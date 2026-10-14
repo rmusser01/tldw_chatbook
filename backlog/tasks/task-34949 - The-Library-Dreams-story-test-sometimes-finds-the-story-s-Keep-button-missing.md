@@ -1,13 +1,16 @@
 ---
 id: TASK-34949
 title: The Library Dreams story test sometimes finds the story's Keep button missing
-status: To Do
+status: Done
 created_date: 2026-10-14 13:47
 labels:
 - tests
 - flaky
 - dreams
 priority: medium
+assignee:
+- '@claude'
+updated_date: 2026-10-14 15:31
 ---
 
 ## Description
@@ -18,16 +21,21 @@ Tests/UI/test_library_dreams_reader.py::test_production_library_dreams_story_act
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test passes 20 consecutive CI runs after aea8948fdb, or, if it fails again, the cause of the missing button is identified in the test or the product
-- [ ] #2 If the product was at fault, a test that fails deterministically without the fix pins it
+- [x] #1 The test passes 20 consecutive CI runs after aea8948fdb, or, if it fails again, the cause of the missing button is identified in the test or the product
+- [x] #2 If the product was at fault, a test that fails deterministically without the fix pins it
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read the failures and the test changes on dev since. 2. Count required-check attempts since the fix reached dev. 3. Close if it held for 20, else root-cause.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Closed by fixes already on dev, no code change here. The three CI failures predate them: the 2026-10-12 20:34Z failure (NoMatches #dsm-keep-button inside the mounted modal) predates 4a2470098a (10-12 22:07Z, waits for the modal's control); both 'did not mount #dsm-keep-button' failures (10-13 04:58Z and 21:17Z) predate aea8948fdb (10-13 22:12Z, waits for the button's real hit target with get_widget_at and asserts the click landed; the click had hit nav-home). Evidence it held: 20 completed attempts of the required workflow's pull_request runs since PR #3020 reached dev (2026-10-13 22:58Z to 2026-10-14 ~15:30Z), none failed on this test; 12 of 12 local runs pass. Investigation by the flaky-test stream of TASK-34789 (PR for TASK-34951).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

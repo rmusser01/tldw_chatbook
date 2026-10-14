@@ -28,6 +28,11 @@ from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 from .table_selection import IdSelectionModel, row_with_id
 
+try:  # Private Textual name, pinned by a test; without it a list loses its highlight.
+    from textual.widgets._select import SelectOverlay
+except ImportError:  # pragma: no cover - only after a Textual upgrade renames it
+    SelectOverlay = None
+
 
 DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
 
@@ -372,8 +377,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._update_multi_selection_ui()
 
     def set_authoritative_source_ids(self, source_ids: tuple[str, ...]) -> None:
-        """Mirror the owning screen's full-reload order for selected IDs."""
+        """Mirror the owning screen's full-reload order for selected IDs.
+
+        The selection is pruned to them in place: picks and the shift-range
+        anchor that still exist are kept (review of #3107, round 3, Q4).
+        """
         self._authoritative_source_ids = tuple(dict.fromkeys(source_ids))
+        selected = self._multi_selection.selected_ids
+        if self._authoritative_source_ids and selected:
+            self._multi_selection.prune(self._authoritative_source_ids)
+            if self._multi_selection.selected_ids != selected:
+                self._update_multi_selection_ui()
 
     def configure_create_backend(
         self, backend: str, source_types: tuple[str, ...]
@@ -419,6 +433,41 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def watch_create_draft_source_type(self, _source_type: str) -> None:
         """Show noise controls only when the selected type can use them."""
         self._sync_create_backend_controls()
+
+    def watch_watchlist_choices(self, _choices: list[dict[str, Any]]) -> None:
+        """Offer changed choices in an open form; the chosen draft is kept.
+
+        The Select shows `_resolved_destination()`: the user's draft while it
+        is still offered, Unassigned otherwise (review of #3107, item V3).
+        Only the destination Select is touched.
+        """
+        try:
+            self._sync_destination_options(
+                self.query_one("#sources-create-watchlist", Select)
+            )
+        except NoMatches:
+            pass
+
+    def _sync_destination_options(self, destination: Select) -> None:
+        """Re-offer the destination choices, keeping an open list's highlight.
+
+        `Select.set_options` rebuilds the expanded overlay and drops its
+        highlight; it is put back on the same choice when that is still
+        offered (review of #3107, round 2, item Y2).
+        """
+        overlay = None
+        if SelectOverlay is not None and destination.expanded:
+            overlay = next(iter(destination.query(SelectOverlay)), None)
+        shown = getattr(destination, "_options", None)  # private, pinned likewise
+        index = None if overlay is None else overlay.highlighted
+        keep = None if index is None or shown is None else shown[index][1]
+        options = self._destination_options()
+        with destination.prevent(Select.Changed):
+            destination.set_options(options)
+            destination.value = self._resolved_destination()
+        values = [value for _label, value in options]
+        if keep is not None and keep in values:
+            overlay.highlighted = values.index(keep)
 
     def _sync_create_backend_controls(self) -> None:
         """Patch the small backend-dependent surface in place when mounted."""
@@ -484,9 +533,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 "Watchlist" if local_backend else "Watchlist (Local only)"
             )
             destination = self.query_one("#sources-create-watchlist", Select)
-            with destination.prevent(Select.Changed):
-                destination.set_options(self._destination_options())
-                destination.value = self._resolved_destination()
+            self._sync_destination_options(destination)
             destination.disabled = not local_backend
         except NoMatches:
             pass

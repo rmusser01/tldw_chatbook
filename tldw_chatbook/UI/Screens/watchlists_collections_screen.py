@@ -1492,28 +1492,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
         else:
             overview.data = self.overview_data
-        try:
-            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
-        except NoMatches:
-            pass
-        else:
-            inspector.profile_state = self._watchlists_profile_state()
-        # Built exactly as `_build_inspector_pane` builds them, so a rebuild
-        # and a patch cannot render differently.
-        for widget_id, text in (
-            (
-                "#watchlists-alerts-summary",
-                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-            ),
-            (
-                "#watchlists-latest-run-summary",
-                self._latest_run_status_text(),
-            ),
-        ):
-            try:
-                self.query_one(widget_id, Static).update(text)
-            except NoMatches:
-                continue
+        self._reseed_inspector_rail()
         # An overview refresh follows every write verb on this screen, so this
         # is one of the points where the recompose this reactive no longer
         # triggers used to re-enter the Console-follow adapter. What that
@@ -2184,8 +2163,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         this the selection highlight would reset to nothing every time,
         even though the scope itself survived on the screen.
         """
-        recovering = self.active_section == "items" and self._read_recovery_active
-        return WatchlistTree(
+        inputs = self._rail_inputs()
+        recovering = inputs[0]
+        view = dict(zip(self._RAIL_VIEW, self._rail_view(recovering), strict=True))
+        tree = WatchlistTree(
             watchlists=[] if recovering else self._tree_watchlists,
             counts={} if recovering else self._tree_counts,
             source_rows_loader=(
@@ -2193,14 +2174,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if recovering
                 else self._load_source_rows_for_tree
             ),
-            expanded=(frozenset() if recovering else self._tree_expanded_watchlist_ids),
-            expanded_root_kinds=(
-                frozenset() if recovering else self._tree_expanded_root_kinds
-            ),
-            active_tag=None if recovering else self._tree_active_tag,
-            active_scope=self.tree_scope,
-            write_disabled_reason=self._tree_write_disabled_reason(),
-            selection_disabled_reason=self._tree_selection_disabled_reason(),
+            **view,
             source_counts={} if recovering else self._tree_source_counts,
             all_source_rows=[] if recovering else self._tree_all_source_rows,
             unassigned_source_rows=(
@@ -2208,6 +2182,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ),
             unread_pin_source_id=self._unread_pin_source_id(),
             id="wl-tree",
+        )
+        tree.built_from = inputs
+        return tree
+
+    def _rail_inputs(self) -> tuple[Any, ...]:
+        """The data `_build_tree_pane` renders; each tree carries its own copy.
+
+        The rail has no in-place data pushes, so a reopened rail is rebuilt
+        only when these moved between its build and its mount, or when its
+        view (`_RAIL_VIEW`, which the tree itself changes and reports) differs
+        from the screen's (review of #3107, Q2 and R1); a full rebuild costs
+        200-500 ms on a 30-watchlist rail.
+        """
+        recovering = self.active_section == "items" and self._read_recovery_active
+        return (recovering, self._tree_snapshot, self._unread_pin_source_id())
+
+    #: The tree's view reactives, in `_rail_view`'s order.
+    _RAIL_VIEW = (
+        "active_scope",
+        "active_tag",
+        "expanded",
+        "expanded_root_kinds",
+        "write_disabled_reason",
+        "selection_disabled_reason",
+    )
+
+    def _rail_view(self, recovering: bool) -> tuple[Any, ...]:
+        """The rail's view as the screen holds it; a tree reports `_RAIL_VIEW`."""
+        return (
+            self.tree_scope,
+            None if recovering else self._tree_active_tag,
+            frozenset() if recovering else frozenset(self._tree_expanded_watchlist_ids),
+            frozenset() if recovering else frozenset(self._tree_expanded_root_kinds),
+            self._tree_write_disabled_reason(),
+            self._tree_selection_disabled_reason(),
         )
 
     @staticmethod
@@ -2718,13 +2727,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
         if section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
-            overview.set_reactive(OverviewPane.data, self.overview_data)
-            # TASK-998: lets the first-run panel distinguish "no watchlists at
-            # all" from "a watchlist with no sources in it" -- `overview_data`
-            # counts sources, items and runs, never watchlists.
-            overview.set_reactive(
-                OverviewPane.watchlist_count, len(self._tree_watchlists)
-            )
+            self._seed_overview_pane(overview, mounted=False)
             children.append(overview)
         elif section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
@@ -2733,33 +2736,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self.runtime_backend,
                 source_types,
             )
-            # Seed the last-loaded rows and selection (Finding 2, fix round
-            # 2) the same way RunsPane/NotificationsPane already do below —
-            # without this the table renders empty until the next unrelated
-            # navigation happens to trigger `_load_sources` again.
-            # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
-            # the table back to every source while the header still names one
-            # watchlist.
-            sources_pane.set_reactive(SourcesPane.sources, self.scoped_loaded_sources())
-            sources_pane.set_authoritative_source_ids(
-                self._loaded_source_canonical_ids()
-            )
+            # Rows, ids, busy checks, destination choices (BEFORE
+            # `show_create_form`), then what the pane owns once mounted.
+            self._seed_sources_pane(sources_pane, mounted=False)
             sources_pane.set_selected_source_ids(self._selected_source_ids)
             sources_pane.selected_source = self.selected_source
-            # TASK-2309: re-seed from screen state for the identical
-            # rebuild-survival reason as `selected_source` on the line
-            # above -- a region rebuild (collapse/expand, a tab
-            # switch) constructs a brand new `SourcesPane`, and without this
-            # a check still running would render its Check-now button back
-            # to enabled/"Check now" until the run's own completion repaint
-            # reached this new instance.
-            sources_pane.busy_source_ids = frozenset(self._checks_in_flight)
-            # TASK-2302: the destination Select's options and its default,
-            # seeded BEFORE `show_create_form` so a form that opens as part
-            # of this very rebuild has them. The pane holds no service of its
-            # own, the same as every other pane here.
-            sources_pane.watchlist_choices = self._create_form_watchlist_choices()
-            sources_pane.default_destination = self._scope_default_destination()
             sources_pane.create_draft_destination = (
                 self._source_create_draft_destination
                 if self._source_create_draft_destination is not None
@@ -2845,15 +2826,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             items_pane.search_query = self._items_search_query
             items_pane.selected_item = self._selected_content_item
-            items_pane.page_number = self._items_page_index + 1
-            items_pane.has_previous = self._items_page_index > 0
-            items_pane.has_next = self._items_has_next
-            items_pane.page_loading = self._items_page_loading
-            items_pane.snapshot_count = self._items_snapshot_count
-            items_pane.new_items_note = self._items_arrival_note()
-            items_pane.search_results_authoritative = (
-                self._items_search_results_authoritative
-            )
+            self._seed_items_pager(items_pane)
             if self._items_retry_message is not None:
                 # Keep the Reader chrome mounted and visible on a transient
                 # load failure. Hiding the entire pane also hid its filter,
@@ -2970,10 +2943,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _push_items_pager_state(self) -> None:
         """Push screen-owned snapshot presentation into the mounted Read pane."""
-        try:
-            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
-        except NoMatches:
-            return
+        for pane in self.query("#watchlists-items-pane").results(ArticleListPane):
+            self._seed_items_pager(pane)
+
+    def _seed_items_pager(self, pane: ArticleListPane) -> None:
+        """The Read pane's snapshot presentation: its factory and pushes."""
         pane.page_number = self._items_page_index + 1
         pane.has_previous = self._items_page_index > 0
         pane.has_next = self._items_has_next
@@ -3327,60 +3301,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         cross-cutting action unrelated to whatever is currently selected --
         moves to the bottom.
         """
-        # Seed from screen state (Finding 3, fix round 2): collapsing or
-        # expanding the right rail constructs a brand new InspectorPane, and
-        # so does the drain's conditional rail rebuild
-        # (`_rebuild_inspector_if_console_follow_drifted`). Without this,
-        # the screen keeps
-        # `selected_entity` but the freshly-built Inspector starts at its
-        # class default (`None`) until the NEXT explicit selection change —
-        # `watch_selected_entity` only pushes on change, so a rebuild alone
-        # never re-syncs it. That left `d`/`c`/`p` silently operating on a
-        # selection the user could no longer see.
-        #
-        # `scope`/`breadcrumb_labels` get the identical treatment (Task 5 fix
-        # round 1) and for the identical reason: a `[`/`]`/`z`/`Z` toggle
-        # rebuilds this factory from scratch, and `watch_selected_scope`
-        # alone would leave a freshly-built Inspector's breadcrumb blank
-        # until the next tree click.
         inspector = InspectorPane(id="watchlists-entity-inspector")
-        inspector.selected_entity = self.selected_entity
-        inspector.scope = self.selected_scope
-        inspector.breadcrumb_labels = self._breadcrumb_labels
-        # TASK-998, widened by TASK-1020: same seeding rationale as the three
-        # lines above -- and the Inspector cannot work this out for itself,
-        # since it is handed a selection rather than the data behind it. The
-        # value is the same one the Overview region keys off, so the rail's
-        # first-run text and the region's can never disagree.
-        inspector.profile_state = self._watchlists_profile_state()
-        # Review wave, I1: the same seeding rationale again, for the same
-        # value the rail is handed in `_build_tree_pane`. The Inspector's
-        # `Add existing` is the watchlist-side twin of the rail's, so the two
-        # must be enabled and disabled by one condition, not two.
-        inspector.write_disabled_reason = self._tree_write_disabled_reason()
-        # TASK-2309: same rebuild-survival seeding as `SourcesPane.busy_
-        # source_ids` in `_build_detail_pane`, and for the identical reason
-        # -- this factory builds a brand new `InspectorPane` on every region
-        # rebuild.
-        inspector.busy_source_ids = frozenset(self._checks_in_flight)
+        self._seed_inspector(inspector)
 
         children: list[Widget] = [
             Static(
                 "Inspector",
                 classes="destination-section watchlists-column-title",
             ),
-            Static(
-                self._watchlists_state_summary_text(),
-                id="watchlists-state-summary",
-            ),
-            Static(
-                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-                id="watchlists-alerts-summary",
-            ),
-            Static(
-                self._latest_run_status_text(),
-                id="watchlists-latest-run-summary",
-            ),
+            *(Static(text, id=key) for key, text in self._inspector_summaries()),
             inspector,
             Static("Console actions", classes="destination-section"),
             Button(
@@ -4095,7 +4024,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(RegionLayoutApplied)
     def _on_region_layout_applied(self, event: RegionLayoutApplied) -> None:
-        """Restore pane-local view state after a successful remount."""
+        """Re-apply what loads pushed while a re-created region was being built."""
         event.stop()
         if event.token != self._current_layout_request_token:
             return
@@ -4104,10 +4033,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             and event.token == self._manual_layout_rollback.token
         ):
             self._manual_layout_rollback = None
-        if event.previous.is_collapsed(Region.ITEMS) and not event.layout.is_collapsed(
-            Region.ITEMS
-        ):
+        reopened = {r for r in COLLAPSIBLE_REGIONS if event.previous.is_collapsed(r)}
+        reopened -= {r for r in COLLAPSIBLE_REGIONS if event.layout.is_collapsed(r)}
+        if Region.ITEMS in reopened:
+            self._reseed_active_section_pane()
             self._restore_items_view_state()
+        if Region.RIGHT_RAIL in reopened:
+            self._reseed_inspector_rail()
+        if Region.LEFT_RAIL in reopened:
+            inputs = self._rail_inputs()
+            view = self._rail_view(inputs[0])
+            for tree in self.query("#wl-tree").results(WatchlistTree):
+                shown = tuple(getattr(tree, name) for name in self._RAIL_VIEW)
+                if getattr(tree, "built_from", None) != inputs or shown != view:
+                    self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
@@ -5212,44 +5151,90 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # is still wrong, but there is nothing better to reach for here.
             logger.debug("No section tab to restore focus to after the swap.")
 
+    @staticmethod
+    def _seed_reactive(pane: Widget, name: str, value: Any, mounted: bool) -> None:
+        """Plain on a mounted pane; `set_reactive` on a built one (task-15778)."""
+        if mounted:
+            setattr(pane, name, value)
+        else:
+            pane.set_reactive(getattr(type(pane), name), value)
+
+    def _seed_overview_pane(self, pane: OverviewPane, *, mounted: bool) -> None:
+        """The Overview's screen state (TASK-998: it counts no watchlists itself)."""
+        self._seed_reactive(pane, "data", self.overview_data, mounted)
+        count = len(self._tree_watchlists)
+        self._seed_reactive(pane, "watchlist_count", count, mounted)
+
+    def _seed_sources_pane(self, pane: SourcesPane, *, mounted: bool) -> None:
+        """Screen-owned Sources state, for its factory, the reseed and the pushes.
+
+        Scoped rows (TASK-2304), ids that prune the pane's own selection
+        without moving its range anchor, busy checks (TASK-2309) and the
+        destination choices (TASK-2302). The pane owns its selection, row
+        highlight and drafts once mounted, so only the factory seeds those.
+        """
+        self._seed_reactive(pane, "sources", self.scoped_loaded_sources(), mounted)
+        pane.set_authoritative_source_ids(self._loaded_source_canonical_ids())
+        pane.busy_source_ids = frozenset(self._checks_in_flight)
+        pane.watchlist_choices = self._create_form_watchlist_choices()
+        pane.default_destination = self._scope_default_destination()
+
+    def _seed_inspector(self, inspector: InspectorPane) -> None:
+        """The screen state the Inspector shows, for its factory and a reopen.
+
+        A rebuild constructs a brand new InspectorPane at class defaults, and
+        each value's watcher pushes only on change, so without this a rebuilt
+        Inspector lost the selection `d`/`c`/`p` act on (Finding 3), its
+        breadcrumb (Task 5), its first-run state (TASK-1020), the `Add
+        existing` gate shared with the rail (I1) and running checks (TASK-2309).
+        """
+        inspector.selected_entity = self.selected_entity
+        inspector.scope = self.selected_scope
+        inspector.breadcrumb_labels = self._breadcrumb_labels
+        inspector.profile_state = self._watchlists_profile_state()
+        inspector.write_disabled_reason = self._tree_write_disabled_reason()
+        inspector.busy_source_ids = frozenset(self._checks_in_flight)
+
+    def _inspector_summaries(self) -> tuple[tuple[str, str], ...]:
+        """The Inspector rail's summary lines, as built and as re-pushed."""
+        alerts = self.overview_data.get("active_alert_rules", 0)
+        return (
+            ("watchlists-state-summary", self._watchlists_state_summary_text()),
+            ("watchlists-alerts-summary", f"Alert rules active: {alerts}"),
+            ("watchlists-latest-run-summary", self._latest_run_status_text()),
+        )
+
+    def _reseed_inspector_rail(self) -> None:
+        """Re-apply the Inspector rail's seeds to whatever of it is mounted."""
+        for inspector in self.query(InspectorPane):
+            self._seed_inspector(inspector)
+        for key, text in self._inspector_summaries():
+            for summary in self.query(f"#{key}").results(Static):
+                summary.update(text)
+
     def _reseed_active_section_pane(self) -> None:
-        """Re-apply the section's loaded rows to the pane the swap mounted.
+        """Re-apply loaded state to the section pane a rebuild just mounted.
 
-        `watch_active_section` dispatches this section's loader and the swap
-        in the same breath, and `WatchlistsWorkbench.refresh_region_content`
-        deliberately calls the region factory BEFORE detaching the old pane
-        (so a factory that raises leaves what is on screen standing). Those
-        two facts open a window: the factory reads screen state, then the
-        remove/mount pair awaits, and a loader that lands in that gap writes
-        its rows to `self._loaded_*` and then fails to find its pane, because
-        the replacement is built but not yet mounted. The pane then renders
-        the state as it was one instant before the data arrived, with nothing
-        left to correct it -- measured as an Alert-rules table that stayed
-        empty over a `self._loaded_rules` holding the row.
-
-        (The whole-screen `refresh(recompose=True)` this replaced did not have
-        the gap: Textual's `Widget.recompose` removes its children first and
-        calls `compose()` only afterwards, so it always read screen state on
-        the late side of the yield.)
-
-        Re-applying after the mount closes it from the other end, and costs
-        nothing when no loader landed: these are reactive assignments, and an
-        unchanged value fires no watcher and no recompose. It is also what
-        keeps a section switch to ONE pane build -- the loader's own push,
-        arriving later, finds the values already in place.
+        A rebuild calls the pane factory (it reads screen state) BEFORE its
+        mount awaits; a loader landing in that gap finds no pane to push into
+        (measured: an Alert-rules table empty over `self._loaded_rules`;
+        TASK-34951: a Sources form offering no watchlist). These reactive
+        assignments are no-ops when unchanged, so a section switch stays ONE
+        pane build.
         """
         if not self._dom_is_live:
             return
         section = self.active_section
         try:
             if section == "items":
-                self.query_one(
-                    "#watchlists-items-pane", ArticleListPane
-                ).items = self._loaded_items
+                pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                pane.items = self._loaded_items
+                self._seed_items_pager(pane)
             elif section == "sources":
-                self.query_one(
-                    "#watchlists-sources-pane", SourcesPane
-                ).sources = self.scoped_loaded_sources()
+                self._push_scoped_sources_to_pane()
+            elif section == "overview":
+                pane = self.query_one("#watchlists-overview-pane", OverviewPane)
+                self._seed_overview_pane(pane, mounted=True)
             elif section == "runs":
                 self._reseed_live_detail_pane()
             elif section == "rules":
@@ -5949,6 +5934,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         watchlist = created["watchlist"]
         self._selected_source_ids = ()
+        for pane in self.query("#watchlists-sources-pane").results(SourcesPane):
+            pane.set_selected_source_ids(())  # was left to the next reload
         self._request_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=int(watchlist["id"]))
         )
@@ -7875,21 +7862,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         if not self._dom_is_live:
             return
-        try:
-            sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
-        except NoMatches:
-            return
-        sources_pane.sources = self.scoped_loaded_sources()
-        # TASK-2302, and pushed from exactly here for the same reason the
-        # rows are: this method is called from `_apply_tree_data_to_live_
-        # surfaces` (a watchlist was created, renamed or deleted) and from
-        # `watch_tree_scope` (the user moved), which are the only two events
-        # that can change either the destination CHOICES or the default. Both
-        # are plain reactive assignments -- an open create form is not
-        # rebuilt, so a half-typed draft is untouched; its Select re-reads
-        # these on the next compose, which the next open supplies.
-        sources_pane.watchlist_choices = self._create_form_watchlist_choices()
-        sources_pane.default_destination = self._scope_default_destination()
+        # Called after a tree load (choices) and a scope move (rows, default).
+        for pane in self.query("#watchlists-sources-pane").results(SourcesPane):
+            self._seed_sources_pane(pane, mounted=True)
 
     async def _load_sources(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -7916,9 +7891,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     sources_pane = self.query_one(
                         "#watchlists-sources-pane", SourcesPane
                     )
-                    sources_pane.sources = self.scoped_loaded_sources()
-                    sources_pane.set_authoritative_source_ids(authoritative_ids)
-                    sources_pane.set_selected_source_ids(self._selected_source_ids)
+                    # The pane prunes its own selection in place (anchor kept).
+                    self._seed_sources_pane(sources_pane, mounted=True)
+                    if not authoritative_ids:  # nothing to prune against
+                        sources_pane.set_selected_source_ids(())
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:
