@@ -131,8 +131,10 @@ in `config.toml` and restart the app:
 allowed_hosts = ["nas.local", "192.168.1.20"]
 ```
 
-Write each host exactly as it appears in the source's address, without the
-scheme, port or path; there are no wildcards. A listed host is admitted for
+Write each host as it appears in the source's address, without the scheme,
+port or path. An IPv6 address goes in without its square brackets:
+`fd00::5`, not `[fd00::5]`. There are no wildcards, and a listed name does
+not cover its subdomains. A listed host is admitted for
 every fetch the app makes, not only for that source's checks — including
 links inside any feed and a cloud-metadata address that is otherwise always
 refused — so list only hosts you trust.
