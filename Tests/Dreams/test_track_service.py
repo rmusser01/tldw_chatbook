@@ -3658,8 +3658,10 @@ async def test_a_held_watch_is_settled_and_asked_again_by_a_pass_not_by_a_start(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """Round 3, T19, as TASK-34922 changed it (owner decision 2026-10-13:
     retry private and metadata holds on later cycles). A held watch is
-    settled "on", so a start does not look its address up unless the
-    start has other reconcile work -- but a resume pass that runs (and the
+    settled "on", so the boot check (``needs_switch``, the start-time
+    question this test asks) does not ask for a pass because of it; a
+    start that has other reconcile work runs a pass that looks it up too,
+    which this test does not exercise. A resume pass that runs (and the
     daily cycle's retry) asks again, and the page comes back once its name
     resolves publicly."""
     from tldw_chatbook.Utils import egress
