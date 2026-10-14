@@ -1905,6 +1905,19 @@ def _resume_has_work(raw: Any) -> bool:
         settled_state(raw) != SETTLED_ON or _hold_may_pass(raw))
 
 
+def _settled_hold_only(raw: Any) -> bool:
+    """Whether a record is settled "on" and owes only its held subscription.
+
+    Every writer of "on" today writes only that (``only_held``), but the
+    resume pass skips its write-ahead and un-settles on this answer, not on
+    the settled state alone (review of #3101, round 2, S2).
+    """
+    if settled_state(raw) != SETTLED_ON:
+        return False
+    subscription, reminders, rules = _owed(_suspension_record({"suspension": raw}))
+    return subscription and not reminders and not rules
+
+
 def _owed(record: dict | None) -> tuple[bool, list[str], list[int]]:
     """What a record owes: ``(subscription, reminder ids, rule ids)``."""
     record = record or {}
@@ -2283,7 +2296,7 @@ async def _resume_pass(
             rider_id = int(rider["id"])
             if (int(rider.get("subscription_id") or 0) == subscription_id
                     and rider_id not in failed
-                    and settled_state(rider.get("suspension")) == SETTLED_ON):
+                    and _settled_hold_only(rider.get("suspension"))):
                 await write_unsettled(rider_id, True, [], [])
                 rewritten.add(rider_id)
 
@@ -2309,14 +2322,14 @@ async def _resume_pass(
             # boot check -- skip as done. And what has been restored is no
             # longer owed, whatever happens to the rest: a reminder left
             # listed was re-armed by the next resume over a disable the
-            # user had made in between. A record settled "on" says nothing
-            # of the kind and owes only its held subscription (nothing is
-            # restored before that decision), so it is not rewritten here:
-            # a held page asked about again on every cycle trigger would
-            # otherwise be written twice each time (review of #3101, N1).
-            # It is un-settled only once its page passes the check
-            # (``unsettle_held_riders``, round 2, S1).
-            if settled_state(item.get("suspension")) != SETTLED_ON:
+            # user had made in between. A record settled "on" that owes
+            # only its held subscription says nothing of the kind, and
+            # nothing is restored before that decision, so it is not
+            # rewritten here: a held page asked about again on every cycle
+            # trigger would otherwise be written twice each time (review of
+            # #3101, N1). It is un-settled only once its page passes the
+            # check (``unsettle_held_riders``, round 2, S1).
+            if not _settled_hold_only(item.get("suspension")):
                 await write_unsettled(item_id, subscription, reminders, rules)
                 rewritten.add(item_id)
             if reminders and scheduling_db is not None:

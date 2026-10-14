@@ -5380,6 +5380,39 @@ async def test_a_held_page_switched_back_on_never_runs_under_its_hold(
 
 
 @pytest.mark.asyncio
+async def test_a_settled_record_that_owes_more_than_its_hold_is_written_ahead(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, round 2, S2. Only a record that owes nothing but
+    its held subscription may skip the write-ahead. No writer makes a
+    settled "on" record that owes a rule today, so one is written by hand:
+    when restoring that rule fails, the record must already have stopped
+    saying "settled on", or the boot check would take it as done."""
+    from tldw_chatbook.Dreams import track_service
+
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5", "private")
+    item_id = owned["tracked_item_id"]
+    dreams_db.set_tracked_suspension(item_id, track_service._record_text(
+        subscription=True, reminders=[], rules=[999], held="private",
+        settled="on"))
+
+    async def rule_fails(*args, **kwargs):
+        raise RuntimeError("rule store unavailable")
+
+    monkeypatch.setattr(service, "update_alert_rule", rule_fails)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    record = _record(dreams_db, item_id)
+    assert record.get("settled") is None, "written ahead before the restore"
+    assert record["rules"] == [999], "the rule is still owed"
+    assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
+@pytest.mark.asyncio
 async def test_a_page_held_for_its_scheme_is_not_asked_about_daily(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """A non-web scheme is a fact about the address, not a DNS answer: the
