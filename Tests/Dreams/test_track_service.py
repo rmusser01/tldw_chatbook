@@ -5272,7 +5272,15 @@ async def test_a_page_that_still_resolves_privately_stays_held_and_is_never_fetc
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
         address, reason):
     """A retry is the same public-address check: it can never switch on a
-    page that still resolves privately, and nothing is requested from it."""
+    page that still resolves privately, and nothing is requested from it.
+
+    Neither the retry nor a switch fetches anything, so the page is then
+    run through the watcher's real check path (``launch_run`` +
+    ``execute_run``, as
+    ``test_tracked_page_is_refused_at_fetch_time_once_it_resolves_private``
+    does): the fetch-time policy refuses it too, and no request leaves.
+    Two layers, each pinned: the hold (the source stays off) and the
+    fetch-time refusal (nothing is sent)."""
     subs_db, service = subs_stack
     owned = await _held_at(
         dreams_db, service, scheduling_db, monkeypatch, address, reason)
@@ -5292,10 +5300,16 @@ async def test_a_page_that_still_resolves_privately_stays_held_and_is_never_fetc
     await _switch(service, dreams_db, scheduling_db, off=False)
 
     assert lookups, "it was asked about again"
-    assert sent == [], "and nothing was requested from it"
     assert _is_active(subs_db, owned["subscription_id"]) == 0
     record = _record(dreams_db, owned["tracked_item_id"])
     assert (record["held"], record["settled"]) == (reason, "on")
+
+    run = await service.launch_run(source_id=owned["subscription_id"])
+    await service.execute_run(run["run_id"])
+
+    assert sent == [], "nothing was requested from it"
+    row = subs_db.get_subscription(owned["subscription_id"])
+    assert "network safety policy" in str(row["last_error"])
 
 
 @pytest.mark.asyncio
