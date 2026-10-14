@@ -25,7 +25,8 @@ _WORDS = (
 ).split()
 
 #: (file, pattern whose one group is the stated number, what it counts).
-#: "runners" is the shards plus the other test lanes the required check needs.
+#: "runners" is the shards plus the other test lanes the required check needs;
+#: "runners+perf" adds perf-guard's jobs, which a PR touching code also starts.
 _STATEMENTS = (
     (WORKFLOW, r"TASK-33007 \(PR #3057\) runs (\w+) shards", "shards"),
     ("scripts/ui_pr_gate_census.txt", r"round-robin over (\w+) shards", "shards"),
@@ -37,25 +38,36 @@ _STATEMENTS = (
     (ADR, r"makes (\w+) concurrent test\s+runners per PR", "runners"),
     (ADR, r"TASK-34353; (\w+) since\s+TASK-33007", "shards"),
     (ADR, r"now runs (\w+) test runners at once", "runners"),
+    (ADR, r"(\w+) with perf-guard", "runners+perf"),
 )
 
 
-def _counts() -> tuple[int, int]:
-    """The UI lane's shards, and the test runners an ordinary PR starts.
+def _counts() -> dict[str, int]:
+    """The UI lane's shards, the test runners an ordinary PR starts, and
+    those runners with perf-guard's.
 
     The runners are the shards plus every other lane the required check
     ``needs`` (the PR Fast Lane's two jobs, the Console P0 gate and the
-    Dreams tracking tests since TASK-34916 and TASK-34929).
+    Dreams tracking tests since TASK-34916 and TASK-34929), each one runner:
+    a second matrix job among them fails here instead of miscounting.
     """
-    jobs = yaml.safe_load((REPO_ROOT / WORKFLOW).read_text(encoding="utf-8"))["jobs"]
+    jobs = _jobs(WORKFLOW)
+    needs = jobs["derived-artifacts"]["needs"]
+    assert [job for job in needs if "strategy" in jobs[job]] == ["ui-fast-lane"]
     shards = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
-    return shards, shards + len(jobs["derived-artifacts"]["needs"]) - 1
+    runners = shards + len(needs) - 1
+    perf = _jobs(".github/workflows/perf-guard.yml")
+    assert not [job for job in perf.values() if "strategy" in job]
+    return {"shards": shards, "runners": runners, "runners+perf": runners + len(perf)}
+
+
+def _jobs(workflow: str) -> dict:
+    return yaml.safe_load((REPO_ROOT / workflow).read_text(encoding="utf-8"))["jobs"]
 
 
 @pytest.mark.parametrize(("path", "pattern", "counts"), _STATEMENTS)
 def test_a_stated_shard_count_is_the_matrix_size(path, pattern, counts):
-    shards, runners = _counts()
-    number = runners if counts == "runners" else shards
+    number = _counts()[counts]
     stated = re.findall(pattern, (REPO_ROOT / path).read_text(encoding="utf-8"))
 
     assert len(stated) == 1, f"{path}: expected one match of {pattern!r}, got {stated}"
