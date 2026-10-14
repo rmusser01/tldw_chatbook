@@ -2271,10 +2271,6 @@ async def _resume_pass(
     # Wrappers whose restore failed part-way: the record written last is
     # the truth about them, and the stale row read at pass start is not.
     failed: set[int] = set()
-    # Wrappers whose record this pass has already rewritten (review of
-    # #3101, N1): only for the others is the row read at pass start still
-    # what is stored, so only they may skip an unchanged final write.
-    rewritten: set[int] = set()
 
     async def write_unsettled(
         item_id: int, subscription: bool, reminders: list[str], rules: list[int]
@@ -2298,7 +2294,6 @@ async def _resume_pass(
                     and rider_id not in failed
                     and _settled_hold_only(rider.get("suspension"))):
                 await write_unsettled(rider_id, True, [], [])
-                rewritten.add(rider_id)
 
     for item in pending:
         item_id = int(item["id"])
@@ -2331,7 +2326,6 @@ async def _resume_pass(
             # check (``unsettle_held_riders``, round 2, S1).
             if not _settled_hold_only(item.get("suspension")):
                 await write_unsettled(item_id, subscription, reminders, rules)
-                rewritten.add(item_id)
             if reminders and scheduling_db is not None:
                 await asyncio.to_thread(run_finite_local_worker,
                     _restore_reminders, scheduling_db, reminders)
@@ -2399,9 +2393,18 @@ async def _resume_pass(
             text = _record_text(
                 subscription=subscription, reminders=reminders, rules=rules,
                 held=held, settled=SETTLED_ON if only_held else None)
-        if (item_id not in rewritten and text is not None
-                and json.loads(text) == record):
-            continue  # still held for the same reason: nothing to write
+        # Still held for the same reason: nothing to write (review of
+        # #3101, N1). Comparing with the row read at pass start is enough;
+        # no "did this pass write it" guard is needed (round 2, S3). A
+        # final text equal to that row is either a held record that is
+        # still held -- skipped its write-ahead, never un-settled, so
+        # nothing was written -- or an unsettled one that owes no reminder
+        # or rule (restoring one changes the text, a failed restore skips
+        # this loop), whose write-ahead wrote exactly that text. An
+        # un-settled rider never matches: its page passed, so its final
+        # text has no hold, and its start row had one.
+        if text is not None and json.loads(text) == record:
+            continue
         try:
             # ``only_live``: a watch retired since the pass began carries
             # its retirement record, which this pass must not rewrite
