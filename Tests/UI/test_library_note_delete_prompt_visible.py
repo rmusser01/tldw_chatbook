@@ -1,7 +1,7 @@
 """TASK-34000.13: the Library Notes delete confirmation shows Cancel and
 Delete inside Info at every size.
 
-Review finding N-10 (qa/notes-library-ux-review-2026-10-02): Info ▸ Delete
+Review finding N-10 (Docs/QA/notes-library-ux-review-2026-10-02): Info ▸ Delete
 changed only the footer. The prompt, ``#library-note-delete-confirmation``,
 is a ``Vertical`` composed as the last child of Info's Danger section, and
 only the compact layout gave it a height; on the wide stage it kept

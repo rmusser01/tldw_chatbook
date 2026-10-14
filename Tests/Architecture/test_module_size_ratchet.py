@@ -1,7 +1,7 @@
 """A size ratchet for the largest ungoverned modules — stop them growing.
 
 **Why this test exists.** The core-runtime code review (2026-09-17,
-`qa/core-code-review-2026-09-17/report.md`) found that several of the
+`Docs/QA/core-code-review-2026-09-17/report.md`) found that several of the
 repository's largest modules had no size ratchet row at all, across
 directories that neither `test_screen_size_ratchet.py` (screens) nor
 `test_library_modules_size_ratchet.py` (`Library_Modules/*_controller.py`)

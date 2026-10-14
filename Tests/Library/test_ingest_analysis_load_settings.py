@@ -5,7 +5,7 @@ provider`` against hand-built mappings. That is the half the review's L-02
 could not see: the app hands the resolver ``load_settings()``'s dict, and
 that dict never carried ``[analysis_defaults]`` over from the TOML, so the
 Media Analysis tab said "No analysis provider is configured" for every user
-with a ready provider (qa/notes-library-ux-review-2026-10-02/verify/nl-v-l-02/
+with a ready provider (Docs/QA/notes-library-ux-review-2026-10-02/verify/nl-v-l-02/
 08-probe-output.txt). These cases resolve over the loader's real output.
 
 The absent / not-ready cases are the AC#3 fence: the fix must not introduce a

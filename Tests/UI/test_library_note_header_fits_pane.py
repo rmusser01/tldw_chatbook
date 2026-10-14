@@ -1,7 +1,7 @@
 """TASK-34000.8: the Library Notes editor header keeps Save, Use in Console
 and Discard new note visible inside the editor pane at 120 columns and up.
 
-Review finding N-05 (qa/notes-library-ux-review-2026-10-02): from the
+Review finding N-05 (Docs/QA/notes-library-ux-review-2026-10-02): from the
 shell's 120-column breakpoint up the header was always ONE horizontal strip
 -- the save state, then [Edit Preview Info], then [Save Use in Console
 Discard new note] -- shaped from the shell's ``compact`` flag alone. Every

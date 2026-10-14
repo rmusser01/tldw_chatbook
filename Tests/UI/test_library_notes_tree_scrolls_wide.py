@@ -1,7 +1,7 @@
 """TASK-34000.7: the Library Notes tree scrolls at 120+ columns, and keyboard
 focus never lands on an unseen row.
 
-Review finding N-04 (qa/notes-library-ux-review-2026-10-02): at 120 columns
+Review finding N-04 (Docs/QA/notes-library-ux-review-2026-10-02): at 120 columns
 and wider ``#library-notes-list`` was a plain ``Vertical`` whose default
 ``overflow: hidden`` left it with no scroll owner -- only the compact rule
 (below ``LIBRARY_NOTES_COMPACT_BREAKPOINT``) gave it ``overflow-y: auto``.

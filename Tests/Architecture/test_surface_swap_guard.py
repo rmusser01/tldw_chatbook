@@ -19,7 +19,7 @@ Which shapes hang was measured, not assumed, on Textual 8.2.8 against a plain
 ``textual.screen.Screen`` (which has no guard): every ``_REFUSED`` shape below,
 and the nested child swap, never landed; every shape these tests expect to
 complete did. The probe scripts and their output are kept beside the task's
-other evidence (``qa/notes-library-ux-review-2026-10-02/fixes/task-34000.4/``).
+other evidence (``Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.4/``).
 
 Gate-free on purpose, like ``test_base_app_screen_recompose_focus_seam.py``:
 a bare ``textual.app.App``, so the recovery gate never runs.
