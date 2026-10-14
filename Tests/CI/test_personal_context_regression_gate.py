@@ -56,6 +56,13 @@ CRITICAL = {
 }
 
 
+#: The job each pytest step runs in (TASK-34916 split the PR Fast Lane's two).
+LANE_JOBS = {
+    "Run fast PR contract": "pr-fast-lane",
+    "Run admission-sensitive suites": "pr-fast-lane-admission",
+}
+
+
 def lane_targets(lane):
     if lane == "UI census":
         return tuple(
@@ -69,7 +76,7 @@ def lane_targets(lane):
         (ROOT / ".github/workflows/derived-artifacts.yml").read_text()
     )
     step = next(
-        s for s in workflow["jobs"]["pr-fast-lane"]["steps"] if s.get("name") == lane
+        s for s in workflow["jobs"][LANE_JOBS[lane]]["steps"] if s.get("name") == lane
     )
     return tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True))
 

@@ -209,22 +209,35 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # each lane needs its own verdict step below or a red lane would leave the
     # required check green.
     # TASK-33621.27: the Console P0 regression gate is the third lane.
-    assert required.get("needs") == ["pr-fast-lane", "ui-fast-lane", "console-p0-gate"]
+    # TASK-34916: the PR Fast Lane's admission-sensitive half is its own job.
+    assert required.get("needs") == [
+        "pr-fast-lane",
+        "pr-fast-lane-admission",
+        "ui-fast-lane",
+        "console-p0-gate",
+    ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in required["steps"])
 
-    verdict = _named_step(required, "Require successful PR fast lane")
-    assert not verdict.get("continue-on-error", False)
     # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
     # `success()`, so a red lane does not skip the next lane's verdict and
     # every red lane is reported in one pass (run 38072845848 showed the UI
     # and P0 verdicts skipped behind the PR lane's).
-    assert verdict["if"] == (
-        f"${{{{ !cancelled() && ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
-    )
-    assert "needs.pr-fast-lane.result" in verdict["run"]
-    assert "exit 1" in verdict["run"]
+    for lane, step_name in (
+        ("pr-fast-lane", "Require successful PR fast lane"),
+        ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
+    ):
+        verdict = _named_step(required, step_name)
+        assert not verdict.get("continue-on-error", False)
+        assert verdict["if"] == (
+            f"${{{{ !cancelled() && ({LANES}) && needs.{lane}.result != 'success' }}}}"
+        )
+        assert f"needs.{lane}.result" in verdict["run"]
+        assert "exit 1" in verdict["run"]
+    admission = workflow["jobs"]["pr-fast-lane-admission"]
+    assert not admission.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in admission["steps"])
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
@@ -332,23 +345,46 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     assert "-n auto" not in run["run"]
 
 
-def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
-    """Keep the fast lane serial, bounded, and minimally provisioned."""
-    fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
+@pytest.mark.parametrize(
+    ("job_name", "display_name", "test_step"),
+    [
+        ("pr-fast-lane", "PR Fast Lane", "Run fast PR contract"),
+        (
+            "pr-fast-lane-admission",
+            "PR Fast Lane (admission-sensitive)",
+            "Run admission-sensitive suites",
+        ),
+    ],
+)
+def test_fast_lane_is_one_serial_minimal_python_312_job(
+    job_name: str, display_name: str, test_step: str
+) -> None:
+    """Keep each half of the fast lane serial, bounded, and minimally provisioned.
 
-    assert fast["name"] == "PR Fast Lane"
+    Args:
+        job_name: The workflow job key.
+        display_name: Its check name.
+        test_step: Its one pytest step.
+    """
+    fast = _workflow("derived-artifacts.yml")["jobs"][job_name]
+
+    assert fast["name"] == display_name
     assert fast["if"] == LANES
     assert fast["runs-on"] == "ubuntu-latest"
     # Roleplay frame B1 (TASK-33910.2): owner decision 2026-10-09, "Raise
     # timeout to 35 (Rec.)" -- 30 -> 35 to fit B1's mounted Roleplay suites in
-    # the admission-sensitive step (worst case measured 28m20s).
+    # the admission-sensitive step (worst case measured 28m20s). TASK-34916
+    # split the two pytest invocations into two jobs instead of raising it
+    # again: over 90 PR runs the halves replay at max 20.8 and 20.1 min.
     assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
-    # TASK-32873: 5 steps -- the admission-sensitive suites run in a
-    # separate pytest invocation inside the same job (their
-    # keep_bootstrap_profile enrollment poisons sandboxed suites sharing
-    # a process).
-    assert len(fast["steps"]) == 5
+    # checkout, setup-python, install, one pytest step. TASK-32873 keeps the
+    # admission-sensitive suites in their own pytest invocation (their
+    # keep_bootstrap_profile enrollment poisons sandboxed suites sharing a
+    # process); TASK-34916 moved that invocation to its own job.
+    assert len(fast["steps"]) == 4
+    assert fast["steps"][-1]["name"] == test_step
+    assert "if" not in fast["steps"][-1]
 
     setup = next(
         step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -426,7 +462,7 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     fast_targets = set(
         _pytest_targets(
             _named_step(
-                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"],
+                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane-admission"],
                 "Run admission-sensitive suites",
             )["run"]
         )
@@ -460,9 +496,9 @@ def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> Non
     negative controls or the re-save wait and merge green.
     """
     workflow = _workflow("derived-artifacts.yml")
-    fast = workflow["jobs"]["pr-fast-lane"]
+    admission = workflow["jobs"]["pr-fast-lane-admission"]
     targets = _pytest_targets(
-        _named_step(fast, "Run admission-sensitive suites")["run"]
+        _named_step(admission, "Run admission-sensitive suites")["run"]
     )
 
     missing = [name for name in NOTES_SYNC_REAL_STACK_TARGETS if name not in targets]
@@ -522,6 +558,9 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
     ("job_name", "step_name"),
     [
         ("pr-fast-lane", None),
+        ("pr-fast-lane-admission", None),
+        ("pr-fast-lane-admission", "Run admission-sensitive suites"),
+        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive)"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("derived-artifacts", None),

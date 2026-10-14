@@ -85,8 +85,15 @@ jobs:
     name: PR Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
-    # TASK-32831: the main and admission-sensitive invocations measured 14m45s
-    # and 4m59s, plus setup; keep both required steps within one bounded job.
+    # TASK-34916: the admission-sensitive invocation moved to its own job
+    # (pr-fast-lane-admission, below). Over 90 pull-request runs to
+    # 2026-10-14 this job took median 31.5 / max 39.5 min with both steps,
+    # and 4 of the 90 ran into the cap and were cancelled with no report.
+    # Each step is about half: the sandboxed step median 15.2 / max 19.9 min,
+    # the admission-sensitive step median 15.4 / max 18.7. With the sandboxed
+    # step alone (plus the ~0.8 min of setup) the same 90 runs replay at
+    # median 16.1 / max 20.8 min, 14 min under the cap. Add a job (a shard),
+    # not minutes, when either nears its cap again.
     timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
 
     steps:
@@ -170,16 +177,46 @@ jobs:
             --timeout=180 \
             --tb=short
 
+  pr-fast-lane-admission:
+    # TASK-34916: the PR Fast Lane's second pytest invocation, moved here
+    # unchanged (same targets, same order, same --timeout) so the two halves
+    # run side by side instead of one after the other. It was always its own
+    # pytest process; each process makes its own throwaway bootstrap profile
+    # (mkdtemp in Tests/conftest.py), so nothing passed from the first
+    # invocation to this one and a fresh runner changes nothing it relies on.
+    #
+    # timeout-minutes: the 35 the owner set for exactly these suites
+    # (TASK-33910.2). Its 90 measured runs replay at median 16.3 / max 20.1
+    # min with setup, so one hung test at --timeout=300 (about 5.3 min with
+    # the private-profile wrapper's report) still ends ~10 min under the cap.
+    #
+    # One more runner per PR (ADR-103 note, 2026-10-14).
+    name: PR Fast Lane (admission-sensitive)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+
       # TASK-32873: the admission-sensitive suites enroll the process
       # against the collection-time profile (keep_bootstrap_profile in
       # Tests/conftest.py); running them in the SAME pytest invocation as
       # sandboxed suites lets the enrollment poison their config access
       # (RecoveryRequired: raw_source_selection_changed). Their own
-      # invocation, after the sandboxed one, keeps both green.
+      # invocation keeps both green.
       # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites (both
       # styled tiers, hostile names, the journeys) are bootstrap_profile files too.
       - name: Run admission-sensitive suites
-        if: always()
         run: |
           pytest \
             Tests/Chat/test_console_run_log_connection_ownership.py \
@@ -294,9 +331,9 @@ jobs:
     # there and that job took 33m41s against its 35-min cap (run
     # 38064483856: main step 13m08s, admission-sensitive step 19m30s, of
     # which this block was 3m01s). Like ui-fast-lane, it is a separate
-    # runner, so it costs one more concurrent runner per PR (ADR-103: now
-    # pr-fast-lane + 4 UI shards + this = 6 test runners, then the
-    # aggregate), and no wall-clock on the PR Fast Lane.
+    # runner, so it costs one more concurrent runner per PR (6 test runners
+    # then; ADR-103's dated notes keep the current count), and no wall-clock
+    # on the PR Fast Lane.
     #
     # Same minimal dependency set, same serial pytest, same profile split as
     # pr-fast-lane (TASK-32873): plain unit, private-profile and in-process
@@ -446,7 +483,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [pr-fast-lane, ui-fast-lane, console-p0-gate]
+    needs: [pr-fast-lane, pr-fast-lane-admission, ui-fast-lane, console-p0-gate]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -469,6 +506,16 @@ jobs:
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
+          exit 1
+
+      # TASK-34916: the admission-sensitive half of the PR Fast Lane, now its
+      # own job. Without this step a red half would leave the required check
+      # green.
+      - name: Require successful PR fast lane (admission-sensitive)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-admission.result != 'success' }}
+        run: |
+          echo "PR Fast Lane (admission-sensitive) result: ${{ needs.pr-fast-lane-admission.result }}"
+          echo "::error::The required PR fast lane (admission-sensitive) did not succeed."
           exit 1
 
       # TASK-32908: same shape as the step above. Without it the new UI job

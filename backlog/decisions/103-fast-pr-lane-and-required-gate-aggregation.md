@@ -197,3 +197,12 @@ one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
 six concurrent test runners, then the aggregate.
 `Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
 required context name, event cadence and dependency boundary are unchanged.
+
+2026-10-14 (TASK-34916): the PR Fast Lane's admission-sensitive pytest invocation
+runs in its own job, `pr-fast-lane-admission` ("PR Fast Lane (admission-sensitive)"),
+with the same install line, the same targets in the same order, and the same 35-min
+cap; the required check `needs` it and fails when it is not `success`. Over 90
+pull-request runs to 2026-10-14 the two invocations in one job took median 31.5 /
+max 39.5 min and four runs were cancelled at the cap; each half replays at max
+20.8 and 20.1 min. One more runner per PR: seven concurrent test runners, then
+the aggregate.

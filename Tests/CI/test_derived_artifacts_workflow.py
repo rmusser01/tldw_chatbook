@@ -58,6 +58,7 @@ CHECKERS = (
 #: Each lane the required aggregate depends on, and its verdict step.
 VERDICTS = {
     "pr-fast-lane": "Require successful PR fast lane",
+    "pr-fast-lane-admission": "Require successful PR fast lane (admission-sensitive)",
     "ui-fast-lane": "Require successful UI fast lane",
     "console-p0-gate": "Require successful Console P0 regression gate",
 }
@@ -81,7 +82,7 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     TASK-32908 added `ui-fast-lane` beside `pr-fast-lane`. Both are ordinary
     jobs that report their own square; neither is named under branch
     protection. `derived-artifacts` stays the single required context, and
-    `needs` + its two verdict steps are what make a red lane fail it -- see
+    `needs` + its verdict steps are what make a red lane fail it -- see
     `test_required_aggregator_fails_when_either_lane_fails`.
 
     `queue-tick` (the merge queue, spec 2026-10-03) runs after the aggregate and
@@ -89,6 +90,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     """
     assert list(_workflow()["jobs"]) == [
         "pr-fast-lane",
+        # TASK-34916: the PR Fast Lane's admission-sensitive pytest invocation,
+        # moved out when the two steps together reached the 35-min cap.
+        "pr-fast-lane-admission",
         "ui-fast-lane",
         # TASK-33621.27: the Console review's P0 regression tests, moved out
         # of pr-fast-lane when they took it to 33m41s of its 35-min cap.
@@ -106,7 +110,7 @@ def test_required_aggregator_fails_when_either_lane_fails():
     "guard nobody is gated on" shape this whole workflow exists to replace.
     """
     job = _workflow()["jobs"]["derived-artifacts"]
-    assert job.get("needs") == ["pr-fast-lane", "ui-fast-lane", "console-p0-gate"]
+    assert job.get("needs") == list(VERDICTS)
     for lane, step_name in VERDICTS.items():
         verdict = next(step for step in job["steps"] if step.get("name") == step_name)
         # Round 4: `!cancelled()` so one red lane cannot skip the next verdict.
@@ -363,7 +367,7 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
     import shlex
 
     steps = []
-    for job_name in ("pr-fast-lane", "console-p0-gate"):
+    for job_name in ("pr-fast-lane", "pr-fast-lane-admission", "console-p0-gate"):
         for step in _workflow()["jobs"][job_name]["steps"]:
             run = step.get("run", "")
             if not run.lstrip().startswith("pytest"):
@@ -397,7 +401,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
     steps = _pytest_step_targets()
     assert tuple(name for name, _ in steps) == (
         "pr-fast-lane: Run fast PR contract",
-        "pr-fast-lane: Run admission-sensitive suites",
+        "pr-fast-lane-admission: Run admission-sensitive suites",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
         "console-p0-gate: Run Dreams and Guardian boundary contracts",
