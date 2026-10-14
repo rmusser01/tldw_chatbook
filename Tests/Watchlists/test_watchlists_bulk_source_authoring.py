@@ -1226,6 +1226,65 @@ async def test_an_ordinary_rail_reopen_builds_the_tree_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_expanding_in_a_fresh_rail_before_its_layout_message_builds_it_once(
+    monkeypatch,
+):
+    """Review of #3107, round 4, item R1: an expansion the fresh rail made
+    itself (and the screen mirrored) before RegionLayoutApplied was handled
+    looked like stale inputs and cost a second, needless tree build."""
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeExpansionChanged,
+        WatchlistTree,
+    )
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    mount, init, builds, expanded = Widget.mount, WatchlistTree.__init__, [], []
+
+    def counted(self, *args, **kwargs):
+        builds.append(True)
+        init(self, *args, **kwargs)
+
+    def mount_then_expand(self, *widgets, **kwargs):
+        if expanded or not any(w.id == "wl-region-left_rail" for w in widgets):
+            return mount(self, *widgets, **kwargs)
+
+        async def later():
+            result = await mount(self, *widgets, **kwargs)
+            screen = self.screen
+            tree = screen.query_one("#wl-tree", WatchlistTree)
+            tree.expanded = frozenset({watchlist["id"]})  # the user, in the fresh rail
+            screen.handle_tree_expansion_changed(
+                TreeExpansionChanged(tree.expanded_root_kinds, tree.expanded)
+            )
+            expanded.append(True)
+            return result
+
+        return later()
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await _reopen(pilot, screen, Region.LEFT_RAIL, "wl-region-left_rail")
+        monkeypatch.setattr(WatchlistTree, "__init__", counted)
+        monkeypatch.setattr(Widget, "mount", mount_then_expand)
+        screen._toggle_preferred_region(Region.LEFT_RAIL)
+        await _until(pilot, lambda: bool(expanded))
+        await pilot.pause()
+        await pilot.pause(0.3)
+        shown = screen.query_one("#wl-tree", WatchlistTree).expanded
+
+    assert shown == {watchlist["id"]}
+    assert len(builds) == 1
+
+
+@pytest.mark.asyncio
 async def test_the_reseed_keeps_the_selection_range_anchor():
     """Review of #3107, round 3, item Q4: re-applying the pane's selection
     through replace() also reset its shift-range anchor, so a shift-click

@@ -2165,6 +2165,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         inputs = self._rail_inputs()
         recovering = inputs[0]
+        view = dict(zip(self._RAIL_VIEW, self._rail_view(recovering), strict=True))
         tree = WatchlistTree(
             watchlists=[] if recovering else self._tree_watchlists,
             counts={} if recovering else self._tree_counts,
@@ -2173,14 +2174,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if recovering
                 else self._load_source_rows_for_tree
             ),
-            expanded=(frozenset() if recovering else self._tree_expanded_watchlist_ids),
-            expanded_root_kinds=(
-                frozenset() if recovering else self._tree_expanded_root_kinds
-            ),
-            active_tag=None if recovering else self._tree_active_tag,
-            active_scope=self.tree_scope,
-            write_disabled_reason=self._tree_write_disabled_reason(),
-            selection_disabled_reason=self._tree_selection_disabled_reason(),
+            **view,
             source_counts={} if recovering else self._tree_source_counts,
             all_source_rows=[] if recovering else self._tree_all_source_rows,
             unassigned_source_rows=(
@@ -2193,22 +2187,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return tree
 
     def _rail_inputs(self) -> tuple[Any, ...]:
-        """What `_build_tree_pane` renders from; each tree carries its own copy.
+        """The data `_build_tree_pane` renders; each tree carries its own copy.
 
         The rail has no in-place data pushes, so a reopened rail is rebuilt
-        only when these moved between its build and its mount (review of
-        #3107, Q2); a full rebuild costs 200-500 ms on a 30-watchlist rail.
+        only when these moved between its build and its mount, or when its
+        view (`_RAIL_VIEW`, which the tree itself changes and reports) differs
+        from the screen's (review of #3107, Q2 and R1); a full rebuild costs
+        200-500 ms on a 30-watchlist rail.
         """
+        recovering = self.active_section == "items" and self._read_recovery_active
+        return (recovering, self._tree_snapshot, self._unread_pin_source_id())
+
+    #: The tree's view reactives, in `_rail_view`'s order.
+    _RAIL_VIEW = (
+        "active_scope",
+        "active_tag",
+        "expanded",
+        "expanded_root_kinds",
+        "write_disabled_reason",
+        "selection_disabled_reason",
+    )
+
+    def _rail_view(self, recovering: bool) -> tuple[Any, ...]:
+        """The rail's view as the screen holds it; a tree reports `_RAIL_VIEW`."""
         return (
-            self.active_section == "items" and self._read_recovery_active,
-            self._tree_snapshot,
             self.tree_scope,
-            self._tree_active_tag,
-            self._tree_expanded_watchlist_ids,
-            self._tree_expanded_root_kinds,
+            None if recovering else self._tree_active_tag,
+            frozenset() if recovering else frozenset(self._tree_expanded_watchlist_ids),
+            frozenset() if recovering else frozenset(self._tree_expanded_root_kinds),
             self._tree_write_disabled_reason(),
             self._tree_selection_disabled_reason(),
-            self._unread_pin_source_id(),
         )
 
     @staticmethod
@@ -4034,9 +4042,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._reseed_inspector_rail()
         if Region.LEFT_RAIL in reopened:
             inputs = self._rail_inputs()
-            rail = self.query("#wl-tree").results(WatchlistTree)
-            if any(getattr(tree, "built_from", None) != inputs for tree in rail):
-                self._request_surface_refresh(self._SURFACE_RAIL)
+            view = self._rail_view(inputs[0])
+            for tree in self.query("#wl-tree").results(WatchlistTree):
+                shown = tuple(getattr(tree, name) for name in self._RAIL_VIEW)
+                if getattr(tree, "built_from", None) != inputs or shown != view:
+                    self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
