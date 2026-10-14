@@ -2590,7 +2590,6 @@ def summarize_with_mock_llm(
 #
 
 
-# FIXME
 def summarize_chunk(
     api_name, text, custom_prompt_input, api_key, temp=None, system_message=None
 ):
@@ -2600,8 +2599,17 @@ def summarize_chunk(
         return "No summary available"
 
     try:
+        # TASK-34845: this call previously rotated the first three
+        # arguments into analyze (text landing on api_name) and swapped
+        # temp/system_message; analyze's signature is (api_name, input_data,
+        # custom_prompt_arg, api_key, system_message, temp, ...).
         result = analyze(
-            text, custom_prompt_input, api_name, api_key, temp, system_message
+            api_name,
+            text,
+            custom_prompt_input,
+            api_key=api_key,
+            system_message=system_message,
+            temp=temp,
         )
 
         # Handle streaming generator responses
