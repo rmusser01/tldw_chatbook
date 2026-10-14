@@ -124,7 +124,8 @@ A source made by an earlier version of the app, or brought in by an OPML or
 bundle import, does not count as typed in. If its address is private, its
 checks now fail with **Blocked by network safety policy**. Watchlists cannot
 change a source's address, so to let such a source run again, list its host
-in `config.toml` and restart the app:
+in `config.toml`, then restart the app (an edit made while the app is running
+may not be noticed until it restarts):
 
 ```toml
 [web_security]
