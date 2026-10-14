@@ -6732,3 +6732,52 @@ async def test_tracking_again_after_deleting_the_source_keeps_the_users_reminder
     assert kept["id"] == reminder["id"], "the same reminder, not a new one"
     assert kept["link_id"] == str(again["tracked_item_id"]) and kept["enabled"]
     assert "07:00" in str(kept["run_at"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["same-story", "new-story"])
+async def test_a_switch_off_after_the_re_tracks_check_never_leaves_the_source_on(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        path):
+    """Review of #3108, round 2, Z1. Dreams is switched off, and a
+    switch-off pass started, right after the re-track checked the switch
+    (at the start of the un-settling) and before it switches the source
+    on. The pass may not run in between: it runs after, and stops the
+    source the re-track switched on. Without that, the pass finished
+    first and the re-track then left the source running with Dreams off."""
+    from tldw_chatbook.Dreams import track_service
+
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    source_id = owned["subscription_id"]
+    if path == "same-story":
+        await _switch(service, dreams_db, scheduling_db, off=True)
+        _resolve_everything_to(monkeypatch, "10.0.0.5")
+        await _switch(service, dreams_db, scheduling_db, off=False)
+        _resolve_everything_to(monkeypatch, "93.184.216.34")
+    else:
+        await untrack(service, dreams_db, owned["tracked_item_id"],
+                      scheduling_db_getter=_sched_getter(scheduling_db))
+    assert _is_active(subs_db, source_id) == 0, "fixture"
+    real_unsettle = track_service._unsettle_held
+    passes: list[asyncio.Task] = []
+
+    async def switch_off_after_the_check(*args, **kwargs):
+        if not passes:
+            settings["enabled"] = False
+            passes.append(asyncio.ensure_future(
+                _switch(service, dreams_db, scheduling_db, off=True)))
+            try:  # it finishes here unless something holds it back
+                await asyncio.wait_for(asyncio.shield(passes[0]), 0.5)
+            except TimeoutError:
+                pass
+        return await real_unsettle(*args, **kwargs)
+
+    monkeypatch.setattr(track_service, "_unsettle_held", switch_off_after_the_check)
+    await _event_page(dreams_db, service, scheduling_db,
+                      story_id=1 if path == "same-story" else 2)
+    await passes[0]
+
+    assert _is_active(subs_db, source_id) == 0, "Dreams is off: source off"
+    assert not any(
+        r["enabled"] for r in await _change_rules(service, source_id))

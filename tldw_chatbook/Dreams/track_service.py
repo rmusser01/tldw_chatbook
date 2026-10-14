@@ -253,6 +253,31 @@ def _require_dreams_on() -> None:
         raise TrackDreamsOff("Dreams is switched off; nothing was tracked")
 
 
+#: The lock a switch-off pass and a re-track's switch-on share, per event
+#: loop (an ``asyncio.Lock`` belongs to the loop it first waits on).
+_SWITCH_LOCK: tuple[Any, asyncio.Lock] | None = None
+
+
+def _switch_lock() -> asyncio.Lock:
+    """Serialize a re-track's switch check and switch-on with switch-off.
+
+    Review of #3108, round 2, Z1. A re-track asks the switch and then
+    switches a source on; a switch-off pass landing in between stopped
+    what it found and was then undone by the switch-on, leaving the source
+    running with Dreams off. With both under this lock the pass either ran
+    before the check -- which then refuses -- or runs after the switch-on
+    and stops that source with the rest. Held only across the check, the
+    un-settling and the switch-on (no name lookup, no wait on a pass), and
+    taken by the switch-off direction only: a switch-on pass enabling
+    sources is not in conflict with a re-track doing the same.
+    """
+    global _SWITCH_LOCK
+    loop = asyncio.get_running_loop()
+    if _SWITCH_LOCK is None or _SWITCH_LOCK[0] is not loop:
+        _SWITCH_LOCK = (loop, asyncio.Lock())
+    return _SWITCH_LOCK[1]
+
+
 class TrackInvalidURL(ValueError):
     """The URL to watch is not a well-formed http(s) address (Qodo #8).
 
@@ -1227,7 +1252,8 @@ async def _retry_held_source(
             dreams_db.list_tracked_for_subscription, subscription_id))
 
     resolved, held = await _restore_source(
-        subs_service, subscription_id, before_enable=unsettle)
+        subs_service, subscription_id, before_enable=unsettle,
+        enable_guard=_switch_lock)
     if not resolved:
         raise TrackPrivateURL(
             f"refusing to track a non-public destination ({held})")
@@ -1412,163 +1438,181 @@ async def track_page(
     # Attach-or-create. An existing subscription for exactly this URL is
     # adopted untouched (never renamed, never re-cadenced, never disabled
     # by a later untrack): the user may already depend on it.
-    existing = await subs_service.find_source_id_by_url(str(url))
-    if existing is not None:
-        subscription_id = int(existing)
-        outcome = "attached"
-        # P10 (final review): dream provenance is pinned by ANY tracked row
-        # for this subscription, whatever its status. A sweep auto-retire
-        # now disables the dream-created subscription too (Qodo #1), but
-        # rows retired by older builds -- and any future writer that
-        # retires a wrapper without touching the subscription -- must
-        # still pin provenance, or a re-track would wrap the watch as
-        # created_by_dreams=0 and a later untrack would (correctly)
-        # never disable it: an orphaned active subscription.
-        # One targeted read (Qodo #6, PR #2921), never a scan of the
-        # capped status lists: the owning row of an old subscription may
-        # be older than the newest 500 retired wrappers.
-        dream_owned = await asyncio.to_thread(
-            dreams_db.subscription_dream_owned, subscription_id
-        )
-        created_by_dreams = 1 if dream_owned else 0
-        # P7 (fix round 1): the URL lookup ignores is_active, so a found
-        # source may be one this flow disabled on a prior untrack, or a
-        # foreign source the user disabled themselves. Attaching to either
-        # as-is would record an active tracked item against a dead watch.
-        source = await subs_service.get_source(subscription_id)
-        if not bool(source.get("active")) and not bool(source.get("paused")):
-            # "active=False, paused=False" is exactly the DISABLED state
-            # untrack writes (is_active=0, is_paused untouched at 0); an
-            # auto-paused source (task-1410, paused=True) keeps its own
-            # Resume lifecycle and rides the plain attach branch.
-            if not dream_owned:
-                raise TrackSourceDisabled(
-                    "source exists but is disabled (no dream provenance): "
-                    f"subscription {subscription_id}"
-                )
-            # A source Dreams created is off. Dreams switches it back on
-            # only when it can account for the disable (round 3, T10) --
-            # a wrapper's record says Dreams stopped it -- and never
-            # undoes the user's own "off" in Watchlists.
-            riders = await asyncio.to_thread(
-                dreams_db.list_tracked_for_subscription, subscription_id)
-            if not _dreams_can_account_for_disable(riders):
-                raise TrackSourceDisabled(
-                    "source exists but was switched off in Watchlists, "
-                    f"not by Dreams: subscription {subscription_id}"
-                )
-            # Re-enabling restarts fetches of a URL Dreams stored, so the
-            # destination is checked again now (Qodo #1, PR #2921) --
-            # still before any write.
-            await _require_public_url(str(url))
-            # ...and the switch again, after that lookup (review of #3108,
-            # X2): a switch-off that landed meanwhile leaves it off.
-            _require_dreams_on()
-            await _unsettle_held(dreams_db, riders)
-            await _enable_dream_subscription(
-                subs_service, subscription_id, source)
-            await _settle_source_restored(dreams_db, riders)
-            outcome = "re-enabled"
-        elif dream_owned and _needs_story_mark(source):
-            # A live source Dreams created before the mark existed (round
-            # 3, T1): attaching used to leave it unmarked, so it stayed a
-            # trusted egress origin. Ownership is enough to stamp it.
-            await subs_service.update_source(
-                subscription_id,
-                {"processing_options": _story_options(source)})
-    else:
-        # Dreams is about to store this URL as a subscription the
-        # watchlist loop will fetch as a trusted source, and nobody typed
-        # it: it must be a public destination (Qodo #1, PR #2921). An
-        # ATTACH above is exempt on purpose -- that subscription is the
-        # user's own, already being fetched, and tracking adds no egress.
-        await _require_public_url(str(url))
-        # Payload keys are the ones ``_source_batch_rows`` consumes:
-        # ``source_type`` (not "type") and ``active`` (not "is_active").
-        result = await subs_service.create_source(
-            {
-                "name": _label(f"Dreams: {str(title)[:40]}"),
-                "source_type": "url",
-                "source": str(url),
-                "check_frequency": cadence,
-                "active": True,
-                # Nobody typed this URL: the watchlist fetch must never
-                # treat it as its own trusted origin (review item 2).
-                "processing_options": dict(_STORY_URL_OPTIONS),
-            }
-        )
-        subscription_id = int(result["source_id"])
-        # ``create_source`` is exact-identity: a concurrent creator can win
-        # the insert between the lookup above and this call. Its outcome
-        # word is authoritative, and a subscription we did not insert is
-        # NOT dream-owned -- untrack must leave it alone.
-        if result["creation_outcome"] == "created":
-            outcome = "created"
-            created_by_dreams = 1
-        else:
+    # Review of #3108, round 2, Z1: from the switch check after the name
+    # lookup to the new watch's row and reminder, this is one step to a
+    # switch-off pass (:func:`_switch_lock`). A pass that waited runs after
+    # it and finds the watch, so it stops what was switched on, created or
+    # armed; one that ran first leaves the switch off, and the check
+    # refuses. No name lookup happens while the lock is held.
+    locked = False
+    async with contextlib.AsyncExitStack() as switch_held:
+        existing = await subs_service.find_source_id_by_url(str(url))
+        if existing is not None:
+            subscription_id = int(existing)
             outcome = "attached"
-            created_by_dreams = 0
+            # P10 (final review): dream provenance is pinned by ANY tracked row
+            # for this subscription, whatever its status. A sweep auto-retire
+            # now disables the dream-created subscription too (Qodo #1), but
+            # rows retired by older builds -- and any future writer that
+            # retires a wrapper without touching the subscription -- must
+            # still pin provenance, or a re-track would wrap the watch as
+            # created_by_dreams=0 and a later untrack would (correctly)
+            # never disable it: an orphaned active subscription.
+            # One targeted read (Qodo #6, PR #2921), never a scan of the
+            # capped status lists: the owning row of an old subscription may
+            # be older than the newest 500 retired wrappers.
+            dream_owned = await asyncio.to_thread(
+                dreams_db.subscription_dream_owned, subscription_id
+            )
+            created_by_dreams = 1 if dream_owned else 0
+            # P7 (fix round 1): the URL lookup ignores is_active, so a found
+            # source may be one this flow disabled on a prior untrack, or a
+            # foreign source the user disabled themselves. Attaching to either
+            # as-is would record an active tracked item against a dead watch.
+            source = await subs_service.get_source(subscription_id)
+            if not bool(source.get("active")) and not bool(source.get("paused")):
+                # "active=False, paused=False" is exactly the DISABLED state
+                # untrack writes (is_active=0, is_paused untouched at 0); an
+                # auto-paused source (task-1410, paused=True) keeps its own
+                # Resume lifecycle and rides the plain attach branch.
+                if not dream_owned:
+                    raise TrackSourceDisabled(
+                        "source exists but is disabled (no dream provenance): "
+                        f"subscription {subscription_id}"
+                    )
+                # A source Dreams created is off. Dreams switches it back on
+                # only when it can account for the disable (round 3, T10) --
+                # a wrapper's record says Dreams stopped it -- and never
+                # undoes the user's own "off" in Watchlists.
+                riders = await asyncio.to_thread(
+                    dreams_db.list_tracked_for_subscription, subscription_id)
+                if not _dreams_can_account_for_disable(riders):
+                    raise TrackSourceDisabled(
+                        "source exists but was switched off in Watchlists, "
+                        f"not by Dreams: subscription {subscription_id}"
+                    )
+                # Re-enabling restarts fetches of a URL Dreams stored, so the
+                # destination is checked again now (Qodo #1, PR #2921) --
+                # still before any write.
+                await _require_public_url(str(url))
+                # ...and the switch again, after that lookup (review of #3108,
+                # X2): a switch-off that landed meanwhile leaves it off. The
+                # check and the switch-on are one step to a switch-off pass
+                # (round 2, Z1, :func:`_switch_lock`).
+                await switch_held.enter_async_context(_switch_lock())
+                locked = True
+                _require_dreams_on()
+                await _unsettle_held(dreams_db, riders)
+                await _enable_dream_subscription(
+                    subs_service, subscription_id, source)
+                await _settle_source_restored(dreams_db, riders)
+                outcome = "re-enabled"
+            elif dream_owned and _needs_story_mark(source):
+                # A live source Dreams created before the mark existed (round
+                # 3, T1): attaching used to leave it unmarked, so it stayed a
+                # trusted egress origin. Ownership is enough to stamp it.
+                await subs_service.update_source(
+                    subscription_id,
+                    {"processing_options": _story_options(source)})
+        else:
+            # Dreams is about to store this URL as a subscription the
+            # watchlist loop will fetch as a trusted source, and nobody typed
+            # it: it must be a public destination (Qodo #1, PR #2921). An
+            # ATTACH above is exempt on purpose -- that subscription is the
+            # user's own, already being fetched, and tracking adds no egress.
+            await _require_public_url(str(url))
+            await switch_held.enter_async_context(_switch_lock())
+            locked = True
+            _require_dreams_on()
+            # Payload keys are the ones ``_source_batch_rows`` consumes:
+            # ``source_type`` (not "type") and ``active`` (not "is_active").
+            result = await subs_service.create_source(
+                {
+                    "name": _label(f"Dreams: {str(title)[:40]}"),
+                    "source_type": "url",
+                    "source": str(url),
+                    "check_frequency": cadence,
+                    "active": True,
+                    # Nobody typed this URL: the watchlist fetch must never
+                    # treat it as its own trusted origin (review item 2).
+                    "processing_options": dict(_STORY_URL_OPTIONS),
+                }
+            )
+            subscription_id = int(result["source_id"])
+            # ``create_source`` is exact-identity: a concurrent creator can win
+            # the insert between the lookup above and this call. Its outcome
+            # word is authoritative, and a subscription we did not insert is
+            # NOT dream-owned -- untrack must leave it alone.
+            if result["creation_outcome"] == "created":
+                outcome = "created"
+                created_by_dreams = 1
+            else:
+                outcome = "attached"
+                created_by_dreams = 0
 
-    watchlist, _created = await subs_service.resolve_or_create_watchlist(
-        _TRACK_WATCHLIST_NAME
-    )
-    await subs_service.add_source_to_watchlist(
-        watchlist_id=watchlist["id"], source_id=subscription_id
-    )
-
-    # Any new item emerging from the watched page fires a notification into
-    # the shared inbox (the Watchlists Notifications pane displays it).
-    # Idempotent (Qodo #15, PR #2890): a re-track on a NEW story with the
-    # same URL resolves to the same subscription, and pinning a second
-    # identical rule there would notify twice per qualifying run. An
-    # existing enabled Dreams rule ("Change: " name + items_above 0) is
-    # reused, never duplicated.
-    # The rule is found by the id Dreams recorded when it made it, never
-    # by its name (round 3, T11). One that exists is shared as it stands
-    # -- enabled or not: a rule the user switched off stays off.
-    dreams_rules = await _dreams_rules_on(
-        subs_service, dreams_db, subscription_id)
-    if dreams_rules:
-        alert_rule_id = min(dreams_rules)
-    else:
-        created_rule = await subs_service.create_alert_rule(
-            name=_change_rule_name(title),
-            condition_type="items_above",
-            condition_value={"threshold": 0},
-            job_id=subscription_id,
-            severity="information",
+        if not locked:
+            await switch_held.enter_async_context(_switch_lock())
+            _require_dreams_on()
+        watchlist, _created = await subs_service.resolve_or_create_watchlist(
+            _TRACK_WATCHLIST_NAME
         )
-        alert_rule_id = int(created_rule["rule_id"])
+        await subs_service.add_source_to_watchlist(
+            watchlist_id=watchlist["id"], source_id=subscription_id
+        )
 
-    tracked_item_id = await asyncio.to_thread(
-        dreams_db.create_tracked_item,
-        origin_story_id=origin_story_id,
-        mechanism=_PAGE_MECHANISM,
-        intent=intent,
-        subscription_id=subscription_id,
-        query_template=None,
-        event_date=event_date,
-        cadence_seconds=cadence,
-        created_by_dreams=created_by_dreams,
-        # Every branch above that leaves a Dreams-owned source leaves it
-        # marked; this is the record that it is (see
-        # ``backfill_egress_marks``).
-        egress_marked=created_by_dreams,
-        alert_rule_id=alert_rule_id,
-    )
-    if created_by_dreams:
-        # ...for the older wrappers of the same source too.
-        await asyncio.to_thread(dreams_db.set_egress_marked, subscription_id)
-    # Phase 2 Task 5: an event-dated watch gets one scheduled reminder a
-    # week ahead. The wrapper row above already exists, so a reminder
-    # failure (or a runtime without the scheduled-tasks DB) only logs --
-    # the tracking result is returned unchanged either way.
-    await promote_to_reminder(
-        scheduling_db_getter,
-        {"id": tracked_item_id, "query_template": None,
-         "event_date": event_date, "origin_story_id": origin_story_id},
-        dreams_db=dreams_db,
-    )
+        # Any new item emerging from the watched page fires a notification into
+        # the shared inbox (the Watchlists Notifications pane displays it).
+        # Idempotent (Qodo #15, PR #2890): a re-track on a NEW story with the
+        # same URL resolves to the same subscription, and pinning a second
+        # identical rule there would notify twice per qualifying run. An
+        # existing enabled Dreams rule ("Change: " name + items_above 0) is
+        # reused, never duplicated.
+        # The rule is found by the id Dreams recorded when it made it, never
+        # by its name (round 3, T11). One that exists is shared as it stands
+        # -- enabled or not: a rule the user switched off stays off.
+        dreams_rules = await _dreams_rules_on(
+            subs_service, dreams_db, subscription_id)
+        if dreams_rules:
+            alert_rule_id = min(dreams_rules)
+        else:
+            created_rule = await subs_service.create_alert_rule(
+                name=_change_rule_name(title),
+                condition_type="items_above",
+                condition_value={"threshold": 0},
+                job_id=subscription_id,
+                severity="information",
+            )
+            alert_rule_id = int(created_rule["rule_id"])
+
+        tracked_item_id = await asyncio.to_thread(
+            dreams_db.create_tracked_item,
+            origin_story_id=origin_story_id,
+            mechanism=_PAGE_MECHANISM,
+            intent=intent,
+            subscription_id=subscription_id,
+            query_template=None,
+            event_date=event_date,
+            cadence_seconds=cadence,
+            created_by_dreams=created_by_dreams,
+            # Every branch above that leaves a Dreams-owned source leaves it
+            # marked; this is the record that it is (see
+            # ``backfill_egress_marks``).
+            egress_marked=created_by_dreams,
+            alert_rule_id=alert_rule_id,
+        )
+        if created_by_dreams:
+            # ...for the older wrappers of the same source too.
+            await asyncio.to_thread(dreams_db.set_egress_marked, subscription_id)
+        # Phase 2 Task 5: an event-dated watch gets one scheduled reminder a
+        # week ahead. The wrapper row above already exists, so a reminder
+        # failure (or a runtime without the scheduled-tasks DB) only logs --
+        # the tracking result is returned unchanged either way.
+        await promote_to_reminder(
+            scheduling_db_getter,
+            {"id": tracked_item_id, "query_template": None,
+             "event_date": event_date, "origin_story_id": origin_story_id},
+            dreams_db=dreams_db,
+        )
     if stale is not None:
         await untrack(subs_service, dreams_db, int(stale["id"]),
                       scheduling_db_getter=scheduling_db_getter)
@@ -2510,6 +2554,7 @@ async def _suspend_pass(
 
 async def _restore_source(
     subs_service: Any, subscription_id: int, *, before_enable: Any = None,
+    enable_guard: Any = None,
 ) -> tuple[bool, str | None]:
     """Re-enable one subscription Dreams stopped, if its page is public.
 
@@ -2524,6 +2569,9 @@ async def _restore_source(
             has passed the check and just before the source is switched
             on -- the resume pass un-settles held records there (review of
             #3101, round 2, S1). If it raises, the source stays off.
+        enable_guard: Optional zero-arg callable returning an async context
+            manager held across ``before_enable`` and the switch-on (a
+            re-track passes :func:`_switch_lock`).
 
     Returns:
         ``(resolved, held)``. ``resolved`` is True when nothing is owed
@@ -2551,9 +2599,11 @@ async def _restore_source(
             "Dreams resume: subscription {} left disabled, its page is not "
             "a public destination ({})", subscription_id, refusal)
         return False, refusal
-    if before_enable is not None:
-        await before_enable()
-    await _enable_dream_subscription(subs_service, subscription_id, source)
+    async with (enable_guard() if enable_guard is not None
+                else contextlib.nullcontext()):
+        if before_enable is not None:
+            await before_enable()
+        await _enable_dream_subscription(subs_service, subscription_id, source)
     return True, None
 
 
@@ -2893,18 +2943,27 @@ async def set_tracking_suspended(
         How many wrappers the pass worked on.
     """
     scheduling_db = _scheduling_db(scheduling_db_getter)
-    # Every watch that is not retired: a PAUSED one (the sweep paused its
-    # failing checks) still owns an armed event reminder, and a disabled
-    # Dreams must not send that either. One thread hop for both reads.
-    items = await asyncio.to_thread(run_finite_local_worker,
-        lambda: [
-            *dreams_db.list_tracked_items("active"),
-            *dreams_db.list_tracked_items("paused"),
-        ]
-    )
+
+    async def live_items() -> list[dict]:
+        # Every watch that is not retired: a PAUSED one (the sweep paused
+        # its failing checks) still owns an armed event reminder, and a
+        # disabled Dreams must not send that either. One thread hop for
+        # both reads.
+        return await asyncio.to_thread(run_finite_local_worker,
+            lambda: [
+                *dreams_db.list_tracked_items("active"),
+                *dreams_db.list_tracked_items("paused"),
+            ]
+        )
+
     if suspended:
-        return await _suspend_pass(
-            subs_service, dreams_db, scheduling_db, items)
+        # Never between a re-track's switch check and its switch-on, and
+        # the watches are read under the lock too, so one a re-track has
+        # just made is among them (review of #3108, round 2, Z1).
+        async with _switch_lock():
+            return await _suspend_pass(
+                subs_service, dreams_db, scheduling_db, await live_items())
+    items = await live_items()
     switched = await _resume_pass(
         subs_service, dreams_db, scheduling_db, items)
     # AFTER the restore, so every record is still on a live wrapper when
