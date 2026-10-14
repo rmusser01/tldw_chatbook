@@ -9,7 +9,7 @@ labels:
 priority: medium
 assignee:
 - '@claude'
-updated_date: 2026-10-14 15:02
+updated_date: 2026-10-14 16:04
 ---
 
 ## Description
@@ -23,6 +23,7 @@ UI Fast Lane shard 3 has a 20-minute cap and ran with a median of 16.4 minutes a
 - [ ] #1 Shard 3's slowest run over at least 20 pull-request runs leaves room for one hung private-profile test to be reported before the cap
 - [ ] #2 The shards stay balanced, with no shard left closer to its cap than shard 3 is today
 - [x] #3 The contract test that pins the shards reflects the new layout
+- [ ] #4 The 20-run measurement also records each job's queue delay (job start minus run creation) and the required check's wall clock (run creation to the aggregate job's completion), and that wall clock is not worse than the pre-change baseline in the notes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,6 +59,7 @@ Contract: Tests/CI/test_derived_artifacts_workflow.py pins the matrix to [1..6] 
 Lesson added to backlog/docs/lessons-testing-evidence.md (round-robin N+1 is not monotonic; replay method).
 
 Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_response_rules_critical_gate.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md, backlog/docs/lessons-testing-evidence.md.
+First run of the new layout (review of #3106, W3): run 38588725796 (PR #3106, head b1d4142d65, created 15:22:23Z 2026-10-14), every job green. Queue delay (job start minus run creation) / duration / done, in min: PR Fast Lane +2.4 / 16.6 / +19.0; Dreams tracking +3.3 / 6.8 / +10.1; UI shards 1-6 +10.1 / 6.3, +5.5 / 8.9, +5.2 / 10.0, +10.1 / 9.5, +6.2 / 11.8, +3.7 / 10.7 (shards done +14.4 to +19.6); Console P0 gate +5.1 / 16.5 / +21.6; PR Fast Lane (admission-sensitive) +9.0 / 14.9 / +23.9; aggregate started +26.1, done +30.9 (the required check's wall clock). The fan-out moved cost into queueing (2.4-10.1 min starts on a 40-job account pool shared with tldw_server), but the wall clock still improved on this run. Pre-change baseline, same definitions, over the 81 pull_request runs to 2026-10-14 with every lane and the aggregate finished: required check wall clock median 39.0 / p90 66.8 / max 256.1 min; last lane done median 33.9 / p90 61.4; per-job queue delay median 2.4 / p90 17.8 min (491 jobs). AC#4 compares the 20-run median and p90 against these. No max-parallel or concurrency change in this PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
