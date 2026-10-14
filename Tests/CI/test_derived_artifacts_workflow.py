@@ -447,3 +447,54 @@ def test_pr_step_contract_rejects_location_and_target_drift(monkeypatch, mutatio
     with pytest.raises(AssertionError):
         test_every_pr_lane_pytest_step_has_disjoint_targets()
         test_every_node_id_target_in_a_pr_lane_step_resolves()
+
+
+# TASK34406: bounded current source/custody witnesses in the real required lane.
+_PR3023_CRITICAL_TARGETS = (
+    "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change",
+    "Tests/Chat/test_console_retry_json_identity.py::test_failed_retry_rejects_python_equal_json_changes[true-to-one-response_format-deepseek]",
+    "Tests/Chat/test_console_retry_json_identity.py::test_failed_retry_rejects_python_equal_json_changes[unchanged-response_format-deepseek]",
+    "Tests/Chat/test_console_native_commit.py::test_owned_native_commit_drains_original_callback_and_connection_after_global_cancel",
+    "Tests/Chat/test_console_shared_tool_cache.py::test_stock_cold_adopts_once_and_warm_reuses_without_payload_decode",
+    "Tests/Chat/test_console_context_presentation_current.py::test_context_display_retains_exact_native_handle_through_cancel[True]",
+    "Tests/UI/test_console_hook_refresh_lifetime.py::test_cancelled_visit_drains_actual_native_custody[True]",
+    "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_receives_intent_before_original_configuration_read",
+    "Tests/UI/test_console_browser_current_native_lifetime.py::test_current_host_shutdown_drains_original_browser_callback[all_created-False]",
+    "Tests/UI/test_console_preparing_current_sources.py::test_preparing_changed_source_after_original_tab_await_replays_full",
+    "Tests/UI/test_console_final_poll_completion.py::test_idle_final_poll_waits_for_original_full_refresh",
+    "Tests/Performance/test_collections_extraction_shutdown.py::test_collections_shutdown_retains_real_interrupted_settlement[all_created]",
+)
+_PR3023_STEP = (
+    "console-p0-gate: Run the admission-sensitive Console P0 regression tests"
+)
+
+
+def test_pr3023_critical_targets_run_in_required_admission_step():
+    steps = _pytest_step_targets()
+    targets = dict(steps)[_PR3023_STEP]
+    assert tuple(targets[-len(_PR3023_CRITICAL_TARGETS):]) == _PR3023_CRITICAL_TARGETS
+    for target in _PR3023_CRITICAL_TARGETS:
+        assert sum(targets.count(target) for _, targets in steps) == 1, target
+
+
+@pytest.mark.parametrize("mutation", ["missing", "wrong-step", "duplicate", "order"])
+def test_pr3023_membership_rejects_actual_workflow_drift(monkeypatch, mutation):
+    workflow = _workflow()
+    steps = workflow["jobs"]["console-p0-gate"]["steps"]
+    step = next(s for s in steps if s.get("name") == _PR3023_STEP.split(": ", 1)[1])
+    target = _PR3023_CRITICAL_TARGETS[0]
+    assert target in step["run"]  # A negative test must first have the real witness.
+    if mutation == "missing":
+        step["run"] = step["run"].replace(target, "", 1)
+    elif mutation == "wrong-step":
+        step["run"] = step["run"].replace(target, "", 1)
+        other = next(s for s in steps if s.get("name") == "Run the sandboxed Console P0 regression tests")
+        other["run"] += " " + target
+    elif mutation == "duplicate":
+        step["run"] += " " + target
+    else:
+        following = _PR3023_CRITICAL_TARGETS[1]
+        step["run"] = step["run"].replace(target, "PR3023_SWAP", 1).replace(following, target, 1).replace("PR3023_SWAP", following, 1)
+    monkeypatch.setattr(f"{__name__}._workflow", lambda: workflow)
+    with pytest.raises(AssertionError):
+        test_pr3023_critical_targets_run_in_required_admission_step()

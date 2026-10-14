@@ -9,6 +9,8 @@ of inserting its ``user_prompt``.
 
 from __future__ import annotations
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 from pathlib import Path
 
 import pytest
@@ -802,7 +804,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        baseline = console._active_console_settings_context_estimate()
+        baseline = context_spend_for_test(console)._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         console._session._apply_console_session_system_prompt(
@@ -810,7 +812,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
         )
         await pilot.pause(0.1)
 
-        after = console._active_console_settings_context_estimate()
+        after = context_spend_for_test(console)._active_console_settings_context_estimate()
         assert after.used_tokens is not None
         assert after.used_tokens > baseline.used_tokens
 

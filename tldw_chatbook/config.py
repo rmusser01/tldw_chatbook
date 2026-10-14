@@ -113,6 +113,40 @@ if TYPE_CHECKING:
 #
 # Functions:
 
+def _contains_literal_backslash_x(value: Any) -> bool:
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if type(current) is str:  # Inspect builtin values without custom coercion.
+            if "\\x" in current:
+                return True
+        elif type(current) in (dict, list, tuple):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            # Only builtin containers enter this branch; custom mappings keep the legacy route.
+            pending.extend(current.values() if type(current) is dict else current)
+    return False
+
+
+def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
+    """Retain the original codec and defer the exceptional literal encoder.
+
+    Args:
+        config_data: Original configuration mapping passed to the writer.
+
+    Returns:
+        TOML text using the existing ordinary or literal-backslash-x codec.
+    """
+    if not _contains_literal_backslash_x(config_data):
+        return toml.dumps(config_data)
+    from tldw_chatbook.Utils.toml_serialization import dumps_cli_config as special
+
+    return special(config_data)
+
+
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---
 # Client ID used by the Server API itself when writing to sync logs
@@ -7552,7 +7586,7 @@ def _write_raw_cli_config_unlocked(
     """
 
     application_directory = _prepare_config_parent(config_path)
-    serialized = toml.dumps(dict(config_data))
+    serialized = dumps_cli_config(dict(config_data))
     try:
         parsed_back = tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
@@ -8361,7 +8395,7 @@ def export_cli_config_snapshot(
         if serialized is None:
             if config_data is None:
                 raise FileNotFoundError(config_path)
-            serialized = toml.dumps(_config_data_for_persistence(config_data))
+            serialized = dumps_cli_config(_config_data_for_persistence(config_data))
         result_path = _write_serialized_config_artifact_unlocked(
             snapshot_path,
             serialized,
@@ -8876,7 +8910,7 @@ def _apply_literal_settings_transaction_locked(
             expected_raw: Mapping[str, Any] | None = None
             try:
                 persisted = _config_data_for_persistence(config_data)
-                expected_raw = tomllib.loads(toml.dumps(dict(persisted)))
+                expected_raw = tomllib.loads(dumps_cli_config(dict(persisted)))
                 raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             except Exception as error:
                 committed_content_visible = False
@@ -11639,3 +11673,191 @@ def create_mcp_credential_service(data_root: Path | None = None):
     return CredentialBindingService(
         KeyringCredentialBackend(data_root or get_user_data_dir())
     )
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "get_workspaces_db_path",
+                "_get_custom_database_path",
+                "get_user_data_dir",
+                "get_cli_setting",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_workspaces_db_path",
+                        "_get_custom_database_path",
+                    "get_user_data_dir",
+                    "get_cli_setting",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Defining callbacks for checked stock Console preparation; no IO.
+_COMPACT_MODEL_CONFIG_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (globals(), name, globals()[name])
+        for name in (
+            "get_cli_providers_and_models",
+            "load_settings",
+            "_load_settings_guarded",
+            "_load_settings_uncached",
+            "_settings_cache_hit",
+            "_get_effective_config_path",
+            "current_config_identity",
+            "resolve_provider_name",
+            "_normalize_provider_lookup_key",
+            "normalize_provider_config_key",
+            "_config_participants",
+        )
+    )
+    + tuple(
+        (vars(_config_participants), name, vars(_config_participants)[name])
+        for name in ("operation",)
+    )
+    + ((sys.modules, _config_participants.__name__, _config_participants),),
+    tuple(
+        (
+            namespace,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for namespace, name, function in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_cli_providers_and_models",
+                    "load_settings",
+                    "_load_settings_guarded",
+                    "_load_settings_uncached",
+                    "_settings_cache_hit",
+                    "_get_effective_config_path",
+                    "current_config_identity",
+                    "resolve_provider_name",
+                    "_normalize_provider_lookup_key",
+                    "normalize_provider_config_key",
+                )
+            ),
+            *(
+                (vars(function), "__wrapped__", function.__wrapped__)
+                for function in (_load_settings_guarded, _load_settings_uncached)
+            ),
+            (vars(_config_participants), "operation", _config_participants.operation),
+            (
+                vars(_config_participants.operation),
+                "__wrapped__",
+                _config_participants.operation.__wrapped__,
+            ),
+        )
+    ),
+)
+
+
+# Definition-time inputs for optional in-memory pending display.
+_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
+    current_config_identity,
+    current_config_identity.__code__,
+    current_config_identity.__globals__,
+    current_config_identity.__defaults__,
+    current_config_identity.__kwdefaults__,
+    current_config_identity.__closure__,
+)
+
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "current_config_identity"),
+        (globals(), "get_library_collections_db_path"),
+        (globals(), "get_user_data_dir"),
+        (globals(), "_get_custom_database_path"),
+        (globals(), "_get_effective_config_path"),
+    )
+)
+del _record_collections_setup_source

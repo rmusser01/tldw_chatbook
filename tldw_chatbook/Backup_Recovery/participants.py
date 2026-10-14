@@ -68,6 +68,8 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.media.primary": "close_connection",
             "db.prompts.primary": "close_connection",
             "db.library_collections": "close",
+            "db.subscriptions": "close",
+            "db.workspaces": "close",
             "db.guardian": "close",
             "db.dreams": "close",
             "db.evals": "close",

@@ -736,6 +736,7 @@ class ConsoleComposerBar(Horizontal):
         # programmatic load/clear/restore leave it untouched so callers can
         # detect "the user typed since X".
         self._user_edit_serial = 0
+        self._authored_draft_observer = None
         # Monotonic scope/version guard for changes that can retain identical
         # bytes and edit serials (notably a same-text session/load swap).
         # Improvement snapshots carry this value so an old request can never
@@ -2067,6 +2068,9 @@ class ConsoleComposerBar(Horizontal):
         matching cache means the hidden input already holds it.
         """
         canonical = self._canonical_draft_text()
+        observer = self._authored_draft_observer
+        if observer is not None:
+            observer(canonical, (self._draft_generation, self._user_edit_serial))
         if canonical == self._hidden_input_mirror:
             return
         try:
@@ -6930,3 +6934,25 @@ class ConsoleComposerBar(Horizontal):
             review_button.styles.line_pad = 0
             review_button.can_focus = False
             yield review_button
+
+
+# Capture the directly skipped callbacks while their defining widget loads.
+_IDLE_VOICE_CALLBACKS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+    )
+    for name in ("sync_dictation_state", "set_voice_status")
+    for function in (getattr(ConsoleComposerBar, name),)
+)
+_IDLE_VOICE_LOADER = (
+    _load_console_voice_states,
+    _load_console_voice_states.__code__,
+    _load_console_voice_states.__defaults__,
+    _load_console_voice_states.__kwdefaults__,
+    tuple((_load_console_voice_states.__kwdefaults__ or {}).items()),
+)

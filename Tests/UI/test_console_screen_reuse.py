@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 
 
@@ -94,7 +95,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
 
         # Arm the interval timers the way an active run would.
         console._start_console_transcript_sync_timer()
-        console._start_console_cost_ttl_timer()
+        context_spend_for_test(console)._start_console_cost_ttl_timer()
         assert console._console_transcript_sync_timer is not None
 
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
@@ -102,7 +103,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
             "suspend must stop the 0.2s transcript-sync poll -- Textual "
             "does not auto-cancel a suspended installed screen's timers"
         )
-        assert console._console_cost_ttl_timer is None
+        assert context_spend_for_test(console)._console_cost_ttl_timer is None
         assert getattr(console._fleet, "_console_fleet_survivor_timer", None) is None
         # THE crux of the audit: the runtime view must stay attached --
         # a suspend-time detach permanently kills the prompt queue

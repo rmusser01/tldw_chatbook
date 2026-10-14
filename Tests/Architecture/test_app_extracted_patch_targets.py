@@ -420,6 +420,7 @@ def test_shared_patch_helper_leaves_a_lazy_module_unloaded(
     assert "tldw_chatbook.app_speech" not in sys.modules
 
 
+@pytest.mark.bootstrap_profile
 def test_source_derived_bindings_match_runtime_globals() -> None:
     """``module_scope_names`` agrees with what each module really binds."""
     import importlib

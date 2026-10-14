@@ -437,6 +437,7 @@ PROVIDER_PARAM_MAP = {
         "tools": "tools",
         "tool_choice": "tool_choice",
         "max_tokens": "max_tokens",
+        "response_format": "response_format",
         "logit_bias": "logit_bias",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",

@@ -20,6 +20,7 @@ from unittest.mock import Mock
 import pytest
 from loguru import logger as loguru_logger
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
 from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -37,9 +38,12 @@ from tldw_chatbook.Chat.console_trace_projection import (
     LegacyExchangeCall,
     NormalizedTraceCall,
 )
+from tldw_chatbook.UI.Console_Modules.context_spend import (
+    ConsoleContextSpendController,
+    _build_console_inspector_exchanges_loader,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
-    _build_console_inspector_exchanges_loader,
 )
 
 
@@ -141,7 +145,7 @@ async def test_durable_fallback_consumes_discriminated_projection() -> None:
 
 
 def test_inspector_cost_builder_has_no_raw_database_dependency() -> None:
-    source = inspect.getsource(ChatScreen._build_console_inspector_cost_data)
+    source = inspect.getsource(ConsoleContextSpendController._build_console_inspector_cost_data)
 
     assert "chachanotes_db" not in source
     assert "projected_trace_calls" in source
@@ -401,6 +405,8 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
         app=SimpleNamespace(push_screen=pushed),
     )
 
+    context_spend_for_test(screen)._build_console_inspector_cost_data = screen._build_console_inspector_cost_data
+
     async def snapshot_factory():
         return SimpleNamespace()
 
@@ -460,7 +466,12 @@ def test_both_inspector_routes_estimate_the_captured_prepared_request(
         _push_console_inspector=pushed,
         _console_next_send_token_estimate=estimator,
     )
-    getattr(ChatScreen, entry)(screen)
+    owner = context_spend_for_test(screen)
+    owner._console_next_send_token_estimate = estimator
+    if entry == "_open_console_cost_breakdown":
+        getattr(ConsoleContextSpendController, entry)(owner)
+    else:
+        getattr(ChatScreen, entry)(screen)
     controller.store.active_session_id = "different"
     payload = SimpleNamespace(
         payload={"messages": [{"role": "system", "content": "long context"}]}

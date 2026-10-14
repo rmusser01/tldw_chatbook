@@ -555,7 +555,6 @@ class LocalMCPControlService:
             ``discovery_snapshot`` and ``is_connected``.
         """
         self._require_allowed("mcp.external_profiles.list.local")
-        servers: list[dict[str, Any]] = []
         client = self.client
         active_sessions = getattr(client, "sessions", {}) if client is not None else {}
         catalog_reader = getattr(self.store, "get_external_catalog", None)
@@ -568,19 +567,35 @@ class LocalMCPControlService:
                 (profile, self.store.get_discovery_snapshot(profile.profile_id))
                 for profile in self.store.list_profiles()
             ]
-        for profile, snapshot in catalog:
+        records = [
+            {**profile.to_dict(), "discovery_snapshot": snapshot}
+            for profile, snapshot in catalog
+        ]
+        return self._project_external_catalog(records, active_sessions=active_sessions)
+
+    def _project_external_catalog(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        active_sessions: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Project checked public catalog fields using live caller connections."""
+        servers: list[dict[str, Any]] = []
+        for record in records:
+            profile_id = record["profile_id"]
             servers.append(
                 {
-                    **profile.to_dict(),
-                    "discovery_snapshot": snapshot,
-                    "is_connected": self._profile_connected(
-                        profile.profile_id,
-                        profile.plugin_owner is not None,
-                        active_sessions,
+                    **record,
+                    "is_connected": (
+                        self._profile_connected(
+                            profile_id, record.get("plugin_owner") is not None,
+                            active_sessions,
+                        )
                     ),
                 }
             )
         return servers
+
 
     def _profile_connected(self, profile_id, plugin_owned, active_sessions) -> bool:
         if plugin_owned and self.connection_ownership is not None:
@@ -1873,3 +1888,39 @@ class LocalMCPControlService:
             action_id=action_id,
             runtime_state_override=RuntimeSourceState(active_source="local"),
         )
+
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("get_external_servers", LocalMCPControlService.get_external_servers),
+    ("_project_external_catalog", LocalMCPControlService._project_external_catalog),
+    ("get_inventory", LocalMCPControlService.get_inventory),
+)
+
+
+# Pin only catalog callbacks whose bodies the joined Console reader consumes.
+# Keep the original guarded body as well as its public wrapper.
+_CONSOLE_STANDARD_BODY_BINDINGS = tuple(
+    (
+        name,
+        callback,
+        getattr(callback, "__wrapped__", None),
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                (
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+                ),
+            )
+            for function in (callback,)
+            + ((callback.__wrapped__,) if hasattr(callback, "__wrapped__") else ())
+        ),
+    )
+    for name, callback in _CONSOLE_STANDARD_METHODS
+)

@@ -36,9 +36,12 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from Tests.UI.test_console_cost_chip_screen import _settle_successful_full
 from tldw_chatbook.Chat.console_display_state import ConsoleDisplayRow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
+
+pytestmark = pytest.mark.bootstrap_profile
 
 class _FakeDictionaryScopeService:
     """Records every `summarize_active_dictionaries` call; returns a single
@@ -404,6 +407,7 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
         calls_before = len(service.calls)
         console.query_one(f"#console-session-tab-{session_a_id}").press()
         await _wait_for_active_session_id(store, pilot, session_a_id)
+        await _settle_successful_full(console, pilot)
 
         assert len(service.calls) == calls_before + 1
         assert service.calls[-1] == ("conv-with-dict", None, "local")
@@ -423,6 +427,7 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
         calls_before_b = len(service.calls)
         console.query_one(f"#console-session-tab-{session_b_id}").press()
         await _wait_for_active_session_id(store, pilot, session_b_id)
+        await _settle_successful_full(console, pilot)
 
         assert len(service.calls) == calls_before_b + 1
         assert service.calls[-1] == ("conv-without-dict", None, "local")

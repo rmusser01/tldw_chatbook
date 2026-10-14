@@ -33,7 +33,9 @@ a subclass (a plugin provider) composes from more than the key covers.
 
 from __future__ import annotations
 
+import inspect
 import os
+import sys
 import threading
 import time
 import weakref
@@ -62,6 +64,92 @@ class LocalKillSwitchRead:
     read: bool = False
     value: bool = False
     error: Exception | None = None
+    _include_mcp: bool = True
+    _need_local: bool = True
+    _share: bool = True
+    _current: Any = None
+
+
+def _require_current(local_read):
+    if local_read is not None and local_read._current is not None:
+        local_read._current()
+
+
+def capture_run_tool_read(controller, session_id, turn_context, project_guard, *, plugins):
+    """Attach demand/currentness to the existing run-local switch observation."""
+    result = LocalKillSwitchRead(_share=False)
+    if plugins:
+        return result
+    from tldw_chatbook import config
+    from tldw_chatbook.Agents import mcp_tool_provider as providers
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.MCP import console_snapshot as snapshot
+
+    from . import console_chat_controller as owner
+
+    methods = owner._CONSOLE_TOOL_COMPOSITION_METHODS
+
+    def original_methods():
+        for name, original, code, namespace, defaults, keywords, items, closure in methods:
+            if (
+                inspect.getattr_static(controller, name, None) is not original
+                or vars(owner.ConsoleChatController).get(name) is not original
+                or original.__code__ is not code
+                or original.__globals__ is not namespace
+                or namespace is not vars(owner)
+                or original.__closure__ is not closure
+                or original.__defaults__ is not defaults
+                or original.__kwdefaults__ is not keywords
+                or len(keywords or {}) != len(items)
+                or any((keywords or {}).get(key) is not value for key, value in items)
+            ):
+                return False
+        return True
+
+    app = controller.app
+    service = getattr(app, "unified_mcp_service", None)
+    if (
+        not original_methods()
+        or not providers._controller_factory_current(owner.MCPToolProvider)
+        or not snapshot.standard_console_catalog_sources(service)
+    ):
+        return result
+    app_config = getattr(app, "app_config", None)
+    store = controller.store
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    revision = store.session_settings_revision(session_id) if session is not None else None
+    scratch = controller._scratch_spaces
+    identity = config.current_config_identity()
+
+    def current():
+        if (
+            not original_methods()
+            or not providers._controller_factory_current(owner.MCPToolProvider)
+            or controller.app is not app
+            or getattr(app, "app_config", None) is not app_config
+            or controller.store is not store
+            or controller._scratch_spaces is not scratch
+            or getattr(app, "unified_mcp_service", None) is not service
+            or sys.modules.get("tldw_chatbook.config") is not config
+            or config.current_config_identity() != identity
+            or next((item for item in store.sessions() if item.id == session_id), None) is not session
+            or (session is not None and store.session_settings_revision(session_id) != revision)
+            or (project_guard is not None and not project_guard())
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+
+    maximum = turn_context.mcp_tool_maximum if turn_context is not None else None
+    enabled = (
+        turn_context.tool_configuration.get("local_tools_enabled", owner.LOCAL_TOOLS_DEFAULT_ENABLED)
+        if turn_context is not None else
+        owner.get_cli_setting("console", "local_tools_enabled", owner.LOCAL_TOOLS_DEFAULT_ENABLED)
+    )
+    result._include_mcp = not (type(maximum) is frozenset and not maximum)
+    result._need_local = owner.coerce_bool_setting(enabled, owner.LOCAL_TOOLS_DEFAULT_ENABLED)
+    result._share = True
+    result._current = current
+    current()
+    return result
 
 
 @dataclass(frozen=True)
@@ -148,6 +236,22 @@ async def compose_run_mcp_provider(
         The composed provider, or None when MCP is not offered this run: the
         kill switch is on, or a read failed (fail closed, logged as before).
     """
+    _require_current(local_read)
+    if local_read is not None and not local_read._include_mcp:
+        if not local_read._need_local:
+            _fill(local_read, False)
+            return None
+        from tldw_chatbook.MCP.console_snapshot import read_console_kill_switch
+
+        try:
+            engaged = await read_console_kill_switch(service)
+        except Exception as caught:  # noqa: BLE001 - preserve optional catalog refusal and the shared permission result.
+            _require_current(local_read)
+            _fill(local_read, True, caught)
+        else:
+            _require_current(local_read)
+            _fill(local_read, bool(engaged))
+        return None
     with _lock:
         entry = _entry
     if entry is not None and entry.service() is not service:
@@ -164,6 +268,7 @@ async def compose_run_mcp_provider(
             "Console MCP catalog check failed ({}); composing from the stores",
             type(caught).__name__,
         )
+    _require_current(local_read)
     key = provider.composition_key()
     if (
         entry is not None
@@ -178,16 +283,55 @@ async def compose_run_mcp_provider(
         provider.install_composition(entry.composition)
         return provider
 
+    # Keep the current fingerprint/reuse owner. On a qualified stock cold
+    # composition, one detached payload supplies MCP and the local switch.
+    # Custom producers continue through their original public call shape.
+    prepared = None
+    if plain and (local_read is None or local_read._share):
+        from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+        from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+        if (
+            provider_source._controller_factory_current(type(provider))
+            and provider_source._console_preparation_pipeline_current(preparation_source)
+        ):
+            try:
+                prepared = await preparation_source.prepare_console_tools(
+                    service,
+                    profile_id=provider._profile_id(),
+                    include_mcp_catalog=True,
+                    need_local_switch=local_read is not None,
+                    builtin_raw_name_exclusions=provider._builtin_raw_name_exclusions,
+                    owned_profile_ids=provider._owned_profile_ids,
+                )
+                _require_current(local_read)
+                if prepared is not None and not prepared.kill_switch:
+                    composition = provider_source.capture_standard_controller_composition(
+                        type(provider), service
+                    )
+                    if composition is None:
+                        raise PermissionError("mcp_catalog_source_changed")
+                    provider.adopt_console_preparation(
+                        prepared, _controller_composition=composition
+                    )
+            except Exception as caught:  # noqa: BLE001 - preserve optional catalog refusal and the shared permission result. same optional catalog failure policy
+                _require_current(local_read)
+                _fill(local_read, True, caught)
+                logger.opt(exception=caught).warning(
+                    "ConsoleChatController: MCP preparation failed; skipping MCP this run"
+                )
+                return None
+
     error = None
     try:
-        engaged = bool(service.get_kill_switch())
+        engaged = prepared.kill_switch if prepared is not None else bool(service.get_kill_switch())
     except Exception as caught:  # noqa: BLE001 -- fail closed to "no MCP this run"
         logger.opt(exception=caught).warning(
             "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
         )
         engaged, error = True, caught
     _fill(local_read, engaged, error)
-    if not engaged:
+    if not engaged and prepared is None:
         try:
             compose = provider.compose_catalog
             await (compose(kill_switch_engaged=False) if plain else compose())

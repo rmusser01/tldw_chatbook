@@ -1,0 +1,54 @@
+name: PR3023 AC77 original Linux prerequisite
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact Root-published evidence commit (not a moving branch)
+        required: true
+        type: string
+      source_manifest_sha256:
+        description: SHA256 of the Root-frozen checkout source manifest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ac77-original-linux-six:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      AC77_EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      AC77_SOURCE_MANIFEST_SHA256: ${{ inputs.source_manifest_sha256 }}
+      AC77_OUTPUT: ${{ runner.temp }}/ac77-linux-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.11'
+      - name: Seal the actual checkout before dependencies
+        run: python .github/scripts/ac77_linux_qualification.py prepare
+      - name: Install original project dependencies and fixed test runtime
+        run: >-
+          python -m pip install -e ".[dev]"
+          "pytest==8.4.2" "pytest-asyncio==1.2.0" "pytest-timeout==2.4.0"
+          > "$AC77_OUTPUT/dependency-install.log" 2>&1
+      - name: Freeze actual Linux runtime and run only the original six
+        run: python .github/scripts/ac77_linux_qualification.py qualify
+      - name: Retain final source and artifact receipts
+        if: always()
+        run: python .github/scripts/ac77_linux_qualification.py finalize
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr3023-ac77-original-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.AC77_OUTPUT }}/
+          if-no-files-found: error

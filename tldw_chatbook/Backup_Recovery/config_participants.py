@@ -35,6 +35,16 @@ _STATE_NAMES = (
 )
 
 
+def checked_config_identity(source: object, active: object) -> tuple[int, str]:
+    """Tag data with its active checked config generation and selected path."""
+    from . import raw_participants as raw
+
+    state = raw._check(active)
+    if state.source is not source or state.route not in {"config", "config_snapshot"}:
+        raise bootstrap.RecoveryRequired("config_operation_source_invalid")
+    return source._CONFIG_GENERATION, str(state.selected)
+
+
 def binding(source):
     module = sys.modules.get("tldw_chatbook.config")
     if module is not None and source is module:
