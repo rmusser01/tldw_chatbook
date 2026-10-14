@@ -153,3 +153,106 @@ def test_kernel_wiring_is_participants_observable(tmp_path, monkeypatch) -> None
     names = {name for name, _ in fired}
     assert {"access", "register", "cached"} <= names
     assert all(target is store for _, target in fired)
+
+
+def _traced(store):
+    statements: list[str] = []
+    with store.connection() as conn:
+        conn.set_trace_callback(statements.append)
+    return statements
+
+
+def test_kernel_default_begin_is_immediate(tmp_path) -> None:
+    store = _KernelStore(str(tmp_path / "begin.sqlite"))
+    statements = _traced(store)
+    with store.transaction():
+        pass
+    assert any(s.strip().upper().startswith("BEGIN IMMEDIATE") for s in statements)
+    store.close()
+
+
+def test_kernel_deferred_begin_available(tmp_path) -> None:
+    store = _KernelStore(str(tmp_path / "begin.sqlite"))
+    statements = _traced(store)
+    with store.transaction(immediate=False):
+        pass
+    assert any(s.strip().upper() == "BEGIN" for s in statements)
+    assert not any("IMMEDIATE" in s.upper() for s in statements)
+    store.close()
+
+
+def test_workspace_transaction_default_is_deferred_begin(tmp_path) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    store = WorkspaceDB(str(tmp_path / "workspace.sqlite"))
+    statements = _traced(store)
+    with store.transaction():
+        pass
+    assert any(s.strip().upper() == "BEGIN" for s in statements)
+    assert not any("IMMEDIATE" in s.upper() for s in statements)
+    store.close()
+
+
+class _PoisonableConnection(sqlite3.Connection):
+    """Live connection whose liveness probe can be made to fail on demand."""
+
+    probe_poisoned = False
+
+    def execute(self, sql, *args):  # type: ignore[override]
+        if self.probe_poisoned and sql == "SELECT 1":
+            raise sqlite3.OperationalError("poisoned probe on live handle")
+        return super().execute(sql, *args)
+
+
+def test_probe_failure_on_live_connection_propagates(tmp_path) -> None:
+    """Failed probe on a still-live handle must raise, not replace (ADR-228).
+
+    The reference port's asymmetry: a probe that fails while the handle is
+    positively alive propagates the error and retains the cached
+    connection; only a positively-closed handle is replaced.
+    """
+
+    class _PoisonableStore(_KernelStore):
+        _kernel_sqlite_owner = "tests.store_kernel"
+
+        def _open_connection(self):
+            return sqlite3.connect(self.db_path_str, factory=_PoisonableConnection)
+
+    store = _PoisonableStore(str(tmp_path / "live.sqlite"))
+    conn = store._held_connection()
+    assert isinstance(conn, _PoisonableConnection)
+    conn.probe_poisoned = True
+    store._thread_local.conn_last_used = 0.0  # force the probe path
+    with pytest.raises(sqlite3.OperationalError):
+        store._held_connection()
+    assert store._thread_local.conn is conn
+    # Unpoisoned, the retained handle serves statements normally.
+    conn.probe_poisoned = False
+    with store.connection() as recovered:
+        assert recovered.execute("SELECT 1").fetchone()[0] == 1
+    store.close()
+
+
+def test_configure_connection_applies_on_revival(tmp_path) -> None:
+    class _ConfiguredStore(_KernelStore):
+        _kernel_sqlite_owner = "tests.store_kernel"
+
+        def _configure_connection(self, conn):
+            conn = super()._configure_connection(conn)
+            # Per-connection only (never persisted in the file), so a fresh
+            # connection to the same database reports the default, not 42.
+            conn.execute("PRAGMA cache_size = -1234")
+            return conn
+
+    store = _ConfiguredStore(str(tmp_path / "revive.sqlite"))
+    first = store._held_connection()
+    assert first.execute("PRAGMA cache_size").fetchone()[0] == -1234
+    first.close()
+    store._thread_local.conn_last_used = 0.0
+    revived = store._held_connection()
+    assert revived is not first
+    # Proves _configure_connection ran on the REVIVED connection: a fresh
+    # connection would report SQLite's default (-2000), not the override.
+    assert revived.execute("PRAGMA cache_size").fetchone()[0] == -1234
+    assert revived.isolation_level is None
+    store.close()

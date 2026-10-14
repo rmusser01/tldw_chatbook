@@ -84,6 +84,17 @@ class SQLiteStoreKernel:
             )
         self._thread_local = threading.local()
 
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a raw connection; BaseDB-provenance stores override this.
+
+        The default opens through private-sqlite under
+        ``_kernel_sqlite_owner``. Stores whose lineage connects via
+        ``BaseDB._get_connection`` (the ``db.base`` owner) override this
+        method to delegate there instead, keeping their participants
+        identity intact (ADR-228, BaseDB-provenance section).
+        """
+        return connect_private_sqlite(self._kernel_sqlite_owner, self.db_path_str)
+
     @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
         """Open and configure a NEW database connection.
@@ -93,7 +104,7 @@ class SQLiteStoreKernel:
         ``_configure_connection`` override.
         """
         _core_access(self)
-        conn = connect_private_sqlite(self._kernel_sqlite_owner, self.db_path_str)
+        conn = self._open_connection()
         _register_core_connection(self, conn)
         try:
             return self._configure_connection(conn)
@@ -156,7 +167,7 @@ class SQLiteStoreKernel:
 
     @_core_transaction
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a write transaction.
 
         Required for any block whose statements must land (or not land)
@@ -169,6 +180,12 @@ class SQLiteStoreKernel:
         transaction``. The outer block still rolls back cleanly, because
         the failure propagates through its ``except``.
 
+        Args:
+            immediate: Reserve the write lock before the first read
+                (``BEGIN IMMEDIATE``; the kernel default). Stores whose
+                contract prefers a deferred ``BEGIN`` override only this
+                default (ADR-228).
+
         Raises:
             BaseException: Re-raised after rolling back, on any error inside
                 the ``with`` block (including ``CancelledError`` /
@@ -176,7 +193,7 @@ class SQLiteStoreKernel:
                 transaction commits.
         """
         conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         try:
             yield conn
         except BaseException:

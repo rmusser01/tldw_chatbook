@@ -580,7 +580,10 @@ def _qualified_store_kernel_dispatch(source_path, symbol, call):
     registered, documented owner policy at connect time (registry<->doc
     parity). The allowance is tied to that validation being present.
     """
-    if symbol != "SQLiteStoreKernel._get_connection" or not call.args:
+    if symbol not in {
+        "SQLiteStoreKernel._get_connection",
+        "SQLiteStoreKernel._open_connection",
+    } or not call.args:
         return False
     if ast.unparse(call.args[0]) != "self._kernel_sqlite_owner":
         return False
