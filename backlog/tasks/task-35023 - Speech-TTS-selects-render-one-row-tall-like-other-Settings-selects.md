@@ -7,7 +7,6 @@ labels:
 - settings
 - ux
 - design-system
-- settings-ux-review-2026-10-14
 - ux-review-2026-10-14
 dependencies:
 - TASK-33007

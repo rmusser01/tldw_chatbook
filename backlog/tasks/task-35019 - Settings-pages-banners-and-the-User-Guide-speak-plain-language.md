@@ -8,6 +8,7 @@ labels:
 - ux
 - copy
 - docs
+- ux-review-2026-10-14
 dependencies:
 - TASK-35018
 - TASK-35017

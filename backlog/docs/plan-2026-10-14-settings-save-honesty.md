@@ -9,7 +9,7 @@
 
 Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/critique/2026-10-14T15-26-24Z__tldw-chatbook-ui-screens-settings-screen-py.md`), reviewed on origin/dev 1ef4fcf4ae.
 
-Tasks: TASK-35013 (Settings shows which controls save without s, and where each page's saves go), TASK-35014 (Settings drops the controls nothing reads and corrects copy about when changes apply), TASK-35015 (Every Settings form uses one on/off control and one row shape), TASK-35023 (Speech & TTS selects render one row tall like other Settings selects).
+Tasks: TASK-35013 (Settings shows which controls save without s, and where each page's saves go), TASK-35014 (Settings drops the controls nothing reads and corrects copy about when changes apply), TASK-35015 (Every Settings form uses one on/off control), TASK-35023 (Speech & TTS selects render one row tall like other Settings selects).
 
 Review: the verified Settings UX review on origin/dev 1ef4fcf4ae (assessments A–E, adversarial verdicts, completeness critic). origin/dev is now 67136d5dd7. The commits since the review only change backlog files and clean up the repository root (path pointers in two tests and two scripts), so no Settings code changed. Every code anchor below was read on PR #3057's head 29ca19f10d, because this stream lands after it.
 
@@ -55,7 +55,7 @@ If #3057 changes again before it merges, re-read every anchor below at its merge
 - T3 waits for T2 so that it does not convert Smooth scrolling, a control T2 deletes, or rewrite the Appearance block twice.
 - TASK-35023 shares only `SpeechTTSSettingsPanel` (its `_row` helper) and the Speech CSS rules with T3, which converts Speech's Switches. Whichever lands second rebases.
 
-**Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
+**Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories) and owns the rail-size guard; TASK-35016 adds no category and leaves that guard alone. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 
 Design target: 211x44 and 235x52 only.
 
@@ -228,7 +228,7 @@ Closes D7. The design follows the OD-2 ruling (A). D-shell-design-M2 (the Domain
 
 **Files.** `settings_screen.py` (a net shrink; lower the row), `settings_appearance_defaults.py`, `settings_search_index.py`, `settings_config_models.py`, `config.py`, `Docs/User_Guide/settings.md`, `Tests/UI/COMMAND_PALETTE_TESTING.md`. If T1 has landed, also `settings_save_contract.py`.
 
-### TASK-35015: Every Settings form uses one on/off control and one row shape
+### TASK-35015: Every Settings form uses one on/off control
 
 Closes D6 (the on/off controls and their one-row shape), D-shell-design-M5 and B10. The design follows the OD-3 ruling (B). D6's Goal runs rows are TASK-35017's, and Speech & TTS's three-row selects are TASK-35023's.
 

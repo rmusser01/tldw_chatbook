@@ -3,7 +3,7 @@
 > **Owner rulings, 2026-10-14.**
 > - "Pick = use as default" (owner choice): a discovered model you choose becomes the default, and it joins the provider's saved list; Save selected becomes the secondary "Add to model list".
 > - OD-1: **(a)**, a frozen set of the 13 legacy sample IDs, removed on the next Settings write and never rewritten at startup. This was the recommendation; the owner was told and did not object.
-> - Sequencing: this stream starts after PR #3057 merges (auto-merge armed 2026-10-14 by owner go-ahead).
+> - Sequencing: this stream starts after PR #3057 merges (owner ruling: land #3057 first). Check its state with `gh pr view 3057`; this plan does not record a live status.
 
 Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/critique/2026-10-14T15-26-24Z__tldw-chatbook-ui-screens-settings-screen-py.md`), reviewed on origin/dev 1ef4fcf4ae.
 
@@ -66,7 +66,7 @@ After S1, saved model lists can be trusted:
   - TASK-35011 follows TASK-35010, because it uses T1's refresh and write rules.
   - TASK-35012 follows TASK-35010 (the sample-id set) and Phase 8 (TASK-33008), because the popover holds +451 lines of P8 work.
   - T2 and T3 touch disjoint files, so TASK-35012's dependencies do not name TASK-35011. Land it after TASK-35011 anyway (the shared order below), because the default it lifts is the pick TASK-35011 saves.
-- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories) and owns the rail-size guard; TASK-35016 adds no category and leaves that guard alone. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 - **Phase 9 (TASK-33641, local branch `feat/model-config-p9-riders`) is not a dependency.** It shares these seams:
   - Task 7 (TASK-33005.8): the `s` save's success branch, which T2 extends.
   - Task 16 (TASK-33005.12; TASK-33641.9, on the local P8/P9 branch, not yet on dev): `console_model_popover.py`, beside T3.

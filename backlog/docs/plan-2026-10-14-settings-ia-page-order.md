@@ -9,7 +9,7 @@ Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/cri
 
 Tasks: TASK-35016 (Group the Settings rail by what people come to change, and give view-only pages a way to their owner), TASK-35017 (Open Console Behavior on chat defaults and fold agent, capture and replay sections into Advanced).
 
-Source: the verified Settings UX review on origin/dev 1ef4fcf4ae (assessments A–E, adversarial verdicts, completeness critic). Planning base: origin/dev **67136d5dd7**. Since the review, dev has only had backlog commits and a repository-root cleanup (#3102); no Settings code changed. PR #3057 (TASK-33007, Phase 7) is OPEN at **29ca19f10d** and BEHIND, with auto-merge armed (2026-10-14 16:58Z, by owner go-ahead); the merge queue is `on`. Code is anchored by **symbol** in a file. Line numbers are left out on purpose.
+Source: the verified Settings UX review on origin/dev 1ef4fcf4ae (assessments A–E, adversarial verdicts, completeness critic). Planning base: origin/dev **67136d5dd7**. Since the review, dev has only had backlog commits and a repository-root cleanup (#3102); no Settings code changed. PR #3057 (TASK-33007, Phase 7) was read at **29ca19f10d** and must merge first (owner ruling); check its state with `gh pr view 3057`, since this plan does not record a live status. Code is anchored by **symbol** in a file. Line numbers are left out on purpose.
 
 ## Goal
 
@@ -23,8 +23,9 @@ Findings closed:
 
 - **D2** (rail IA). The verifier corrected the count: there are **7** "(view)" Domain Defaults pages, not 8.
 - **D-shell-design-M2** (the "read-only" claim covering editable pages).
-- **D-shell-design-M3** (the rail-size guard is red: it asserts 31, but the enum has 33).
+- D-shell-design-M3 (the rail-size guard asserts 31, but the enum has 33) is owned by TASK-35020; this stream adds no category and leaves that guard alone.
 - **D3 + B16**, Console part only (page order; "Start here" at row 39 of 44).
+- **D6**, Goal runs rows only (TASK-35017 converts them to the shared one-row grammar).
 
 The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
 
@@ -35,7 +36,7 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
   - The frameless one-row rules for `#settings-console-behavior-card Collapsible`, in css/features/_settings.tcss (TASK-33007.5/.6).
   - The open-state memory for `.settings-advanced-disclosure`: `SettingsScreen._advanced_disclosures_open` and `SettingsScreen.handle_advanced_disclosure_toggled`, plus the `ADVANCED_DISCLOSURE_CLASS`/`advanced_title`/`advanced_disclosure`/`refresh_advanced` pattern in UI/Settings_Modules/providers_models_card.py.
   - The global fallback rows from `settings_field_rows.compose_console_fallbacks` and `refresh_console_fallbacks` (TASK-33007.7).
-- **If #3057 slips,** TASK-35016 can be built on dev, because `_category_groups`, the rail collapse code, `_render_domain_category_detail`, `_render_overview_detail` and `on_key` are byte-identical on dev and 29ca19f10d. It then has no ratchet row to re-pin. TASK-35017 must wait.
+- **If #3057 slips,** TASK-35016 may be prototyped on dev, because `_category_groups`, the rail collapse code, `_render_domain_category_detail`, `_render_overview_detail` and `on_key` are byte-identical on dev and 29ca19f10d. It still lands after #3057 (it depends on TASK-33007) and re-pins the ratchet row then. TASK-35017 must wait.
 - **P8 and P9 restack onto #3057 after it merges.** I checked feat/model-config-p8-first-run (19a9117e9e) and feat/model-config-p9-riders (841361671c). Every difference from #3057 in the S3 functions comes from their older bases (no Dreams/Guardian, an older P7 head). Neither branch changes the rail, Overview's action row, the domain detail renderer or the Console card's order.
   - P9 Task 7 (TASK-33003.14) edits settings_search_index.py. S3 does not touch that file and keeps every Console field id.
   - P9 Task 2 (TASK-33005.15) edits the Overview readiness line, not the action row.
@@ -44,8 +45,8 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
 - **TASK-35016 and TASK-35017 are independent PRs.** Either can land first. The second rebases (`git pull --rebase origin dev`, never a merge) and re-measures the ratchet row.
 - **TASK-35017 lands before the streams that edit the Console Behavior card.** Its first commit moves `SettingsScreen._render_console_behavior_card` into the new `UI/Settings_Modules/console_behavior_card.py`. TASK-35013, TASK-35015 and TASK-35019 depend on TASK-35017 and edit the card in that module, never in `settings_screen.py`.
 - **TASK-35016 lands before TASK-35013, TASK-35014, TASK-35018 and TASK-35021.** It owns the rail groups and toggles, the Domain Defaults "read-only" tooltip (D-shell-design-M2), the view-only pages' "Planned" row and Inspector owner line, and the User Guide's category map and view-only count.
-- **The rulings are in.** The owner ruled on OD-1..OD-3 on 2026-10-14 (the block at the top): rail map A with the group names shown in the option the owner chose, OD-2 (a), and OD-3 (a) with Conversation context and memory open. The ACs are written to those rulings.
-- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
+- **The rulings are in** (the block at the top). OD-1 (rail map A, with the group names shown in the option the owner chose) and OD-3 (a) are owner choices. OD-2 (a) and the sub-ruling that Conversation context and memory stays open were recommendations the owner was told about and did not object to. The ACs are written to those rulings.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories) and owns the rail-size guard; TASK-35016 adds no category and leaves that guard alone. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 
 ## Scope
 
@@ -75,7 +76,7 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
 
 ## Decisions (ruled 2026-10-14)
 
-The owner ruled on all three on 2026-10-14 (the block at the top). Each decision states its ruling; the options not chosen are kept as the record.
+OD-1 and OD-3 are owner choices; OD-2 and the OD-3 sub-ruling were recommendations the owner was told about and did not object to (the block at the top). Each decision states its ruling; the options not chosen are kept as the record.
 
 ### OD-1: the rail map (all 33 SettingsCategoryId members placed)
 
@@ -157,7 +158,7 @@ The page-order rule ("most common task first; expert or newly added controls in 
 
 ### TASK-35016: Group the Settings rail by intent and give view-only pages a way to their owner
 
-Closes D2, D-shell-design-M2 and D-shell-design-M3.
+Closes D2 and D-shell-design-M2.
 
 Files:
 - tldw_chatbook/UI/Screens/settings_config_models.py
@@ -209,16 +210,13 @@ Mechanism:
    - Enter on the focused button must press it. `SettingsScreen.on_key` stops Enter only for an id set and for rail rows, so the Button's own binding should fire. The keyboard test decides; add the id to that set only if the test shows Enter is swallowed.
 4. **Overview: Run setup wizard.** `SettingsScreen._render_overview_detail` adds `Button("Run setup wizard", id="settings-overview-run-setup-wizard")` to the top `settings-action-row`, beside Backup & Restore. It costs no row at full screen. `handle_run_setup_wizard`'s `@on` takes both ids, and `on_key`'s Enter id set gains the new id if the keyboard test needs it.
 5. **The guards that 1b769eb757 (Dreams + Guardian, 2026-10-12) turned red,** both in Tests/UI/test_settings_configuration_hub.py:
-   - `test_settings_category_summaries_cover_every_category_id_exactly_once`: 31 → 33. Its docstring history gains the step that caused the red: Dreams and Guardian took the enum from 31 to 33.
-     - At 2bce8ffa0f the count was 31 (HOOKS was the 31st).
-     - The review verifier blamed Network/My Profile; `git log -L` shows those came earlier (27 and 28).
-     - If TASK-35020 has already set 33 with this history, leave the test as it is.
+   - `test_settings_category_summaries_cover_every_category_id_exactly_once` (31 vs 33) belongs to TASK-35020, which sets it to 33 with the Dreams and Guardian history (1b769eb757; at 2bce8ffa0f the count was 31, HOOKS the 31st). TASK-35016 adds no category and does not edit it.
    - `test_settings_domain_category_contracts_are_explicit_about_mutation_scope` is red by reading the code, not by a run: it expects 11 contracts, and `SETTINGS_DOMAIN_CATEGORY_CONTRACTS` has 13. Add DREAMS and GUARDIAN to its expected and mutable sets (both have `settings_can_mutate=True`). Run it at the merge base first to confirm.
 6. **Ratchet.** Measure settings_screen.py at the PR head (`len(path.read_text().splitlines())`) and lower its row to that number. `test_budget_is_not_left_slack` fails at more than 50 lines of slack.
 
 ### TASK-35017: Open Console Behavior on chat defaults and fold expert sections into Advanced
 
-Closes D3 (Console part) and B16.
+Closes D3 (Console part), B16, and D6 for the Goal runs rows.
 
 Files:
 - new tldw_chatbook/UI/Settings_Modules/console_behavior_card.py
@@ -282,7 +280,6 @@ TASK-35016 (Tests/UI/test_settings_configuration_hub.py unless noted):
 
 | Test | Change and reason |
 |---|---|
-| `test_settings_category_summaries_cover_every_category_id_exactly_once` | 31 → 33, plus the corrected history (M3). |
 | `test_settings_domain_category_contracts_are_explicit_about_mutation_scope` | Add DREAMS and GUARDIAN to its expected/mutable sets (same cause, read from the code). |
 | `test_settings_category_navigation_is_grouped_for_scan` | New group titles. |
 | `test_internal_prompts_appears_in_settings_sidebar_expert_group` | "Expert" → "Maintenance"; rename the test. |

@@ -7,6 +7,7 @@ labels:
 - settings
 - ux
 - information-architecture
+- ux-review-2026-10-14
 dependencies:
 - TASK-33007
 priority: high
@@ -15,9 +16,9 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The Settings rail lists 33 categories in six groups that misfile them: Agents sits under Troubleshooting and Console Behavior under Interface. Six pages Settings fully edits (RAG, Schedules, Dreams, Guardian, Image Gen, Video Gen) are hidden in a collapsed 'Domain Defaults' group whose tooltip calls everything in it read-only. The seven '(view)' pages owned by other screens say 'change this in <Destination>' but offer no way there, and they show developer roadmap notes both on the page ('Planned: ...') and in the Inspector ('Read-only: ...'). Re-running setup lives only under Troubleshooting. The guard meant to make each new rail category a deliberate decision is red: it asserts 31, but the enum has had 33 since Dreams and Guardian landed, and a sibling domain-contract guard went red in the same commit. So the rail grew without anyone deciding it should. This task applies the rail map the owner chose on 2026-10-14 (OD-1, option A with the group names shown in that option: Core, Look & Feel, Console & Agents, Retrieval & media and Data & Privacy open; Maintenance and Owned elsewhere collapsed) and the ruled view-only page treatment (OD-2a). It closes verified findings D2, D-shell-design-M2 and D-shell-design-M3. It lands after PR #3057 (TASK-33007), which gives settings_screen.py its size-ratchet row. Design, pinned tests and live checks are in backlog/docs/plan-2026-10-14-settings-ia-page-order.md.
+The Settings rail lists 33 categories in six groups that misfile them: Agents sits under Troubleshooting and Console Behavior under Interface. Six pages Settings fully edits (RAG, Schedules, Dreams, Guardian, Image Gen, Video Gen) are hidden in a collapsed 'Domain Defaults' group whose tooltip calls everything in it read-only. The seven '(view)' pages owned by other screens say 'change this in <Destination>' but offer no way there, and they show developer roadmap notes both on the page ('Planned: ...') and in the Inspector ('Read-only: ...'). Re-running setup lives only under Troubleshooting. The rail grew from 31 to 33 categories when Dreams and Guardian landed without anyone deciding where they belong, and a domain-contract guard went red in the same commit (it still expects 11 contracts; there are 13). This task applies the rail map the owner chose on 2026-10-14 (OD-1, option A with the group names shown in that option: Core, Look & Feel, Console & Agents, Retrieval & media and Data & Privacy open; Maintenance and Owned elsewhere collapsed) and the ruled view-only page treatment (OD-2a). It closes verified findings D2 and D-shell-design-M2; the red rail-size guard (D-shell-design-M3) is TASK-35020's. It lands after PR #3057 (TASK-33007), which gives settings_screen.py its size-ratchet row. Design, pinned tests and live checks are in backlog/docs/plan-2026-10-14-settings-ia-page-order.md.
 
-Plan: `backlog/docs/plan-2026-10-14-settings-ia-page-order.md`. Findings closed: D2, D-shell-design-M2, D-shell-design-M3 (Settings UX review, 2026-10-14).
+Plan: `backlog/docs/plan-2026-10-14-settings-ia-page-order.md`. Findings closed: D2, D-shell-design-M2 (Settings UX review, 2026-10-14).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -31,7 +32,7 @@ Plan: `backlog/docs/plan-2026-10-14-settings-ia-page-order.md`. Findings closed:
 - [ ] #7 None of the seven view-only pages shows the 'Planned' roadmap row in the detail pane, and each one's Inspector read-only line says where to change its settings instead of a roadmap note
 - [ ] #8 Overview offers Run setup wizard, which opens the same re-run wizard as the Diagnostics button
 - [ ] #9 The category search echo names the match's new group (for example 'Appearance › Reduce motion (Look & Feel)')
-- [ ] #10 The Settings category-count guard and the domain-contract guard both pass with all 33 categories and 13 domain contracts counted, and the count guard's history names the Dreams and Guardian step that took it from 31 to 33
+- [ ] #10 The domain-contract guard passes with all 13 domain contracts counted
 - [ ] #11 settings_screen.py does not grow and its size-ratchet row equals its measured size; the boot CSS bytes, UI-ready module census, screen pre-import payload and bare-type CSS subject ratchets do not rise
 - [ ] #12 The User Guide's category map lists all 33 categories under the shipped groups, its group-named section headings match the rail, its view-only page table lists seven pages, each with its Open button, and every count of view-only pages in the guide says seven
 - [ ] #13 The new rail tests run on every pull request and pass

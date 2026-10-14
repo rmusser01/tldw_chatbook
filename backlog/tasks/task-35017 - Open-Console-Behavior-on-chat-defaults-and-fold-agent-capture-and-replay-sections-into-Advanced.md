@@ -8,6 +8,7 @@ labels:
 - ux
 - console-behavior
 - information-architecture
+- ux-review-2026-10-14
 dependencies:
 - TASK-33007
 priority: medium

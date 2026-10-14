@@ -1,13 +1,13 @@
 ---
 id: TASK-35015
-title: Every Settings form uses one on/off control and one row shape
+title: Every Settings form uses one on/off control
 status: To Do
 created_date: 2026-10-14 17:10
 labels:
 - settings
 - ux
 - design-system
-- settings-ux-review-2026-10-14
+- ux-review-2026-10-14
 dependencies:
 - TASK-35014
 - TASK-33007
@@ -41,7 +41,7 @@ Plan: `backlog/docs/plan-2026-10-14-settings-save-honesty.md`. Findings closed: 
 - [ ] #2 Every such checkbox paints its whole mark and label at 211x44 and 235x52, with no ellipsis in place of the mark.
 - [ ] #3 Each converted control keeps its id, saved key, value and save model, and Space, Enter and a click each toggle it.
 - [ ] #4 Every on/off control this task converts is one row tall with no border at 211x44 and 235x52, and Speech & TTS's stacked layout still shows each one whole.
-- [ ] #5 DESIGN.md's dense-form convention names the one on/off control and the one row shape, and Docs/User_Guide/settings.md describes the controls as they now render.
+- [ ] #5 DESIGN.md's dense-form convention names the one on/off control and how its row is laid out, and Docs/User_Guide/settings.md describes the controls as they now render.
 - [ ] #6 A test fails if a Settings module builds a Switch or a checkbox without a label. No new bare-type CSS subject or raw dimension literal is added.
 - [ ] #7 The change does not raise settings_screen.py's budget in the module size ratchet, and the new tests run on every pull request.
 <!-- AC:END -->
