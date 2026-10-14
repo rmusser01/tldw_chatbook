@@ -5976,3 +5976,46 @@ async def test_a_tracked_update_is_titled_without_square_brackets(
         note="prices dropped")
 
     assert sent[0]["title"] == "Tracked update: see (/r/boardgames) meetup in {region}"
+
+
+# --- TASK-34919: a watch retired while a switch-on pass runs -------------------
+#
+# The pass checks a watch is live when it starts on it, then re-arms its
+# rule and looks its page's name up before switching the source on. A watch
+# untracked in that window used to keep its source running with its change
+# rule enabled and no live watch behind it; later passes read live watches
+# only, so nothing ever stopped it again.
+
+
+@pytest.mark.asyncio
+async def test_a_watch_retired_during_the_switch_on_ends_with_its_source_off(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    from tldw_chatbook.Utils import egress
+
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id, source_id = owned["tracked_item_id"], owned["subscription_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    untracked: list[bool] = []
+
+    async def untrack_during_the_lookup(_host):
+        if not untracked:
+            untracked.append(True)
+            await untrack(service, dreams_db, item_id,
+                          scheduling_db_getter=_sched_getter(scheduling_db))
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve_async", untrack_during_the_lookup)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert untracked, "fixture: the watch was untracked during the lookup"
+    assert dreams_db.get_tracked_item(item_id)["status"] == "retired"
+    assert _is_active(subs_db, source_id) == 0, "no live watch: source off"
+    assert [r["enabled"] for r in await _change_rules(service, source_id)] == [
+        False], "and its change rule silenced again"
+
+    for off in (True, False):
+        await _switch(service, dreams_db, scheduling_db, off=off)
+        assert _is_active(subs_db, source_id) == 0
+        assert not any(
+            r["enabled"] for r in await _change_rules(service, source_id))

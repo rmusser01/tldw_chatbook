@@ -2326,6 +2326,8 @@ async def _resume_pass(
     # Subscriptions whose held riders could not be un-settled, so their
     # source stayed off (review of #3101, round 3, T3).
     unsettle_failed: set[int] = set()
+    # Dreams rules this pass re-enabled, by subscription (TASK-34919).
+    restored_rules: dict[int, set[int]] = {}
 
     async def write_unsettled(
         item_id: int, subscription: bool, reminders: list[str], rules: list[int]
@@ -2394,6 +2396,8 @@ async def _resume_pass(
                             rule_id, enabled=True)
                     except KeyError:
                         pass  # the user deleted the rule
+                    restored_rules.setdefault(
+                        int(item.get("subscription_id") or 0), set()).add(rule_id)
                 rules = []
                 await write_unsettled(item_id, subscription, reminders, rules)
         except Exception as exc:  # noqa: BLE001 - one failed wrapper stops nothing
@@ -2424,6 +2428,36 @@ async def _resume_pass(
         except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
             logger.warning(
                 "Dreams resume: restoring subscription {} failed: {}",
+                subscription_id, type(exc).__name__)
+
+    # TASK-34919. A watch can be retired while this pass works on it -- an
+    # untrack or a sweep landing during a name lookup -- after the pass
+    # read it as live. Its source was still off then, so the retirement
+    # left it alone, and later passes read live watches only: the source
+    # ran on, its rule enabled, with no watch behind it. Every
+    # subscription this pass switched on or re-armed a rule on is looked
+    # at once more; with no live watch left, both go back off.
+    touched = set(restored_rules) | {
+        subscription_id for subscription_id, (resolved, _held)
+        in outcomes.items() if resolved}
+    for subscription_id in sorted(touched - {0}):
+        try:
+            riders = await asyncio.to_thread(run_finite_local_worker,
+                dreams_db.list_tracked_for_subscription, subscription_id)
+            if any(rider.get("status") in ("active", "paused")
+                   for rider in riders):
+                continue
+            for rule_id in sorted(restored_rules.get(subscription_id, ())):
+                try:
+                    await subs_service.update_alert_rule(
+                        rule_id, enabled=False)
+                except KeyError:
+                    pass  # the user deleted the rule
+            if subscription_id in outcomes:
+                await _disable_dream_source(subs_service, subscription_id)
+        except Exception as exc:  # noqa: BLE001 - the next pass is no help here
+            logger.warning(
+                "Dreams resume: re-checking subscription {} failed: {}",
                 subscription_id, type(exc).__name__)
 
     for item in items:
