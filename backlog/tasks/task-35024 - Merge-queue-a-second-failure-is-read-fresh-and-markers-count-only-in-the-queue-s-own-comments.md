@@ -10,7 +10,7 @@ labels:
 - ci
 - merge-queue
 priority: medium
-updated_date: 2026-10-14 19:23
+updated_date: 2026-10-14 19:32
 ---
 
 ## Description
@@ -40,8 +40,8 @@ Found by the final code review of the tldw_server port of this queue (tldw_serve
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Ported from tldw_server PR #3237 (TASK-13639 there). The retry comment carries a hidden <!-- merge-queue-attempt:N --> note (the attempt re-run, read before the re-run). _after_retry: fresh GET of the run; live or held -> stand down; run_attempt <= recorded -> rerun-unseen strike (warning + one kick, eviction after 10 min); otherwise a fresh read of the required check (counted checks + stand-ins): running, missing or green -> stand down, else evict failed-twice. Old markers without the note read as attempt 0, so behaviour on them is the fresh-read rule. Comments: COMMENTS_QUERY now asks for author { login __typename }; _queue_comments keeps only login github-actions with __typename Bot (verified on this repo's queue comments, e.g. #3070); has_comment, marker_age and comment_once (both reads) use it. Tests: 4 new (stale passed, pending lag, forged marker, failed again), the fake records comment authors and bumps run_attempt on a re-run; 191 passed through the scratch wrapper. Mutation checks, each failing a test: author filter removed, attempt check removed, fresh-state check removed, live stand-down removed. Not ported (separate findings there, owner approved only these two): restart cap for runs that keep being cancelled, license-while-gates-run (not applicable: chatbook has no license context). Files: scripts/merge_queue.py, Tests/CI/test_merge_queue_actions.py, Docs/superpowers/specs/2026-10-03-merge-queue-design.md.
+Code review of #3113 (2026-10-14): 0 critical/important, 5 minor; all addressed. (1) A retry marker posted by the live queue before this change carries no attempt note: a failure older than the marker is the one retried, so it is now a rerun-unseen strike, not an eviction. (2) The attempt note is taken from a fresh GET of the run, not the listing. (3) The rerun-unseen strike is keyed by attempt, so a later re-run on the same head gets its own warning and gap. (4) Checked: the only jobs that can write to PRs here are merge-queue.yml and derived-artifacts.yml's queue-tick, both running this script, so no other workflow can post user text as github-actions; noted at QUEUE_COMMENTER. (5) Direct _after_retry tests for the live/held stand-down and the no-result stand-down. Merge-queue test files: 195 passed (actions, rules, workflow); 5 mutation checks killed. A parametrize id 'live' was silently skipped by the conftest's --run-live gate (known trap, lessons-testing-evidence.md); renamed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

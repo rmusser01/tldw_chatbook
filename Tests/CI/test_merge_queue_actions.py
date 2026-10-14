@@ -1150,7 +1150,7 @@ def test_a_pending_rerun_wakes_a_kick_that_does_not_evict_while_github_still_sho
     kick = state(comments={1: [retry]})
     _run(kick)
     assert not any(c[0] == "disarm" for c in kick.calls)
-    assert any(c[0] == "comment" and f"merge-queue:rerun-unseen:{OLD}" in c[2] for c in kick.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unseen-1:{OLD}" in c[2] for c in kick.calls)
 
 
 def test_a_retry_marker_in_someone_elses_comment_is_ignored():
@@ -1162,6 +1162,35 @@ def test_a_retry_marker_in_someone_elses_comment_is_ignored():
     _run(gh)
     assert ("rerun", "70", "failed") in gh.calls
     assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_an_old_retry_marker_without_an_attempt_does_not_count_the_failure_it_retried():
+    """A marker posted by the queue before attempts were recorded: a failure older than the marker is
+    the one the queue retried, so the re-run's result is not in yet. That is a strike, not an eviction."""
+    run = _pr_run(70, 700)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", completed="2026-10-03T11:00:00Z", suite=700)]},
+                runs={OLD: [run]}, comments={1: [(f"<!-- merge-queue:retry:{OLD} -->\nre-running", "2026-10-03T11:05:00Z")]})
+    action = mq.Action("retry", "x", ("https://run/1",), suite_id=700)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is False
+    assert not any(c[0] == "disarm" for c in gh.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unseen-0:{OLD}" in c[2] for c in gh.calls)
+
+
+@pytest.mark.parametrize("fresh", [{"status": "in_progress"}, {"status": "completed", "conclusion": "action_required"}],
+                         ids=["in-progress", "held"])
+def test_after_retry_stands_down_while_the_run_is_going_again(fresh):
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_pr_run(70, 700)]}, run_status={70: [dict(fresh, run_attempt=1)]})
+    assert mq._after_retry(gh, mq.read_pr(gh, 1), _pr_run(70, 700), 1, None, (), lambda m: None, lambda: NOW) is False
+    assert gh.calls == []
+
+
+def test_after_retry_stands_down_when_the_re_run_reported_no_result_yet():
+    """The queue's re-run ran (a higher attempt) but the required check is missing or running: not a
+    second failure."""
+    rerun = dict(_pr_run(70, 700, conclusion="success"), run_attempt=2)
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [rerun]})
+    assert mq._after_retry(gh, mq.read_pr(gh, 1), _pr_run(70, 700), 1, None, (), lambda m: None, lambda: NOW) is False
+    assert gh.calls == []
 
 
 def test_a_retried_run_that_ran_again_and_failed_again_evicts():
