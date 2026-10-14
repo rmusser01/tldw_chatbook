@@ -1,5 +1,5 @@
 ---
-id: TASK-34950
+id: TASK-34989
 title: >-
   canvas_sync's shared dispatchers take two receiver types with no guard - 8 of
   10 Library controllers have no state accessor
@@ -58,3 +58,9 @@ Citations to TASK-32041 written by this branch — in
 task-4 report — refer to THIS task and were updated with the renumber. Any
 TASK-32041 citation originating on `dev` refers to the media focus-trap
 task, which is Done.
+
+## Renumbering provenance
+
+Renumbered from task-34950 to TASK-34989 (2026-10-14): the id collided
+with a task already on dev; per the 2026-08-21 owner rule (TASK-19601)
+the dev-side arrival keeps the id on merge.

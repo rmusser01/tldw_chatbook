@@ -1,5 +1,5 @@
 ---
-id: TASK-34949
+id: TASK-34988
 title: Extract Console realtime orchestration ownership
 status: Done
 assignee:
@@ -65,3 +65,9 @@ ADR required: no
 ADR path: N/A
 Reason: applies DESIGN.md section 7 and the approved Wave 6 closeout boundary without changing a durable architecture contract.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34949 to TASK-34988 (2026-10-14): the id collided
+with a task already on dev; per the 2026-08-21 owner rule (TASK-19601)
+the dev-side arrival keeps the id on merge.

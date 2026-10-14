@@ -1,5 +1,5 @@
 ---
-id: TASK-34951
+id: TASK-34990
 title: Add reversible conversation archive lifecycle
 status: Done
 assignee:
@@ -46,3 +46,9 @@ Implemented schema 43 local archive flag and index under ADR-144, version-checke
 
 Final integrated evidence: Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. User guide updated at Docs/User_Guide/console/sessions-tabs-workspaces.md. ADR-144 linked. Compact/wide mounted flows and final cancellation-safe lifecycle run pass (29 checks); targeted FTS/recovery run passes (75); six close tests pass. Independent final review reports no remaining blockers. No full suite, live provider calls, commit or unrelated checkout cleanup.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34951 to TASK-34990 (2026-10-14): the id collided
+with a task already on dev; per the 2026-08-21 owner rule (TASK-19601)
+the dev-side arrival keeps the id on merge.
