@@ -22,7 +22,6 @@ from collections.abc import (
     Sequence,
 )
 from datetime import datetime, timezone
-from enum import Enum
 from contextlib import closing, suppress
 from functools import partial
 import hashlib
@@ -32,8 +31,6 @@ from weakref import ref
 
 from loguru import logger
 from loguru import logger as loguru_logger
-from tldw_chatbook.Utils.input_validation import escape_markup
-from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -71,7 +68,6 @@ from ...Chatbooks.chatbook_models import ContentType
 from ...config import (
     TLDW_API_PLACEHOLDER_AUTH_TOKEN,
     TLDW_API_PLACEHOLDER_BASE_URL,
-    coerce_bool_setting,
     current_config_identity,
     get_cli_setting,
     get_notes_sync_state_db_path,
@@ -96,7 +92,6 @@ from ...Library.export_progress import (
 )
 from ...Library.collections_capture_models import (
     CaptureIdentity,
-    CapturePageRequest,
 )
 from ...Library.library_browse_location import (
     browse_start_directory,
@@ -319,7 +314,6 @@ from ...Library.library_rag_state import (
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
-    update_search_history,
 )
 from ...Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
@@ -334,12 +328,6 @@ from ...Library.library_rail_state import (
 from ...Library.library_shell_state import (
     LIBRARY_CANVAS_LANDING_COPY,
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
-    LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
-    LIBRARY_DELETE_SELECTED_TOOLTIP,
-    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
-    LIBRARY_EXPORT_SELECTED_TOOLTIP,
-    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
-    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -347,12 +335,9 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_BROWSE_SKILLS,
-    LIBRARY_ROW_CREATE_FLASHCARDS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_CREATE_PROMPT,
-    LIBRARY_ROW_CREATE_QUIZZES,
     LIBRARY_ROW_CREATE_SKILL,
-    LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
@@ -442,7 +427,6 @@ from ...Widgets.Library import (
     LibraryMediaViewer,
     LibraryNoteWorkPane,
     LibraryNotesCanvas,
-    LibraryNavigationRailHandle,
     PaneToggleRequested,
     LibraryPaneVisibilityChanged,
     LibraryPromptWorkPane,
@@ -473,7 +457,6 @@ from ...Widgets.Library.library_file_notes_events import (
 from ...Widgets.Library.library_media_content import LibraryMediaContentBody
 from ...Widgets.Library.library_media_canvas import (
     LibraryMediaRowGeometry,
-    LibraryMediaRowGeometryChanged,
     LibraryMediaRowScroll,
 )
 from ...Library.meeting_speaker_rename import (
@@ -556,8 +539,6 @@ from ..destination_recovery import (
 from .model_browser_state import install_failure_message
 from .skills_screen import (
     SkillRecoveryReviewModal,
-    SkillTrustBootstrapModal,
-    SkillTrustPassphraseModal,
 )
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
@@ -11821,74 +11802,6 @@ class LibraryScreen(BaseAppScreen):
             )
         )
 
-    @staticmethod
-    def _structural_records_for_comparison(
-        records: Mapping[str, tuple[Any, ...]],
-    ) -> dict[str, Any]:
-        """Mask the DECORATIVE-only rail-count fields out of ``records``
-        for the task-15459 ``unchanged`` check in
-        ``_apply_local_source_snapshot`` -- see that method's own comment
-        for why decorative counts must not gate a recompose.
-
-        ``records["prompts"]`` is entirely decorative: its second slot is
-        permanently ``()`` (Prompt rows have their own exact browse owner
-        -- see the ``__init__``/``_list_local_source_snapshot`` comments on
-        this key), so the whole entry is dropped. ``records["skills"]`` is
-        mixed: only its COUNT (first slot) is the decorative rail badge;
-        its ``available_skills``/``blocked_skills`` payload (second slot)
-        is the actual content a mounted Skills canvas renders
-        (``_build_library_skills_state``), so only the count is masked out
-        there, not the whole entry.
-
-        Args:
-            records: A ``_local_source_records``-shaped snapshot (either
-                the incoming one or the currently-rendered one).
-
-        Returns:
-            A shallow copy of ``records`` with decorative count fields
-            neutralized, suitable for ``==`` comparison against another
-            such copy to detect a genuine STRUCTURAL (rendered-content)
-            change.
-        """
-        view = {key: value for key, value in records.items() if key != "prompts"}
-        skills_entry = view.get("skills")
-        if isinstance(skills_entry, tuple) and len(skills_entry) == 2:
-            view["skills"] = (None, skills_entry[1])
-        return view
-
-    @staticmethod
-    def _decorative_rail_counts_for_comparison(
-        records: Mapping[str, tuple[Any, ...]],
-    ) -> tuple[Any, Any]:
-        """Return the two decorative rail counts folded into ``records``
-        (Prompts, Skills) as a comparable tuple -- the counterpart half of
-        ``_structural_records_for_comparison``'s masking. ``study_counts``
-        is the third decorative field but lives outside ``records``
-        entirely, so callers compare it separately.
-
-        Args:
-            records: A ``_local_source_records``-shaped snapshot.
-
-        Returns:
-            ``(prompts_count, skills_count)``, each ``None`` when the
-            corresponding entry is absent or malformed (mirrors
-            ``_build_library_shell_input``'s own extraction of these two
-            fields for the rail).
-        """
-        prompts_entry = records.get("prompts")
-        prompts_count = (
-            prompts_entry[0]
-            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
-            else None
-        )
-        skills_entry = records.get("skills")
-        skills_count = (
-            skills_entry[0]
-            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
-            else None
-        )
-        return (prompts_count, skills_count)
-
     def _library_entry_route_key(self) -> tuple[object, ...]:
         """Return the state fields that select the mounted Library owner."""
         return (
@@ -13481,18 +13394,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_user_id(self) -> str:
         return self._notes_controller._library_notes_user_id()
 
-    @staticmethod
-    def _safe_sync_scope_text(value: Any, *, max_length: int = 200) -> str | None:
-        """Return a validated Sync scope value or None when unsafe/empty."""
-
-        text = sanitize_string(str(value or ""), max_length=max_length).strip()
-        text = " ".join(text.split())
-        if not text:
-            return None
-        if validate_text_input(text, max_length=max_length, allow_html=False):
-            return text
-        return None
-
     @classmethod
     def _source_optional_title(
         cls, source_type: str, record: Mapping[str, Any]
@@ -13939,11 +13840,6 @@ class LibraryScreen(BaseAppScreen):
         return (
             f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZES[source_type]}): {count}"
         )
-
-    def _hub_source_count_label(self, source_type: str, label: str) -> str:
-        count = self._local_source_counts[source_type]
-        suffix = "" if self._local_source_total_known[source_type] else "+"
-        return f"{label}: {count}{suffix}"
 
     def _source_sample_titles(self, source_type: str) -> list[str]:
         return [
@@ -14771,15 +14667,6 @@ class LibraryScreen(BaseAppScreen):
             )
         return self._library_workspace_depth_state_cache
 
-    def _library_workspace_scope_label(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> Text:
-        """Return the left-rail workspace scope copy for the active Library mode."""
-        return Text.from_markup(
-            f"Active workspace: {escape_markup(workspace_depth_state.workspace_name)}"
-        )
-
     def _source_study_context(self) -> StudyScopeContext | None:
         if not self._has_source_study_context():
             return None
@@ -15328,84 +15215,6 @@ class LibraryScreen(BaseAppScreen):
         )
         return widgets
 
-    def _library_single_notes_stage(self) -> bool:
-        """Whether the Notes compact/focused-task single-stage layout applies.
-
-        TASK-21243: extracted from ``compose_content`` (its single
-        computation site) so the targeted adaptive-shell leave builds the
-        ordinary shell with the SAME stage display rules the compose path
-        applies -- the two composers must not drift.
-        """
-        return (
-            self._notes_state.compact and self._library_notes_compact_stage_applies()
-        ) or (
-            not self._notes_state.compact and self._library_notes_focused_task_active()
-        )
-
-    def _build_library_ordinary_shell_trio(
-        self, shell: LibraryShellState, single_notes_stage: bool
-    ) -> tuple[
-        LibraryNavigationRailHandle,
-        LibraryRail,
-        Vertical,
-        LibraryEmergencyReturn,
-        Vertical,
-    ]:
-        """Build the ordinary (non-adaptive) shell's grid children.
-
-        TASK-21243: extracted verbatim from ``compose_content``'s ordinary
-        tail so the ONE construction serves both composers -- the screen
-        recompose and the targeted "leave the adaptive reader shell" swap
-        (``leave_library_browse_shell_for_ordinary``) -- and the two cannot
-        drift apart. The pieces are returned UNATTACHED: the compose
-        generator nests them with its own ``yield`` contexts, and the
-        leave helper mounts them onto the grid (host first, then the
-        host's always-present chrome inside it) in the same order.
-
-        Args:
-            shell: The freshly built shell state for the destination route.
-            single_notes_stage: The compact-notes single-stage flag the
-                display rules below read, computed by the caller (compose
-                derives it once for all of its branches).
-
-        Returns:
-            ``(rail_handle, rail, canvas_host, emergency_return,
-            route_content)`` in compose order.
-        """
-        rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
-        rail_handle.add_class("h-full")
-        rail_handle.display = self._library_rail_collapsed and not single_notes_stage
-        rail = LibraryRail(
-            shell,
-            self._library_rail_preferences(),
-            query=self._library_rail_search_value(),
-            search_placeholder=self._library_rail_search_placeholder(),
-            workspaces_body_factory=self._compose_workspaces_rail_body,
-            top_action_factory=self._compose_library_rail_top_action,
-            lifecycle=self._library_lifecycle,
-            onboarding_all_empty=self._library_onboarding_all_empty,
-            id="library-rail",
-            classes="destination-workbench-pane",
-        )
-        rail.add_class("h-full")
-        rail.display = (
-            not single_notes_stage or self._notes_state.stage == "rail"
-        ) and not (self._library_rail_collapsed and not single_notes_stage)
-        canvas_host = Vertical(id="library-canvas", classes="destination-workbench-pane")
-        canvas_host.add_class("w-13fr")
-        canvas_host.styles.min_width = 40
-        canvas_host.add_class("h-full")
-        canvas_host.set_class(self._notes_state.compact, "library-notes-compact")
-        canvas_host.display = (
-            not single_notes_stage or self._notes_state.stage == "notes"
-        )
-        emergency_return = LibraryEmergencyReturn(id="library-emergency-return")
-        emergency_return.display = False
-        route_content = Vertical(id="library-canvas-route-content")
-        route_content.add_class("h-fill")
-        route_content.styles.min_height = 0
-        return rail_handle, rail, canvas_host, emergency_return, route_content
-
     def compose_content(self) -> ComposeResult:
         # TASK-23025: every whole-screen recompose passes through here (the
         # task-2856 choke-point guarantee below), so this is the one place
@@ -15527,7 +15336,12 @@ class LibraryScreen(BaseAppScreen):
         shell_grid.styles.min_height = 12
         shell_grid.set_class(self._notes_state.compact, "library-notes-compact")
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
-        single_notes_stage = self._library_single_notes_stage()
+        from ..Library_Modules.library_browse_route_swap import (  # noqa: PLC0415 -- lazy, same reason as the source-strip import above
+            build_library_ordinary_shell_trio,
+            library_single_notes_stage,
+        )
+
+        single_notes_stage = library_single_notes_stage(self)
         if (
             shell.canvas_kind
             in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
@@ -15922,9 +15736,7 @@ class LibraryScreen(BaseAppScreen):
                 canvas_host,
                 emergency_return,
                 route_content,
-            ) = self._build_library_ordinary_shell_trio(
-                shell, single_notes_stage
-            )
+            ) = build_library_ordinary_shell_trio(self, shell, single_notes_stage)
             yield rail_handle
             yield rail
             with canvas_host:
