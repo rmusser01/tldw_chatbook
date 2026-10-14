@@ -91,6 +91,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
@@ -253,9 +254,13 @@ def _require_dreams_on() -> None:
         raise TrackDreamsOff("Dreams is switched off; nothing was tracked")
 
 
-#: The lock a switch-off pass and a re-track's switch-on share, per event
-#: loop (an ``asyncio.Lock`` belongs to the loop it first waits on).
-_SWITCH_LOCK: tuple[Any, asyncio.Lock] | None = None
+#: The lock a switch-off pass and a re-track's switch-on share, one per event
+#: loop (an ``asyncio.Lock`` belongs to the loop it first waits on), kept for
+#: as long as that loop lives, so callers on two loops never swap each
+#: other's lock out from under a holder.
+_SWITCH_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _switch_lock() -> asyncio.Lock:
@@ -271,11 +276,11 @@ def _switch_lock() -> asyncio.Lock:
     taken by the switch-off direction only: a switch-on pass enabling
     sources is not in conflict with a re-track doing the same.
     """
-    global _SWITCH_LOCK
     loop = asyncio.get_running_loop()
-    if _SWITCH_LOCK is None or _SWITCH_LOCK[0] is not loop:
-        _SWITCH_LOCK = (loop, asyncio.Lock())
-    return _SWITCH_LOCK[1]
+    lock = _SWITCH_LOCKS.get(loop)
+    if lock is None:
+        lock = _SWITCH_LOCKS[loop] = asyncio.Lock()
+    return lock
 
 
 class TrackInvalidURL(ValueError):

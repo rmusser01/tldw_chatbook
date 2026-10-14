@@ -6824,3 +6824,26 @@ async def test_a_failed_replacement_is_cleaned_up_by_the_next_track(
     assert kept["id"] == reminder["id"] and kept["enabled"]
     assert kept["link_id"] == str(first["tracked_item_id"])
     assert "07:00" in str(kept["run_at"])
+
+
+def test_the_switch_lock_is_one_per_event_loop_and_stays_put():
+    """Review of #3108, round 3: the lock used to be replaced whenever a
+    different loop asked for it, so two loops used alternately would stop
+    excluding each other's callers and a holder's lock could be swapped out.
+    Each loop now keeps its own lock for as long as it lives."""
+    from tldw_chatbook.Dreams.track_service import _switch_lock
+
+    async def ask():
+        return _switch_lock()
+
+    first, second = asyncio.new_event_loop(), asyncio.new_event_loop()
+    try:
+        a1 = first.run_until_complete(ask())
+        b1 = second.run_until_complete(ask())
+        a2 = first.run_until_complete(ask())
+        b2 = second.run_until_complete(ask())
+    finally:
+        first.close()
+        second.close()
+    assert a1 is a2 and b1 is b2
+    assert a1 is not b1
