@@ -420,6 +420,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         """Show noise controls only when the selected type can use them."""
         self._sync_create_backend_controls()
 
+    def watch_watchlist_choices(self, _choices: list[dict[str, Any]]) -> None:
+        """Offer changed choices in an open form; the chosen draft is kept.
+
+        The Select shows `_resolved_destination()`: the user's draft while it
+        is still offered, Unassigned otherwise (review of #3107, item V3).
+        """
+        self._sync_create_backend_controls()
+
     def _sync_create_backend_controls(self) -> None:
         """Patch the small backend-dependent surface in place when mounted."""
         if not self.is_mounted:

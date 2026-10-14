@@ -810,6 +810,47 @@ async def test_a_load_landing_while_the_items_region_is_recreated_reaches_its_pa
 
 
 @pytest.mark.asyncio
+async def test_an_open_create_form_offers_a_watchlist_the_tree_load_adds():
+    """Review of #3107, item V3: a tree load pushing new watchlist choices into
+    a pane whose create form is already open also refreshes the form's
+    Select, and keeps the destination the user chose."""
+    app_instance = _build_test_app()
+    chosen = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async def tree_loaded(screen):
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == "wc_tree"
+            )
+        )
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await tree_loaded(screen)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        destination.value = chosen["id"]
+        await pilot.pause()
+        later = app_instance.watchlist_bundle_service.create("Later")
+        screen._load_tree_data()
+        await pilot.pause()
+        await tree_loaded(screen)
+        await pilot.pause()
+        offered = {value for _label, value in destination._options}
+
+    assert later["id"] in offered
+    assert destination.value == chosen["id"]
+    assert pane.create_draft_destination == chosen["id"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
     """Backend-only repaints must not replace a focused create-form field."""
