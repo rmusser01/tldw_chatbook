@@ -2415,25 +2415,25 @@ class SchedulesWorkbench(BaseAppScreen):
         self.action_mark_all_results_read()
 
     @on(Button.Pressed, "#scheduling-results-badge")
-    def _on_results_badge_pressed(self, event: Button.Pressed) -> None:
+    async def _on_results_badge_pressed(self, event: Button.Pressed) -> None:
         """Rail `Results (N)` (redesign PR-4, task 2) -- pushes the whole
         (unfiltered) inbox as a fresh `ResultsHostScreen` overlay, beside
         `Mark all read`. Task 5 retired the Results tab, so this (and the
         definition panes' own unread row) is the only route to it."""
         event.stop()
-        self._push_results_overlay()
+        await self._push_results_overlay()
 
     @on(ViewDefinitionResultsRequested)
-    def _on_view_definition_results_requested(
+    async def _on_view_definition_results_requested(
         self, event: ViewDefinitionResultsRequested
     ) -> None:
         """A definition pane's `Unread results` row was activated
         (redesign PR-4, task 2) -- the live replacement for the retired
         "See Results tab" pointer."""
         event.stop()
-        self._push_results_overlay(definition=event.definition)
+        await self._push_results_overlay(definition=event.definition)
 
-    def _push_results_overlay(
+    async def _push_results_overlay(
         self, *, definition: dict[str, Any] | None = None
     ) -> None:
         """Push a standalone `ResultsTab` instance via `ResultsHostScreen`
@@ -2480,7 +2480,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 return self._unread_result_ids(service)
             return self._definition_unread_result_ids(service, definition)
 
-        results, definitions_by_id, total = _query()
+        # task-34931: three sync SQLite reads used to run inline on the
+        # click; off the loop like _read_counts.
+        results, definitions_by_id, total = await asyncio.to_thread(_query)
         heading = RESULTS_HEADING
         if definition is not None:
             name = str(
@@ -2509,16 +2511,16 @@ class SchedulesWorkbench(BaseAppScreen):
         )
 
     @on(Button.Pressed, "#scheduling-conflicts-badge")
-    def _on_conflicts_badge_pressed(self, event: Button.Pressed) -> None:
+    async def _on_conflicts_badge_pressed(self, event: Button.Pressed) -> None:
         """Status-strip conflicts badge (redesign PR-4, Task 1) -- pushes
         the hosted Conflicts view as a fresh overlay instance instead of
         flipping tabs (the tab flip could not survive the tab bar). Task
         5 retired the Conflicts tab, so this badge is the only route to
         the view."""
         event.stop()
-        self._push_conflicts_overlay()
+        await self._push_conflicts_overlay()
 
-    def _push_conflicts_overlay(self) -> None:
+    async def _push_conflicts_overlay(self) -> None:
         """Push a standalone `ConflictsTab` instance via `WorkbenchHostScreen`.
 
         Pre-reads the same `get_conflicts` shape `_refresh_conflicts_badge`
@@ -2539,8 +2541,13 @@ class SchedulesWorkbench(BaseAppScreen):
         tab used to get, while the overlay is still open.
         """
         service = self._service()
+        # task-34931: the conflicts read runs off the loop.
         conflicts = (
-            service.db.get_conflicts(service.owner_id, primitive="reminder_task")
+            await asyncio.to_thread(
+                service.db.get_conflicts,
+                service.owner_id,
+                primitive="reminder_task",
+            )
             if service is not None
             else []
         )
@@ -3805,14 +3812,16 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
-        unread_ids = self._definition_unread_result_ids(service, definition)
-        if not unread_ids:
-            self.app_instance.notify(
-                "Nothing unread for this automation.", severity="information"
-            )
-            return
-
         async def _mark() -> None:
+            # task-34931: the unread read (count + list) runs off the loop.
+            unread_ids = await asyncio.to_thread(
+                self._definition_unread_result_ids, service, definition
+            )
+            if not unread_ids:
+                self.app_instance.notify(
+                    "Nothing unread for this automation.", severity="information"
+                )
+                return
             await self._dispatch_mark_all_results_read(service, unread_ids)
 
         self.run_worker(_mark, exclusive=True, group="schedules-mark-all-read")  # type: ignore[arg-type]
@@ -4504,12 +4513,16 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
-        unread_ids = self._unread_result_ids(service)
-        if not unread_ids:
-            self.app_instance.notify("Nothing unread.", severity="information")
-            return
-
         async def _mark_all() -> None:
+            # task-34931: the unread read (count + list) runs off the loop.
+            unread_ids = await asyncio.to_thread(
+                self._unread_result_ids, service
+            )
+            if not unread_ids:
+                self.app_instance.notify(
+                    "Nothing unread.", severity="information"
+                )
+                return
             await self._dispatch_mark_all_results_read(service, unread_ids)
 
         self.run_worker(_mark_all, exclusive=True, group="schedules-mark-all-read")  # type: ignore[arg-type]

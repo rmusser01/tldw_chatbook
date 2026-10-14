@@ -126,7 +126,8 @@ class MoonshotStream(Iterator[dict[str, Any]]):
 
     def __next__(self) -> dict[str, Any]:
         try:
-            event = deepcopy(next(self._stream))
+            # HostedChatStream hands out a fresh copy per event; mutate in place.
+            event = next(self._stream)
         except StopIteration:
             # Session ledger boundary tap (issue #365): terminal-turn usage
             # records only at natural exhaustion; a consumer Stop skips it

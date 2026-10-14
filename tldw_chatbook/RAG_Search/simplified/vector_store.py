@@ -411,7 +411,13 @@ class ChromaVectorStore:
                     f"All embeddings must have the same dimension."
                 )
 
-            embeddings = embeddings.tolist()
+            # task-34398: chromadb accepts numpy arrays directly (verified on
+            # 1.5.8, which types Embeddings as ndarray[int32|float32]), so
+            # converting the whole (m, d) matrix to Python lists here -- a
+            # full per-add copy on the ingest hot path -- is gone. Coerce
+            # dtype/layout only; np.ascontiguousarray is a no-op for an
+            # already-contiguous float32 array.
+            embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
         elif isinstance(embeddings, list):
             # Validate list structure
             if len(embeddings) != len(ids):
@@ -520,9 +526,12 @@ class ChromaVectorStore:
         )
         log_histogram("vector_store_search_top_k", top_k)
 
-        # Convert numpy array to list if needed
+        # task-34398: pass ndarray query vectors through to chromadb (which
+        # accepts them, verified 1.5.8) instead of paying a list conversion
+        # per search. Coerce dtype/layout only -- a no-op for a contiguous
+        # float32 vector, the common case.
         if NUMPY_AVAILABLE and isinstance(query_embedding, np.ndarray):
-            query_embedding = query_embedding.tolist()
+            query_embedding = np.ascontiguousarray(query_embedding, dtype=np.float32)
         elif not isinstance(query_embedding, list):
             raise TypeError(
                 f"query_embedding must be numpy array or list, got {type(query_embedding)}"

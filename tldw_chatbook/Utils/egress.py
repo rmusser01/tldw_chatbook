@@ -1380,7 +1380,7 @@ def _record_rate_limit_headers(response: Any, *_args: Any, **_kwargs: Any) -> No
 def create_default_session(
     *, timeout: float | tuple[float, float] | None = None
 ) -> "DefaultTimeoutSession":
-    """Build a ``requests.Session`` whose default timeout is config-driven.
+    """Return the shared pooled session for this (timeout, verify) pair.
 
     Every call made through the returned session that omits ``timeout=``
     gets ``default_session_timeout()`` (or the ``timeout`` passed here, if
@@ -1389,24 +1389,166 @@ def create_default_session(
     construction alone never changes behaviour for a deliberate per-call or
     per-provider timeout (task-19830).
 
+    The session is shared process-wide (task-34387): HTTP keep-alive works
+    across calls, context-manager exit does not close it, and callers must
+    not mutate session-level state (headers/auth/cookies/adapters). Call
+    sites that need a mounted retry adapter pass ``mount_retry=`` to
+    :func:`create_pooled_default_session` instead of mounting their own
+    adapter.
+
     Args:
         timeout: Override for this session's default -- a scalar (applied
             to both halves) or a ``(connect, read)`` tuple. ``None`` reads
             the configured default.
 
     Returns:
-        A ``DefaultTimeoutSession``. Usable anywhere a
-        ``requests.Session`` is, including as a context manager.
+        A shared ``PooledDefaultTimeoutSession`` (a ``DefaultTimeoutSession``
+        usable anywhere a ``requests.Session`` is, including as a context
+        manager whose exit keeps the pool alive).
+    """
+    return create_pooled_default_session(timeout=timeout)
+
+
+def create_owned_default_session(
+    *, timeout: float | tuple[float, float] | None = None
+) -> DefaultTimeoutSession:
+    """Build a PRIVATE default-timeout session the caller owns.
+
+    Unlike :func:`create_default_session` (shared, pooled, closed by nobody),
+    the returned session is not pooled: the caller may mutate session-level
+    state (``trust_env``, cookies, headers) and must close it. Intended for
+    seams that transfer session ownership elsewhere -- e.g. the guarded
+    recovery ``_Operation`` in ``LLM_Calls``, which closes the session at
+    operation end and (recovered mode) sets ``trust_env = False``
+    (ADR-222 §5).
     """
     from .tls_trust import requests_verify
 
     session = DefaultTimeoutSession(default_timeout=timeout)
-    # task-21513: carry the app TLS trust policy ([network] ssl_verify) on
-    # every default session; per-request ``verify=`` kwargs still win, which
-    # is how Subscriptions' per-feed ``ssl_verify`` flag keeps precedence.
     session.verify = requests_verify()
+    # TASK-28229: owned sessions are private, so attach the rate-limit
+    # telemetry hook directly -- the pool's once-per-entry guard exists only
+    # to keep shared sessions from accumulating duplicate hooks.
     session.hooks["response"].append(_record_rate_limit_headers)
     return session
+
+
+# TASK-34387: process-wide pool of shared sessions so HTTP keep-alive actually
+# happens (each call used to pay a fresh DNS+TCP+TLS handshake to the same
+# provider host). Keyed on every dimension that changes wire behavior: the
+# resolved default timeout, the TLS trust policy, and the mounted retry
+# adapter's full configuration, so two callers never silently share a session
+# whose retry/trust semantics differ for them.
+_SESSION_POOL_LOCK = threading.Lock()
+_SESSION_POOL: dict[tuple, "PooledDefaultTimeoutSession"] = {}
+_SESSION_POOL_MAX = 8
+
+
+class PooledDefaultTimeoutSession(DefaultTimeoutSession):
+    """Shared, pooled variant of ``DefaultTimeoutSession``.
+
+    Context-manager exit and ``close()`` do not close the session: the pool
+    owns its lifetime so pooled connections survive between requests, and a
+    caller that closes "its" session cannot break other sharers.
+    :func:`close_pooled_default_sessions` exists for tests and any future
+    explicit shutdown wiring; nothing calls it in production today.
+    """
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        return False
+
+    def close(self) -> None:
+        return None
+
+
+def _retry_signature(retry: Any) -> tuple:
+    """Hashable snapshot of a ``urllib3.Retry`` configuration.
+
+    ``Retry`` carries only primitives/tuples/frozensets, so sorting its
+    ``__dict__`` gives a faithful identity without hardcoding which fields
+    matter.
+    """
+    return tuple(sorted((key, _hashable(value)) for key, value in retry.__dict__.items()))
+
+
+def _hashable(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(value)
+    if isinstance(value, set):
+        return frozenset(value)
+    return value
+
+
+def _timeout_key(timeout: float | tuple[float, float] | None) -> tuple | None:
+    if timeout is None:
+        return None
+    if isinstance(timeout, tuple):
+        return (float(timeout[0]), float(timeout[1]))
+    return (float(timeout), float(timeout))
+
+
+def create_pooled_default_session(
+    *,
+    timeout: float | tuple[float, float] | None = None,
+    mount_retry: Any = None,
+    mount_prefixes: tuple[str, ...] = ("https://",),
+) -> "PooledDefaultTimeoutSession":
+    """Return a shared pooled session; see :func:`create_default_session`.
+
+    Args:
+        timeout: Default-timeout override for calls that omit one; ``None``
+            reads the configured default. Part of the pool key.
+        mount_retry: Optional ``urllib3.util.retry.Retry`` mounted (at pool
+            creation only) as an ``HTTPAdapter`` on the given prefixes. Its
+            full configuration is part of the pool key, so providers with
+            different retry policies never share a session.
+        mount_prefixes: Prefixes to mount the retry adapter on.
+
+    Returns:
+        A shared ``PooledDefaultTimeoutSession``. Closing it is the pool's
+        job, not the caller's.
+    """
+    from .tls_trust import requests_verify
+
+    resolved_timeout = default_session_timeout() if timeout is None else timeout
+    verify = requests_verify()
+    key = (
+        _timeout_key(resolved_timeout),
+        verify,
+        _retry_signature(mount_retry) if mount_retry is not None else None,
+        tuple(mount_prefixes),
+    )
+    with _SESSION_POOL_LOCK:
+        session = _SESSION_POOL.get(key)
+        if session is None:
+            session = PooledDefaultTimeoutSession(default_timeout=resolved_timeout)
+            # task-21513: carry the app TLS trust policy ([network]
+            # ssl_verify) on every default session; per-request ``verify=``
+            # kwargs still win, which is how Subscriptions' per-feed
+            # ``ssl_verify`` flag keeps precedence.
+            session.verify = verify
+            # TASK-28229: ``create_default_session`` used to attach this
+            # response hook to every fresh session it built; the pool owns
+            # session creation now, so attach it here instead -- exactly
+            # once per pooled session, at pool-creation time, so shared
+            # sessions never accumulate duplicate hooks.
+            session.hooks["response"].append(_record_rate_limit_headers)
+            if mount_retry is not None:
+                adapter = requests.adapters.HTTPAdapter(max_retries=mount_retry)
+                for prefix in mount_prefixes:
+                    session.mount(prefix, adapter)
+            if len(_SESSION_POOL) >= _SESSION_POOL_MAX:
+                _SESSION_POOL.pop(next(iter(_SESSION_POOL)))
+            _SESSION_POOL[key] = session
+        return session
+
+
+def close_pooled_default_sessions() -> None:
+    """Close and drop every pooled session (tests, app shutdown)."""
+    with _SESSION_POOL_LOCK:
+        while _SESSION_POOL:
+            _, session = _SESSION_POOL.popitem()
+            requests.Session.close(session)
 
 
 def guarded_fetch_requests(

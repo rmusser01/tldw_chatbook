@@ -3723,6 +3723,60 @@ class MediaDatabase:
                 f"Unexpected error deleting sync log entries before threshold: {e}"
             ) from e
 
+    def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
+        """
+        Deletes sync log entries whose timestamp predates a cutoff.
+
+        Time-based retention (task-34389, ADR-229): parity with
+        ``ChaChaNotes_DB.delete_sync_log_entries_older_than``. One
+        parameterized ``DELETE`` over the indexed ``timestamp`` column, so a
+        media/chunk sync event older than the configured window leaves the
+        database regardless of reachability.
+
+        ``sync_log.timestamp`` rows are ISO-8601 UTC strings in the
+        ``YYYY-MM-DDTHH:MM:SS.mmmZ`` shape ``_log_sync_event`` emits, so the
+        comparison is a plain lexicographic string compare and the caller
+        passes the cutoff in that same shape. Rows at or after the cutoff are
+        never touched, which keeps change_id-cursor readers (the only
+        production reader) seeing every unpruned change.
+
+        Args:
+            cutoff_timestamp: Cutoff in the ``YYYY-MM-DDTHH:MM:SS.mmmZ`` form;
+                rows strictly older are deleted.
+
+        Returns:
+            int: The number of sync log entries actually deleted.
+
+        Raises:
+            ValueError: If `cutoff_timestamp` is not a non-empty string.
+            DatabaseError: If the deletion fails.
+        """
+        if not isinstance(cutoff_timestamp, str) or not cutoff_timestamp:
+            raise ValueError("cutoff_timestamp must be a non-empty string.")
+        query = "DELETE FROM sync_log WHERE timestamp < ?"
+        try:
+            with self.transaction():
+                cursor = self.execute_query(query, (cutoff_timestamp,), commit=False)
+                deleted_count = cursor.rowcount
+                logger.info(
+                    f"Deleted {deleted_count} sync log entries older than {cutoff_timestamp} from DB '{self.db_path_str}'."
+                )
+                return deleted_count
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(
+                f"Error deleting sync log entries older than cutoff from DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError(
+                "Failed to delete sync log entries older than cutoff"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error deleting sync log entries older than cutoff from DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError(
+                f"Unexpected error deleting sync log entries older than cutoff: {e}"
+            ) from e
+
     def get_reading_progress(self, media_id: int) -> Optional[Dict[str, Any]]:
         """Fetch the local-only reading progress row for a media item."""
         try:
@@ -4757,6 +4811,19 @@ class MediaDatabase:
                 return
 
             created = self._get_current_utc_timestamp_str()
+            # task-34399: build all row params first, then one executemany --
+            # the shape process_unvectorized_chunks already uses -- instead
+            # of one round-trip per chunk. `idx` stays the position in the
+            # CALLER's list (invalid entries still consume their index), and
+            # the sync-event payloads are byte-identical to the per-chunk
+            # loop this replaces.
+            insert_sql = """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
+                                                            chunk_type, creation_date, last_modified_orig, is_processed,
+                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
+                                                            prev_version, merge_parent_uuid)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            chunk_params: List[tuple] = []
+            sync_events: List[Dict[str, Any]] = []
             for idx, ch in enumerate(chunks):
                 if not isinstance(ch, dict) or ch.get("text") is None:
                     logging.warning(
@@ -4765,12 +4832,7 @@ class MediaDatabase:
                     continue
 
                 chunk_uuid = self._generate_uuid()
-                cnx.execute(
-                    """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
-                                                            chunk_type, creation_date, last_modified_orig, is_processed,
-                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
-                                                            prev_version, merge_parent_uuid)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                chunk_params.append(
                     (
                         media_id,
                         ch["text"],
@@ -4795,25 +4857,39 @@ class MediaDatabase:
                         0,
                         None,
                         None,
-                    ),
+                    )
                 )
+                sync_events.append(
+                    {
+                        "uuid": chunk_uuid,
+                        "chunk_index": idx,
+                        "payload": {
+                            **ch,
+                            "media_id": media_id,
+                            "uuid": chunk_uuid,
+                            "chunk_index": idx,
+                            "creation_date": created,
+                            "last_modified": created,
+                            "version": 1,
+                            "client_id": client_id,
+                            "deleted": 0,
+                        },
+                    }
+                )
+
+            if chunk_params:
+                cnx.executemany(insert_sql, chunk_params)
+            # _log_sync_event serializes each event's own payload (they all
+            # differ, embedding the chunk text) and has no batched variant,
+            # so the events stay per-chunk INSERTs inside this transaction.
+            for event in sync_events:
                 self._log_sync_event(
                     cnx,
                     "UnvectorizedMediaChunks",
-                    chunk_uuid,
+                    event["uuid"],
                     "create",
                     1,
-                    {
-                        **ch,
-                        "media_id": media_id,
-                        "uuid": chunk_uuid,
-                        "chunk_index": idx,
-                        "creation_date": created,
-                        "last_modified": created,
-                        "version": 1,
-                        "client_id": client_id,
-                        "deleted": 0,
-                    },
+                    event["payload"],
                 )
 
         # ------------------------------------------------------------------

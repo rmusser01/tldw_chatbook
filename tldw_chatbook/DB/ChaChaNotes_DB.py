@@ -84,7 +84,11 @@ from loguru import logger
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.input_validation import validate_conversation_archive_scope
 from tldw_chatbook.Utils.timestamps import parse_utc, to_utc_iso
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Metrics.metrics_logger import (
+    is_metrics_logging_enabled,
+    log_counter,
+    log_histogram,
+)
 
 
 #
@@ -139,6 +143,40 @@ _ID_LIST_BATCH_CAP = 500
 _SQLITE_DEFAULT_VARIABLE_LIMIT = 999
 _UNSET = object()
 _VOICE_TRACE_IMPORT_GUARD_FUNCTION = "console_voice_trace_import_authorized"
+
+# task-34399: execute_query used to build fresh label dicts and call
+# log_histogram/log_counter (plus two time.time() reads) on EVERY query even
+# though metrics_logger drops the emission when metrics logging is off (the
+# default). One `is_metrics_logging_enabled()` check per query now gates all
+# of it, and the immutable label dicts are shared module constants instead of
+# per-call allocations. The log_* functions themselves keep their internal
+# gate, so these labels are read-only to every consumer.
+_QUERY_METRIC_LABELS_SUCCESS = {"operation": "query", "success": "true"}
+_QUERY_METRIC_LABELS_ERROR = {"operation": "query", "success": "false"}
+_QUERY_METRIC_LABELS_SCRIPT_SUCCESS = {"operation": "script", "success": "true"}
+_QUERY_METRIC_LABELS_SCRIPT_ERROR = {"operation": "script", "success": "false"}
+_COUNTER_LABELS_SUCCESS = {"operation": "query", "status": "success"}
+_COUNTER_LABELS_SCRIPT_SUCCESS = {"operation": "script", "status": "success"}
+_COUNTER_LABELS_INTEGRITY_ERROR = {
+    "operation": "query",
+    "status": "error",
+    "error_type": "integrity_error",
+}
+_COUNTER_LABELS_DATABASE_ERROR = {
+    "operation": "query",
+    "status": "error",
+    "error_type": "database_error",
+}
+_COUNTER_LABELS_SCRIPT_INTEGRITY_ERROR = {
+    "operation": "script",
+    "status": "error",
+    "error_type": "integrity_error",
+}
+_COUNTER_LABELS_SCRIPT_DATABASE_ERROR = {
+    "operation": "script",
+    "status": "error",
+    "error_type": "database_error",
+}
 
 
 class _VoiceTraceImportAuthorization:
@@ -3564,8 +3602,15 @@ DELETE FROM keywords
             ConflictError: If an SQLite IntegrityError due to a "unique constraint failed" occurs.
             CharactersRAGDBError: For other SQLite errors or general query execution failures.
         """
-        start_time = time.time()
-        operation_type = "script" if script else "query"
+        # task-34399: one cheap check gates every metric emission and both
+        # time.time() reads below; the shared label dicts at module scope
+        # replace the per-call dict literals this used to build on every
+        # query. metrics_logger drops the emission itself when metrics
+        # logging is off (the default), so gating here just skips the
+        # now-dead timing and label work too.
+        collect_metrics = is_metrics_logging_enabled()
+        if collect_metrics:
+            start_time = time.time()
 
         conn = self.get_connection()
         try:
@@ -3596,34 +3641,48 @@ DELETE FROM keywords
                 logger.debug("Committed directly by execute_query.")
 
             # Log success metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chachanotes_db_query_duration",
-                duration,
-                labels={"operation": operation_type, "success": "true"},
-            )
-            log_counter(
-                "chachanotes_db_query_count",
-                labels={"operation": operation_type, "status": "success"},
-            )
+            if collect_metrics:
+                duration = time.time() - start_time
+                log_histogram(
+                    "chachanotes_db_query_duration",
+                    duration,
+                    labels=(
+                        _QUERY_METRIC_LABELS_SCRIPT_SUCCESS
+                        if script
+                        else _QUERY_METRIC_LABELS_SUCCESS
+                    ),
+                )
+                log_counter(
+                    "chachanotes_db_query_count",
+                    labels=(
+                        _COUNTER_LABELS_SCRIPT_SUCCESS
+                        if script
+                        else _COUNTER_LABELS_SUCCESS
+                    ),
+                )
 
             return cursor
         except sqlite3.IntegrityError as e:
             # Log error metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chachanotes_db_query_duration",
-                duration,
-                labels={"operation": operation_type, "success": "false"},
-            )
-            log_counter(
-                "chachanotes_db_query_count",
-                labels={
-                    "operation": operation_type,
-                    "status": "error",
-                    "error_type": "integrity_error",
-                },
-            )
+            if collect_metrics:
+                duration = time.time() - start_time
+                log_histogram(
+                    "chachanotes_db_query_duration",
+                    duration,
+                    labels=(
+                        _QUERY_METRIC_LABELS_SCRIPT_ERROR
+                        if script
+                        else _QUERY_METRIC_LABELS_ERROR
+                    ),
+                )
+                log_counter(
+                    "chachanotes_db_query_count",
+                    labels=(
+                        _COUNTER_LABELS_SCRIPT_INTEGRITY_ERROR
+                        if script
+                        else _COUNTER_LABELS_INTEGRITY_ERROR
+                    ),
+                )
 
             logger.warning(
                 f"Integrity constraint violation: {query[:300]}... Error: exception_type={type(e).__name__}"
@@ -3636,20 +3695,25 @@ DELETE FROM keywords
             ) from e  # Broader for other integrity issues
         except sqlite3.Error as e:
             # Log error metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chachanotes_db_query_duration",
-                duration,
-                labels={"operation": operation_type, "success": "false"},
-            )
-            log_counter(
-                "chachanotes_db_query_count",
-                labels={
-                    "operation": operation_type,
-                    "status": "error",
-                    "error_type": "database_error",
-                },
-            )
+            if collect_metrics:
+                duration = time.time() - start_time
+                log_histogram(
+                    "chachanotes_db_query_duration",
+                    duration,
+                    labels=(
+                        _QUERY_METRIC_LABELS_SCRIPT_ERROR
+                        if script
+                        else _QUERY_METRIC_LABELS_ERROR
+                    ),
+                )
+                log_counter(
+                    "chachanotes_db_query_count",
+                    labels=(
+                        _COUNTER_LABELS_SCRIPT_DATABASE_ERROR
+                        if script
+                        else _COUNTER_LABELS_DATABASE_ERROR
+                    ),
+                )
 
             logger.error(
                 f"Query execution failed: {query[:300]}... Error: exception_type={type(e).__name__}"
@@ -17024,7 +17088,11 @@ DELETE FROM keywords
             raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
     def search_messages_by_content(
-        self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10
+        self,
+        content_query: str,
+        conversation_id: Optional[str] = None,
+        limit: int = 10,
+        include_image_data: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Searches messages by content using FTS.
@@ -17053,6 +17121,11 @@ DELETE FROM keywords
                 it are inert.
             conversation_id: Optional conversation UUID to filter results.
             limit: Maximum number of results. Defaults to 10.
+            include_image_data: When False, the ``image_data`` BLOB column is
+                returned as None (key still present) so text-only callers --
+                snippet builders -- skip the BLOB I/O (task-260 pattern,
+                task-34399). ``image_mime_type`` is always returned, so
+                callers can still tell an image exists.
 
         Returns:
             A list of matching message dictionaries. Can be empty.
@@ -17063,9 +17136,10 @@ DELETE FROM keywords
         safe_search_term = build_and_match_query(content_query)
         if not safe_search_term:
             return []
-        base_query = """
+        image_col = "m.image_data" if include_image_data else "NULL AS image_data"
+        base_query = f"""
                      SELECT m.id, m.conversation_id, m.parent_message_id,
-                            m.sender, m.content, m.image_data, m.image_mime_type,
+                            m.sender, m.content, {image_col}, m.image_mime_type,
                             m.timestamp, m.ranking, m.last_modified, m.deleted,
                             m.client_id, m.version, m.feedback, m.role, m.variant_of,
                             m.variant_number, m.is_selected_variant, m.total_variants,
@@ -18293,7 +18367,48 @@ DELETE FROM keywords
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def list_notes(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_notes(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        preview_chars: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """List non-deleted notes, most recently modified first.
+
+        Args:
+            limit: Maximum number of notes to return.
+            offset: Number of notes to skip.
+            preview_chars: When given (and > 0), each row carries a
+                ``substr(content, 1, preview_chars)`` projection under the
+                ``preview`` key instead of the full ``content`` body -- the
+                same projection ``list_library_notes_page`` ships for list
+                surfaces, so a large listing stops transferring every note
+                body (task-34399). Callers that render or export full bodies
+                must keep the default.
+
+        Returns:
+            A list of note dictionaries. With ``preview_chars`` unset the
+            dicts are the full rows (unchanged historical behavior); with it
+            set, ``content`` is replaced by the truncated ``preview``.
+        """
+        if preview_chars is not None and int(preview_chars) > 0:
+            query = (
+                "SELECT id, title, substr(content, 1, ?) AS preview, "
+                "created_at, last_modified, deleted, client_id, version "
+                "FROM notes WHERE deleted = 0 ORDER BY last_modified DESC "
+                "LIMIT ? OFFSET ?"
+            )
+            try:
+                cursor = self.execute_query(
+                    query, (int(preview_chars), limit, offset)
+                )
+                return [dict(row) for row in cursor.fetchall()]
+            except CharactersRAGDBError as e:
+                logger.error(
+                    f"Database error listing notes: exception_type={type(e).__name__}"
+                )
+                raise
         # Using _list_generic_items but ensuring table name and order_by_col are correct for notes
         return self._list_generic_items("notes", "last_modified DESC", limit, offset)
 
@@ -21345,10 +21460,20 @@ DELETE FROM keywords
     def get_sync_log_entries(
         self,
         since_change_id: int = 0,
-        limit: Optional[int] = None,
+        limit: Optional[int] = 500,
         entity_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieves sync log entries newer than a given change_id, optionally filtered by entity type."""
+        """Retrieves sync log entries newer than a given change_id, optionally filtered by entity type.
+
+        Args:
+            since_change_id: Only entries with a strictly greater change_id
+                are returned.
+            limit: Maximum number of entries to return. Defaults to 500 so
+                an unbounded backlog can never be pulled whole into memory
+                (task-34399); pass ``None`` explicitly for the old
+                unbounded read, or a caller-specific bound.
+            entity_type: Optional entity filter (e.g. ``"notes"``).
+        """
         query_parts = ["SELECT * FROM sync_log WHERE change_id > ?"]
         params_list: List[Any] = [since_change_id]
 
@@ -21571,6 +21696,57 @@ DELETE FROM keywords
             )
             raise CharactersRAGDBError(
                 "Failed to delete sync log entries before threshold"
+            ) from e
+
+    def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
+        """Delete ``sync_log`` rows whose ``timestamp`` predates a cutoff.
+
+        Time-based retention (task-34389, ADR-229): the companion to
+        :meth:`prune_sync_log`, which bounds the log by REACHABILITY. This
+        method bounds it by AGE -- one parameterized ``DELETE`` over the
+        indexed ``timestamp`` column, so a journal row older than the
+        configured window leaves the database even when it is still the
+        frontier row of a live entity.
+
+        ``sync_log.timestamp`` stores ISO-8601 UTC strings in the
+        ``YYYY-MM-DDTHH:MM:SS.mmmZ`` shape every writer emits (the triggers
+        via ``strftime('%Y-%m-%dT%H:%M:%fZ', 'now')``), so the comparison is
+        a plain lexicographic string compare and the caller passes the cutoff
+        in that same shape. Rows at or after the cutoff are never touched,
+        which is what keeps change_id-cursor readers (the only production
+        reader) seeing every unpruned change.
+
+        Args:
+            cutoff_timestamp: Inclusive-exclusive cutoff in the
+                ``YYYY-MM-DDTHH:MM:SS.mmmZ`` form; rows strictly older are
+                deleted.
+
+        Returns:
+            The number of rows actually deleted.
+
+        Raises:
+            ValueError: If ``cutoff_timestamp`` is not a non-empty string.
+            CharactersRAGDBError: If the deletion fails.
+        """
+        if not isinstance(cutoff_timestamp, str) or not cutoff_timestamp:
+            raise ValueError("cutoff_timestamp must be a non-empty string.")
+        try:
+            with self.transaction() as conn:
+                deleted = conn.execute(
+                    "DELETE FROM sync_log WHERE timestamp < ?",
+                    (cutoff_timestamp,),
+                ).rowcount
+            logger.info(
+                f"Deleted {deleted} sync_log entries older than {cutoff_timestamp} "
+                f"from db_sha256={self._db_diagnostic_ref}."
+            )
+            return deleted
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            logger.error(
+                f"Error deleting sync_log entries older than cutoff: exception_type={type(e).__name__}"
+            )
+            raise CharactersRAGDBError(
+                "Failed to delete sync log entries older than cutoff"
             ) from e
 
     def prune_sync_log(self) -> int:

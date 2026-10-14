@@ -90,6 +90,11 @@ EXEMPT_FILES: frozenset[str] = frozenset(
         # here, and its existing `timeout: float = 30.0` parameter is a
         # deliberate, already-reviewed default, not an oversight.
         "Utils/egress.py",
+        # task-34387 review I-2: `build_requests_session` is a deliberate
+        # session factory (same shape as the Utils/egress.py exemption
+        # above) -- its bare `requests.Session()` is the product it hands
+        # callers, not an unconverted call site.
+        "Utils/tls_trust.py",
     }
 )
 

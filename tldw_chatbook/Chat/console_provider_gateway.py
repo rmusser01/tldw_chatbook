@@ -237,6 +237,21 @@ NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
 
 
+def _capture_sanitizer_for(known_credentials: tuple[str, ...]) -> Any:
+    """Build one credential sanitizer per exchange flight (TASK-34957).
+
+    ``None`` on any construction failure: the per-chunk call site then
+    falls back to constructing from ``known_credentials`` exactly as
+    before, so capture never gains a new failure mode.
+    """
+    try:
+        from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+        return CredentialSanitizer(known_credentials=known_credentials)
+    except Exception:  # noqa: BLE001 - capture is diagnostic, fail open
+        return None
+
+
 def _max_trace_accumulated_bytes() -> int:
     """ADR-097 boot ratchet: settlement's cap constant, read on first use."""
     from tldw_chatbook.Chat.console_trace_settlement import MAX_TRACE_RESPONSE_BYTES
@@ -993,6 +1008,7 @@ class ConsoleProviderStreamSignals:
                     sanitized, omitted = sanitize_capture_value_with_omission(
                         items,
                         known_credentials=flight["known_credentials"],
+                        sanitizer=flight.get("credential_sanitizer"),
                     )
                     if omitted:
                         path = f"response.{key}"
@@ -1321,6 +1337,9 @@ class ConsoleProviderCallSignals:
                 "response_truncation_inventory": [],
                 "credential_omission_inventory": [],
                 "known_credentials": known_credentials,
+                # TASK-34957: one sanitizer per exchange flight; the
+                # per-chunk mutation path reuses it instead of rebuilding.
+                "credential_sanitizer": _capture_sanitizer_for(known_credentials),
                 "capture_detail": self.capture_detail,
                 "pii_redaction_enabled": self._aggregate.pii_redaction_enabled,
                 "pii_ruleset_revision_id": (self._aggregate.pii_ruleset_revision_id),
@@ -2497,9 +2516,61 @@ def _provider_response_envelope(
     return envelope
 
 
-def _trace_response_item_bytes(item: ProviderStreamItem) -> int | None:
-    """Measure one normalized semantic item without retaining its raw value."""
+def _json_escaped_string_bytes(text: str) -> int | None:
+    """Length of ``text`` as a JSON string literal, without serializing.
 
+    TASK-34962: the per-token hot path must not build an envelope and run a
+    full ``json.dumps`` per chunk. With ``ensure_ascii=False`` only quotes,
+    backslashes and C0 control characters gain escape bytes (newline/tab/
+    carriage return -- the realistic ones in model text -- add exactly one
+    each); everything else serializes to its own UTF-8 bytes. ``+2`` covers
+    the surrounding quotes. Exotic control characters would undercount by
+    at most five bytes each -- immaterial for the accumulation bound.
+    Returns ``None`` for text JSON cannot encode.
+    """
+    try:
+        encoded = text.encode("utf-8")
+    except ValueError:
+        return None
+    escapes = (
+        text.count('"')
+        + text.count("\\")
+        + text.count("\n")
+        + text.count("\r")
+        + text.count("\t")
+    )
+    return len(encoded) + escapes + 2
+
+
+def _trace_response_item_bytes(item: ProviderStreamItem) -> int | None:
+    """Measure one normalized semantic item without retaining its raw value.
+
+    Text deltas (content and thinking -- the per-token cases) take the
+    cheap length-plus-escape path with a fixed envelope-wrapper allowance
+    (``{"content":...,"role":"assistant"}`` / the thinking evidence dict
+    keys). Structured items are rare per response and keep the exact
+    envelope serialization.
+    """
+    text_bytes: int | None
+    wrapper = 0
+    if isinstance(item, str):
+        text_bytes = _json_escaped_string_bytes(item)
+        wrapper = len('{"content":') + len(',"role":"assistant"}')  # 31
+    elif isinstance(item, ProviderThinkingDelta):
+        text_bytes = _json_escaped_string_bytes(item.text)
+        # thinking-evidence dict: fixed keys + the item's own short metadata
+        wrapper = (
+            len('{"role":"assistant","content":"","thinking":[{"text":')
+            + len(item.provider)
+            + len(item.model)
+            + len(item.protocol)
+            + len(item.source_format)
+            + len(',"provider":"","model":"","protocol":"","source_format":""}]}')
+        )
+    else:
+        text_bytes = None
+    if text_bytes is not None:
+        return text_bytes + wrapper
     try:
         envelope = _provider_response_envelope((item,))
         return len(

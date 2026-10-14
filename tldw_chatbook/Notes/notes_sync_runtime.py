@@ -116,6 +116,20 @@ CUTOVER_MARKER = "notes-sync-cutover-v1"
 _AUTOMATIC_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
 _EXECUTABLE_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
 _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
+
+
+def _display_path_suffix(display_path: str) -> str:
+    """Return the ``Path``-style final suffix without building a ``Path``.
+
+    Matches ``Path(display_path).suffix`` for POSIX display paths: the final
+    component's last dot segment, unless the name is hidden (``.md``), ends
+    in a dot, or carries no dot.
+    """
+    name = display_path.rstrip("/").rsplit("/", 1)[-1]
+    dot = name.rfind(".")
+    if 0 < dot < len(name) - 1:
+        return name[dot:]
+    return ""
 _OBSERVATION_BUNDLE_LIMIT = 8
 _DISPLAY_LABEL_MAX_CHARS = 160
 _DESTINATION_LABEL_MAX_CHARS = 1024
@@ -1039,7 +1053,7 @@ class _ProductionRuntimeAdapter:
             relative_path = candidate.source.source_path.relative_to(
                 Path(root.canonical_path)
             ).as_posix()
-            if Path(relative_path).suffix.casefold() not in _SYNC_FILE_EXTENSIONS:
+            if _display_path_suffix(relative_path).casefold() not in _SYNC_FILE_EXTENSIONS:
                 continue
             syncable_files += 1
             discovered_sources[relative_path] = candidate.source
@@ -1363,19 +1377,30 @@ class _ProductionRuntimeAdapter:
 
     @staticmethod
     def _discovery_signature(discovery: object) -> tuple[object, ...]:
-        return tuple(
-            (
-                candidate.source.display_path,
-                candidate.identity.device,
-                candidate.identity.inode,
-                candidate.identity.size,
-                candidate.identity.modified_ns,
-                candidate.identity.changed_ns,
+        """Hash the syncable discovery entries into one change token.
+
+        Change detection only compares this value against the previous pass,
+        so one digest of the filtered (path, identity) entries replaces the
+        per-candidate tuple building -- and the suffix filter compares raw
+        path strings instead of constructing a ``Path`` per candidate.
+        """
+        fingerprint = hashlib.sha256()
+        for candidate in discovery.candidates:
+            display_path = candidate.source.display_path
+            if (
+                _display_path_suffix(display_path).casefold()
+                not in _SYNC_FILE_EXTENSIONS
+            ):
+                continue
+            identity = candidate.identity
+            fingerprint.update(
+                (
+                    f"{display_path}\0{identity.device}\0{identity.inode}"
+                    f"\0{identity.size}\0{identity.modified_ns}"
+                    f"\0{identity.changed_ns}\0"
+                ).encode("utf-8", "surrogatepass")
             )
-            for candidate in discovery.candidates
-            if Path(candidate.source.display_path).suffix.casefold()
-            in _SYNC_FILE_EXTENSIONS
-        )
+        return (fingerprint.hexdigest(),)
 
     def changed_root_ids(self, roots: Mapping[str, str]) -> tuple[str, ...]:
         """Return only roots whose bounded metadata inventory changed."""

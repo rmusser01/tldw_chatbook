@@ -372,7 +372,7 @@ def test_opening_a_v5_database_drops_the_inert_version_columns(request, tmp_path
     conn = db.get_connection()
 
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 6  # this suite pins the v5 -> v6 hop specifically
+    assert SCHEMA_VERSION == 7  # v5 -> v6 hop plus the v7 tool-message migration both ride SCHEMA_VERSION
 
     for table in _VERSION_CARRYING_TABLES:
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}

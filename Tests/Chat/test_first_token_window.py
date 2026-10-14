@@ -260,7 +260,16 @@ def test_a_self_hosted_read_timeout_never_undercuts_the_first_token_window(
 
     _no_first_token_config(monkeypatch)
     session = _RecordingSession()
-    monkeypatch.setattr(local, "create_default_session", lambda: session)
+    mounted_retries: list[object] = []
+
+    def _factory(*args, **kwargs):
+        # Production passes its Retry via mount_retry= (the pooled factory
+        # mounts the adapter); the stub records it instead of mounting.
+        mounted_retries.append(kwargs.get("mount_retry"))
+        return session
+
+    monkeypatch.setattr(local, "create_default_session", _factory, raising=False)
+    monkeypatch.setattr(local, "create_pooled_default_session", _factory, raising=False)
 
     local._chat_with_openai_compatible_local_server(
         api_base_url="http://127.0.0.1:9412/v1",
@@ -273,7 +282,8 @@ def test_a_self_hosted_read_timeout_never_undercuts_the_first_token_window(
     )
 
     assert session.timeouts and session.timeouts[0] > 300, session.timeouts
-    retry = session.adapters[0].max_retries
+    retry = mounted_retries[0]
+    assert retry is not None, "the pooled factory must receive a mount_retry"
     assert retry.read == 0, "a read timeout must not re-send the prompt"
 
 

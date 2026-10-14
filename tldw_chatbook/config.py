@@ -1046,6 +1046,7 @@ def set_encryption_password(password: str):
     _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password set for current session")
 
 
@@ -1059,6 +1060,7 @@ def clear_encryption_password():
     global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
     _STARTUP_UNLOCK_PENDING = False
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password cleared from memory")
 
 
@@ -2337,6 +2339,9 @@ def _load_settings_uncached(
     # the ingest template resolution order (``[chunking] default_template``).
     # Distinct from the legacy CamelCase "Chunking" server section above.
     final_chunking_settings_cli = get_toml_section("chunking")
+    # (task-34389, ADR-229) The [sync] table -- the sync-journal retention
+    # window the startup maintenance pass reads.
+    final_sync_settings_cli = get_toml_section("sync")
     final_image_generation_settings_cli = get_toml_section("image_generation")
     final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
@@ -2735,6 +2740,7 @@ def _load_settings_uncached(
         "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
+        "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
@@ -5982,6 +5988,22 @@ llm_context_document_limit = 10
 # an unresolvable name fails the import with a named error rather than
 # silently falling back to different chunking.
 default_template = ""
+
+
+# ==========================================================
+# Sync Journal Retention
+# ==========================================================
+[sync]
+# Retention window, in days, for the local sync journals (`sync_log` in the
+# ChaChaNotes and media databases). Every conversation/message/note/media
+# mutation leaves a full-copy JSON event there, so without a bound the table
+# grows with total mutations forever. A background pass after startup (and
+# then once a day) deletes rows older than this many days; the number of
+# pruned rows is logged. Rows within the window are never touched, so sync
+# consumers reading by change_id cursor still see every unpruned change.
+# Set 0 (or any negative number) to disable pruning entirely.
+# (TASK-34389; ADR-229.)
+sync_log_retention_days = 90
 
 
 # --- Model Capabilities Configuration ---

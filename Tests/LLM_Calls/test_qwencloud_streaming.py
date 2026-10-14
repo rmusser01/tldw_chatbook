@@ -1978,8 +1978,8 @@ def test_stream_retries_only_before_first_consumed_byte(
     session = _ByteStreamSession([retryable, malformed_after_body, replay_canary])
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2047,8 +2047,8 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
     session = _ByteStreamSession([response])
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,

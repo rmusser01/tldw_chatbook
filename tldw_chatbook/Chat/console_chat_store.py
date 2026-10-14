@@ -10981,6 +10981,7 @@ class ConsoleChatStore:
     ) -> ConsoleChatMessage:
         """Append one source node within an atomic fork-transition window."""
 
+        self._bump_display_projection_revision(session_id)
         with self._fork_source_transition(session_id):
             return self._append_message(
                 session_id,
@@ -12412,6 +12413,7 @@ class ConsoleChatStore:
         if not content.strip():
             raise ValueError("Message content cannot be blank.")
         message = self._message_or_raise(message_id)
+        self._bump_display_revision_for_message(message.id)
         self._reject_quarantined_generation_mutation(message)
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
@@ -13854,6 +13856,7 @@ class ConsoleChatStore:
         ``console_subtree_delete`` so the Console can run the write off the
         event loop; this runs all three in a row.
         """
+        self._bump_display_revision_for_message(message_id)
         from tldw_chatbook.Chat import console_subtree_delete as subtree
 
         plan = subtree.plan_subtree_delete(self, message_id)
@@ -14301,8 +14304,14 @@ class ConsoleChatStore:
                 )
             )
 
-    def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
+    def append_stream_chunk(self, message_id: str, chunk: str) -> None:
         """Append streamed assistant content to an existing message.
+
+        Returns ``None`` on purpose (TASK-34961): this runs once per
+        streamed chunk and every production caller discarded the returned
+        snapshot copy, so the hot path no longer pays a full ~50-field
+        message copy per token. Callers wanting state read
+        ``get_message`` / ``messages_for_session``.
 
         A chunk arriving for a message already ``"stopped"`` is dropped
         silently rather than raising: the user's Stop already finalized and
@@ -14317,7 +14326,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._reject_quarantined_generation_mutation(message)
         if message.status == "stopped":
-            return self._snapshot(message)
+            return None
         self._validate_can_stream(message)
         capture = self._character_emote_captures.get(message.id)
         accepted_events: tuple[CharacterEmoteEvent, ...] = ()
@@ -14358,7 +14367,6 @@ class ConsoleChatStore:
             and stash.get("first_token_at") is None
         ):
             stash["first_token_at"] = time.time()
-        return self._snapshot(message)
 
     # --- Trajectory sidecar (schema v38) -----------------------------------
     #
@@ -16846,6 +16854,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._prime_unpersisted_terminal_receipt(message)
+        self._bump_display_revision_for_message(message.id)
         self._finalize_character_emote_capture(message, outcome="complete")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -17049,6 +17058,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._bump_display_revision_for_message(message.id)
         self._finalize_character_emote_capture(message, outcome="stopped")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -17122,6 +17132,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._prime_unpersisted_terminal_receipt(message)
+        self._bump_display_revision_for_message(message.id)
         self._finalize_character_emote_capture(message, outcome="failed")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -17931,6 +17942,11 @@ class ConsoleChatStore:
         message.thinking = envelope
         message.opaque_thinking_json = None
         message.thinking_warning = None
+        # TASK-34958 review: live thinking envelopes mutate the rendered
+        # transcript without any content chunk -- without this bump the
+        # screen's tick gate would hold reasoning text at the ~3s forced
+        # pass cadence during thinking-only phases.
+        self._bump_display_revision_for_message(message.id)
         return self._snapshot(message)
 
     def settle_message_thinking(
@@ -21634,6 +21650,18 @@ class ConsoleChatStore:
         """Return a constant-time invalidation token for screen projections."""
         self._session_or_raise(session_id)
         return self._display_projection_revisions.get(session_id, 0)
+
+    def _bump_display_revision_for_message(self, message_id: str) -> None:
+        """Invalidate the token for one message's session (TASK-34958).
+
+        The screen's 0.2s transcript tick gates on the token, so every
+        transcript-visible mutation must advance it. Extra bumps are always
+        safe: consumers only use the token to SKIP work, so an over-broad
+        invalidation costs one re-sync, never staleness.
+        """
+        session_id = self._message_session_index.get(message_id)
+        if session_id is not None:
+            self._bump_display_projection_revision(session_id)
 
     def _bump_payload_revision(self, session_id: str) -> None:
         """Mark the session's provider payload as changed (cost-ticker PR3).

@@ -352,6 +352,9 @@ def _list_relative_directory(
         resolved_workspace: Path | None = workspace.resolve()
     except (OSError, RuntimeError, ValueError):
         resolved_workspace = None
+    # Loop-invariant check input: denylist entries case-folded once for the
+    # whole scan instead of once per candidate.
+    folded = _folded_exclusions(sensitive_exclusions)
     if (
         not _relative_target_is_safe(
             relative,
@@ -359,6 +362,7 @@ def _list_relative_directory(
             sensitive_exclusions,
             is_directory=True,
             resolved_workspace=resolved_workspace,
+            folded_exclusions=folded,
         )
         or not target.is_dir()
     ):
@@ -378,6 +382,7 @@ def _list_relative_directory(
             sensitive_exclusions,
             is_directory=entry.is_dir(),
             resolved_workspace=resolved_workspace,
+            folded_exclusions=folded,
         ):
             continue
         scanned.append(entry)
@@ -1271,6 +1276,9 @@ def _glob_relative_files(
         resolved_workspace: Path | None = workspace.resolve()
     except (OSError, RuntimeError, ValueError):
         resolved_workspace = None
+    # Loop-invariant check input: denylist entries case-folded once for the
+    # whole glob instead of once per candidate.
+    folded = _folded_exclusions(sensitive_exclusions)
     for p in workspace.glob(pattern):
         try:
             if not p.is_file():
@@ -1288,10 +1296,14 @@ def _glob_relative_files(
                     sensitive_exclusions,
                     is_directory=False,
                     resolved_workspace=resolved_workspace,
+                    folded_exclusions=folded,
                 ):
                     continue
             elif _is_relative_sensitive_path(
-                rendered, sensitive_exclusions, is_directory=False
+                rendered,
+                sensitive_exclusions,
+                is_directory=False,
+                folded_exclusions=folded,
             ):
                 continue
             mtime = p.stat().st_mtime
@@ -1445,7 +1457,7 @@ def grep_files(
     import re
 
     try:
-        re.compile(pattern)
+        compiled = re.compile(pattern)
     except re.error as exc:
         raise LocalToolError(f"invalid regex: {exc}") from exc
     if mode not in {"content", "files", "count"}:
@@ -1457,7 +1469,7 @@ def grep_files(
         ".", workspace_root, intent="list", context=sensitive_ctx
     )
     return _grep_relative_files(
-        pattern,
+        compiled,  # validated once here; the relative core must not recompile
         workspace=Path(workspace_root).resolve(),
         mode=mode,
         max_results=max_results,
@@ -1466,7 +1478,7 @@ def grep_files(
 
 
 def _grep_relative_files(
-    pattern: str,
+    pattern: str | re.Pattern[str],
     *,
     workspace: Path,
     mode: str,
@@ -1476,10 +1488,15 @@ def _grep_relative_files(
     """Grep pinned-root-relative files while refusing escaping symlink content."""
     import re
 
-    try:
-        rx = re.compile(pattern)
-    except re.error as exc:
-        raise LocalToolError(f"invalid regex: {exc}") from exc
+    if isinstance(pattern, re.Pattern):
+        rx = pattern
+        display_pattern = pattern.pattern
+    else:
+        display_pattern = pattern
+        try:
+            rx = re.compile(pattern)
+        except re.error as exc:
+            raise LocalToolError(f"invalid regex: {exc}") from exc
     if mode not in ("content", "files", "count"):
         raise LocalToolError(f"unknown mode: {mode}")
     if max_results < 1:
@@ -1497,7 +1514,7 @@ def _grep_relative_files(
     ci_near_total = 0
     ci_near_example: str | None = None
     try:
-        rx_ci = re.compile(pattern, re.IGNORECASE)
+        rx_ci = re.compile(display_pattern, re.IGNORECASE)
     except re.error:
         rx_ci = rx  # unreachable (validated above); keep the type narrow
     # review-B B27: resolve the workspace once for the whole walk instead of
@@ -1507,6 +1524,9 @@ def _grep_relative_files(
         resolved_workspace: Path | None = workspace.resolve()
     except (OSError, RuntimeError, ValueError):
         resolved_workspace = None
+    # Loop-invariant check input: denylist entries case-folded once for the
+    # whole search instead of once per candidate.
+    folded = _folded_exclusions(sensitive_exclusions)
     for p in workspace.rglob("*"):
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
@@ -1518,6 +1538,15 @@ def _grep_relative_files(
                 sensitive_exclusions,
                 is_directory=False,
                 resolved_workspace=resolved_workspace,
+                folded_exclusions=folded,
+                # rglob never descends INTO symlinked directories, so a
+                # candidate that is not itself a symlink has only real
+                # directories between the (already resolved) workspace root
+                # and its lexical path — its realpath equals that lexical
+                # path and the two checks below already decided. Symlinks
+                # still get the full resolved-target check, so escaping or
+                # sensitive link targets are refused exactly as before.
+                resolve_regular_targets=False,
             ):
                 continue  # protected path — skipped BEFORE it is read
         except OSError:
@@ -1550,17 +1579,40 @@ def _grep_relative_files(
         shown.append(f"… ({total - max_results} more, truncated)")
     if shown:
         return "\n".join(shown)
-    empty = f"(no matches for {pattern!r})"
+    empty = f"(no matches for {display_pattern!r})"
     if ci_near_total:
         # Review fix (PR #3086 Minor-2): route through _bound_hint so the
         # path-bearing example respects the same cap as every other hint
         # (AC#5's blanket bound claim).
         return f"{empty}\n{HINT_LABEL}: " + _bound_hint(
             f"{ci_near_total} line(s) match case-insensitively "
-            f"(e.g. {ci_near_example}) — prefix the pattern with "
+            f"(e.g. {ci_near_example}) \u2014 prefix the pattern with "
             "(?i) if that is intended"
         )
     return empty
+
+
+
+#: One denylist entry with its path parts case-folded once, ready for the
+#: per-candidate comparisons in :func:`_is_relative_sensitive_path`:
+#: ``(kind, folded value parts, raw value)``. The raw value is kept because
+#: the ``"name"`` rule compares against it verbatim.
+_FoldedExclusion = tuple[str, tuple[str, ...], str]
+
+
+def _folded_exclusions(
+    exclusions: tuple[SensitiveExclusion, ...],
+) -> tuple[_FoldedExclusion, ...]:
+    """Case-fold every exclusion's path parts ONCE per call.
+
+    ``_is_relative_sensitive_path`` used to re-fold ``Path(value).parts`` for
+    every exclusion entry for every candidate — O(candidates x exclusions)
+    tuple builds that are loop-invariant for one tool invocation.
+    """
+    return tuple(
+        (kind, tuple(part.casefold() for part in Path(value).parts), value)
+        for kind, value in exclusions
+    )
 
 
 def _relative_target_is_safe(
@@ -1570,6 +1622,8 @@ def _relative_target_is_safe(
     *,
     is_directory: bool,
     resolved_workspace: Path | None = None,
+    folded_exclusions: tuple[_FoldedExclusion, ...] | None = None,
+    resolve_regular_targets: bool = True,
 ) -> bool:
     """Require both lexical and resolved targets to be admissible for I/O.
 
@@ -1578,20 +1632,42 @@ def _relative_target_is_safe(
     the workspace once per operation instead of once per entry. Omitted, the
     workspace is resolved here as before; the decision is identical either
     way.
+
+    ``folded_exclusions`` is :func:`_folded_exclusions`' once-per-call
+    output; ``None`` folds here, which decides identically.
+
+    ``resolve_regular_targets=False`` (grep only) skips the realpath walk for
+    candidates that pass the lexical check and are not themselves symlinks:
+    grep enumerates with ``rglob``, which never descends INTO symlinked
+    directories, so a non-symlink candidate's ancestors below the (resolved)
+    workspace are all real directories and its resolved form equals its
+    lexical form — the same two checks then decide identically. Candidates
+    that ARE symlinks still get the full resolved-target check, so the
+    escaping-symlink and symlinked-sensitive-path refusals are unchanged;
+    see ``test_fs_grep_skips_symlinks_escaping_workspace``.
     """
     try:
-        if _is_relative_sensitive_path(relative, exclusions, is_directory=is_directory):
-            return False
-        if resolved_workspace is None:
-            resolved_workspace = workspace.resolve()
-        resolved = (workspace / relative).resolve()
-        if not resolved.is_relative_to(resolved_workspace):
-            return False
-        return not _is_relative_sensitive_path(
-            resolved.relative_to(resolved_workspace),
+        if _is_relative_sensitive_path(
+            relative,
             exclusions,
             is_directory=is_directory,
-        )
+            folded_exclusions=folded_exclusions,
+        ):
+            return False
+        target = workspace / relative
+        if resolved_workspace is None:
+            resolved_workspace = workspace.resolve()
+        if resolve_regular_targets or target.is_symlink():
+            resolved = target.resolve()
+            if not resolved.is_relative_to(resolved_workspace):
+                return False
+            return not _is_relative_sensitive_path(
+                resolved.relative_to(resolved_workspace),
+                exclusions,
+                is_directory=is_directory,
+                folded_exclusions=folded_exclusions,
+            )
+        return True
     except (OSError, RuntimeError, ValueError):
         # Python <= 3.12 raises RuntimeError for a symlink loop (3.13+:
         # OSError); ValueError covers an embedded NUL. Any unresolvable
@@ -1609,11 +1685,17 @@ def _is_relative_sensitive_path(
     exclusions: tuple[SensitiveExclusion, ...],
     *,
     is_directory: bool,
+    folded_exclusions: tuple[_FoldedExclusion, ...] | None = None,
 ) -> bool:
-    """Apply parent-derived sensitive exclusions to one relative candidate."""
+    """Apply parent-derived sensitive exclusions to one relative candidate.
+
+    ``folded_exclusions`` is :func:`_folded_exclusions`' once-per-call output;
+    ``None`` folds here, which decides identically.
+    """
+    if folded_exclusions is None:
+        folded_exclusions = _folded_exclusions(exclusions)
     parts = tuple(part.casefold() for part in relative.parts)
-    for kind, value in exclusions:
-        value_parts = tuple(part.casefold() for part in Path(value).parts)
+    for kind, value_parts, value in folded_exclusions:
         if kind == "subtree" and parts[: len(value_parts)] == value_parts:
             return True
         if kind == "file" and parts == value_parts:

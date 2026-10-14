@@ -67,7 +67,8 @@ def captured_payloads(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(llm_calls, "create_default_session", _FakeSession)
+    monkeypatch.setattr(llm_calls, "create_default_session", lambda *a, **k: _FakeSession(), raising=False)
+    monkeypatch.setattr(llm_calls, "create_pooled_default_session", lambda *a, **k: _FakeSession(), raising=False)
     return payloads
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 import os
@@ -690,6 +692,10 @@ class LocalLLMProviderCatalogService:
         """Refresh stale cloud-provider catalogs; optionally append new models to config.
 
         Never raises for per-provider failures; each becomes a "failed" outcome.
+        The per-provider fetches are independent HTTPS GETs, so they fan out
+        concurrently via ``asyncio.gather`` and the pass costs the slowest
+        provider rather than the sum of all providers; failure isolation stays
+        per provider and outcomes are reported in ``provider_list_keys`` order.
         Write-through is append-only, computed against the pre-fetch cache entry,
         with a baseline guard for oversized first fetches (ADR-020).
 
@@ -706,19 +712,30 @@ class LocalLLMProviderCatalogService:
                 appended to the saved config.
 
         Returns:
-            RefreshReport: One outcome per requested provider key.
+            RefreshReport: One outcome per requested provider key, in the
+            order the keys were requested.
         """
         self._enforce("llm.catalog.models.discover.local")
-        outcomes: list[ProviderRefreshOutcome] = []
         disk_write_failed = False
         catalog = self._catalog()
         saved_settings = self._settings()
+        # Outcome slots are indexed by requested position so the concurrent
+        # fetch phase cannot reorder the report: setup decisions fill their
+        # slot immediately, fetched providers fill theirs once their result
+        # is processed below.
+        outcomes: list[ProviderRefreshOutcome | None] = [None] * len(
+            provider_list_keys
+        )
+        # Providers that passed setup and owe one fetch, in request order:
+        # (slot index, list key, normalized provider key, endpoint
+        # fingerprint, pre-fetch diff base, configured model IDs).
+        pending: list[tuple[int, str, str, str, set[str], set[str]]] = []
 
         try:
-            for requested_key in provider_list_keys:
+            for index, requested_key in enumerate(provider_list_keys):
                 # Everything per-provider (resolve/api-key/fingerprint/previous-ids
-                # setup plus the fetch itself) lives inside the try: one provider
-                # blowing up must not abort the remaining refreshes.
+                # setup) lives inside the try: one provider blowing up must not
+                # abort the remaining refreshes.
                 list_key: str | None = None
                 try:
                     resolution = resolve_provider_list_key(requested_key, catalog)
@@ -726,21 +743,17 @@ class LocalLLMProviderCatalogService:
                         resolution.status != "resolved"
                         or resolution.provider_list_key is None
                     ):
-                        outcomes.append(
-                            ProviderRefreshOutcome(
-                                provider_list_key=requested_key,
-                                status="skipped_not_ready",
-                            )
+                        outcomes[index] = ProviderRefreshOutcome(
+                            provider_list_key=requested_key,
+                            status="skipped_not_ready",
                         )
                         continue
                     provider_key = resolution.normalized_provider
                     list_key = resolution.provider_list_key
 
                     if provider_key in catalog_settings.auto_refresh_disabled:
-                        outcomes.append(
-                            ProviderRefreshOutcome(
-                                provider_list_key=list_key, status="skipped_disabled"
-                            )
+                        outcomes[index] = ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_disabled"
                         )
                         continue
 
@@ -752,10 +765,8 @@ class LocalLLMProviderCatalogService:
                     )
                     # OpenRouter's catalog is public; everything else needs credentials.
                     if api_key is None and provider_key != "openrouter":
-                        outcomes.append(
-                            ProviderRefreshOutcome(
-                                provider_list_key=list_key, status="skipped_not_ready"
-                            )
+                        outcomes[index] = ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_not_ready"
                         )
                         continue
 
@@ -763,10 +774,8 @@ class LocalLLMProviderCatalogService:
                         provider_key=provider_key
                     )
                     if fingerprint is None:
-                        outcomes.append(
-                            ProviderRefreshOutcome(
-                                provider_list_key=list_key, status="skipped_not_ready"
-                            )
+                        outcomes[index] = ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_not_ready"
                         )
                         continue
 
@@ -775,23 +784,72 @@ class LocalLLMProviderCatalogService:
                         fingerprint,
                         stale_after_hours=catalog_settings.stale_after_hours,
                     ):
-                        outcomes.append(
-                            ProviderRefreshOutcome(
-                                provider_list_key=list_key, status="skipped_fresh"
-                            )
+                        outcomes[index] = ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_fresh"
                         )
                         continue
 
-                    # Snapshot the pre-fetch cache entry for the diff BEFORE discover_models
-                    # replaces it (also empty after fingerprint change/corruption — the
-                    # baseline guard below keeps that safe).
+                    # Snapshot the pre-fetch cache entry for the diff BEFORE the
+                    # concurrent discover_models calls replace it (also empty
+                    # after fingerprint change/corruption — the baseline guard
+                    # below keeps that safe). All snapshots are taken up front,
+                    # before any fetch runs.
                     previous_ids = {
                         model.model_id
                         for model in self.discovery_cache.list(list_key, fingerprint)
                     }
                     saved_ids = set(catalog.get(list_key, []))
+                    pending.append(
+                        (
+                            index,
+                            list_key,
+                            provider_key,
+                            fingerprint,
+                            previous_ids,
+                            saved_ids,
+                        )
+                    )
+                except Exception as exc:
+                    # No traceback: the log file sink runs with diagnose=True, which
+                    # would dump frame locals (api_key, headers) into the log file.
+                    logger.warning(
+                        f"Model catalog refresh failed for {list_key or requested_key}: "
+                        f"{type(exc).__name__}"
+                    )
+                    outcomes[index] = ProviderRefreshOutcome(
+                        provider_list_key=list_key or requested_key,
+                        status="failed",
+                        error_kind="unexpected",
+                    )
 
-                    result = await self.discover_models(provider=list_key)
+            # Fan the independent fetches out concurrently and keep
+            # ``return_exceptions=True`` so one provider's blown-up request
+            # neither aborts the others nor this pass; the exception objects
+            # become "failed" outcomes below, preserving the sequential
+            # behavior of a discover_models() raise.
+            results = await asyncio.gather(
+                *(
+                    self.discover_models(provider=list_key)
+                    for _i, list_key, _key, _fp, _prev, _saved in pending
+                ),
+                return_exceptions=True,
+            )
+
+            for (
+                index,
+                list_key,
+                provider_key,
+                fingerprint,
+                previous_ids,
+                saved_ids,
+            ), result in zip(pending, results, strict=True):
+                # The whole post-fetch step (diff/write-through/disk record)
+                # stays inside its own try: one provider blowing up must not
+                # abort the remaining refreshes, exactly as when this loop was
+                # fused with the setup loop above.
+                try:
+                    if isinstance(result, BaseException):
+                        raise result
                     if result.status != "success":
                         if result.error and result.error.kind == "missing_credentials":
                             # Bad/rejected key: quiet not-ready skip, no per-launch nagging.
@@ -799,11 +857,9 @@ class LocalLLMProviderCatalogService:
                                 f"Model catalog auto-refresh skipped for {list_key}: "
                                 "credentials were rejected"
                             )
-                            outcomes.append(
-                                ProviderRefreshOutcome(
-                                    provider_list_key=list_key,
-                                    status="skipped_not_ready",
-                                )
+                            outcomes[index] = ProviderRefreshOutcome(
+                                provider_list_key=list_key,
+                                status="skipped_not_ready",
                             )
                             continue
                         error_kind = (
@@ -813,12 +869,10 @@ class LocalLLMProviderCatalogService:
                             f"Model catalog auto-refresh failed for {list_key} "
                             f"(fingerprint {fingerprint}): {error_kind}"
                         )
-                        outcomes.append(
-                            ProviderRefreshOutcome(
-                                provider_list_key=list_key,
-                                status="failed",
-                                error_kind=error_kind,
-                            )
+                        outcomes[index] = ProviderRefreshOutcome(
+                            provider_list_key=list_key,
+                            status="failed",
+                            error_kind=error_kind,
                         )
                         continue
 
@@ -874,32 +928,30 @@ class LocalLLMProviderCatalogService:
                             f"Model catalog disk cache skipped for {list_key} "
                             "(reason=validation_error)"
                         )
-                    outcomes.append(
-                        ProviderRefreshOutcome(
-                            provider_list_key=list_key,
-                            status=status,
-                            new_model_ids=new_ids,
-                            saved_model_ids=saved_to_config,
-                            write_failed=write_failed,
-                        )
+                    outcomes[index] = ProviderRefreshOutcome(
+                        provider_list_key=list_key,
+                        status=status,
+                        new_model_ids=new_ids,
+                        saved_model_ids=saved_to_config,
+                        write_failed=write_failed,
                     )
                 except Exception as exc:
                     # No traceback: the log file sink runs with diagnose=True, which
                     # would dump frame locals (api_key, headers) into the log file.
                     logger.warning(
-                        f"Model catalog refresh failed for {list_key or requested_key}: "
+                        f"Model catalog refresh failed for {list_key}: "
                         f"{type(exc).__name__}"
                     )
-                    outcomes.append(
-                        ProviderRefreshOutcome(
-                            provider_list_key=list_key or requested_key,
-                            status="failed",
-                            error_kind="unexpected",
-                        )
+                    outcomes[index] = ProviderRefreshOutcome(
+                        provider_list_key=list_key,
+                        status="failed",
+                        error_kind="unexpected",
                     )
         finally:
             # Keep-set is the configured catalog only: entries for providers no
             # longer in [providers] are pruned even when still requested here.
+            # One prune + save for the whole pass, after all results — not per
+            # provider.
             disk_store.prune(set(catalog))
             try:
                 disk_store.save()
@@ -912,9 +964,18 @@ class LocalLLMProviderCatalogService:
                     f"(reason={type(exc).__name__})"
                 )
         return RefreshReport(
-            outcomes=tuple(outcomes), disk_write_failed=disk_write_failed
+            outcomes=tuple(
+                outcome
+                if outcome is not None
+                else ProviderRefreshOutcome(
+                    provider_list_key=requested_key,
+                    status="failed",
+                    error_kind="unexpected",
+                )
+                for requested_key, outcome in zip(provider_list_keys, outcomes)
+            ),
+            disk_write_failed=disk_write_failed,
         )
-
     def list_discovered_models(
         self,
         *,

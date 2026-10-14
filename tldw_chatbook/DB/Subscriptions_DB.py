@@ -1030,6 +1030,10 @@ class SubscriptionsDB(BaseDB):
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_folder ON subscriptions(folder);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_last_checked ON subscriptions(last_checked);
+            -- task-34399: the exact-source lookups (OPML dedupe inside BEGIN
+            -- IMMEDIATE: _find_exact_source_id, get_subscription_id_by_source,
+            -- resolve_collection_candidates) otherwise full-scan subscriptions.
+            CREATE INDEX IF NOT EXISTS idx_subscriptions_source ON subscriptions(source);
             CREATE INDEX IF NOT EXISTS idx_subscription_items_status_created ON subscription_items(subscription_id, status, created_at);
             CREATE INDEX IF NOT EXISTS idx_subscription_items_canonical_url ON subscription_items(canonical_url);
             CREATE INDEX IF NOT EXISTS idx_url_snapshots_lookup ON url_snapshots(subscription_id, url, created_at);

@@ -53,7 +53,8 @@ class _Session:
 
 def _post(monkeypatch: pytest.MonkeyPatch, status: int, display_name: str | None) -> Exception:
     _Session.status = status
-    monkeypatch.setattr(hosted_chat, "create_default_session", _Session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     config = HostedHTTPTransportConfig(
         provider="nvidia",
         base_url="https://integrate.api.nvidia.com/v1",
@@ -175,7 +176,8 @@ def test_an_engine_failure_reaches_console_with_the_display_name(
     )
     monkeypatch.setattr(hosted_provider_engine, "resolve_hosted_request", lambda _r, **_k: resolution)
     _Session.status = status
-    monkeypatch.setattr(hosted_chat, "create_default_session", _Session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
 
     with pytest.raises(ChatAPIError) as caught:
         hosted_provider_engine.build_hosted_chat_handler(record)(

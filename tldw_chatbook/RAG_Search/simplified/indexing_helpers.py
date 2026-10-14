@@ -205,6 +205,12 @@ async def store_documents_batch(
     results = []
     failed_indices_set = set(failed_embedding_indices or [])
 
+    # task-34398: prepare every document's storage payload first (isolating
+    # per-document prep failures exactly as before), then issue ONE vector
+    # store add for the whole batch instead of one executor hop + one store
+    # transaction per document.
+    prepared_docs = []
+
     for doc_info in doc_chunk_info:
         if doc_info is None:
             continue  # Skip failed documents
@@ -268,40 +274,9 @@ async def store_documents_batch(
                 }
                 chunk_metadata.append(meta)
 
-            # Store in vector database
-            # Convert embeddings if numpy is available
-            if NUMPY_AVAILABLE:
-                embeddings_to_store = np.array(valid_embeddings)
-            else:
-                embeddings_to_store = valid_embeddings
-
-            await rag_service._store_chunks(
-                chunk_ids, embeddings_to_store, chunk_texts, chunk_metadata
-            )
-
-            # Update metrics
-            rag_service._docs_indexed += 1
-            rag_service._total_chunks_created += len(valid_chunks)
-
-            elapsed = time.time() - batch_start_time
-
-            # Create result with partial success indication if some chunks failed
-            if failed_chunk_count > 0:
-                logger.warning(
-                    f"Document {doc['id']}: {failed_chunk_count} out of {chunk_count} chunks failed"
-                )
-                error_msg = f"{failed_chunk_count} chunks failed embedding generation"
-            else:
-                error_msg = None
-
-            results.append(
-                IndexingResult(
-                    doc_id=doc["id"],
-                    chunks_created=len(valid_chunks),
-                    time_taken=elapsed,
-                    success=True,  # Partial success is still success
-                    error=error_msg,
-                )
+            # Queue the payload for the single batch store below.
+            prepared_docs.append(
+                (doc, failed_chunk_count, chunk_ids, valid_embeddings, chunk_texts, chunk_metadata)
             )
 
         except Exception as e:
@@ -315,5 +290,95 @@ async def store_documents_batch(
                     error=str(e),
                 )
             )
+
+    if not prepared_docs:
+        return results
+
+    def _record_success(
+        doc: Dict[str, Any], failed_chunk_count: int, chunks_created: int
+    ) -> None:
+        """Finalize a stored document's metrics and IndexingResult."""
+        rag_service._docs_indexed += 1
+        rag_service._total_chunks_created += chunks_created
+
+        elapsed = time.time() - batch_start_time
+
+        # Create result with partial success indication if some chunks failed
+        if failed_chunk_count > 0:
+            logger.warning(
+                f"Document {doc['id']}: {failed_chunk_count} out of {failed_chunk_count + chunks_created} chunks failed"
+            )
+            error_msg = f"{failed_chunk_count} chunks failed embedding generation"
+        else:
+            error_msg = None
+
+        results.append(
+            IndexingResult(
+                doc_id=doc["id"],
+                chunks_created=chunks_created,
+                time_taken=elapsed,
+                success=True,  # Partial success is still success
+                error=error_msg,
+            )
+        )
+
+    # Concatenate across documents and store the whole batch in one add.
+    batch_ids: List[str] = []
+    batch_texts: List[str] = []
+    batch_metadata: List[Dict[str, Any]] = []
+    batch_embeddings: List[Any] = []
+    for _doc, _failed, chunk_ids, valid_embeddings, chunk_texts, chunk_metadata in prepared_docs:
+        batch_ids.extend(chunk_ids)
+        batch_texts.extend(chunk_texts)
+        batch_metadata.extend(chunk_metadata)
+        batch_embeddings.extend(valid_embeddings)
+
+    # Convert embeddings if numpy is available
+    if NUMPY_AVAILABLE:
+        embeddings_to_store = np.array(batch_embeddings)
+    else:
+        embeddings_to_store = batch_embeddings
+
+    try:
+        await rag_service._store_chunks(
+            batch_ids, embeddings_to_store, batch_texts, batch_metadata
+        )
+
+        for doc, failed_chunk_count, chunk_ids, _emb, _texts, _metas in prepared_docs:
+            _record_success(doc, failed_chunk_count, len(chunk_ids))
+
+    except Exception as e:
+        # task-34398 failure-granularity decision: the pre-batch code caught
+        # store failures PER DOCUMENT, so one bad document never sank its
+        # batch siblings. Preserve exactly that: on a batch-level failure,
+        # retry each document's payload individually and mark only the ones
+        # that actually fail.
+        logger.error(
+            f"Batch store of {len(prepared_docs)} documents failed ({e}); "
+            "retrying per document to isolate the failure"
+        )
+        for doc, failed_chunk_count, chunk_ids, valid_embeddings, chunk_texts, chunk_metadata in prepared_docs:
+            try:
+                if NUMPY_AVAILABLE:
+                    doc_embeddings = np.array(valid_embeddings)
+                else:
+                    doc_embeddings = valid_embeddings
+                await rag_service._store_chunks(
+                    chunk_ids, doc_embeddings, chunk_texts, chunk_metadata
+                )
+                _record_success(doc, failed_chunk_count, len(chunk_ids))
+            except Exception as e2:
+                logger.error(
+                    f"Failed to store document {doc.get('id', 'unknown')}: {e2}"
+                )
+                results.append(
+                    IndexingResult(
+                        doc_id=doc.get("id", "unknown"),
+                        chunks_created=0,
+                        time_taken=time.time() - batch_start_time,
+                        success=False,
+                        error=str(e2),
+                    )
+                )
 
     return results

@@ -506,12 +506,50 @@ def sanitize_capture_value_with_omission(
     value: Any,
     *,
     known_credentials: tuple[str, ...] = (),
+    sanitizer: CredentialSanitizer | None = None,
 ) -> tuple[Any, bool]:
-    result = CredentialSanitizer(known_credentials=known_credentials).sanitize(value)
+    """Sanitize one captured value, reporting whether anything was omitted.
+
+    Args:
+        known_credentials: Runtime credential values to also remove; ignored
+            when ``sanitizer`` carries them already.
+        sanitizer: Pre-built sanitizer to reuse (TASK-34957: one per
+            exchange flight instead of one per streamed chunk). ``None``
+            constructs from ``known_credentials`` as before.
+    """
+    active = (
+        sanitizer
+        if sanitizer is not None
+        else CredentialSanitizer(known_credentials=known_credentials)
+    )
+    result = active.sanitize(value)
     if not result.available:
         return dict(_CREDENTIAL_OMISSION), True
+    sanitized_value = result.value
+    if (
+        isinstance(sanitized_value, str)
+        and len(sanitized_value) < _STUB_MIN_CHARS
+        and not sanitized_value.startswith("data:")
+    ):
+        # TASK-34957: the dominant streamed shapes are a short plain-text
+        # delta (str) or a one-element list of one -- the exchange mutation
+        # path passes each chunk as [text] (review follow-up). Both
+        # post-passes provably return such values unchanged -- nested-
+        # credential removal passes plain strings through, and the binary
+        # stub gate requires a data: prefix or a canonical length >=
+        # _STUB_MIN_CHARS (canonical <= raw) -- so the whitespace-strip
+        # copy and base64 regex are skipped over every chunk.
+        return sanitized_value, result.redacted
+    if (
+        type(sanitized_value) is list
+        and len(sanitized_value) == 1
+        and isinstance(sanitized_value[0], str)
+        and len(sanitized_value[0]) < _STUB_MIN_CHARS
+        and not sanitized_value[0].startswith("data:")
+    ):
+        return sanitized_value, result.redacted
     return (
-        stub_binary_strings(_remove_nested_credentials(result.value)),
+        stub_binary_strings(_remove_nested_credentials(sanitized_value)),
         result.redacted,
     )
 

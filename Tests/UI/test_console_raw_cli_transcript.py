@@ -1195,8 +1195,14 @@ async def test_mounted_raw_cli_row_is_literal_focusable_and_lifecycle_complete()
         assert "[bold]literal[/bold]" in body_text
         assert "[red]literal[/red]" in body_text
         assert "[link=https://invalid.example]literal[/link]" in body_text
-        await pilot.pause(0.2)
-        after = _rendered_static_text(transcript, header_selector)
+        # TASK-34963: the elapsed ticker fires every 0.5s -- poll until the
+        # copy advances instead of assuming a fixed-cadence wait.
+        after = before
+        for _attempt in range(12):
+            await pilot.pause(0.1)
+            after = _rendered_static_text(transcript, header_selector)
+            if after != before:
+                break
         assert after != before, "the mounted command row must own its elapsed timer"
 
         stopping = replace(

@@ -5419,3 +5419,334 @@ async def test_commit_child_started_postflight_exception_publishes_quarantine(
     assert evidence.hooks_directory is None
     assert await waiter == outcome
     await service.shutdown()
+
+
+def test_endpoint_overlap_index_matches_per_endpoint_overlap_scan() -> None:
+    endpoints = (
+        "docs",
+        "docs/deep/note.md",
+        "sibling.md",
+        "a",
+        "a/b/c.md",
+    )
+    index = git_service._build_endpoint_overlap_index(endpoints)
+    probes = (
+        "docs",
+        "docs/other.md",
+        "docs/deep",
+        "docs/deep/note.md",
+        "docs/deep/note.md/inner",
+        "sibling.md",
+        "sibling.md.bak",
+        "a",
+        "a/b",
+        "a/b/c.md",
+        "a/b/c.md/inner",
+        "unrelated.md",
+        "doc",
+        "docsx/other.md",
+        "",
+    )
+
+    for probe in probes:
+        assert index.overlaps(probe) == any(
+            git_service._paths_overlap(probe, endpoint)
+            for endpoint in endpoints
+        ), probe
+
+    empty_index = git_service._build_endpoint_overlap_index(())
+    assert not empty_index.overlaps("docs")
+
+
+def test_stage_and_unstage_closures_match_naive_overlap_scan() -> None:
+    endpoints = ("docs", "docs/deep/note.md", "sibling.md")
+    entries = {
+        "docs": _entry("docs"),
+        "docs/other.md": _entry("docs/other.md"),
+        "docs/deep": _entry("docs/deep"),
+        "docs/deep/note.md": _entry("docs/deep/note.md"),
+        "sibling.md": _entry("sibling.md"),
+        "sibling.md-copy": _entry("sibling.md-copy"),
+        "docsx/deep.md": _entry("docsx/deep.md"),
+        "unrelated": _entry("unrelated"),
+    }
+
+    naive_stage = frozenset(endpoints) | {
+        path
+        for path in entries
+        if any(
+            git_service._paths_overlap(path, endpoint)
+            for endpoint in endpoints
+        )
+    }
+    assert compute_stage_closure(endpoints, entries) == naive_stage
+
+    baselines = {
+        "docs": IndexBaseline(_entry("docs", object_id=OID_B)),
+        "tree/leaf.md": IndexBaseline(_entry("tree/leaf.md", object_id=OID_C)),
+        "absent": IndexBaseline(None),
+    }
+    naive_unstage = set(baselines)
+    for path, baseline in baselines.items():
+        if baseline.entry is None:
+            continue
+        naive_unstage.update(
+            candidate
+            for candidate in entries
+            if git_service._paths_overlap(path, candidate)
+        )
+    assert compute_unstage_closure(baselines, entries) == frozenset(
+        naive_unstage
+    )
+
+
+def test_bulk_effective_mutation_paths_match_per_group_scan() -> None:
+    groups = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "modified", "c.md"),
+            _change(3, "created", "dir/d.md"),
+        )
+    )
+    records = (
+        PorcelainRecord("untracked", "b.md"),
+        PorcelainRecord("ordinary", "c.md", "M", "M"),
+        PorcelainRecord("ordinary", "dir/d.md", ".", "M"),
+        PorcelainRecord("ordinary", "a.md", "M", "."),
+        PorcelainRecord("rename", "z.md", "A", ".", original_path="old.md"),
+    )
+
+    assert git_service._bulk_effective_mutation_paths(groups, records) == {
+        group.group_id: git_service._effective_mutation_paths(group, records)
+        for group in groups
+    }
+
+
+def test_stage_pathspecs_preflight_sets_match_and_skip_recompute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    groups = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "modified", "c.md"),
+        )
+    )
+    records = (
+        PorcelainRecord("untracked", "b.md"),
+        PorcelainRecord("ordinary", "c.md", "M", "M"),
+    )
+    ambiguous = git_service._ambiguous_group_ids(groups, records)
+    bulk_paths = git_service._bulk_effective_mutation_paths(groups, records)
+    expected = [
+        git_service._effective_mutation_paths(group, records)
+        for group in groups
+    ]
+
+    ambiguous_calls: list[object] = []
+    mutation_calls: list[object] = []
+    original_ambiguous = git_service._ambiguous_group_ids
+    original_mutation = git_service._effective_mutation_paths
+
+    def counting_ambiguous(*args: object) -> object:
+        ambiguous_calls.append(args)
+        return original_ambiguous(*args)  # type: ignore[arg-type]
+
+    def counting_mutation(*args: object) -> object:
+        mutation_calls.append(args)
+        return original_mutation(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        git_service, "_ambiguous_group_ids", counting_ambiguous
+    )
+    monkeypatch.setattr(
+        git_service, "_effective_mutation_paths", counting_mutation
+    )
+
+    for group, expected_paths in zip(groups, expected):
+        assert stage_pathspecs(
+            group,
+            records,
+            groups=groups,
+            ambiguous_group_ids=ambiguous,
+            effective_mutation_paths=bulk_paths[group.group_id],
+        ) == tuple(
+            os.fsencode(path)
+            for path in group.endpoints
+            if path in expected_paths
+        )
+    assert ambiguous_calls == []
+    assert mutation_calls == []
+
+    for group in groups:
+        stage_pathspecs(group, records, groups=groups)
+    assert len(ambiguous_calls) == len(groups)
+    assert len(mutation_calls) == len(groups)
+
+
+def test_classify_session_rows_index_keeps_exact_endpoint_membership() -> None:
+    groups = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "modified", "a.md"),
+            _change(3, "created", "tree/note.md"),
+        )
+    )
+    entries = {
+        "tree": _entry("tree"),
+        "b.md": _entry("b.md"),
+        "a.md": _entry("a.md", stage=1),
+    }
+    records = (
+        PorcelainRecord("ordinary", "a.md", "M", "."),
+        PorcelainRecord("untracked", "b.md"),
+    )
+
+    rows = classify_session_rows(groups, records, entries, {})
+
+    assert [row.state for row in rows] == [
+        "conflict",
+        "conflict",
+        "unsafe_closure",
+    ]
+
+
+def test_endpoint_parent_walk_cache_shares_sibling_parent_stats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notes_root = tmp_path / "notes"
+    (notes_root / "day").mkdir(parents=True)
+    (notes_root / "day" / "one.md").write_text("one", encoding="utf-8")
+    (notes_root / "day" / "two.md").write_text("two", encoding="utf-8")
+    original_inspect = git_service._inspect_endpoint_parent
+    calls: list[str] = []
+
+    def counting_inspect(
+        notes_root: Path,
+        components: Sequence[str],
+    ) -> str:
+        calls.append("/".join(components))
+        return original_inspect(notes_root, components)
+
+    monkeypatch.setattr(
+        git_service, "_inspect_endpoint_parent", counting_inspect
+    )
+
+    plain_one = git_service._map_session_endpoint(
+        notes_root,
+        tmp_path,
+        "day/one.md",
+    )
+    plain_two = git_service._map_session_endpoint(
+        notes_root,
+        tmp_path,
+        "day/two.md",
+    )
+    plain_calls = list(calls)
+
+    calls.clear()
+    walk_cache = git_service._EndpointWalkCache()
+    cached_one = git_service._map_session_endpoint(
+        notes_root,
+        tmp_path,
+        "day/one.md",
+        walk_cache,
+    )
+    cached_two = git_service._map_session_endpoint(
+        notes_root,
+        tmp_path,
+        "day/two.md",
+        walk_cache,
+    )
+    cached_calls = list(calls)
+
+    assert plain_one == cached_one
+    assert plain_two == cached_two
+    assert plain_calls == ["day", "day"]
+    assert cached_calls == ["day"]
+
+    calls.clear()
+    (notes_root / "vault" / ".git").mkdir(parents=True)
+    nested_cache = git_service._EndpointWalkCache()
+    mapped, problem = git_service._map_session_endpoint(
+        notes_root,
+        tmp_path,
+        "vault/note.md",
+        nested_cache,
+    )
+    assert (mapped, problem) == (None, "nested_repository")
+
+    mapped, problem = git_service._map_session_endpoint(
+        notes_root,
+        tmp_path,
+        "absent/deep/note.md",
+    )
+    assert mapped == "notes/absent/deep/note.md"
+    assert problem is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_stage_preflight_computes_shared_sets_once_per_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FileNotesGitService(FileNotesSessionOwner(), git_executable="git")
+    binding = SessionBinding("bulk-stage-root", 1)
+    repository = _repository()
+    groups = coalesce_session_changes(
+        (
+            _change(1, "created", "one.md"),
+            _change(2, "created", "two.md"),
+            _change(3, "created", "three.md"),
+        )
+    )
+    records = (
+        PorcelainRecord("untracked", "one.md"),
+        PorcelainRecord("untracked", "two.md"),
+        PorcelainRecord("untracked", "three.md"),
+    )
+    inspection = git_service._StageInspection(
+        repository=repository,
+        head=HeadIdentity.attached("main", OID_A),
+        groups=groups,
+        repository_groups={group.group_id: group for group in groups},
+        rows={
+            group.group_id: SessionGitRow(group, "clean")
+            for group in groups
+        },
+        index_sequence=(),
+        index_entries={},
+        status_records=records,
+    )
+
+    ambiguous_calls: list[object] = []
+    bulk_calls: list[object] = []
+    original_ambiguous = git_service._ambiguous_group_ids
+    original_bulk = git_service._bulk_effective_mutation_paths
+
+    def counting_ambiguous(*args: object) -> object:
+        ambiguous_calls.append(args)
+        return original_ambiguous(*args)  # type: ignore[arg-type]
+
+    def counting_bulk(*args: object) -> object:
+        bulk_calls.append(args)
+        return original_bulk(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        git_service, "_ambiguous_group_ids", counting_ambiguous
+    )
+    monkeypatch.setattr(
+        git_service, "_bulk_effective_mutation_paths", counting_bulk
+    )
+
+    action = await service._apply_stage(
+        binding,
+        tuple(group.group_id for group in groups),
+        inspection,
+    )
+
+    assert action.state == "blocked"
+    assert action.clean_group_ids == tuple(
+        group.group_id for group in groups
+    )
+    assert len(ambiguous_calls) == 1
+    assert len(bulk_calls) == 1

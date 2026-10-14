@@ -3903,6 +3903,7 @@ class SettingsScreen(BaseAppScreen):
         self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
             None
         )
+        self._subscription_readiness_gate: tuple[Any, ...] | None = None
         self._provider_subscription_test: tuple[str, int] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
@@ -5094,12 +5095,34 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.PROVIDERS_MODELS,
         }:
             self._subscription_readiness_observation = None
+            self._subscription_readiness_gate = None
             return
         provider = (
             str(self._resolve_provider_model_for_settings().provider or "")
             if category is SettingsCategoryId.OVERVIEW
             else self._provider_widget_value()
         )
+        # Cheap gate BEFORE the expensive resolution: readiness can only
+        # change when the provider/panel choice changes, the background
+        # credential snapshot goes stale or completes (cached status /
+        # revision), or a draft edit lands. Saves re-render the panel
+        # directly; this poll only covers background subscription
+        # transitions (chat_screen and the console settings modal gate on
+        # the same revision).
+        from ...LLM_Calls.anthropic_subscription import (
+            subscription_credential_status,
+            subscription_readiness_revision,
+        )
+
+        gate = (
+            category.value,
+            provider,
+            self._provider_auth_source_value(provider),
+            subscription_credential_status(background=True),
+            subscription_readiness_revision(),
+        )
+        if gate == self._subscription_readiness_gate:
+            return
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config()
@@ -5108,6 +5131,7 @@ class SettingsScreen(BaseAppScreen):
             background_credentials=True,
         )
         observation = (category.value, provider, readiness.subscription_status)
+        self._subscription_readiness_gate = gate
         if observation == self._subscription_readiness_observation:
             return
         self._subscription_readiness_observation = observation
@@ -23597,7 +23621,14 @@ class SettingsScreen(BaseAppScreen):
         if href.startswith(("http://", "https://")):
             import webbrowser
 
-            webbrowser.open(href)
+            # TASK-34937: OS spawn off the UI thread.
+            self.run_worker(
+                webbrowser.open,
+                href,
+                thread=True,
+                exit_on_error=False,
+                name="open-link",
+            )
             self.notify(f"Opened in browser: {href}", timeout=4)
         else:
             self.notify(
@@ -33010,24 +33041,34 @@ class SettingsScreen(BaseAppScreen):
             )
         except (QueryError, TypeError, ValueError):
             weight = float(DREAMS_TOPIC_DEFAULT_WEIGHT)
-        try:
-            dreams_db.upsert_profile_entry(
-                "topic",
-                text_value,
-                weight=weight,
-                searchable=1,
-                source="user",
+        async def _apply_topic_add() -> None:
+            # task-34934: the fsync'd write runs off the loop; the result
+            # copy and pane refresh apply on completion, on the loop.
+            try:
+                await asyncio.to_thread(
+                    dreams_db.upsert_profile_entry,
+                    "topic",
+                    text_value,
+                    weight=weight,
+                    searchable=1,
+                    source="user",
+                )
+            except Exception as error:  # noqa: BLE001 - surfaced in the result row
+                self._settings_dreams_result = f"Topic not added: {error}"
+                self._set_static_text(
+                    "#settings-dreams-result", self._settings_dreams_result
+                )
+                return
+            self._settings_dreams_result = (
+                f"Added '{text_value}' — yours; the cycle never overwrites it."
             )
-        except Exception as error:  # noqa: BLE001 - surfaced in the result row
-            self._settings_dreams_result = f"Topic not added: {error}"
-            self._set_static_text(
-                "#settings-dreams-result", self._settings_dreams_result
-            )
-            return
-        self._settings_dreams_result = (
-            f"Added '{text_value}' — yours; the cycle never overwrites it."
+            self._refresh_dreams_pane()
+
+        self.run_worker(
+            _apply_topic_add,
+            exclusive=True,
+            group="settings-dreams-topic-write",
         )
-        self._refresh_dreams_pane()
 
     @on(Button.Pressed)
     def handle_dreams_topic_remove_pressed(self, event: Button.Pressed) -> None:
@@ -33045,16 +33086,26 @@ class SettingsScreen(BaseAppScreen):
         dreams_db = self._dreams_db()
         if dreams_db is None or entry_id is None:
             return
-        try:
-            dreams_db.delete_profile_entry(int(entry_id))
-        except Exception as error:  # noqa: BLE001 - surfaced in the result row
-            self._settings_dreams_result = f"Topic not removed: {error}"
-            self._set_static_text(
-                "#settings-dreams-result", self._settings_dreams_result
-            )
-            return
-        self._settings_dreams_result = "Topic removed."
-        self._refresh_dreams_pane()
+        async def _apply_topic_remove() -> None:
+            # task-34934: the fsync'd write runs off the loop.
+            try:
+                await asyncio.to_thread(
+                    dreams_db.delete_profile_entry, int(entry_id)
+                )
+            except Exception as error:  # noqa: BLE001 - surfaced in the result row
+                self._settings_dreams_result = f"Topic not removed: {error}"
+                self._set_static_text(
+                    "#settings-dreams-result", self._settings_dreams_result
+                )
+                return
+            self._settings_dreams_result = "Topic removed."
+            self._refresh_dreams_pane()
+
+        self.run_worker(
+            _apply_topic_remove,
+            exclusive=True,
+            group="settings-dreams-topic-write",
+        )
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:

@@ -237,22 +237,15 @@ class WatchlistsToolService:
             "source": self._shape_selected_source(source),
         }
         items: list[dict[str, Any]] = []
-        final_payload = self._search_response(
-            request=request,
-            as_of=as_of,
-            snapshot_max_item_id=int(page["snapshot_max_item_id"]),
-            scope=scope,
-            items=items,
-            has_more=False,
-            next_cursor=None,
-        )
+        accepted_item_bytes = 0
+        final_has_more = False
+        final_next_cursor: str | None = None
         for index, row in enumerate(rows):
             candidate = self._shape_search_item(
                 row,
                 memberships[int(row["subscription_id"])],
                 request.query,
             )
-            candidate_items = [*items, candidate]
             has_more = bool(page["has_more"]) or index < len(rows) - 1
             next_cursor = (
                 self._encode_cursor(
@@ -265,22 +258,52 @@ class WatchlistsToolService:
                 if has_more
                 else None
             )
-            candidate_payload = self._search_response(
-                request=request,
-                as_of=as_of,
-                snapshot_max_item_id=int(page["snapshot_max_item_id"]),
-                scope=scope,
-                items=candidate_items,
-                has_more=has_more,
-                next_cursor=next_cursor,
+            # Byte budget without re-serializing the whole accumulated payload
+            # per row (O(n^2) bytes): with separators=(",", ":") a JSON array
+            # renders as "[" + ",".join(item JSON) + "]", so the candidate
+            # payload's size is byte-exactly the envelope (measured with an
+            # empty items array, minus its "[]") plus each item serialized
+            # once plus the array separators.
+            envelope_size = (
+                self._json_size(
+                    self._search_response(
+                        request=request,
+                        as_of=as_of,
+                        snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+                        scope=scope,
+                        items=[],
+                        has_more=has_more,
+                        next_cursor=next_cursor,
+                    )
+                )
+                - 2  # the "[]" of the empty items array
             )
-            if self._json_size(candidate_payload) >= _MAX_RESULT_BYTES:
+            candidate_bytes = self._json_size(candidate)
+            total_size = (
+                envelope_size
+                + accepted_item_bytes
+                + candidate_bytes
+                + len(items)
+                + 2  # brackets plus the one new comma
+            )
+            if total_size >= _MAX_RESULT_BYTES:
                 break
-            items = candidate_items
-            final_payload = candidate_payload
+            items.append(candidate)
+            accepted_item_bytes += candidate_bytes
+            final_has_more = has_more
+            final_next_cursor = next_cursor
 
         if rows and not items:
             raise RuntimeError("bounded Watchlists item did not fit")
+        final_payload = self._search_response(
+            request=request,
+            as_of=as_of,
+            snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+            scope=scope,
+            items=items,
+            has_more=final_has_more,
+            next_cursor=final_next_cursor,
+        )
         return self._finalize(final_payload)
 
     def get_item(self, arguments: object) -> str:
@@ -1842,20 +1865,43 @@ class WatchlistsToolService:
         payload["returned_count"] = 0
         payload["has_more"] = False
         payload["next_cursor"] = None
+        empty_items: list[dict[str, Any]] = []
+        sum_of_item_bytes = 0
         for index, (row, item) in enumerate(zip(rows, shaped, strict=True)):
-            accepted.append(item)
             has_more = storage_has_more or index < len(rows) - 1
-            payload["returned_count"] = len(accepted)
+            next_cursor = cursor_for(row) if has_more else None
+            # Byte budget without re-serializing the whole accumulated payload
+            # per row (O(n^2) bytes): serialize this row once, keep a running
+            # byte total, and measure only the (small) envelope — with
+            # separators=(",", ":") the items array contributes exactly
+            # "[" + ",".join(items) + "]", so the incremental total is
+            # byte-identical to measuring the assembled payload.
+            item_bytes = WatchlistsToolService._json_size(item)
+            payload["returned_count"] = len(accepted) + 1
             payload["has_more"] = has_more
-            payload["next_cursor"] = cursor_for(row) if has_more else None
-            if WatchlistsToolService._json_size(payload) >= _MAX_RESULT_BYTES:
-                accepted.pop()
+            payload["next_cursor"] = next_cursor
+            payload[item_key] = empty_items  # measure the envelope sans items
+            envelope_size = WatchlistsToolService._json_size(payload) - 2
+            payload[item_key] = accepted  # restore before any break/finalize
+            total_size = (
+                envelope_size
+                + sum_of_item_bytes
+                + item_bytes
+                + len(accepted)
+                + 2  # brackets plus the one new comma
+            )
+            if total_size >= _MAX_RESULT_BYTES:
                 if not accepted:
                     raise RuntimeError("bounded Watchlists metadata row did not fit")
+                # Revert to the last accepted page tail: with a rejected row
+                # there is always a previous row (index > 0 here), whose tail
+                # was has_more=True and this row's predecessor as the cursor.
                 payload["returned_count"] = len(accepted)
                 payload["has_more"] = True
                 payload["next_cursor"] = cursor_for(rows[index - 1])
                 break
+            accepted.append(item)
+            sum_of_item_bytes += item_bytes
         return WatchlistsToolService._finalize(payload)
 
     @staticmethod

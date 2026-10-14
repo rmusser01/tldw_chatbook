@@ -26,6 +26,73 @@ def _safe_dom_id(prefix: str, path: str) -> str:
     return f"{prefix}-{digest}"
 
 
+#: TASK-34394: the file-type filter vocabulary, hoisted out of
+#: `TreeView._matches_filters` -- it used to rebuild this dict (and all
+#: four lists) for every non-directory node on every filter keystroke.
+FILE_TYPE_MAPPINGS: Dict[str, List[str]] = {
+    "code": [
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".java",
+        ".cpp",
+        ".c",
+        ".h",
+        ".cs",
+        ".rb",
+        ".go",
+        ".rs",
+        ".php",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".r",
+        ".m",
+        ".mm",
+        ".dart",
+        ".lua",
+        ".pl",
+        ".sh",
+        ".bash",
+    ],
+    "docs": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc",
+        ".tex",
+        ".doc",
+        ".docx",
+        ".pdf",
+        ".rtf",
+        ".odt",
+        ".html",
+        ".htm",
+        ".xml",
+    ],
+    "config": [
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".properties",
+        ".env",
+        ".gitignore",
+        ".dockerignore",
+        ".editorconfig",
+        "Dockerfile",
+        "Makefile",
+        "package.json",
+        "tsconfig.json",
+    ],
+}
+
+
 class TreeNodeSelected(Message):
     """Message sent when a tree node is selected."""
 
@@ -120,6 +187,9 @@ class TreeNode(Widget):
         file_size = kwargs.pop("file_size", None)
         super().__init__(**kwargs)
         self.path = path
+        # TASK-34394: precomputed once at insert so the per-keystroke
+        # filter walk doesn't lowercase every path again per node.
+        self.path_lower = path.lower()
         self.node_name = (
             name  # Changed from 'name' to avoid conflict with Widget.name property
         )
@@ -644,91 +714,36 @@ class TreeView(VerticalScroll):
         self._file_type_filter = file_type
         self._apply_filters()
 
-    def _matches_filters(self, node_path: str, is_directory: bool) -> bool:
-        """Check if a node matches the current filters."""
+    def _matches_filters(self, node: "TreeNode") -> bool:
+        """Check if a node matches the current filters.
+
+        TASK-34394: takes the node itself so the precomputed
+        `TreeNode.path_lower` is reused instead of re-lowercasting the
+        full path per node per keystroke.
+        """
+        node_path = node.path
+
         # Always show directories
-        if is_directory:
+        if node.is_directory:
             return True
 
         # Search filter
-        if self._search_term and self._search_term not in node_path.lower():
+        if self._search_term and self._search_term not in node.path_lower:
             return False
 
         # File type filter
         if self._file_type_filter != "all":
             file_ext = os.path.splitext(node_path)[1].lower()
 
-            # Define file type mappings
-            file_type_mappings = {
-                "code": [
-                    ".py",
-                    ".js",
-                    ".ts",
-                    ".jsx",
-                    ".tsx",
-                    ".java",
-                    ".cpp",
-                    ".c",
-                    ".h",
-                    ".cs",
-                    ".rb",
-                    ".go",
-                    ".rs",
-                    ".php",
-                    ".swift",
-                    ".kt",
-                    ".scala",
-                    ".r",
-                    ".m",
-                    ".mm",
-                    ".dart",
-                    ".lua",
-                    ".pl",
-                    ".sh",
-                    ".bash",
-                ],
-                "docs": [
-                    ".md",
-                    ".txt",
-                    ".rst",
-                    ".adoc",
-                    ".tex",
-                    ".doc",
-                    ".docx",
-                    ".pdf",
-                    ".rtf",
-                    ".odt",
-                    ".html",
-                    ".htm",
-                    ".xml",
-                ],
-                "config": [
-                    ".json",
-                    ".yaml",
-                    ".yml",
-                    ".toml",
-                    ".ini",
-                    ".cfg",
-                    ".conf",
-                    ".properties",
-                    ".env",
-                    ".gitignore",
-                    ".dockerignore",
-                    ".editorconfig",
-                    "Dockerfile",
-                    "Makefile",
-                    "package.json",
-                    "tsconfig.json",
-                ],
-            }
+            mappings = FILE_TYPE_MAPPINGS.get(self._file_type_filter, [])
 
             # Special handling for files without extensions
             basename = os.path.basename(node_path)
-            if basename in file_type_mappings.get(self._file_type_filter, []):
+            if basename in mappings:
                 return True
 
             # Check by extension
-            if file_ext not in file_type_mappings.get(self._file_type_filter, []):
+            if file_ext not in mappings:
                 return False
 
         return True
@@ -744,7 +759,7 @@ class TreeView(VerticalScroll):
         visible_parents = set()
 
         for path, node in self.nodes.items():
-            if self._matches_filters(path, node.is_directory):
+            if self._matches_filters(node):
                 node.display = True
                 # Mark all parent directories as visible
                 parent_path = path

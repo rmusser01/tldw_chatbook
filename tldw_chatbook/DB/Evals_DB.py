@@ -64,7 +64,12 @@ from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 # v6 (TASK-19566 F8) dropped the inert ``version`` columns from the five
 # tables that carried them (see ``_VERSION_COLUMN_TABLES``); v5-and-older
 # databases are migrated with ``ALTER TABLE ... DROP COLUMN`` on open.
-SCHEMA_VERSION = 6
+#
+# v7 (task-34399) added the ``idx_eval_results_run_created`` composite
+# index on ``eval_results (run_id, created_at)`` so ``get_run_results``
+# stops re-sorting a run's rows on every page; v6-and-older databases are
+# migrated with ``CREATE INDEX IF NOT EXISTS`` on open.
+SCHEMA_VERSION = 7
 
 #: SQLite's own host-parameter limit varies by build -- as low as 999 on
 #: older versions, tens of thousands on newer ones -- so a single
@@ -468,6 +473,13 @@ class EvalsDB:
         conn.execute("CREATE INDEX idx_eval_runs_model ON eval_runs (model_id)")
         conn.execute("CREATE INDEX idx_eval_runs_group ON eval_runs (run_group_id)")
         conn.execute("CREATE INDEX idx_eval_results_run ON eval_results (run_id)")
+        # task-34399: get_run_results pages `WHERE run_id = ? ORDER BY
+        # created_at ASC`; without the composite index every page re-sorted
+        # the run's rows.
+        conn.execute(
+            "CREATE INDEX idx_eval_results_run_created "
+            "ON eval_results (run_id, created_at)"
+        )
         conn.execute(
             "CREATE INDEX idx_eval_run_metrics_run ON eval_run_metrics (run_id)"
         )
@@ -815,6 +827,16 @@ class EvalsDB:
                 }
                 if "version" in existing:
                     conn.execute(f"ALTER TABLE {table} DROP COLUMN version")
+
+        if current_version < 7 and SCHEMA_VERSION >= 7:
+            logger.info(
+                "Migrating to version 7: Adding eval_results (run_id, created_at) index"
+            )
+
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_eval_results_run_created "
+                "ON eval_results (run_id, created_at)"
+            )
 
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 

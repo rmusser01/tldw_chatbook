@@ -1506,3 +1506,93 @@ def test_is_public_http_url_blocks_multicast(monkeypatch):
 def test_guarded_fetch_helpers_keep_their_docstrings(helper):
     """A ``'''...''' + CONSTANT`` first statement silently drops ``__doc__``."""
     assert "Credential contract" in (helper.__doc__ or "")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_pooled_sessions():
+    """Sessions are pooled process-wide (task-34387); tests here mount
+    recording adapters onto them, so every test must start from an empty
+    pool and must not leak its adapter into later tests."""
+    from tldw_chatbook.Utils import egress as egress_mod
+
+    egress_mod.close_pooled_default_sessions()
+    yield
+    egress_mod.close_pooled_default_sessions()
+
+
+# ---------------------------------------------------------------------------
+# Pooled shared sessions (task-34387)
+# ---------------------------------------------------------------------------
+from tldw_chatbook.Utils.egress import (  # noqa: E402
+    PooledDefaultTimeoutSession,
+    close_pooled_default_sessions,
+    create_pooled_default_session,
+)
+from urllib3.util.retry import Retry as _PoolRetry  # noqa: E402
+
+
+def test_create_default_session_returns_pooled_instance():
+    assert isinstance(create_default_session(), PooledDefaultTimeoutSession)
+
+
+def test_same_timeout_and_verify_share_one_session():
+    first = create_default_session()
+    second = create_default_session()
+    assert first is second
+
+
+def test_distinct_explicit_timeouts_get_distinct_sessions():
+    assert create_default_session(timeout=5) is not create_default_session(timeout=9)
+
+
+def test_distinct_retry_policies_get_distinct_sessions():
+    retry_a = _PoolRetry(total=1, backoff_factor=1, status_forcelist=[429])
+    retry_b = _PoolRetry(total=2, backoff_factor=1, status_forcelist=[429])
+    session_a = create_pooled_default_session(mount_retry=retry_a)
+    session_b = create_pooled_default_session(mount_retry=retry_b)
+    plain = create_default_session()
+    assert session_a is not session_b
+    assert session_a is not plain
+    assert (
+        create_pooled_default_session(
+            mount_retry=_PoolRetry(total=1, backoff_factor=1, status_forcelist=[429])
+        )
+        is session_a
+    )
+
+
+def test_mounted_retry_adapter_survives_repeats_and_matches_policy():
+    retry = _PoolRetry(total=2, backoff_factor=1, status_forcelist=[429, 502])
+    session = create_pooled_default_session(
+        mount_retry=retry, mount_prefixes=("https://",)
+    )
+    again = create_pooled_default_session(
+        mount_retry=_PoolRetry(total=2, backoff_factor=1, status_forcelist=[429, 502]),
+        mount_prefixes=("https://",),
+    )
+    assert again is session
+    adapter = session.get_adapter("https://example.com/")
+    assert adapter.max_retries.total == 2
+    assert set(adapter.max_retries.status_forcelist) == {429, 502}
+
+
+def test_context_manager_exit_does_not_close_pooled_session():
+    session = create_default_session()
+    with session:
+        pass
+    assert session in _live_pool_sessions()
+
+
+def test_pooled_session_close_is_a_noop_until_pool_shutdown():
+    session = create_default_session()
+    session.close()
+    assert session in _live_pool_sessions()
+
+    close_pooled_default_sessions()
+    assert _live_pool_sessions() == set()
+
+
+def _live_pool_sessions():
+    from tldw_chatbook.Utils import egress as egress_mod
+
+    return set(egress_mod._SESSION_POOL.values())

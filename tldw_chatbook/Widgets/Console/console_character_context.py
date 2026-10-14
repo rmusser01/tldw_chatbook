@@ -132,6 +132,15 @@ class ConsoleCharacterContext(Vertical):
 
     def _sync_progress_counts(self) -> None:
         """Refresh literal counts without collecting reports or rebuilding focus."""
+        # The owning Console screen is reusable (suspended, not unmounted,
+        # on navigation away): keep the 2Hz sweep from walking every
+        # CharacterConversationButton while another screen is current.
+        # Same currency gate the Console's own pollers use.
+        if not self.is_attached:
+            return
+        screen = self.screen
+        if screen is None or screen is not self.app.screen:
+            return
         for button in self.query(CharacterConversationButton):
             count = self._controller.pending_progress_count(button.character_row)
             if count != button.progress_count:

@@ -436,10 +436,11 @@ def test_terminal_cancellation_wins_and_drops_a_late_provider_chunk():
         assistant.id,
         visible_copy="Session closed.",
     )
-    late = store.append_stream_chunk(assistant.id, "late provider output")
+    store.append_stream_chunk(assistant.id, "late provider output")
+    late_message = store.get_message(assistant.id)
 
-    assert late.status == "stopped"
-    assert late.content == "before cancellation"
+    assert late_message.status == "stopped"
+    assert late_message.content == "before cancellation"
     with pytest.raises(ValueError, match="Cannot mark a stopped message terminal"):
         store.mark_message_complete(assistant.id)
     assert controller.run_state_for(session.id).status is ConsoleRunStatus.STOPPED

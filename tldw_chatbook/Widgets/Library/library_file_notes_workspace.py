@@ -323,6 +323,10 @@ FOLDER_FILES_EMPTY_COPY = (
 )
 FILE_TREE_BATCH_SIZE = 100
 
+#: TASK-34938: search-box debounce, matching the repo picker/filter family
+#: (media 0.3s, artifacts 0.2s, emoji 0.3s).
+FILE_NOTES_SEARCH_DEBOUNCE_SECONDS = 0.2
+
 
 #: How many deferred re-fits one geometry change may queue before the path
 #: lines keep whatever they last fitted (task-32614, review F6). Settling took
@@ -1610,9 +1614,15 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_action_reason = ""
 
         self._entries: dict[str, FileNoteEntry] = {}
+        # TASK-34938: pre-folded entry paths for the replica-less search
+        # fallback, rebuilt whenever _entries is assigned.
+        self._entries_folded: tuple[str, ...] = ()
         self._deleted_paths: tuple[str, ...] = ()
         self._folder_children: dict[str, tuple[_FolderItem, ...]] = {}
         self._search_paths: tuple[str, ...] = ()
+        # TASK-34938: debounced search execution + cached navigator refs.
+        self._search_debounce_timer: Timer | None = None
+        self._navigator_refs: Any = None
         self._restore_expanded_folders: set[str] = set()
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
@@ -3110,6 +3120,9 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> None:
         """Install a scan projection without requiring mounted widgets."""
         self._entries = {entry.relative_path: entry for entry in result.entries}
+        self._entries_folded = tuple(
+            path.casefold() for path in self._entries
+        )
         self._deleted_paths = deleted
         self._root_offline = result.offline
         self._runtime_warning = "; ".join(
@@ -3158,6 +3171,9 @@ class LibraryFileNotesWorkspace(Vertical):
             new_entries != self._entries or deleted != self._deleted_paths
         )
         self._entries = new_entries
+        self._entries_folded = tuple(
+            path.casefold() for path in self._entries
+        )
         self._deleted_paths = deleted
         self._root_offline = result.offline
         self._runtime_warning = result.replica_warning or ""
@@ -3542,25 +3558,18 @@ class LibraryFileNotesWorkspace(Vertical):
         """Show one retained navigator surface without remounting its peers."""
         if not self._active or not self.is_mounted:
             return
-        search_row = self.query_one("#file-notes-search-row")
-        tree = self.query_one("#file-notes-tree", Tree)
-        results = self.query_one("#file-notes-search-results", Tree)
-        entry = self.query_one("#file-notes-session-changes", Button)
-        panel = self.query_one(
-            "#file-notes-git-panel",
-            LibraryFileNotesGitPanel,
-        )
+        refs = self._navigator_surface_refs()
         git_visible = self._navigator_mode == "git" and self._work_mode == "manage"
         file_mode = (
             self._navigator_mode_before_git
             if self._navigator_mode == "git"
             else self._navigator_mode
         )
-        panel.display = git_visible
-        search_row.display = True
-        entry.display = not git_visible
-        tree.display = file_mode == "files"
-        results.display = file_mode == "search"
+        refs.panel.display = git_visible
+        refs.search_row.display = True
+        refs.entry.display = not git_visible
+        refs.tree.display = file_mode == "files"
+        refs.results.display = file_mode == "search"
         self.set_class(
             git_visible and not self._narrow,
             "-prepare-session-wide",
@@ -6957,13 +6966,48 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_save_state("dirty")
         self._arm_autosave()
 
+    def _stop_search_debounce_timer(self) -> None:
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
+
+    def _navigator_surface_refs(self) -> Any:
+        """Cached refs to the five navigator surfaces (TASK-34938).
+
+        Display toggles keep the widgets attached, so the refs stay valid;
+        if a rebuild ever detaches them, the staleness check re-queries.
+        Five attribute reads replace five query_one DOM walks per call.
+        """
+
+        class _Refs:
+            __slots__ = ("search_row", "tree", "results", "entry", "panel")
+
+        refs = self._navigator_refs
+        if refs is not None and all(
+            getattr(refs, name).is_attached for name in _Refs.__slots__
+        ):
+            return refs
+        refs = _Refs()
+        refs.search_row = self.query_one("#file-notes-search-row")
+        refs.tree = self.query_one("#file-notes-tree", Tree)
+        refs.results = self.query_one("#file-notes-search-results", Tree)
+        refs.entry = self.query_one("#file-notes-session-changes", Button)
+        refs.panel = self.query_one(
+            "#file-notes-git-panel",
+            LibraryFileNotesGitPanel,
+        )
+        self._navigator_refs = refs
+        return refs
+
     @on(Input.Changed, "#file-notes-search")
     def _search_changed(self, event: Input.Changed) -> None:
         event.stop()
         query = event.value.strip()
         self._search_query = event.value
-        results = self.query_one("#file-notes-search-results", Tree)
+        results = self._navigator_surface_refs().results
         if not query:
+            # Clearing the box restores the files navigator immediately.
+            self._stop_search_debounce_timer()
             self._search_generation += 1
             if self._navigator_mode == "git":
                 self._navigator_mode_before_git = "files"
@@ -6973,6 +7017,24 @@ class LibraryFileNotesWorkspace(Vertical):
             self._search_paths = ()
             results.reset(Text("Search results"))
             return
+        # TASK-34938: repo-standard debounce -- the mode flip, worker
+        # spawn, and query all run once typing pauses.
+        self._stop_search_debounce_timer()
+        self._search_debounce_timer = self.set_timer(
+            FILE_NOTES_SEARCH_DEBOUNCE_SECONDS,
+            partial(self._begin_search, query),
+        )
+
+    @on(Input.Submitted, "#file-notes-search")
+    def _search_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        query = event.value.strip()
+        if query:
+            self._stop_search_debounce_timer()
+            self._begin_search(query)
+
+    def _begin_search(self, query: str) -> None:
+        self._search_debounce_timer = None
         if self._navigator_mode == "git":
             self._navigator_mode_before_git = "search"
         else:
@@ -7001,8 +7063,14 @@ class LibraryFileNotesWorkspace(Vertical):
             except Exception:
                 paths = []
         else:
+            # TASK-34938: match against the pre-folded path list -- no
+            # per-keystroke casefold over every entry.
             folded = query.casefold()
-            paths = [path for path in self._entries if folded in path.casefold()]
+            paths = [
+                path
+                for path, folded_path in zip(self._entries, self._entries_folded)
+                if folded in folded_path
+            ]
         if generation != self._search_generation or not self._active:
             return
         self._rebuild_search_results(tuple(paths))

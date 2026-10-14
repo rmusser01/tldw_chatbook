@@ -63,7 +63,11 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import (
+    create_default_session,
+    create_owned_default_session,
+    create_pooled_default_session,
+)
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
@@ -880,7 +884,7 @@ def chat_with_openai(
                 # (recovered mode) sets session.trust_env = False. A shared
                 # session would be closed per call anyway and would leak
                 # that mutation into later calls. See ADR-222 §5.
-                session_context = create_default_session()
+                session_context = create_owned_default_session()
                 session = session_context.__enter__()
                 response = None
                 try:
@@ -995,13 +999,13 @@ def chat_with_openai(
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],  # Changed from method_whitelist
             )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
             # ADR-222 (TASK-34418): deliberately NOT registry-backed --
             # openai_post() owns and closes the session via the guarded
             # recovery _Operation; see ADR-222 §5.
-            with create_default_session() as session:
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)  # Though OpenAI is https
+            # task-34387 review C1: recovery transfers ownership (closes the
+            # session, recovered mode sets trust_env=False) -- that must land
+            # on a private session, never the shared pool entry.
+            with create_owned_default_session() as session:
                 response = _provider_recovery.openai_post(
                     session,
                     api_url,
@@ -1978,15 +1982,13 @@ def chat_with_anthropic(
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-
         def _anthropic_registry_session() -> requests.Session:
             # ADR-222 (TASK-34418): factory for the per-thread registry;
             # the mount must live here so a cached session keeps its
             # adapter (and warm pool) across calls.
-            session = create_default_session()
-            session.mount("https://", adapter)
-            return session
+            return create_pooled_default_session(
+                mount_retry=retry_strategy, mount_prefixes=("https://",)
+            )
 
         # ADR-222: nullcontext so leaving the block does NOT close the
         # registry-owned session (retries below stay on one session).
@@ -3011,16 +3013,14 @@ def chat_with_cohere(
         status_forcelist=[429, 500, 502, 503, 504],  # Standard retry statuses
         allowed_methods=["POST"],  # Retry only for POST requests
     )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-
     def _cohere_registry_session() -> requests.Session:
         # ADR-222 (TASK-34418): factory for the per-thread registry; the
         # mount lives here so a cached session keeps its adapter (and warm
         # pool) across calls.
-        session = create_default_session()
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        return session
+        return create_pooled_default_session(
+            mount_retry=retry_strategy,
+            mount_prefixes=("https://", "http://"),
+        )
 
     # ADR-222: one registry session per thread; the effective retry budget
     # and TLS trust are key fragments (settings changes get a new session).
@@ -3866,15 +3866,15 @@ def chat_with_google(
             status_forcelist=[429, 500, 503],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=google_retry)
+
 
         def _google_registry_session() -> requests.Session:
             # ADR-222 (TASK-34418): factory for the per-thread registry;
             # the mount lives here so a cached session keeps its adapter
             # (and warm pool) across calls.
-            session = create_default_session()
-            session.mount("https://", adapter)
-            return session
+            return create_pooled_default_session(
+                mount_retry=google_retry, mount_prefixes=("https://",)
+            )
 
         # ADR-222: nullcontext so leaving the block does NOT close the
         # registry-owned session; retry budget + TLS trust are key
@@ -4818,10 +4818,10 @@ def chat_with_huggingface(
                 # ADR-222 (TASK-34418): factory for the per-thread registry;
                 # the mount lives here so a cached session keeps its adapter
                 # (and warm pool) across calls.
-                session = create_default_session()
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)
-                return session
+                return create_pooled_default_session(
+                    mount_retry=adapter.max_retries,
+                    mount_prefixes=("https://", "http://"),
+                )
 
             hf_retry = adapter.max_retries
             session = get_session(

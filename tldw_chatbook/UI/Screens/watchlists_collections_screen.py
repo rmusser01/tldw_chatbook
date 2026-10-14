@@ -1337,6 +1337,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
         self._recompute_effective_layout(cause="initial")
+        # TASK-34967 (review revert): the revisit-TTL gate shipped here
+        # stranded fresh screen instances in a permanent loading state --
+        # this route is NOT reusable, so every visit constructs a screen
+        # with empty data state, and skipping the loaders on a rapid
+        # revisit left nothing to render from. Reload every visit until a
+        # data-carrying snapshot cache exists (see the task file).
         server_read = self.active_section == "items" and self.runtime_backend != "local"
         if server_read:
             self._enter_server_read_recovery()

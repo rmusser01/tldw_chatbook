@@ -238,7 +238,9 @@ class MCPScreen(BaseAppScreen):
         if self.workbench is None:
             return
         self.run_worker(
-            self.workbench.reload(),
+            # force: the manual refresh must bypass the revisit cache
+            # (TASK-34965) even when the catalog fingerprint is unchanged.
+            self.workbench.reload(force=True),
             name="mcp-screen-manual-refresh",
             group=_RELOAD_WORKER_GROUP,
             exclusive=True,
@@ -337,7 +339,8 @@ class MCPScreen(BaseAppScreen):
         _ = runtime_backend
         if self.workbench:
             self.run_worker(
-                self.workbench.reload(),
+                # force: a backend change must fully reload (TASK-34965).
+                self.workbench.reload(force=True),
                 name="mcp-screen-runtime-refresh",
                 group=_RELOAD_WORKER_GROUP,
                 exclusive=True,

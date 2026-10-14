@@ -69,9 +69,8 @@ def sent(monkeypatch):
 
     for module_name in TRANSPORT_MODULES:
         module = importlib.import_module(module_name)
-        monkeypatch.setattr(
-            module, "create_default_session", lambda *a, **k: RecordingSession()
-        )
+        monkeypatch.setattr(module, "create_default_session", lambda *a, **k: RecordingSession(), raising=False)
+        monkeypatch.setattr(module, "create_pooled_default_session", lambda *a, **k: RecordingSession(), raising=False)
     return requests_sent
 
 

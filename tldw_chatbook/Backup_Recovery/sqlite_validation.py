@@ -641,6 +641,18 @@ class _Restrictions:
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.evals":
+                allowed = (
+                    action == sqlite3.SQLITE_CREATE_INDEX
+                    and first == "idx_eval_results_run_created"
+                    and second == "eval_results"
+                    or action == sqlite3.SQLITE_INSERT
+                    and first == "sqlite_master"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_eval_results_run_created"
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
             if self.migration_owner == "db.prompts.primary":
                 allowed = (
                     action == sqlite3.SQLITE_CREATE_TABLE

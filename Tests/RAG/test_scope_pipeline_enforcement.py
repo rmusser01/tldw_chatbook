@@ -142,6 +142,59 @@ class _SpyRagService:
         return []
 
 
+_QUERY_EMBEDDING_UNPASSED = object()
+"""Sentinel distinguishing "the kwarg was not sent" from an explicit ``None``
+in the task-34390 spy's recorded calls."""
+
+
+class _CountingEmbeddings:
+    """Embeddings-wrapper double: counts ``create_embeddings_async`` calls
+    and returns one fixed vector, so identity of the passed-through embedding
+    is assertable (task-34390)."""
+
+    def __init__(self) -> None:
+        self.calls: List[List[str]] = []
+
+    async def create_embeddings_async(self, texts: List[str]) -> List[List[float]]:
+        self.calls.append(list(texts))
+        return [[1.0, 2.0]]
+
+
+class _EmbeddingSpyRagService(_SpyRagService):
+    """``_SpyRagService`` that also models the ``embeddings`` wrapper seam
+    and records each ``search()`` call's ``query_embedding`` kwarg
+    (task-34390)."""
+
+    def __init__(self, results_by_call: Optional[List[List[_RagResult]]] = None):
+        super().__init__(results_by_call)
+        self.embeddings = _CountingEmbeddings()
+
+    async def search(
+        self,
+        query,
+        top_k=None,
+        search_type="semantic",
+        filter_metadata=None,
+        include_citations=None,
+        score_threshold=None,
+        *,
+        metadata_allowlist=None,
+        query_embedding=_QUERY_EMBEDDING_UNPASSED,
+    ):
+        self.search_calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "search_type": search_type,
+                "metadata_allowlist": metadata_allowlist,
+                "query_embedding": query_embedding,
+            }
+        )
+        if self._results_by_call:
+            return self._results_by_call.pop(0)
+        return []
+
+
 class _RefusingMediaDB:
     """Proves the media leg short-circuits without ever querying the DB."""
 
@@ -547,6 +600,74 @@ class TestSemanticLegAllowlists:
             {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"m1"}}
         ]
         assert [r.id for r in results] == ["m1"]
+
+
+class TestSemanticLegSingleEmbed:
+    """task-34390: a scoped semantic search embeds the query ONCE for the
+    whole per-source-type fan-out and passes the vector through the
+    service's ``query_embedding`` seam, instead of re-embedding the
+    identical query text once per allowlist."""
+
+    @pytest.mark.asyncio
+    async def test_scoped_semantic_embeds_query_once_across_allowlists(self):
+        spy = _EmbeddingSpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.4)],
+                [_RagResult("n1", score=0.9)],
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"m1"}, note={"n1"})
+
+        results = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        # Exactly ONE query embedding for TWO store queries.
+        assert len(spy.embeddings.calls) == 1
+        assert spy.embeddings.calls[0] == ["query"]
+        # Both store queries received that same precomputed vector...
+        assert len(spy.search_calls) == 2
+        passed_vector = spy.search_calls[0]["query_embedding"]
+        assert passed_vector == [1.0, 2.0]
+        assert spy.search_calls[1]["query_embedding"] is passed_vector
+        # ...and the merge-by-score behavior is unchanged.
+        assert [r.id for r in results] == ["n1", "m1"]
+
+    @pytest.mark.asyncio
+    async def test_unscoped_semantic_does_not_preembed(self):
+        """Zero drift: the single unscoped store query embeds inside the
+        service; the pipeline neither embeds nor forwards a vector."""
+        spy = _EmbeddingSpyRagService(results_by_call=[[_RagResult("v1")]])
+        app = _App(rag_service=spy)
+
+        results = await pfs.search_semantic(app, "query", {"media": True}, limit=10)
+
+        assert spy.embeddings.calls == []
+        assert spy.search_calls[0]["query_embedding"] is _QUERY_EMBEDDING_UNPASSED
+        assert [r.id for r in results] == ["v1"]
+
+    @pytest.mark.asyncio
+    async def test_service_without_embeddings_wrapper_keeps_old_contract(self):
+        """A service advertising no embeddings wrapper (this file's plain
+        ``_SpyRagService`` -- its ``search`` does not even accept the kwarg)
+        must keep the old embed-per-call contract: no ``query_embedding``
+        kwarg is sent, so nothing TypeErrors."""
+        spy = _SpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.4)],
+                [_RagResult("n1", score=0.9)],
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"m1"}, note={"n1"})
+
+        results = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        assert [r.id for r in results] == ["n1", "m1"]
+        assert len(spy.search_calls) == 2
 
 
 # === Custom-pipeline inheritance (self-enforcement proof) ===

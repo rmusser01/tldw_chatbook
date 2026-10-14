@@ -47,7 +47,8 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("the local check must stop the request before any HTTP")
 
-    monkeypatch.setattr(LLM_API_Calls, "create_default_session", refuse)
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: refuse(), raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: refuse(), raising=False)
 
 
 def _assert_local(error: ChatConfigurationError, provider: str) -> None:

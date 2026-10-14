@@ -7377,6 +7377,7 @@ class ChatScreen(BaseAppScreen):
         self._console_environment_poll_timer: Any | None = None
         self._console_credential_poll_timer: Any | None = None
         self._console_credential_snapshot: tuple[int, str | None, int] | None = None
+        self._console_credential_pre_gate: tuple[str, int, int] | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -7415,6 +7416,12 @@ class ChatScreen(BaseAppScreen):
         # Message action, preview, speaking, and swipe state lives on
         # `self._message`; compatibility properties below proxy that owner.
         self._console_transcript_sync_timer: Any | None = None
+        # TASK-34958: skip-gate state for the 0.2s transcript tick -- the
+        # store's constant-time display token plus projection inputs, with a
+        # forced full pass every 15th tick (~3s) bounding staleness from any
+        # mutation the token does not cover.
+        self._console_transcript_sync_ticks = 0
+        self._console_transcript_sync_token: tuple[Any, ...] | None = None
         # Set by every start request, cleared by each poll tick (TASK-34789).
         self._console_transcript_poll_asked = False
         # Cost-ticker PR3 (task-5): the 10s WARM->EXPIRED repaint timer --
@@ -11593,6 +11600,7 @@ class ChatScreen(BaseAppScreen):
     def _poll_console_credential_readiness(self) -> None:
         """Refresh send controls as background credentials complete or expire."""
         from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_credential_status,
             subscription_readiness_revision,
         )
 
@@ -11602,6 +11610,23 @@ class ChatScreen(BaseAppScreen):
             or not self.is_current
             or getattr(self, "_console_sync_maintenance_paused", False)
         ):
+            return
+        # TASK-34956: cheap pre-gate BEFORE the ~8ms derivation-scope
+        # build. Same signals the snapshot gate relies on -- status()
+        # reports a credential's time-based expiry with no revision bump,
+        # and version covers connection-evidence settlements. Provider and
+        # draft edits sync the send controls through their own watcher
+        # paths; this poll only owns background credential transitions.
+        # Reads no config, so it sits ahead of the maintenance locks.
+        version = getattr(
+            shared_connection_evidence(lambda: self.app), "version", 0
+        )
+        pre_gate = (
+            subscription_credential_status(background=True),
+            subscription_readiness_revision(),
+            version,
+        )
+        if pre_gate == getattr(self, "_console_credential_pre_gate", None):
             return
         from contextlib import ExitStack
 
@@ -11619,9 +11644,6 @@ class ChatScreen(BaseAppScreen):
             with self._console_derivation_scope():
                 # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
                 # before the build: a switcher probe settles off-thread mid-build.
-                version = getattr(
-                    shared_connection_evidence(lambda: self.app), "version", 0
-                )
                 _settings, readiness = self._active_console_settings_readiness()
                 snapshot = (
                     subscription_readiness_revision(),
@@ -11633,6 +11655,11 @@ class ChatScreen(BaseAppScreen):
                 self._sync_console_settings_summary()
                 if self._sync_console_control_bar():
                     self._console_credential_snapshot = snapshot
+                # Commit the pre-gate only from a completed pass (review
+                # finding): lock contention, a dropped deferred sync, or a
+                # build failure must leave it unset so the next tick
+                # retries -- the contract the old comment promised.
+                self._console_credential_pre_gate = pre_gate
 
         with ExitStack() as acquired:
             for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
@@ -11647,6 +11674,7 @@ class ChatScreen(BaseAppScreen):
                 )
             else:
                 sync()
+
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""
@@ -18096,12 +18124,124 @@ class ChatScreen(BaseAppScreen):
             rendered.append((conversation_id, receipt_id))
         return tuple(rendered)
 
-    async def _sync_native_console_transcript(self) -> None:
-        """Render native Console messages in the native transcript."""
+    async def _sync_native_console_transcript(self, *, force: bool = False) -> None:
+        """Render native Console messages in the native transcript.
+
+        Args:
+            force: Skip the TASK-34958 tick gate entirely. Direct callers
+                that mutate transcript presentation while the app is idle
+                (no run active, so no 0.2s tick is running) must pass
+                ``True`` -- the review-notes edit/delete reload otherwise
+                skips as a no-op until the user's next send.
+        """
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
             transcript = None
+
+        # TASK-34958: cheap gate BEFORE the O(session) message pipeline
+        # (snapshot materialization, projections, grouping, spec walks).
+        # The store's display token covers transcript-visible mutations
+        # (stream chunks and folds via the speech fence; appends, terminal
+        # marks, edits, deletes bump directly); the projection key covers
+        # change-review marker republication; the ack flag covers send
+        # acknowledgements. A forced pass every 15th tick (~3s) bounds any
+        # gap, and the refresh-key reconcile inside the pipeline remains
+        # the final arbiter of DOM writes.
+        store = self._console_chat_store
+        if store is not None:
+            session_id = store.active_session_id
+            try:
+                token = (
+                    None
+                    if session_id is None
+                    else store.display_projection_revision(session_id)
+                )
+            except Exception:  # noqa: BLE001 - unknown session: never gate
+                token = object()
+            try:
+                projection_key = self._change_review_projection.revision_key()
+            except Exception:  # noqa: BLE001 - torn-down runtime: never gate
+                projection_key = object()
+            # Run-activity component (task-34958 review follow-up): the
+            # turn-activity line, the jump-indicator chip and the abandon
+            # affordance all read the controller's per-session run state and
+            # approval-round registry, neither of which bumps the store's
+            # display token -- during a store-quiet run period (long tool
+            # call, approval wait) the gate would otherwise hold those frozen
+            # for up to the 15-tick forced-pass bound. The pending-round KIND
+            # set joins them: a question escalating to (or being joined by)
+            # an approval round flips the waiting copy ("Waiting for your
+            # answer" -> "Waiting for your approval") while the registry-
+            # presence bool below already reads True, so presence alone
+            # cannot see the flip. All reads are O(1)-ish (frozen dataclass,
+            # bool, registry-keyed kind set, no content hashing); the except
+            # keeps partial controller doubles fail-open like the reads
+            # above.
+            try:
+                controller = getattr(self, "_console_chat_controller", None)
+                if controller is None or session_id is None:
+                    run_activity = None
+                else:
+                    run_activity = (
+                        controller.run_state_for(session_id),
+                        bool(controller.has_pending_approval_round(session_id)),
+                        controller.pending_round_kinds(session_id),
+                    )
+            except Exception:  # noqa: BLE001 - unknown controller: never gate
+                run_activity = object()
+            # Armed row-scoped delete confirmation (task-33628.2). Arming,
+            # re-arming, cancelling or clearing the pending delete flips the
+            # selected row's action bar (the confirm/cancel pair) WITHOUT
+            # touching the store, so the display token above cannot see it:
+            # a store-quiet arm used to be skipped as a token-equal no-op and
+            # the row froze pre-confirmation, because every later tick gated
+            # on the same token. The component mirrors the message
+            # controller's ``pending_delete_scope`` truth table -- the scope
+            # only renders while the pending id still matches it -- so a
+            # cleared pending id reopens the gate even when the scope object
+            # lags. getattr defaults (both attributes are initialized in the
+            # controller, so ``None`` here only reads as "nothing armed" for
+            # partial test doubles): frozen-dataclass equality over a few
+            # attribute reads, O(1), same class as the components above.
+            try:
+                delete_host = self._message
+                delete_pending = getattr(
+                    delete_host, "_pending_console_delete_message_id", None
+                )
+                delete_scope = getattr(delete_host, "_console_delete_scope", None)
+                delete_arm = (
+                    None
+                    if (
+                        delete_scope is None
+                        or delete_pending is None
+                        or delete_scope.message_id != delete_pending
+                    )
+                    else delete_scope
+                )
+            except Exception:  # noqa: BLE001 - no message controller: never gate
+                delete_arm = object()
+            gate = (
+                session_id,
+                token,
+                projection_key,
+                getattr(self, "_console_send_ack", None) is not None,
+                run_activity,
+                delete_arm,
+            )
+            # getattr fail-open: bare test shells build this screen via
+            # __new__ and do not run __init__ (review finding).
+            ticks = getattr(self, "_console_transcript_sync_ticks", 0) + 1
+            self._console_transcript_sync_ticks = ticks
+            forced = ticks % 15 == 0
+            if (
+                not force
+                and not forced
+                and gate
+                == getattr(self, "_console_transcript_sync_token", None)
+            ):
+                return
+            self._console_transcript_sync_token = gate
 
         active_messages = self._message._native_console_messages()
         messages = self._change_review_projection.project(active_messages)
@@ -23136,7 +23276,11 @@ class ChatScreen(BaseAppScreen):
                     await self._review_selection._load_console_annotation_previews(
                         database, store, conversation_id
                     )
-                    await self._sync_native_console_transcript()
+                    # force=True: this is precisely the idle path the
+                    # TASK-34958 gate cannot see -- edit/delete bumps no
+                    # store token and no tick is running, so the gated sync
+                    # would skip and leave the stale marker row mounted.
+                    await self._sync_native_console_transcript(force=True)
         finally:
             # Every exit path -- empty-notes toast, modal cancel/dismiss, or
             # an error above -- releases the in-flight guard; a latched flag

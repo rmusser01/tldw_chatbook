@@ -909,12 +909,11 @@ def test_qwencloud_partial_call_cancellation_never_executes(
 
     def recording_stream_chunk(
         store: ConsoleChatStore, message_id: str, chunk: str
-    ) -> Any:
-        message = real_append_stream_chunk(store, message_id, chunk)
+    ) -> None:
+        real_append_stream_chunk(store, message_id, chunk)
         if _CANCEL_CHECKPOINT in chunk:
             checkpoint_observed.set()
             cancelled.set()
-        return message
 
     monkeypatch.setattr(
         ConsoleChatStore,

@@ -683,6 +683,11 @@ class MCPWorkbench(Container):
         self._app_instance = app_instance
         self._mcp_recovery_token = None
         self._mcp_recovery_busy = False
+        # TASK-34953: the 0.25s save-status timer refreshes the config-file
+        # identity (stat read) only every 8th tick (~2s); direct post-save
+        # calls force a fresh read via the refresh flag.
+        self._save_status_tick = 0
+        self._save_file_identity_cache: tuple[tuple, tuple | None] | None = None
         self._active_mode = "servers"
         #: Mode requested before the deferred canvases mounted (task-2901);
         #: replayed by `_mount_deferred_canvases`.
@@ -1124,7 +1129,7 @@ class MCPWorkbench(Container):
 
     # -- data loading ---------------------------------------------------------
 
-    async def reload(self) -> None:
+    async def reload(self, *, force: bool = False) -> None:
         self._reloading = True
         # Raised here, not only in `on_mount`: `reload()` always CLEARS this in
         # its `finally`, so every caller must also raise it or a direct reload
@@ -1156,7 +1161,9 @@ class MCPWorkbench(Container):
                             "MCP workbench context load failed", exc
                         ),
                     )
-            self._snapshots = await self._collect_snapshots()
+            self._snapshots = await self._collect_snapshots_stale_gated(
+                service, force=force
+            )
             self._preselect_single_problem_on_load()
             await self._sync_children()
             self._rebind_inspector_advanced_context(service)
@@ -1357,6 +1364,73 @@ class MCPWorkbench(Container):
             isinstance(a, Mapping) and a.get("name") == "external_server.create"
             for a in actions
         )
+
+    async def _collect_snapshots_stale_gated(
+        self, service: Any, *, force: bool = False
+    ) -> list[ReadinessSnapshot]:
+        """Snapshot walk gated on the catalog fingerprint (TASK-34965).
+
+        Re-entering the workbench re-collects every server snapshot on a
+        fresh widget each visit. The service already maintains a
+        governance-grade catalog fingerprint (``run_catalog_fingerprint``,
+        used to validate cached run compositions), so a revisit with an
+        unchanged fingerprint AND unchanged config reuses the cached
+        snapshots; ``_sync_children`` still rebuilds the fresh DOM from
+        them. Anything that changed (permissions, servers, lifecycle
+        runtime state, config) alters the fingerprint and forces the full
+        walk, as do server-source mode, admission refusals, and
+        ``force`` (the manual/runtime refresh paths).
+        """
+        if force or self._source != "local" or service is None:
+            return await self._collect_snapshots()
+        fingerprint_runner = getattr(service, "run_catalog_fingerprint", None)
+        if not callable(fingerprint_runner):
+            return await self._collect_snapshots()
+        # Review fix: name the profiles the cached snapshots describe so the
+        # fingerprint's connection-state projection actually joins the token.
+        # The default ``profiles=()`` excluded connection states entirely, so
+        # a server connect/disconnect with no store change served stale
+        # readiness. Review follow-up: this route is NOT reusable, so a
+        # production revisit builds a FRESH widget whose `_catalog_records`
+        # is empty -- deriving profiles from it silently excluded
+        # connection states from the fingerprint on every revisit. The
+        # CACHE's records describe exactly the snapshots the token would
+        # validate, so they lead; the widget's own records cover the
+        # same-widget forced path; a true first visit passes () and always
+        # takes the full walk (the cache is empty too).
+        cache = getattr(self.app_instance, "_mcp_workbench_snapshot_cache", None)
+        records_for_profiles = (
+            cache[2] if cache is not None else None
+        ) or self._catalog_records
+        profiles = tuple(
+            (profile_id, bool(record.get("plugin_owner")))
+            for profile_id, record in records_for_profiles.items()
+        )
+        try:
+            fingerprint = await fingerprint_runner(profiles)
+        except Exception:  # noqa: BLE001 - admission refusal: full load
+            return await self._collect_snapshots()
+        token = (fingerprint, current_config_identity())
+        if cache is not None and cache[0] == token:
+            # Review fix (task-34965): a cache hit must restore the local
+            # profile catalog along with the snapshots. `_catalog_records`
+            # feeds the Hub Tools catalog, EDIT_CONFIG's record lookup and
+            # show_import, and it is only populated inside
+            # `_collect_snapshots()` -- leaving it empty on a hit broke all
+            # three. The records are plain dicts re-derived from the same
+            # fingerprinted store, so they are equally cacheable; both the
+            # cache entry and `self._catalog_records` are only ever replaced
+            # wholesale, never mutated in place, so sharing the dict is safe.
+            _, snapshots, catalog_records = cache
+            self._catalog_records = catalog_records
+            return snapshots
+        snapshots = await self._collect_snapshots()
+        self.app_instance._mcp_workbench_snapshot_cache = (
+            token,
+            snapshots,
+            self._catalog_records,
+        )
+        return snapshots
 
     async def _collect_snapshots(self) -> list[ReadinessSnapshot]:
         snapshots: list[ReadinessSnapshot] = []
@@ -4305,7 +4379,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _master_save_projection(self) -> tuple[bool, str, bool]:
+    def _master_save_projection(
+        self, *, file_identity_refresh: bool = False
+    ) -> tuple[bool, str, bool]:
         """Describe the latest choice without changing runtime tool authority."""
         enabled = coerce_bool_setting(
             get_cli_setting(
@@ -4315,8 +4391,10 @@ class MCPWorkbench(Container):
         )
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         config_path = get_cli_config_path()
-        generation = current_config_identity()[0]
-        file_revision = config_file_revision(config_path)
+        generation, file_revision = self._save_status_file_identity(
+            refresh=file_identity_refresh
+        )
+        generation = generation[0]
         default = "Applies immediately - no Save needed."
         if owner is None:
             return enabled, default, False
@@ -4382,7 +4460,9 @@ class MCPWorkbench(Container):
             and not canvas._pruning
         )
 
-    def _sync_master_save_status(self) -> None:
+    def _sync_master_save_status(
+        self, *, file_identity_refresh: bool = True
+    ) -> None:
         canvases = [
             canvas
             for canvas_type in (MCPToolsMode, MCPServersMode)
@@ -4391,7 +4471,9 @@ class MCPWorkbench(Container):
         ]
         if not canvases:
             return
-        enabled, text, error = self._master_save_projection()
+        enabled, text, error = self._master_save_projection(
+            file_identity_refresh=file_identity_refresh
+        )
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         state = owner.state_for("local_tools_enabled") if owner is not None else None
         pending = bool(
@@ -4409,9 +4491,33 @@ class MCPWorkbench(Container):
                 pending=pending,
             )
 
+    def _save_status_file_identity(
+        self, *, refresh: bool = False
+    ) -> tuple[tuple, tuple[int, int, int, int] | None]:
+        """Config identity + config-file revision for save-status stamps.
+
+        Args:
+            refresh: Force a fresh stat read; the 0.25s timer instead uses
+                the coarse ~2s cache so idle ticks do not touch the file.
+        """
+        if refresh or self._save_file_identity_cache is None:
+            self._save_file_identity_cache = (
+                current_config_identity(),
+                config_file_revision(get_cli_config_path()),
+            )
+        return self._save_file_identity_cache
+
     def _sync_local_config_save_status(self) -> None:
-        self._sync_root_save_status()
-        self._sync_master_save_status()
+        # TASK-34953: external config edits only need a coarse detection
+        # cadence; the in-memory save-state stamp parts stay per-tick.
+        self._save_status_tick += 1
+        refresh_file_identity = self._save_status_tick % 8 == 1
+        self._sync_root_save_status(
+            file_identity_refresh=refresh_file_identity
+        )
+        self._sync_master_save_status(
+            file_identity_refresh=refresh_file_identity
+        )
 
     async def _observe_local_master_save(self, task) -> None:
         outcome = await asyncio.shield(task)
@@ -4474,7 +4580,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _sync_root_save_status(self) -> None:
+    def _sync_root_save_status(
+        self, *, file_identity_refresh: bool = True
+    ) -> None:
         """Project current-profile receipts, including after screen recreation."""
         if not self.is_attached or not self.query(MCPToolsMode):
             return
@@ -4485,13 +4593,16 @@ class MCPWorkbench(Container):
         state = owner.state_for("workspace_root") if owner is not None else None
         if state is None:
             return
+        config_identity, file_revision = self._save_status_file_identity(
+            refresh=file_identity_refresh
+        )
         stamp = (
             canvas,
             state.revision,
             state.result is None,
             owner.completion_revision,
-            current_config_identity(),
-            config_file_revision(get_cli_config_path()),
+            config_identity,
+            file_revision,
         )
         if stamp == getattr(self, "_root_save_projection", None):
             return
@@ -4501,8 +4612,8 @@ class MCPWorkbench(Container):
         self._root_save_projection = stamp
         canvas.project_workspace_root_save(
             state,
-            generation=current_config_identity()[0],
-            file_revision=config_file_revision(get_cli_config_path()),
+            generation=config_identity[0],
+            file_revision=file_revision,
         )
 
     async def _observe_workspace_root_save(self, task) -> None:

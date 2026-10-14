@@ -324,7 +324,8 @@ async def test_filter_narrowing_to_zero_rows_does_not_show_empty_state():
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         text_input.value = "does-not-match-anything"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the 0.2s timer.
+        await pilot.pause(0.3)
 
         table = app.query_one("#mcp-audit-table", DataTable)
         assert table.row_count == 0
@@ -415,13 +416,14 @@ async def test_filter_by_text_matches_tool_name_or_server_key():
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         text_input.value = "weather"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the 0.2s timer.
+        await pilot.pause(0.3)
         table = app.query_one("#mcp-audit-table", DataTable)
         assert table.row_count == 1
         assert _row_texts(table, 0)[1] == "server:weather::forecast"
 
         text_input.value = "search"
-        await pilot.pause()
+        await pilot.pause(0.3)
         assert table.row_count == 1
         assert _row_texts(table, 0)[1] == "local:docs::search"
 
@@ -619,7 +621,8 @@ async def test_cursor_key_is_preserved_across_a_filter_rebuild():
         # key "1" ("b").
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         text_input.value = "local"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the 0.2s timer.
+        await pilot.pause(0.3)
 
         row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
         assert row_key.value == "1"

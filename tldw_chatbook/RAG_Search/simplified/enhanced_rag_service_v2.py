@@ -284,6 +284,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         *,
         metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
+        query_embedding: Optional[Any] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Enhanced search with optional reranking and experiment tracking.
@@ -315,6 +316,10 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 their doubles mirror ``RAGService.search``, not this
                 override. Any new base-class search kwarg has to be added
                 here too.
+            query_embedding: Precomputed query embedding, forwarded to
+                ``RAGService.search`` (task-34390). See the base method for
+                semantics -- semantic searches only, ``ValueError``
+                otherwise; ``None`` embeds per call exactly as before.
 
         Returns:
             Search results, optionally reranked
@@ -352,6 +357,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             score_threshold=score_threshold,
             metadata_allowlist=metadata_allowlist,
             keyword_source_types=keyword_source_types,
+            query_embedding=query_embedding,
         )
 
         # Apply reranking if enabled. Reranking must NEVER fail a search:

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -644,3 +645,67 @@ def test_notification_reports_baseline_diff_as_cached():
     message = format_refresh_notification(report)
     assert "OpenRouter: 2 new cached" in message
     assert "ZAI: catalog cached" in message
+
+
+@pytest.mark.asyncio
+async def test_provider_fetches_overlap_and_report_keeps_request_order(tmp_path):
+    """The per-provider HTTPS fetches run concurrently (TASK-34397).
+
+    A staggered fake client counts how many discovers are in flight at once:
+    under the old sequential ``await`` loop that counter can never exceed 1,
+    while the gather fan-out holds every provider in flight together even
+    when the FIRST provider is the slowest one. The report must still come
+    back in ``provider_list_keys`` order with the sequential per-provider
+    statuses, so slow providers cannot reorder outcomes around fast ones.
+    """
+    delays = {
+        "OpenAI": 0.25,      # slowest AND first: sequential order would gate the rest
+        "Anthropic": 0.01,
+        "MistralAI": 0.02,
+        "Moonshot": 0.01,
+        "OpenRouter": 0.03,
+        "ZAI": 0.01,
+    }
+    keys = tuple(delays)
+    in_flight = 0
+    max_in_flight = 0
+    fetch_order: list[str] = []
+    done_order: list[str] = []
+
+    async def staggered_client(**kwargs):
+        nonlocal in_flight, max_in_flight
+        key = kwargs["provider_list_key"]
+        fetch_order.append(key)
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        try:
+            await asyncio.sleep(delays[key])
+        finally:
+            in_flight -= 1
+        done_order.append(key)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+            models=_discovered(kwargs["provider_list_key"], "fresh-1"),
+        )
+
+    saved_calls = []
+    service = _service({}, saved_calls, discovery_client=staggered_client)
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=keys,
+    )
+
+    assert fetch_order == list(keys)  # every fetch dispatched up front, in order
+    assert done_order[-1] == "OpenAI"  # the slow provider still finishes last
+    assert max_in_flight == len(keys)  # sequential awaits cap this at 1
+    assert [outcome.provider_list_key for outcome in report.outcomes] == list(keys)
+    assert all(outcome.status == "refreshed" for outcome in report.outcomes)
+    assert all(outcome.new_model_ids == ("fresh-1",) for outcome in report.outcomes)
+    assert report.disk_write_failed is False
+    # The shared disk persistence still happens once, after all results.
+    assert (tmp_path / "cache.json").exists()

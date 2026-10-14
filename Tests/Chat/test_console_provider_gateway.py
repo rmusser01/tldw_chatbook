@@ -7975,10 +7975,17 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
         }
     }
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: _CapturedMistralSession(calls),
+        raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: _CapturedMistralSession(calls),
+        raising=False)
+    # Pooled seam (task-34387): patch BOTH names so either production
+    # session seam is intercepted.
     monkeypatch.setattr(
         hosted_chat,
-        "create_default_session",
-        lambda: _CapturedMistralSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedMistralSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         mistral,
@@ -8081,10 +8088,15 @@ async def test_console_send_keeps_custom_endpoint_and_credential_paired(
         legacy_values["api_settings"]["custom"]["api_key"] = "stale-credential"
         legacy_values["custom_openai_api_2"]["api_key"] = "stale-credential"
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -8181,10 +8193,15 @@ async def test_console_keyless_custom_send_never_falls_back_to_legacy_credential
         legacy_values["api_settings"]["custom"]["api_key"] = legacy_credential
         legacy_values["custom_openai_api_2"]["api_key"] = legacy_credential
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -8278,10 +8295,15 @@ async def test_console_persisted_explicit_keyless_ignores_saved_env_and_legacy_k
         },
     }
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -8334,10 +8356,15 @@ def test_custom_adapter_fallback_honors_persisted_explicit_keyless(monkeypatch):
 
     calls: list[tuple[str, str]] = []
     monkeypatch.setenv("CUSTOM_API_KEY", "environment-adapter-canary")
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -8509,8 +8536,15 @@ async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) ->
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     captured: dict = {}
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
     monkeypatch.setattr(
-        LLM_API_Calls, "create_default_session", lambda: _CapturedURLSession(captured)
+        LLM_API_Calls,
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedURLSession(captured),
+        raising=False,
     )
 
     gateway = ConsoleProviderGateway(
@@ -8554,8 +8588,15 @@ async def test_console_send_default_anthropic_url_unchanged_when_unconfigured(
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     captured: dict = {}
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
     monkeypatch.setattr(
-        LLM_API_Calls, "create_default_session", lambda: _CapturedURLSession(captured)
+        LLM_API_Calls,
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedURLSession(captured),
+        raising=False,
     )
 
     gateway = ConsoleProviderGateway(

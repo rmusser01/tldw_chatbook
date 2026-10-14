@@ -10,12 +10,14 @@ and resource management issues found in previous iterations.
 
 Key Features & Fixes in this Version
 ────────────────────────────────────
-• **Thread-Safe & Race-Condition-Free**: The core embedding logic is now fully
-  thread-safe, preventing race conditions where a model could be evicted by one
-  thread while being used by another.
-• **Correct Resource Management**: Eviction now occurs *before* loading a new
-  model, ensuring the `max_cached` limit is never exceeded, preventing
-  potential out-of-memory errors.
+• **Thread-Safe & Race-Condition-Free**: The core embedding logic is now
+  fully thread-safe, preventing race conditions where a model could be
+  evicted by one thread while being used by another (a per-record refcount
+  since task-34398, which also lets the model forward pass run OUTSIDE the
+  factory lock so concurrent embeds no longer serialize).
+• **Correct Resource Management**: Eviction now occurs *before* loading a
+  new model; the max_cached limit is only ever (transiently) exceeded when
+  every cached model is currently checked out and thus not evictable.
 • **Improved Typing**: The internal cache and Pydantic configurations use
   `TypedDict` and discriminated unions for better static analysis and maintainability.
 • **Async Facade**: `await factory.async_embed(...)` uses `asyncio.to_thread`
@@ -318,11 +320,17 @@ class EmbedFn(Protocol):
 
 
 class CacheRecord(TypedDict):
-    """Strongly-typed structure for a cache entry."""
+    """Strongly-typed structure for a cache entry.
+
+    ``refs`` is the checkout count (task-34398): an entry with a positive
+    refcount is in use by an in-flight ``embed`` call and is never evicted
+    or closed until the count returns to 0.
+    """
 
     embed: EmbedFn
     close: Optional[Callable[[], None]]
     last: float
+    refs: int
 
 
 class _HuggingFaceEmbedder:
@@ -611,7 +619,26 @@ def _openai_embedder(
 
 
 class EmbeddingFactory:
-    """Thread‑safe LRU/idle cache with sync & async embedding methods."""
+    """Thread‑safe LRU/idle cache with sync & async embedding methods.
+
+    Locking strategy (task-34398): ``self._lock`` -- shared with the
+    ``self._cond`` Condition -- guards ONLY model-cache mutation (lookup,
+    insert, LRU bookkeeping, eviction). The model forward pass runs outside
+    it, so a background ingest batch no longer serializes interactive query
+    embeddings. Use-after-free is prevented with a per-record refcount
+    instead of lock-held-for-the-whole-call: eviction (idle and LRU) skips
+    entries whose refcount is positive, so an in-use model can never be
+    closed underneath a caller.
+
+    Concurrent forward passes on the SAME model are allowed: the HF embedder
+    below runs in eval mode under ``torch.inference_mode()`` and shares no
+    mutable state across calls (each call tokenizes into fresh tensors), and
+    the OpenAI embedder is a stateless HTTP client. Any custom ``embed_fn``
+    handed to :meth:`_build` must uphold the same thread-safety guarantee;
+    if a model is NOT safe for concurrent calls, wrap its forward pass in
+    its own lock inside the embed_fn -- the factory-level ceiling is gone
+    either way, because different models always run concurrently.
+    """
 
     def __init__(
         self,
@@ -648,6 +675,11 @@ class EmbeddingFactory:
         self._allow_dynamic_hf = allow_dynamic_hf
         self._cache: "OrderedDict[str, CacheRecord]" = OrderedDict()
         self._lock = threading.Lock()
+        # Condition sharing ``self._lock``: ``with self._cond`` acquires the
+        # very same lock, so both spellings interoperate. The Condition only
+        # adds the wait/notify ``close()`` needs to drain in-flight embeds
+        # before closing models (task-34398).
+        self._cond = threading.Condition(self._lock)
         logger.debug(
             "factory initialised max_cached={} idle={}s", max_cached, idle_seconds
         )
@@ -719,7 +751,9 @@ class EmbeddingFactory:
             )
             try:
                 hf = _HuggingFaceEmbedder(spec)
-                rec = CacheRecord(embed=hf.embed, close=hf.close, last=time.monotonic())
+                rec = CacheRecord(
+                    embed=hf.embed, close=hf.close, last=time.monotonic(), refs=0
+                )
                 logger.debug(
                     f"_build: Successfully created HuggingFace embedder for {model_id}"
                 )
@@ -744,7 +778,9 @@ class EmbeddingFactory:
             )
             try:
                 fn = _openai_embedder(spec)  # Pass the whole spec object
-                rec = CacheRecord(embed=fn, close=None, last=time.monotonic())
+                rec = CacheRecord(
+                    embed=fn, close=None, last=time.monotonic(), refs=0
+                )
                 logger.debug(
                     f"_build: Successfully created OpenAI embedder for {model_id}"
                 )
@@ -775,6 +811,12 @@ class EmbeddingFactory:
         """
         Embed a list of texts using the specified model or the default model.
 
+        The lock guards only the model-cache checkout below; the forward pass
+        runs OUTSIDE it (task-34398), so concurrent callers -- including the
+        same model -- never serialize behind one global lock. The refcount
+        checked out here guarantees the model cannot be evicted or closed
+        while this call is in flight.
+
         Args:
             texts: List of strings to embed
             model_id: Optional model ID to use (falls back to default_model_id)
@@ -797,13 +839,15 @@ class EmbeddingFactory:
             _ensure_numpy()
             return [] if as_list else np.empty((0, 0), dtype=np.float32)
 
-        # --- The lock must be held during the embedding call to prevent use-after-free ---
-        logger.debug(f"embed: Acquiring lock for model {model_id_to_use}")
-        with self._lock:
-            # First, check for idle models to evict.
+        # --- Cache checkout: mutate the cache under the lock, then release
+        # it for the model work (task-34398). ---
+        logger.debug(f"embed: Acquiring lock for cache checkout of {model_id_to_use}")
+        with self._cond:
+            # First, check for idle models to evict -- never one that is
+            # still checked out (refcount > 0).
             now = time.monotonic()
             for mid, rec in list(self._cache.items()):
-                if now - rec["last"] > self._idle:
+                if rec["refs"] == 0 and now - rec["last"] > self._idle:
                     logger.debug(
                         f"embed: Idle evicting model {mid} (unused for {now - rec['last']:.1f}s)"
                     )
@@ -817,9 +861,23 @@ class EmbeddingFactory:
                 logger.info(
                     f"embed: Model {model_id_to_use} not in cache, will build it"
                 )
-                # If we need to load a model, make space for it *first*.
+                # If we need to load a model, make space for it *first* --
+                # but only by evicting models that are NOT checked out. If
+                # every cached model is currently in use, we transiently
+                # exceed max_cached rather than evicting a live model (the
+                # same trade-off prefetch already documents).
                 while len(self._cache) >= self._max_cached:
-                    lru_mid, lru_rec = self._cache.popitem(last=False)
+                    lru_mid = next(
+                        (mid for mid, r in self._cache.items() if r["refs"] == 0),
+                        None,
+                    )
+                    if lru_mid is None:
+                        logger.debug(
+                            f"embed: all {len(self._cache)} cached models are in use; "
+                            f"building {model_id_to_use} past max_cached"
+                        )
+                        break
+                    lru_rec = self._cache.pop(lru_mid)
                     logger.debug(
                         f"embed: LRU evicting model {lru_mid} to make space for {model_id_to_use}"
                     )
@@ -834,14 +892,19 @@ class EmbeddingFactory:
             else:
                 logger.debug(f"embed: Using cached model {model_id_to_use}")
 
-            # Mark as most recently used and get the function to call.
+            # Mark as most recently used, check the model out (refcount), and
+            # grab the function to call.
             rec["last"] = time.monotonic()
+            rec["refs"] += 1
             self._cache.move_to_end(model_id_to_use)
             embed_fn = rec["embed"]
 
-            # The embedding call itself is now inside the lock. This serializes
-            # all embedding calls, but guarantees that the model cannot be
-            # evicted by another thread while it is in use.
+        # The embedding call itself runs OUTSIDE the lock (task-34398): the
+        # refcount above, not lock-held-for-the-whole-call, now guarantees
+        # the model cannot be evicted by another thread while it is in use.
+        # See the class docstring for the concurrent-forward-pass safety
+        # contract every embed_fn must uphold.
+        try:
             logger.debug(
                 f"embed: Starting embedding of {len(texts)} texts with model {model_id_to_use}"
             )
@@ -859,7 +922,12 @@ class EmbeddingFactory:
                 )
 
             return result
-        # The lock is released only after the work is complete.
+        finally:
+            # Check the model back in; wake close() if it is waiting for
+            # in-flight embeds to drain.
+            with self._cond:
+                rec["refs"] -= 1
+                self._cond.notify_all()
 
     async def async_embed(
         self, texts: List[str], *, model_id: Optional[str] = None, as_list: bool = False
@@ -893,8 +961,17 @@ class EmbeddingFactory:
             logger.info("prefetched {}", mid)
 
     def close(self) -> None:
-        """Close all models and clear the cache."""
-        with self._lock:
+        """Close all models and clear the cache.
+
+        Waits for any in-flight ``embed`` calls to check their models back in
+        first (task-34398): before the lock-scope reduction, ``close()``
+        acquired the same lock the whole forward pass held, so it could never
+        close a model mid-use; the refcount + Condition pair preserves that
+        guarantee without serializing the embeds themselves.
+        """
+        with self._cond:
+            while any(rec["refs"] > 0 for rec in self._cache.values()):
+                self._cond.wait()
             for mid, rec in self._cache.items():
                 if rec["close"]:
                     rec["close"]()

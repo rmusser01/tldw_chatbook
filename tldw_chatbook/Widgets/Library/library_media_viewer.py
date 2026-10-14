@@ -860,9 +860,13 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         the new name. The screen re-reads the item on this message.
         """
 
-        def __init__(self, media_id: int) -> None:
+        def __init__(self, media_id: int, *, content: str | None = None) -> None:
             super().__init__()
             self.media_id = media_id
+            # TASK-34933: the renamed content travels with the message so
+            # the screen patches its memoized detail without re-reading the
+            # full media row (content blob included) from the DB.
+            self.content = content
 
     def _compose_speaker_legend(self) -> ComposeResult:
         """Render one rename row per speaker of a finished meeting recording.
@@ -1008,7 +1012,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             self.viewer, content=content, speaker_legend_rows=rows
         )
         self.refresh(recompose=True)
-        self.post_message(self.SpeakerRenamed(media_id))
+        self.post_message(self.SpeakerRenamed(media_id, content=content))
 
     def sync_loading_state(self, *, loading: bool, message: str) -> None:
         """Patch the mounted loading placeholder without rebuilding the body.

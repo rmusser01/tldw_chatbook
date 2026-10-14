@@ -83,10 +83,35 @@ def test_v5_evals_candidate_migrates_to_v6_and_keeps_its_rows(tmp_path):
 
     assert not any("version" in _columns(path, t) for t in _EVALS_VERSION_COLUMN_TABLES)
     with closing(sqlite3.connect(path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        # With the v7 catalog declared, one migrating pass applies every
+        # pending step: v5 -> v6 (drop column) -> v7 (run_created index).
+        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
         assert connection.execute(
             "SELECT name FROM eval_tasks WHERE id = 'kept-task'"
         ).fetchone() == ("Saved task",)
+
+
+def test_v5_evals_candidate_migrates_through_v6_to_v7_and_creates_the_run_created_index(tmp_path):
+    """task-34399 review round 3: the DECLARED-v5 candidate migrates through
+    v6 to v7 in a single migrating pass (the v6 drop-column step and the v7
+    step both apply before the first assertion below), creating
+    idx_eval_results_run_created under the db.evals authorizer admissions
+    added for it (CREATE INDEX + the rebuild-dance sqlite_master INSERT);
+    the second pass on the already-v7 candidate is a no-op."""
+    path = _build_declared_v5(tmp_path / "evals.db")
+
+    assert validate_candidate(_owner(), path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+
+    # A second pass on the already-v7 candidate is a no-op.
+    assert validate_candidate(_owner(), path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' "
+            "AND name = 'idx_eval_results_run_created'"
+        ).fetchone() == ("idx_eval_results_run_created",)
 
 
 @pytest.mark.parametrize(

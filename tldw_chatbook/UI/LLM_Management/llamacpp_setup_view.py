@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from textual import on
@@ -101,6 +101,7 @@ class LlamaCppSetupView(Vertical):
         self._staged = None
         self._last_models = ()
         self._last_diagnostics = None
+        self._last_refresh_gate: tuple[Any, ...] | None = None
         self._draft = getattr(app_instance, "_llamacpp_lab_draft", {})
         if hasattr(app_instance, "_llm_server_lifecycle_lock"):
             from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
@@ -582,6 +583,34 @@ class LlamaCppSetupView(Vertical):
         if not self.is_mounted:
             return
         active = self._active()
+        snapshot = self.owner.snapshot()
+        # Equality gate (task-34916): everything painted below derives from
+        # these inputs, so the 2Hz timer skips the whole DOM walk while idle.
+        # snapshot fields are read as values because the owner mutates its
+        # cached snapshot in place. Diagnostics keeps its own identity gate
+        # and runs on every tick regardless.
+        from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+            current_server_claim,
+        )
+
+        claim = current_server_claim(self.app_instance, "llamacpp") if active else None
+        gate = (
+            active,
+            self._profile_busy,
+            self._profiles_loaded,
+            snapshot.code,
+            snapshot.state,
+            snapshot.target,
+            tuple(snapshot.model_ids or ()),
+            getattr(claim, "_launch_preview", None),
+            getattr(self._local_claim, "_connection_exposed", False),
+            self._local_claim is not None
+            and self._local_claim.cancel_event.is_set(),
+        )
+        if gate == self._last_refresh_gate:
+            self._render_diagnostics()
+            return
+        self._last_refresh_gate = gate
         self._render_launch_state()
         self.query_one("#llamacpp-profile-select", Select).disabled = (
             self._profile_busy or not self._profiles_loaded
@@ -590,7 +619,6 @@ class LlamaCppSetupView(Vertical):
             self.query_one("#llamacpp-profile-" + action, Button).disabled = (
                 self._profile_busy or (action != "reload" and not self._profiles_loaded)
             )
-        snapshot = self.owner.snapshot()
         status = _STATUS.get(snapshot.code, "Connection unavailable. Check again.")
         if (
             snapshot.code == "process_unavailable"
