@@ -911,8 +911,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 308,
-      "diagnostic_digest": "63ec51ad8ad4963366bb",
+      "call_count": 305,
+      "diagnostic_digest": "8e59093e31061f818dab",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -939,8 +939,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 117,
-      "diagnostic_digest": "a2bac74d3c88bfb52a43",
+      "call_count": 116,
+      "diagnostic_digest": "05acb0fa5170cbc003d3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Prompts_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1219,13 +1219,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "f41baa1a718b2a3da3be",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Event_Handlers/Media_Creation_Events/swarmui_events.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 29,
       "diagnostic_digest": "d6f178afee6348890e84",
       "owner": "TASK-494",
@@ -1244,20 +1237,6 @@
       "diagnostic_digest": "eca063b8bc9c7768812d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Event_Handlers/app_lifecycle.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 9,
-      "diagnostic_digest": "77776fe18b4a34a2910d",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Event_Handlers/eval_db_operations.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 2,
-      "diagnostic_digest": "f569ee256b356ddb4b93",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Event_Handlers/ingest_status_helper.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -2808,13 +2787,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "88c22afb88298e9b5dde",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/ChatbookCreationWindow.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 11,
       "diagnostic_digest": "d22e427a54424dd28e4a",
       "owner": "TASK-494",
@@ -3564,13 +3536,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "3e5a48897028892f1aef",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Screens/skills_screen.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 14,
       "diagnostic_digest": "0f5542cc54bddaa67463",
       "owner": "TASK-494",
@@ -4159,20 +4124,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "6320c2f9385c3abf2dd8",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/Chat_Widgets/chat_message.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 14,
-      "diagnostic_digest": "a11ca42c75621f29542d",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/Chat_Widgets/chat_message_enhanced.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 1,
       "diagnostic_digest": "0b2624e9dfecb2836f43",
       "owner": "TASK-494",
@@ -4670,8 +4621,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 26,
-      "diagnostic_digest": "f2b5f0a51b778a2c308c",
+      "call_count": 23,
+      "diagnostic_digest": "c8736d95bbecfd138f8a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_speech.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5952,24 +5903,6 @@
             "db_instance.db_path_str"
           ],
           "scope": "empty_trash",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "d5d15757b13af8d1",
-          "method": "debug",
-          "path_expressions": [
-            "db_instance.db_path_str"
-          ],
-          "scope": "fetch_keywords_for_media",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "3f5b5005aff08ae8",
-          "method": "error",
-          "path_expressions": [
-            "db_instance.db_path_str"
-          ],
-          "scope": "fetch_keywords_for_media",
           "status": "legacy_unreviewed"
         },
         {
