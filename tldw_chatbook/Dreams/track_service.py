@@ -946,6 +946,26 @@ async def _settle_source_restored(dreams_db: Any, riders: list[dict]) -> None:
             dreams_db.set_tracked_suspension, int(rider["id"]), text)
 
 
+async def _unsettle_held(dreams_db: Any, riders: list[dict]) -> None:
+    """Un-settle held records just before their source runs again.
+
+    A record settled "on" that owes only its held subscription says the
+    page is paused, and the boot check takes it as done. Once the page has
+    passed the check, and before the source is switched on, such a record
+    is written back unsettled (no ``held``), so a closing write that then
+    fails leaves a record the next pass finishes -- not a running source
+    reported as held (review of #3101, round 2: S1 for the resume pass, and
+    the re-track path). A write that fails here raises, and the source
+    stays off.
+    """
+    for rider in riders:
+        if _settled_hold_only(rider.get("suspension")):
+            await asyncio.to_thread(run_finite_local_worker,
+                partial(dreams_db.set_tracked_suspension, only_live=True),
+                int(rider["id"]),
+                _record_text(subscription=True, reminders=[], rules=[]))
+
+
 async def _retry_held_source(
     subs_service: Any, dreams_db: Any, wrapper: dict,
 ) -> None:
@@ -965,7 +985,12 @@ async def _retry_held_source(
     if (not subscription_id or record is None or not _owed(record)[0]
             or settled_state(wrapper.get("suspension")) == SETTLED_OFF):
         return
-    resolved, held = await _restore_source(subs_service, subscription_id)
+    async def unsettle() -> None:
+        await _unsettle_held(dreams_db, await asyncio.to_thread(
+            dreams_db.list_tracked_for_subscription, subscription_id))
+
+    resolved, held = await _restore_source(
+        subs_service, subscription_id, before_enable=unsettle)
     if not resolved:
         raise TrackPrivateURL(
             f"refusing to track a non-public destination ({held})")
@@ -1162,6 +1187,7 @@ async def track_page(
             # destination is checked again now (Qodo #1, PR #2921) --
             # still before any write.
             await _require_public_url(str(url))
+            await _unsettle_held(dreams_db, riders)
             await _enable_dream_subscription(
                 subs_service, subscription_id, source)
             await _settle_source_restored(dreams_db, riders)
@@ -2284,16 +2310,11 @@ async def _resume_pass(
     async def unsettle_held_riders(subscription_id: int) -> None:
         # Review of #3101, round 2, S1. A held record skipped the
         # write-ahead (N1); its page has now passed the check, so before
-        # the source runs again it stops saying "held, settled on". A
-        # closing write that then fails leaves an unsettled record the
-        # next pass finishes -- not a running source the Tracked row calls
-        # paused and the boot check never looks at again.
-        for rider in items:
-            rider_id = int(rider["id"])
-            if (int(rider.get("subscription_id") or 0) == subscription_id
-                    and rider_id not in failed
-                    and _settled_hold_only(rider.get("suspension"))):
-                await write_unsettled(rider_id, True, [], [])
+        # the source runs again it stops saying "held, settled on".
+        await _unsettle_held(dreams_db, [
+            rider for rider in items
+            if int(rider.get("subscription_id") or 0) == subscription_id
+            and int(rider["id"]) not in failed])
 
     for item in pending:
         item_id = int(item["id"])

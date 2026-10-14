@@ -4489,6 +4489,56 @@ async def test_tracking_again_retries_a_held_page(
     assert _record(dreams_db, item_id) is None, "the hold is over"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_story", [True, False], ids=["reuse", "new-story"])
+@pytest.mark.parametrize("failing", ["closing", "unsettling"])
+async def test_a_re_track_never_runs_a_source_under_its_hold(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        same_story, failing):
+    """Review of #3101, round 2, re-track path (as S1 for the resume pass).
+    A re-track whose lookup now passes un-settles the held records just
+    before the source is switched on. If the closing write then fails, the
+    source runs under an unsettled record the next pass finishes -- not
+    under "held: private, settled: on", which the Tracked row calls paused
+    and the boot check never looks at. If the un-settling write fails, the
+    source stays off and the hold stands."""
+    import json
+
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id, source_id = owned["tracked_item_id"], owned["subscription_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _resolve_everything_to(monkeypatch, "10.0.0.5")
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert _record(dreams_db, item_id)["held"] == "private"
+    _resolve_everything_to(monkeypatch, "93.184.216.34")
+    real = dreams_db.set_tracked_suspension
+
+    def one_write_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == item_id:
+            closing = record is None
+            unsettling = record is not None and "held" not in json.loads(record)
+            if (closing, unsettling)[failing == "unsettling"]:
+                raise RuntimeError("disk full")
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", one_write_fails)
+
+    with pytest.raises(RuntimeError):
+        await _event_page(dreams_db, service, scheduling_db,
+                          story_id=1 if same_story else 2)
+
+    record = _record(dreams_db, item_id)
+    if failing == "closing":
+        assert _is_active(subs_db, source_id) == 1
+        assert "held" not in record, "a running source is not reported as held"
+        assert record.get("settled") is None, "the next pass finishes it"
+        assert _boot_needs_switch(dreams_db, enabled=True) is True
+    else:
+        assert _is_active(subs_db, source_id) == 0, "the source stays off"
+        assert (record["held"], record["settled"]) == ("private", "on")
+
+
 # --- T15: mutants that used to survive -----------------------------------------
 #
 # Each test below kills one mutant the reviewer's script left alive.
