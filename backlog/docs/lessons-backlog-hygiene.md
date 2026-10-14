@@ -1336,8 +1336,12 @@ But `test_screen_size_ratchet.py` counted it for a month, in both the line
 budget and the method budget, and that cost was part of why the ratchet went
 red. To catch the other half of this failure, run
 `ruff check --isolated --select F811 <file>` on a heavily merged class-body
-file. It flags the shadowed copy whichever copy wins, but only when the two
-bodies differ: the same review found a byte-identical second copy of
-`ChatScreen._restore_collapsible_states` that ruff 0.16.6 F811 does not report.
-An AST pass over the class body that lists duplicate method names (skipping
-property getter/setter pairs) finds both kinds.
+file. It flags the shadowed copy whichever copy wins, but by default only for
+names that do not start with `_`: ruff's default `dummy-variable-rgx` exempts
+every `_`-prefixed name from F811, so most of ChatScreen (mostly private
+methods) is invisible to it. The same review found a second, byte-identical copy
+of `ChatScreen._restore_collapsible_states` that the plain command did not
+report; `ruff check --isolated --select F811 --config 'lint.dummy-variable-rgx = "^_$"' <file>`
+does (identical bodies are flagged too, probed on ruff 0.16.6). An AST pass over
+the class body that lists duplicate method names (skipping property
+getter/setter pairs) is the other way to see them.

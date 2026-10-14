@@ -67,7 +67,7 @@ Budgets are not lowered. Chat sits 192 lines under, inside the 200-line slack te
 - The Console and Library UI and Chat test files that exercise every moved or deleted symbol were run on this branch and on a clean dev worktree with the same arguments. They show no failure that is new on this branch; the differences are timing flakes that fail on both trees when rerun.
 - Preflight passes. The markup census and the textual worker contract checker pass.
 - /verify (an app launch) was not run: this session forbids launching the app.
-Review of PR #3109 found a second, byte-identical copy of `ChatScreen._restore_collapsible_states` (ruff F811 does not flag identical copies); its first copy is deleted too (its only caller is `set_timer(0.1, self._restore_collapsible_states)`, a bound method). That put chat_screen.py 219 lines under its row, past the ratchet's 200-line slack, so the row is lowered to the exact measurement, 24985/754. Library is 53 lines and 5 methods under its unchanged row.
+Review of PR #3109 found a second, byte-identical copy of `ChatScreen._restore_collapsible_states` (ruff's F811 skips `_`-prefixed names under its default `dummy-variable-rgx`); its first copy is deleted too (its only caller is `set_timer(0.1, self._restore_collapsible_states)`, a bound method). That put chat_screen.py 219 lines under its row, past the ratchet's 200-line slack, so the row is lowered to the exact measurement, 24985/754. Library is 53 lines and 5 methods under its unchanged row.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
