@@ -1,7 +1,7 @@
 ---
 id: TASK-34967
 title: Gate-Watchlists-per-visit-section-loads-on-staleness
-status: Done
+status: To Do
 assignee: []
 created_date: 2026-10-13 14:52
 labels:
@@ -21,9 +21,9 @@ Watchlists on_mount fires five loaders on every visit — _refresh_local_wc_snap
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] Re-entering Watchlists with unchanged data skips redundant section re-queries (whole-screen reads served from a TTL cache)
+- [ ] Re-entering Watchlists with unchanged data skips redundant section re-queries (two attempts reverted; see notes)
 - [x] Forced refresh action still reloads everything
-- [x] Overview and tree stay correct after data changes — loaders always run and write state, so a fresh instance can never be stranded empty
+- [ ] Overview and tree stay correct after data changes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,6 +36,11 @@ Watchlists on_mount fires five loaders on every visit — _refresh_local_wc_snap
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
+
+- SECOND REVERT (2026-10-14): the TTL read-cache (attempt 2) broke two P0 admission tests (`test_watchlists_bulk_source_authoring.py::test_a_load_landing_while_a_section_pane_mounts_reaches_that_pane` and `::test_a_load_landing_while_a_rail_is_recreated_reaches_it`). Root cause: those tests pin a load/mount ORDERING contract — a load landing while a pane mounts must reach that pane through the watcher publish path. The cache made revisit loads land BEFORE the pane mounted (instantly, from the app-level cache), so the pane mounted after the reactive write and stayed in LOADING. Any future attempt must preserve the publish timing relative to pane mounts (e.g., defer applying a cached result until the destination pane exists), which is a publish-path change, not a cache-in-front change.
+- Attempt 2 design (reverted in db3d6df48c): loaders unchanged, TTL read-cache in front of `_list_local_wc_snapshot` and `get_overview_data`. Kept the correctness surface empty for STATE (loaders always ran) but not for TIMING.
+
+
 
 - Second attempt (2026-10-14, follow-up batch): a TTL read-cache instead of the reverted mount gate. `_list_local_wc_snapshot_cached` and `_overview_data_cached` sit IN FRONT of the two whole-screen reads and serve a fresh (<2s) app-level cached result; the loaders themselves — and every state write they perform — run unchanged on every visit. This keeps the correctness surface empty by construction (the first attempt's failure was skipping the loaders on a fresh instance), while rapid revisits stop re-issuing the identical page query and overview aggregation.
 - Scope: the tree loader's five batched reads (verified efficient in the wave-1 audit) and the per-section loaders (only the ACTIVE section's branch runs) are left uncached; `r` / sync completions refresh through their own paths and naturally age the cache out.
