@@ -1084,6 +1084,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._tree_active_tag: str | None = None
         self._tree_load_generation = 0
         self._tree_snapshot = TreeDataSnapshot((), (), (), {}, {})
+        self._rail_shows = self._tree_snapshot  # what the mounted rail shows
         self._tree_snapshot_failures: frozenset[str] = frozenset()
         self._tree_failure_episode_active = False
         # task-895: one tree write (each of which owns a modal dialog) at a
@@ -2185,6 +2186,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         even though the scope itself survived on the screen.
         """
         recovering = self.active_section == "items" and self._read_recovery_active
+        self._rail_shows = self._tree_snapshot
         return WatchlistTree(
             watchlists=[] if recovering else self._tree_watchlists,
             counts={} if recovering else self._tree_counts,
@@ -4095,7 +4097,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(RegionLayoutApplied)
     def _on_region_layout_applied(self, event: RegionLayoutApplied) -> None:
-        """Restore pane-local view state after a successful remount."""
+        """Re-apply what loads pushed while a re-created region was being built."""
         event.stop()
         if event.token != self._current_layout_request_token:
             return
@@ -4104,11 +4106,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             and event.token == self._manual_layout_rollback.token
         ):
             self._manual_layout_rollback = None
-        if event.previous.is_collapsed(Region.ITEMS) and not event.layout.is_collapsed(
-            Region.ITEMS
-        ):
-            self._reseed_active_section_pane()  # a re-created pane (#3107, V1)
+        reopened = {r for r in COLLAPSIBLE_REGIONS if event.previous.is_collapsed(r)}
+        reopened -= {r for r in COLLAPSIBLE_REGIONS if event.layout.is_collapsed(r)}
+        if Region.ITEMS in reopened:
+            self._reseed_active_section_pane()
             self._restore_items_view_state()
+        if Region.RIGHT_RAIL in reopened:
+            self.watch_overview_data()
+            for inspector in self.query(InspectorPane):
+                inspector.breadcrumb_labels = self._breadcrumb_labels
+        if Region.LEFT_RAIL in reopened and self._rail_shows is not self._tree_snapshot:
+            self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
@@ -5216,18 +5224,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _reseed_active_section_pane(self) -> None:
         """Re-apply loaded state to the section pane a rebuild just mounted.
 
-        A section swap, and a layout change that re-creates the Items region,
-        call the pane factory (it reads screen state) BEFORE the old pane's
-        remove and the new one's mount await. A loader landing in that gap
-        writes `self._loaded_*` (or the tree, overview or source ids) and
-        finds no pane to push into, so the pane would keep the state of one
-        instant before -- measured as an Alert-rules table left empty over
-        `self._loaded_rules`, and in TASK-34951 as a Sources form offering no
-        watchlist. The whole-screen recompose this replaced had no gap.
-
-        These are reactive assignments: an unchanged value fires no watcher
-        or recompose, so a section switch stays ONE pane build and a loader
-        arriving later finds its values already in place.
+        A rebuild calls the pane factory (it reads screen state) BEFORE its
+        mount awaits; a loader landing in that gap finds no pane to push into
+        (measured: an Alert-rules table empty over `self._loaded_rules`;
+        TASK-34951: a Sources form offering no watchlist). These reactive
+        assignments are no-ops when unchanged, so a section switch stays ONE
+        pane build.
         """
         if not self._dom_is_live:
             return

@@ -909,6 +909,72 @@ async def test_a_sources_load_landing_while_the_pane_mounts_prunes_its_selection
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("rail", ["right_rail", "left_rail"])
+async def test_a_load_landing_while_a_rail_is_recreated_reaches_it(monkeypatch, rail):
+    """Review of #3107, round 2, item Y1: expanding a collapsed rail builds
+    its content before mounting it, so an overview refresh (the Inspector's
+    profile state) or a tree load (the rail's watchlists) landing in between
+    reached nothing and the rail showed the state from before the load."""
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    land = _hold_loader(monkeypatch, "overview" if rail == "right_rail" else "tree")
+    region, node_id = Region(rail), f"wl-region-{rail}"
+    mount = Widget.mount
+    landed = []
+
+    def mount_after_the_load(self, *widgets, **kwargs):
+        if landed or not any(w.id == node_id for w in widgets):
+            return mount(self, *widgets, **kwargs)
+
+        async def later():
+            # The re-created rail is built but not mounted.
+            await land(host, self.screen)
+            landed.append(True)
+            return await mount(self, *widgets, **kwargs)
+
+        return later()
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        if screen.query(f"#{node_id}"):
+            screen._toggle_preferred_region(region)
+            await _until(pilot, lambda: not screen.query(f"#{node_id}"))
+        assert not screen.query(f"#{node_id}"), f"{rail} did not collapse"
+        monkeypatch.setattr(Widget, "mount", mount_after_the_load)
+        screen._toggle_preferred_region(region)
+        await _until(pilot, lambda: bool(landed))
+        if rail == "right_rail":
+
+            def shown():
+                return screen.query_one(InspectorPane).profile_state
+
+            expected = screen._watchlists_profile_state()
+            assert expected != OverviewPane.LOADING
+        else:
+
+            def shown():
+                tree = screen.query_one("#wl-tree", WatchlistTree)
+                return [int(row["id"]) for row in tree._watchlists]
+
+            expected = [watchlist["id"]]
+        await _until(pilot, lambda: shown() == expected)
+        result = shown()
+
+    assert landed == [True]
+    assert result == expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
     """Backend-only repaints must not replace a focused create-form field."""
