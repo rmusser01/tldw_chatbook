@@ -118,3 +118,36 @@ async def test_panel_operation_name_resolves_on_the_interop_scope_service(
 
     assert isinstance(result, dict)
     assert server.calls and server.calls[-1][0] == operation_name
+
+
+def test_seam_list_is_bound_to_the_panel_call_sites():
+    """Review hardening: the PANEL_OPERATIONS list must be exactly the set
+    of operation names the panel actually passes to _run_operation -- a
+    hand-copied list would stay green while a panel edit reintroduced the
+    very drift this suite exists to catch (same guard as the Outputs seam
+    test)."""
+    import ast
+    from pathlib import Path
+
+    panel_source = Path("tldw_chatbook/UI/Sharing_Panel.py").read_text(encoding="utf-8")
+    tree = ast.parse(panel_source)
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_run_operation"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            called.add(node.args[1].value)
+
+    listed = {name for name, _kwargs in PANEL_OPERATIONS}
+    assert called == listed, (
+        f"panel call sites and seam-test list diverged: "
+        f"only-in-panel={sorted(called - listed)} "
+        f"only-in-test={sorted(listed - called)}"
+    )
+    for name in sorted(called):
+        assert hasattr(SharingScopeService, name), name

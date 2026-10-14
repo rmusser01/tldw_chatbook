@@ -1,5 +1,5 @@
 ---
-id: TASK-34896
+id: TASK-34993
 title: Fix the Sharing_Panel server-service seam (six legacy operation names)
 status: Done
 created_date: 2026-10-13 02:03

@@ -3,7 +3,6 @@
 Event handlers for live dictation functionality.
 """
 
-from typing import Optional
 from textual.message import Message
 
 

@@ -1,5 +1,5 @@
 ---
-id: TASK-34897
+id: TASK-34994
 title: Delete or revive the unwired server panels (OutputsPanel SharingPanel)
 status: To Do
 created_date: 2026-10-13 02:04
