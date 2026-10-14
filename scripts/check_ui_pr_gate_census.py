@@ -297,7 +297,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Review of #3057, findings 2 and 3: +2 node ids after the block (the
 # unsaved-work check reads a kept Settings visit; a pipeline voice edit
 # survives a Settings save/restore): 281.
-MINIMUM_FILES = 281
+# Their siblings: +1 node id after the block (undoing an audio.cpp review
+# merge keeps a pipeline voice edit): 282.
+MINIMUM_FILES = 282
 
 
 def read_census(path: Path) -> list[str]:

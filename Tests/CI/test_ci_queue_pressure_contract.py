@@ -139,6 +139,10 @@ FAST_LANE_TARGETS = (
     "Tests/Widgets/test_model_search_picker.py::test_an_unreadable_catalog_setting_is_logged_by_type",
     # Review of #3057, finding 2: the unsaved-work check knows every Settings key.
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_settings_check_knows_every_key_settings_save_state_writes",
+    # Its siblings: the check sees a pipeline voice edit, and the key pin
+    # reads or refuses every way save_state could write a key.
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_speech_pipeline_voice_draft_is_compared",
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_save_state_key_pin_reads_or_refuses_every_way_a_key_is_written",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
