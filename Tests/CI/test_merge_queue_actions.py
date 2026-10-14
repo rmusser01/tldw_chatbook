@@ -60,6 +60,9 @@ DISPATCH_ERRORS = {
 }
 
 
+QUEUE_AUTHOR = {"login": "github-actions", "__typename": "Bot"}
+
+
 class FakeGh:
     """Records every mutating call; serves scripted reads.
 
@@ -130,9 +133,17 @@ class FakeGh:
             return {"data": {}}
         self.reads += 1
         if "comments(last" in query:
-            # An entry is a body, or (body, createdAt); a bare body has no timestamp (reads as old).
-            nodes = [{"body": c[0], "createdAt": c[1]} if isinstance(c, tuple) else {"body": c}
-                     for c in self.comments.get(v["number"], [])]
+            # An entry is a body, (body, createdAt), or a dict of node fields; a bare body has no
+            # timestamp (reads as old). A comment is the queue's own (GraphQL author `github-actions`,
+            # a Bot) unless a dict names another author.
+            nodes = []
+            for entry in self.comments.get(v["number"], []):
+                if isinstance(entry, dict):
+                    node = dict(entry)
+                else:
+                    node = {"body": entry[0], "createdAt": entry[1]} if isinstance(entry, tuple) else {"body": entry}
+                node.setdefault("author", QUEUE_AUTHOR)
+                nodes.append(node)
             return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
         if "pullRequest(number" in query:
             node = self.reread.get(v["number"], self.nodes[v["number"]])
@@ -204,7 +215,8 @@ class FakeGh:
             self._record(("rerun", rid, "failed" if path.endswith("-failed-jobs") else "all"))
             if self.rerun_error:
                 raise mq.GhError(self.rerun_error)
-            self._set_run(int(rid), status="queued", conclusion=None)
+            listed = next((r for runs in self.runs.values() for r in runs if r.get("id") == int(rid)), {})
+            self._set_run(int(rid), status="queued", conclusion=None, run_attempt=int(listed.get("run_attempt") or 1) + 1)
             return None
         if method == "GET" and re.search(r"/actions/runs/\d+$", path):
             rid = int(path.rsplit("/", 1)[1])
@@ -1106,6 +1118,63 @@ def test_a_broken_run_that_fails_again_after_its_retry_evicts():
     assert f"<!-- merge-queue:evict-failed-twice:{OLD} -->" in comment[2]
 
 
+def test_a_retry_decided_on_a_stale_snapshot_never_evicts_a_check_that_has_since_passed():
+    """A racing queue run re-ran the required check and it passed; this run's decision still says
+    "failed once". The retry marker alone must not read as "failed again" (found reviewing the
+    tldw_server port of this queue, 2026-10-14)."""
+    run = dict(_pr_run(70, 700, conclusion="success"), run_attempt=2)
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", suite=700),
+              _check("success", completed="2026-10-03T11:30:00Z", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
+                comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nx\n<!-- merge-queue-attempt:1 -->"]})
+    action = mq.Action("retry", "required check failed once; retrying", ("https://run/1",), suite_id=700)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is False
+    assert gh.calls == []
+
+
+def test_a_pending_rerun_wakes_a_kick_that_does_not_evict_while_github_still_shows_the_old_attempt():
+    """GitHub accepted the re-run but still shows the old attempt when the woken kick decides: one
+    failure on the head is not "failed again"; it is a strike that waits for the re-run."""
+    old_attempt = {"status": "completed", "conclusion": "failure", "run_attempt": 1}
+
+    def state(**fake):
+        return FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                      runs={OLD: [_pr_run(70, 700)]}, run_status={70: [old_attempt]}, **fake)
+
+    first = state()
+    _run(first)
+    assert ("rerun", "70", "failed") in first.calls
+    retry = next(c[2] for c in first.calls if c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2])
+    assert "<!-- merge-queue-attempt:1 -->" in retry
+    assert any(c[0] == "dispatch" for c in first.calls), "a pending re-run wakes a kick"
+    kick = state(comments={1: [retry]})
+    _run(kick)
+    assert not any(c[0] == "disarm" for c in kick.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unseen:{OLD}" in c[2] for c in kick.calls)
+
+
+def test_a_retry_marker_in_someone_elses_comment_is_ignored():
+    """Markers count only in the queue's own comments: a hidden one in anyone else's comment must not
+    turn a first failure into an eviction."""
+    forged = {"body": f"LGTM <!-- merge-queue:retry:{OLD} -->", "author": {"login": "someone", "__typename": "User"}}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, comments={1: [forged]}, run_status={70: ["in_progress"]})
+    _run(gh)
+    assert ("rerun", "70", "failed") in gh.calls
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_retried_run_that_ran_again_and_failed_again_evicts():
+    run = dict(_pr_run(70, 700), run_attempt=2)
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", suite=700),
+              _check("failure", completed="2026-10-03T11:30:00Z", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
+                comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nx\n<!-- merge-queue-attempt:1 -->"]})
+    action = mq.Action("retry", "x", ("https://run/1",), suite_id=700)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is True
+    assert [c[0] for c in gh.calls] == ["comment", "disarm"]
+
+
 def test_a_refused_wake_fails_the_run_and_disarms_nobody(monkeypatch):
     monkeypatch.setenv("GITHUB_RUN_ID", "70")
     own = _pr_run(70, 700, conclusion=None, status="in_progress")
@@ -1750,8 +1819,8 @@ class _CommentRace:
         if self.fail == "look-again" and self.reads == 2:
             raise mq.GhError("gh api graphql -f failed: gh: HTTP 502")
         marker = f"<!-- merge-queue:rebased:{NEW} -->"
-        nodes = [] if self.reads == 1 else [{"databaseId": i, "body": marker} for i in (self.racer_id, self.own_id)
-                                            if i is not None]
+        nodes = [] if self.reads == 1 else [{"databaseId": i, "body": marker, "author": QUEUE_AUTHOR}
+                                            for i in (self.racer_id, self.own_id) if i is not None]
         return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
 
     def rest(self, method, path, fields=None):

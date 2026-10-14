@@ -53,6 +53,11 @@ BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
 # check does not appear in the PR's status rollup at all (spec V4, 2026-10-06). So the queue
 # approves the held runs and never dispatches the required check.
 QUEUE_ACTOR = "github-actions[bot]"
+# The queue's own comments, as GraphQL names their author: a Bot whose login has no `[bot]`
+# (checked on this repository's queue comments, 2026-10-14). Retry and strike markers count only in
+# these: in anyone else's comment a hidden marker would let any commenter turn a PR's first failure
+# into an eviction.
+QUEUE_COMMENTER = "github-actions"
 HELD_RUN_POLLS = 10
 HELD_RUN_POLL_S = 3
 # How a re-run that GitHub answered with an error is read (`_rerun_error`):
@@ -327,7 +332,8 @@ PR_QUERY = (
 )
 COMMENTS_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {"
-    " pullRequest(number: $number) { comments(last: 100) { nodes { databaseId body createdAt } } } } }"
+    " pullRequest(number: $number) { comments(last: 100) { nodes { databaseId body createdAt"
+    " author { login __typename } } } } } }"
 )
 REBASE_MUTATION = (
     "mutation($id: ID!, $oid: GitObjectID!) { updatePullRequestBranch(input: "
@@ -544,6 +550,29 @@ def _best_effort(log: Callable[[str], None], what: str, fn: Callable[[], object]
         log(f"  best-effort {what} failed: {exc}")
 
 
+def _queue_comments(gh: GhApi, number: int) -> list[dict]:
+    """The PR's last 100 comments that the queue itself posted (see QUEUE_COMMENTER).
+
+    Raises:
+        GhError: The read failed.
+    """
+    owner, name = _owner_name()
+    data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
+    nodes = data["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+    return [n for n in nodes
+            if (n.get("author") or {}).get("login") == QUEUE_COMMENTER and (n.get("author") or {}).get("__typename") == "Bot"]
+
+
+def _marker(gh: GhApi, number: int, kind: str, sha: str) -> dict | None:
+    """The queue's comment of this kind for this head, if any.
+
+    Raises:
+        GhError: The read failed.
+    """
+    marker = f"<!-- merge-queue:{kind}:{sha} -->"
+    return next((n for n in _queue_comments(gh, number) if marker in (n.get("body") or "")), None)
+
+
 def has_comment(gh: GhApi, number: int, kind: str, sha: str) -> bool:
     """Whether the queue already posted a comment of this kind for this head.
 
@@ -559,11 +588,7 @@ def has_comment(gh: GhApi, number: int, kind: str, sha: str) -> bool:
     Raises:
         GhError: The read failed.
     """
-    marker = f"<!-- merge-queue:{kind}:{sha} -->"
-    owner, name = _owner_name()
-    data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
-    nodes = data["data"]["repository"]["pullRequest"]["comments"]["nodes"]
-    return any(marker in (n.get("body") or "") for n in nodes)
+    return _marker(gh, number, kind, sha) is not None
 
 
 def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> timedelta | None:
@@ -582,14 +607,36 @@ def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> ti
     Raises:
         GhError: The read failed.
     """
-    marker = f"<!-- merge-queue:{kind}:{sha} -->"
-    owner, name = _owner_name()
-    data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
-    for node in data["data"]["repository"]["pullRequest"]["comments"]["nodes"]:
-        if marker in (node.get("body") or ""):
-            posted = _ts(node.get("createdAt"))
-            return timedelta.max if posted is None else now - posted
-    return None
+    node = _marker(gh, number, kind, sha)
+    if node is None:
+        return None
+    posted = _ts(node.get("createdAt"))
+    return timedelta.max if posted is None else now - posted
+
+
+def _attempt_note(run: dict) -> str:
+    """The hidden note a retry comment carries: the run attempt the queue re-ran."""
+    return f"<!-- merge-queue-attempt:{int(run.get('run_attempt') or 1)} -->"
+
+
+def marker_attempt(gh: GhApi, number: int, kind: str, sha: str) -> int | None:
+    """The run attempt the queue recorded in its comment of this kind for this head.
+
+    Returns:
+        The attempt (0 when the comment carries none), or None if there is no such comment.
+
+    Raises:
+        GhError: The read failed.
+    """
+    node = _marker(gh, number, kind, sha)
+    if node is None:
+        return None
+    body = node.get("body") or ""
+    start = body.find("<!-- merge-queue-attempt:")
+    if start < 0:
+        return 0
+    digits = body[start + len("<!-- merge-queue-attempt:"):].split(" ", 1)[0]
+    return int(digits) if digits.isascii() and digits.isdigit() else 0
 
 
 def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str,
@@ -613,10 +660,7 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str,
         GhError: A call failed.
     """
     marker = f"<!-- merge-queue:{kind}:{sha} -->"
-    owner, name = _owner_name()
-    data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
-    bodies = [n.get("body") or "" for n in data["data"]["repository"]["pullRequest"]["comments"]["nodes"]]
-    if any(marker in b for b in bodies):
+    if any(marker in (n.get("body") or "") for n in _queue_comments(gh, number)):
         return False
     try:
         posted = gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
@@ -630,8 +674,7 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str,
     if own_id is None:
         return True
     try:
-        again = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
-        ids = [n["databaseId"] for n in again["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+        ids = [n["databaseId"] for n in _queue_comments(gh, number)
                if marker in (n.get("body") or "") and n.get("databaseId") is not None]
         if ids and min(ids) < own_id:
             gh.rest("DELETE", f"repos/{REPO}/issues/comments/{own_id}")
@@ -1174,6 +1217,54 @@ def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[
     )
 
 
+def _after_retry(gh: GhApi, pr: PrState, run: dict, attempt: int, links: tuple[str, ...],
+                 log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
+    """Decide on a head whose required check the queue already re-ran once (its retry marker exists).
+
+    The decision being acted on may be older than that re-run: a racing queue run made it, or
+    GitHub has not shown it yet. So the run is read fresh, and the PR is evicted only when the
+    queue's re-run has run (a higher `run_attempt` than the marker recorded) and the required check
+    still failed. A run that is live or held, or a check that passed since the decision, is left
+    alone. A re-run not visible yet is a `rerun-unseen` strike: one warning and a kick, an eviction
+    only if it still has not run 10 minutes later.
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        run: The required workflow's run, as listed.
+        attempt: The attempt the marker recorded (0 if it recorded none).
+        links: The failed run URLs, for the eviction comment.
+        log: Receives one line per notable step.
+        now: The clock.
+
+    Returns:
+        True if the PR was evicted.
+
+    Raises:
+        GhError: A read failed.
+    """
+    fresh = gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}")
+    if fresh.get("status") in LIVE_RUN_STATUSES or _is_held(fresh):
+        log(f"  #{pr.number}: run {run['id']} is going again; standing down")
+        return False
+    if int(fresh.get("run_attempt") or 1) <= attempt:
+        return _strike(
+            gh, pr, "rerun-unseen",
+            f"Merge queue: the queue's re-run of the required check on `{pr.head_sha[:10]}` has not started yet. A queue "
+            "run will look again, and remove it from the line if it still has not run 10 minutes from now.",
+            Action("evict", "the queue's re-run of the required check never started", links, "rerun"), True, log, now,
+        )
+    runs = runs_on(gh, pr.head_sha)
+    checks = counted(read_checks(gh, pr.head_sha), runs)
+    checks += required_run_stand_ins(gh, pr.head_sha, checks, runs)
+    finished = sorted((c for c in checks if c.status == "completed" and c.conclusion != "cancelled"),
+                      key=lambda c: c.completed_at or now())
+    if any(c.status != "completed" for c in checks) or not finished or finished[-1].conclusion in PASSING:
+        log(f"  #{pr.number}: the required check is running, missing or green since the decision; standing down")
+        return False
+    return _evict(gh, pr, Action("evict", "required check failed again after its retry", links, "failed-twice"), log)
+
+
 def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None],
            now: Callable[[], datetime]) -> bool:
     """Re-run the run whose required check failed once, in its own check suite (spec V3).
@@ -1217,12 +1308,10 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
     if _queue_held(run):
         return _approve_strictly(gh, pr, run, log, now)
     cancelled = run.get("conclusion") == "cancelled"
-    if not cancelled and has_comment(gh, pr.number, "retry", pr.head_sha):
-        if _going_again(gh, run["id"]):
-            log(f"  #{pr.number}: run {run['id']} was re-run by a racing queue run; standing down")
-            return False
-        return _evict(gh, pr, Action("evict", "required check failed again after its retry", action.links,
-                                     "failed-twice"), log)
+    attempt = None if cancelled else marker_attempt(gh, pr.number, "retry", pr.head_sha)
+    if attempt is not None:
+        return _after_retry(gh, pr, run, attempt, action.links, log, now)
+    note = _attempt_note(run)  # the attempt being re-run, read before the re-run changes it
     outcome = _rerun(gh, pr, run, action.suite_id is not None and not cancelled, log, sleep, now)
     if outcome == "refused":
         return _evict(gh, pr, Action("evict", "required check failed once and GitHub refused to re-run it",
@@ -1230,7 +1319,7 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
     comment_once(
         gh, pr.number, "retry", pr.head_sha,
         f"Merge queue: the required check failed once on `{pr.head_sha[:10]}`; re-running it. "
-        f"Failed run: {action.links[0]}",
+        f"Failed run: {action.links[0]}\n{note}",
         log,
     )
     if outcome == "pending":
