@@ -33,7 +33,7 @@ ADR-033 rule 3 already requires the first: "Every instant-apply control MUST car
 
 ## Assumptions & sequencing
 
-**PR #3057 (Phase 7, TASK-33007) merges first.** It is open at 29ca19f10d and has not merged. This plan builds on what it ships:
+**PR #3057 (Phase 7, TASK-33007) merges first.** It was read at 29ca19f10d; check its state with `gh pr view 3057`. This plan builds on what it ships:
 - The copy constants `STAGED_SAVE_BEHAVIOR_COPY` ("edits save with s · r reverts") and `INSTANT_APPLY_BEHAVIOR_COPY` ("applies immediately · no Save needed").
 - The clean draft badge "No changes · edits save with s" in `SettingsScreen._category_state_banner_text`.
 - Every Settings checkbox built as `StateCheckbox` (`Widgets/state_checkbox.py`: ✓ when on, a blank cell when off), guarded by `test_no_settings_panel_builds_a_stock_checkbox`.

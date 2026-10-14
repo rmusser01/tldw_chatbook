@@ -55,7 +55,7 @@ The guards that keep "/" complete (the search-index drift guard and the rail cat
   - Land TASK-35020 before P9 Task 7 if possible. TASK-33003.14 AC#2 needs `test_settings_search_index.py` to "stay green", and it is red today.
   - Both edit the CONSOLE_BEHAVIOR tuple. S5 appends rows at its end; P9 rewrites the `settings-console-default-*` rows. A rebase resolves this.
   - P9 Task 14 also appends to the census. Its plan says six shards, but #3057's head has nine, so read the matrix at rebase.
-- **S3 (rail IA).** TASK-35021 lands after TASK-35016, which regroups the rail and turns the one Domain Defaults toggle into one toggle per collapsed group (class `.settings-category-group-toggle`). T2 derives arrow order from the rendered rail, so it treats every group toggle as a rail row. TASK-35020 sets the category-count literal to today's 33 and PR-gates it; TASK-35016 then updates that guard deliberately.
+- **S3 (rail IA).** TASK-35021 lands after TASK-35016, which regroups the rail and turns the one Domain Defaults toggle into one toggle per collapsed group (class `.settings-category-group-toggle`). T2 derives arrow order from the rendered rail, so it treats every group toggle as a rail row. TASK-35020 sets the category-count literal to today's 33 and PR-gates it; TASK-35016 adds no category and leaves it alone.
 - **Order.** T1 and T2 are independent. T3 follows T2, because both use the new keyboard module and the footer. Each task is one PR, rebased (never merged) onto dev and landed under CLAUDE.md's merge-queue rules.
 - **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories) and owns the rail-size guard; TASK-35016 adds no category and leaves that guard alone. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 
@@ -467,4 +467,4 @@ No task changes config schema or user data, so no migration rollback is needed.
 - TASK-32385: Folder Files labels in the same index file.
 - TASK-1378: split of `settings_screen.py`.
 - ADR-212 §4; ADR-031 (2026-10-03 refinement).
-- S3: TASK-35016 (rail groups, group toggles, the rail-size guard after T1) lands before T2; TASK-35017 (page order). S4 (other User Guide copy; the Tab sentence stays T2's).
+- S3: TASK-35016 (rail groups, group toggles) lands before T2; TASK-35017 (page order). S4 (other User Guide copy; the Tab sentence stays T2's).

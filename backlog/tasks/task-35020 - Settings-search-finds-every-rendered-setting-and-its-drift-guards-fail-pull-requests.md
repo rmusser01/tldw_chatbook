@@ -28,7 +28,7 @@ Plan: `backlog/docs/plan-2026-10-14-settings-keyboard-search.md`. Findings close
 - [ ] #3 '/discover' and '/model discovery' open Providers & Models with focus on Discover models, and its disclosure is open; '/discover' still lists Dreams as the next match
 - [ ] #4 '/dark mode' and '/light mode' open the Theme picker
 - [ ] #5 Every '/' landing and match count that existing tests pin is unchanged
-- [ ] #6 The rail category-count guard matches the number of Settings categories and passes
+- [ ] #6 The rail category-count guard matches the number of Settings categories and passes, and its history names the Dreams and Guardian step (1b769eb757) that took it from 31 to 33
 - [ ] #7 The search-index drift guard and the rail category-count guards run in the required pull-request check: a PR that renders a setting with no index row, or changes the number of categories without updating the guard, fails that check
 - [ ] #8 The Settings User Guide's description of what '/' finds matches the shipped behaviour
 <!-- AC:END -->

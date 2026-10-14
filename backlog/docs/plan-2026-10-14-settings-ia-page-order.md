@@ -54,7 +54,7 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
   - Collapse works from group membership instead of the one hard-coded "Domain Defaults" title.
   - The seven view-only pages get an Open \<owner\> button and lose the "Planned" row and the Inspector's roadmap line (OD-2).
   - Overview gains Run setup wizard.
-  - The two guards that 1b769eb757 turned red are fixed.
+  - The domain-contract guard that 1b769eb757 turned red is fixed (the rail-size guard is TASK-35020's).
   - The User Guide category map is rewritten.
 - **TASK-35017, Console Behavior page order (OD-3):**
   - Goal runs moves next to Agent run budget and uses one-row grammar.
@@ -280,7 +280,7 @@ TASK-35016 (Tests/UI/test_settings_configuration_hub.py unless noted):
 
 | Test | Change and reason |
 |---|---|
-| `test_settings_domain_category_contracts_are_explicit_about_mutation_scope` | Add DREAMS and GUARDIAN to its expected/mutable sets (same cause, read from the code). |
+| `test_settings_domain_category_contracts_are_explicit_about_mutation_scope` | Add DREAMS and GUARDIAN to its expected/mutable sets (Dreams and Guardian, 1b769eb757; red by reading the code). |
 | `test_settings_category_navigation_is_grouped_for_scan` | New group titles. |
 | `test_internal_prompts_appears_in_settings_sidebar_expert_group` | "Expert" → "Maintenance"; rename the test. |
 | Tests/UI/test_settings_about_2775.py::`test_about_category_registered_read_only` | "Troubleshooting" → "Maintenance". |

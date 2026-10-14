@@ -30,7 +30,7 @@ TASK-2827 had already settled on the checkbox, and later work drifted away from 
 
 Ordinary fields are inconsistent too: Goal runs puts its labels above three-row inputs, and Speech & TTS's selects render three rows tall. TASK-35017 gives Goal runs the shared row shape as it moves that section, and TASK-35023 finds and fixes the Speech cause.
 
-Nothing a user learns on one page carries over to the next, and the clipped mark looks broken. This task gives every Settings category form one on/off control drawn in one row, and writes that control and the one label-left, one-row field shape into DESIGN.md's dense-form convention. Every control keeps its id, saved key and save model.
+Nothing a user learns on one page carries over to the next, and the clipped mark looks broken. This task gives every Settings category form one on/off control drawn in one row, and writes that control and its one-row layout into DESIGN.md's dense-form convention. Every control keeps its id, saved key and save model.
 
 Plan: `backlog/docs/plan-2026-10-14-settings-save-honesty.md`. Findings closed: D6 (the on/off controls; its Goal runs rows are TASK-35017's and its Speech selects TASK-35023's), D-shell-design-M5, B10 (Settings UX review, 2026-10-14).
 <!-- SECTION:DESCRIPTION:END -->
