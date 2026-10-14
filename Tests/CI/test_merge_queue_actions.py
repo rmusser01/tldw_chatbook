@@ -690,6 +690,12 @@ def test_a_fresh_green_head_that_dev_has_moved_past_is_rebased_at_once():
     assert decision.kind == "rebase" and gh.calls[0] == ("rebase", "PR_1", OLD)
 
 
+def test_dry_mode_proposes_the_rebase_of_a_green_head_behind_dev_without_making_it():
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]}, behind_by={OLD: 1})
+    assert _run(gh, "dry")[0][1].kind == "rebase"
+    assert gh.calls == []
+
+
 def test_an_old_green_head_up_to_date_with_dev_is_still_evicted_as_stuck():
     gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]})
     decision = _run(gh)[0][1]

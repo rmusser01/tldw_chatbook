@@ -1367,7 +1367,7 @@ def _decide(gh: GhApi, pr: PrState, mode: str, now: Callable[[], datetime],
         # Right after a merge, mergeStateStatus can still read up to date for the next PR in line
         # (#3070 was evicted twice as stuck while a racing run rebased it). Auto-merge cannot fire on
         # a head that is behind, so ask GitHub before waiting on a green head or evicting it.
-        compare = gh.rest("GET", f"repos/{REPO}/compare/{BASE}...{pr.head_sha}?per_page=1")
+        compare = gh.rest("GET", f"repos/{REPO}/compare/{BASE}...{pr.head_sha}?per_page=1") or {}
         if compare.get("behind_by", 0) > 0:
             action = Action("rebase", "behind dev (its merge state had not caught up yet)")
     return pr, action
