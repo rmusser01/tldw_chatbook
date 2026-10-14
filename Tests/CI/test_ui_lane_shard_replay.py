@@ -95,6 +95,8 @@ Tests/UI/test_x.py
 Tests/UI/test_h.py
 
 # the tail block
+
+# what test_t2.py pins
 Tests/UI/test_t2.py
 Tests/UI/test_t1.py
 """
@@ -139,29 +141,34 @@ def test_main_replays_the_runs_over_the_census_it_is_given(tmp_path, capsys):
 
 def test_write_reorders_only_the_tail_of_the_census_it_is_given(tmp_path, capsys):
     """--write moves the heavy tail file off the heavy shard, in the census
-    passed in: the head, its order and every comment stay."""
+    passed in: the head, its order and the block header stay, and a tail
+    entry's own comment moves with it, write after write."""
     census = tmp_path / "census.txt"
     census.write_text(_CENSUS, encoding="utf-8")
     real_census = replay.CENSUS_PATH.read_bytes()
+    argv = ["--shards", "2", "--tail", "2", "--write", "--census", str(census)]
+    run = str(_run_dir(tmp_path))
 
-    code = replay.main(
-        ["--shards", "2", "--tail", "2", "--write", "--census", str(census)]
-        + [str(_run_dir(tmp_path))]
-    )
+    code = replay.main(argv + [run])
 
     assert code == 0
-    assert census.read_text(encoding="utf-8") == (
+    written = census.read_text(encoding="utf-8")
+    assert written == (
         "# a comment that stays where it is\n"
         "Tests/UI/test_x.py\n"
         "Tests/UI/test_h.py\n"
         "\n"
         "# the tail block\n"
+        "\n"
         "Tests/UI/test_t1.py\n"
+        "# what test_t2.py pins\n"
         "Tests/UI/test_t2.py\n"
     )
     out = capsys.readouterr().out
     assert "2 shards, best tail:  1.6 1.8  max 1.8 min" in out
     assert "rewrote the last 2 entries of census.txt" in out
+    assert replay.main(argv + [run]) == 0
+    assert census.read_text(encoding="utf-8") == written  # a second write keeps it
     assert replay.CENSUS_PATH.read_bytes() == real_census
 
 

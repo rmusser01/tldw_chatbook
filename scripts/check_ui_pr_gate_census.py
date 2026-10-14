@@ -304,6 +304,19 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # at its slowest, the re-ordered block gives 15.2 pytest min at most over nine
 # shards, 13.7 over ten and 12.4 over eleven; ten leaves a hung test's report
 # room under the 20-min cap, so the lane runs ten.
+# Merge-gate review of #3057's rebased head (2026-10-14): no entry added, 282.
+# The census's group notes for those rulings moved here, since the replay's
+# --write now moves each entry with the comments above it and would have
+# carried a group note with whichever entry sat under it. Ruling C11's 18
+# entries and the nineteenth each passed three serial runs alone, at
+# pytest's seconds for one run on a loaded machine (load average 40 and up),
+# and are node ids where their files are slow or hold reds that are not this
+# phase's. Each C16 round's entries are the Tests/UI files or tests it added
+# that no lane ran, each 3 of 3 serial alone (seconds in the p7-review-fix
+# lanes report). Their notes' "N shards on (N mod 7)" described the
+# seven-shard lane of their day; the block has since been re-dealt whole for
+# ten shards, so no earlier offset holds. Every block entry keeps its own
+# "what it pins" comment, and a blank line ends the block's header.
 MINIMUM_FILES = 282
 
 

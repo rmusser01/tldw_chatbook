@@ -5,7 +5,10 @@ The UI lane runs ``scripts/ui_pr_gate_census.txt`` as round-robin shards, so
 where a slow file sits decides which shard it lands in. This replays the
 per-file seconds of real CI runs over the current census and prints the
 pytest minutes each shard would carry; ``--write`` re-orders the census tail
-(the last ``--tail`` entries) for the flattest split.
+(the last ``--tail`` entries) for the flattest split. Each tail entry moves
+with the comment lines directly above it (the "what it pins" note); the tail
+block's own header stays put, so end it with a blank line before the first
+entry, or that entry takes the header with it.
 
 Per-file seconds move about 40% between runs on the hosted runners, so each
 file is scored at the WORST of the runs given. Pass more than one run.
@@ -31,6 +34,11 @@ from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.check_ui_pr_gate_census import read_census
+
 CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #: Seconds charged to an entry no log has timed (a new file or node id).
 UNTIMED_SECONDS = 3.0
@@ -176,10 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     if not seconds:
         print("no shard logs with pytest file lines found", file=sys.stderr)
         return 2
-    lines = args.census.read_text(encoding="utf-8").splitlines(keepends=True)
-    entries = [
-        line.strip() for line in lines if line.strip() and not line.startswith("#")
-    ]
+    entries = read_census(args.census)  # what the lane deals
     print(
         f"{args.shards} shards, as listed:  {_minutes(shard_loads(entries, seconds, args.shards))}"
     )
@@ -191,12 +196,39 @@ def main(argv: list[str] | None = None) -> int:
         f"{args.shards} shards, best tail:  {_minutes(shard_loads(head + order, seconds, args.shards))}"
     )
     if args.write:
-        kept = [line for line in lines if line.strip() not in tail]
-        args.census.write_text(
-            "".join(kept) + "".join(f"{entry}\n" for entry in order), encoding="utf-8"
-        )
+        if len(set(entries)) != len(entries):
+            print("the census lists an entry twice: fix it first", file=sys.stderr)
+            return 2
+        args.census.write_text(_reordered(args.census, tail, order), encoding="utf-8")
         print(f"rewrote the last {args.tail} entries of {args.census.name}")
     return 0
+
+
+def _reordered(census: Path, tail: list[str], order: list[str]) -> str:
+    """The census text with ``tail`` dealt in ``order``.
+
+    An entry carries the comment lines (and blanks) between it and the entry
+    before it. The first tail entry carries only its own comment run: a blank
+    line above that run ends the block header, which stays where it is.
+    """
+    text = census.read_text(encoding="utf-8")
+    lines = (text if text.endswith("\n") else text + "\n").splitlines(keepends=True)
+    tail_set = set(tail)
+    first = next(i for i, line in enumerate(lines) if line.strip() in tail_set)
+    start = first
+    while start and lines[start - 1].strip().startswith("#"):
+        start -= 1
+    groups: dict[str, list[str]] = {}
+    pending: list[str] = []
+    for line in lines[start:]:
+        pending.append(line)
+        if line.strip() in tail_set:
+            groups[line.strip()], pending = pending, []
+    return (
+        "".join(lines[:start])
+        + "".join("".join(groups[entry]) for entry in order)
+        + "".join(pending)  # comments after the last entry stay last
+    )
 
 
 if __name__ == "__main__":
