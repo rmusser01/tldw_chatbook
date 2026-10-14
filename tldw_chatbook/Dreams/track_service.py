@@ -229,6 +229,27 @@ class TrackSourceDisabled(RuntimeError):
     reason_code = "track_source_disabled"
 
 
+class TrackDreamsOff(RuntimeError):
+    """Dreams is switched off, so nothing is tracked (TASK-34928).
+
+    The Library hides Track and Watch while Dreams is off, but a call that
+    reached the service anyway re-enabled a page's source and armed an
+    event reminder -- work the master switch had stopped. Raised before
+    any read of another store and before any write.
+
+    Attributes:
+        reason_code: Stable machine identifier (``track_dreams_off``).
+    """
+
+    reason_code = "track_dreams_off"
+
+
+def _require_dreams_on() -> None:
+    """Refuse to track while ``[dreams] enabled`` is off."""
+    if not bool(dreams_setting("enabled")):
+        raise TrackDreamsOff("Dreams is switched off; nothing was tracked")
+
+
 class TrackInvalidURL(ValueError):
     """The URL to watch is not a well-formed http(s) address (Qodo #8).
 
@@ -463,23 +484,30 @@ async def backfill_egress_marks(
     if subs_service is None:
         return 0
     marked = 0
+    # The still-to-do list, read once: verifying writes the marker only for
+    # a source it stamped or one the list names, so a run that finds every
+    # source marked writes nothing (TASK-34928).
+    awaiting = set(await asyncio.to_thread(
+        dreams_db.subscriptions_awaiting_egress_mark))
     # ponytail: one get_source per Dreams-owned source when verifying;
     # batch the read in SubscriptionsDB if a profile ever owns thousands.
-    for subscription_id in await asyncio.to_thread(
-            dreams_db.dream_owned_subscription_ids if verify
-            else dreams_db.subscriptions_awaiting_egress_mark):
+    for subscription_id in (await asyncio.to_thread(
+            dreams_db.dream_owned_subscription_ids) if verify
+            else sorted(awaiting)):
         try:
             try:
                 source = await subs_service.get_source(subscription_id)
             except KeyError:
                 source = None  # deleted by the user: nothing to stamp
-            if source is not None and _needs_story_mark(source):
+            stamped = source is not None and _needs_story_mark(source)
+            if stamped:
                 await subs_service.update_source(
                     subscription_id,
                     {"processing_options": _story_options(source)})
                 marked += 1
-            await asyncio.to_thread(
-                dreams_db.set_egress_marked, subscription_id)
+            if stamped or subscription_id in awaiting:
+                await asyncio.to_thread(
+                    dreams_db.set_egress_marked, subscription_id)
         except Exception as exc:  # noqa: BLE001 - stays pending for a retry
             logger.warning(
                 "Dreams egress mark: stamping subscription {} failed: {}",
@@ -1176,6 +1204,8 @@ async def track_page(
         reported as ``"attached"``.
 
     Raises:
+        TrackDreamsOff: When Dreams is switched off -- raised first, before
+            anything is read or written (TASK-34928).
         TrackInvalidURL: When ``url`` fails the shared ``validate_url``
             check (scheme, whitespace, credentials, host shape) --
             raised BEFORE any lookup or write.
@@ -1192,6 +1222,7 @@ async def track_page(
             with no dream provenance (the user disabled it themselves) --
             also raised before any write.
     """
+    _require_dreams_on()
     # URL validation FIRST (Qodo #8, PR #2890): the modal gates http(s),
     # but a direct caller can pass anything, and a malformed address
     # persisted as a subscription would ride every later watchlist run.
@@ -2934,7 +2965,9 @@ async def track_question(
             is a caller bug, not a degradation.
         TrackCapReached: When ``count_active_tracked()`` already meets the
             cap -- raised BEFORE the tracked-item row is written.
+        TrackDreamsOff: When Dreams is switched off -- raised first.
     """
+    _require_dreams_on()
     template = str(query_template)
     if not template.strip():
         raise ValueError("track_question requires a non-empty query_template")

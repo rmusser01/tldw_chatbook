@@ -582,7 +582,9 @@ async def test_track_on_http_story_records_feedback_and_notifies(
     # Same for the Dreams settings accessor (cap + min interval reads).
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
-        lambda section, key, default=None: default,
+        # Dreams on: tracking refuses while it is off (TASK-34928).
+        lambda section, key, default=None: (
+            True if key == "enabled" else default),
     )
     changed: list[int] = []
     app = App()
@@ -625,7 +627,8 @@ async def test_track_cap_reached_is_a_notice_and_writes_nothing(
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
         lambda section, key, default: (
-            1 if key == "tracked_item_cap" else default
+            1 if key == "tracked_item_cap"
+            else True if key == "enabled" else default
         ),
     )
     monkeypatch.setattr(
@@ -656,6 +659,47 @@ async def test_track_cap_reached_is_a_notice_and_writes_nothing(
         assert _sub_count(subs_db) == 0, "guard-first: no subscription either"
         assert changed == [], "on_changed must not fire for a refusal"
         assert app.screen is modal, "a cap refusal must not dismiss or crash"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["t", "w"], ids=["track", "watch"])
+async def test_tracking_while_dreams_is_off_is_a_notice_and_writes_nothing(
+    tmp_path, monkeypatch, key
+):
+    """TASK-34928: with Dreams off (the shipped default) the service
+    refuses before any write, and the notice says why and where to switch
+    it on."""
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: (
+            False if key == "enabled" else default),
+    )
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert any(n.message == dsm_module._TRACK_DREAMS_OFF_NOTICE
+                   for n in app._notifications)
+        assert _feedback_kinds(db, story["id"]) == []
+        assert db.list_tracked_items() == []
+        assert _sub_count(subs_db) == 0
+        assert changed == []
+        assert app.screen is modal
 
 
 @pytest.mark.asyncio
@@ -699,7 +743,9 @@ async def test_track_on_disabled_foreign_source_is_a_notice_and_writes_nothing(
     )
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
-        lambda section, key, default=None: default,
+        # Dreams on: tracking refuses while it is off (TASK-34928).
+        lambda section, key, default=None: (
+            True if key == "enabled" else default),
     )
 
     async def _seed_disabled_source() -> None:
@@ -763,7 +809,9 @@ def _track_settings_defaults(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
-        lambda section, key, default=None: default,
+        # Dreams on: tracking refuses while it is off (TASK-34928).
+        lambda section, key, default=None: (
+            True if key == "enabled" else default),
     )
 
 
@@ -1385,7 +1433,9 @@ async def test_track_with_event_date_promotes_reminder(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
-        lambda section, key, default=None: default,
+        # Dreams on: tracking refuses while it is off (TASK-34928).
+        lambda section, key, default=None: (
+            True if key == "enabled" else default),
     )
     try:
         app = App()
@@ -1495,7 +1545,9 @@ async def test_track_on_credential_url_is_a_notice_and_writes_nothing(
     )
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
-        lambda section, key, default=None: default,
+        # Dreams on: tracking refuses while it is off (TASK-34928).
+        lambda section, key, default=None: (
+            True if key == "enabled" else default),
     )
     changed: list[int] = []
     app = App()

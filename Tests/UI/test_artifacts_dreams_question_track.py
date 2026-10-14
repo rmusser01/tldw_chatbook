@@ -55,7 +55,9 @@ def _dreams_settings_defaults(monkeypatch) -> None:
     """Deterministic Dreams settings for the watch/track chain."""
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
-        lambda section, key, default=None: default,
+        # Dreams on: tracking refuses while it is off (TASK-34928).
+        lambda section, key, default=None: (
+            True if key == "enabled" else default),
     )
 
 
@@ -283,7 +285,8 @@ async def test_watch_cap_reached_is_a_notice_and_writes_nothing(
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
         lambda section, key, default: (
-            1 if key == "tracked_item_cap" else default
+            1 if key == "tracked_item_cap"
+            else True if key == "enabled" else default
         ),
     )
     db.create_tracked_item(mechanism="question", intent="topic", cadence_seconds=3600)

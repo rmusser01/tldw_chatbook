@@ -235,6 +235,9 @@ From an open story, **Track this (t)** puts the page under watch: Dreams
 creates (or adopts) a watchlists subscription for the URL, joins it to a
 shared "Dreams Tracked" watchlist, and pins a change alert — every new
 item the page produces lands in the Watchlists **Notifications** pane.
+Tracking and watching need Dreams switched on: while it is off, Dreams
+tracks nothing and says so, so a page whose source the switch stopped
+is not started again behind it.
 
 **The event reminder.** Tracking an event-dated story also schedules one
 reminder a week before the event, at 9:00 in the morning by your

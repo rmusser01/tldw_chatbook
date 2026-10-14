@@ -6261,3 +6261,82 @@ async def test_tracking_again_after_deleting_the_source_makes_a_working_watch(
         [str(old["tracked_item_id"]), str(again["tracked_item_id"])])
         if row.get("enabled")]
     assert [row["link_id"] for row in armed] == [str(again["tracked_item_id"])]
+
+
+# --- TASK-34928: tracking while Dreams is off; the verifying backfill ---------
+
+
+@pytest.mark.asyncio
+async def test_tracking_while_dreams_is_off_changes_nothing_and_says_why(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """The Library hides Track while Dreams is off; a call that reaches the
+    service anyway used to switch the page's source back on and arm a
+    reminder for a new story of it."""
+    from tldw_chatbook.Dreams.track_service import TrackDreamsOff
+
+    subs_db, service = subs_stack
+    first = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-10-01", origin_story_id=_seed_story(dreams_db, "one"),
+        scheduling_db_getter=_sched_getter(scheduling_db))
+    settings["enabled"] = False
+    await _switch(service, dreams_db, scheduling_db, off=True)
+
+    def watches() -> int:
+        with dreams_db.connection() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM dream_tracked_items").fetchone()[0]
+
+    before = (watches(), _reminder_states(scheduling_db),
+              _record(dreams_db, first["tracked_item_id"]))
+
+    for track in (
+        lambda: track_page(
+            service, dreams_db, url=_URL, title="Festival", intent="event",
+            event_date="2026-10-01",
+            origin_story_id=_seed_story(dreams_db, "two"),
+            scheduling_db_getter=_sched_getter(scheduling_db)),
+        lambda: track_page(
+            service, dreams_db, url="https://example.com/other", title="Other",
+            intent="topic", origin_story_id=_seed_story(dreams_db, "three")),
+        lambda: track_question(
+            dreams_db, query_template=_TEMPLATE, intent="event",
+            event_date="2026-10-01", origin_story_id=1,
+            scheduling_db_getter=_sched_getter(scheduling_db)),
+    ):
+        with pytest.raises(TrackDreamsOff) as refused:
+            await track()
+        assert refused.value.reason_code == "track_dreams_off"
+        assert "off" in str(refused.value)
+
+    assert _is_active(subs_db, first["subscription_id"]) == 0
+    assert _count_rows(subs_db, "subscriptions") == 1
+    assert (watches(), _reminder_states(scheduling_db),
+            _record(dreams_db, first["tracked_item_id"])) == before
+
+
+@pytest.mark.asyncio
+async def test_a_verifying_backfill_with_nothing_to_mark_writes_nothing(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    from tldw_chatbook.Dreams.track_service import backfill_egress_marks
+
+    subs_db, service = subs_stack
+    await _event_page(dreams_db, service, scheduling_db, story_id=1)
+    await track_page(service, dreams_db, url="https://example.com/other",
+                     title="Other", intent="topic", origin_story_id=2)
+    writes: list[str] = []
+    real_mark, real_update = dreams_db.set_egress_marked, service.update_source
+
+    def marked(subscription_id):
+        writes.append(f"marker {subscription_id}")
+        return real_mark(subscription_id)
+
+    async def updated(subscription_id, payload):
+        writes.append(f"source {subscription_id}")
+        return await real_update(subscription_id, payload)
+
+    dreams_db.set_egress_marked = marked
+    service.update_source = updated
+
+    assert await backfill_egress_marks(service, dreams_db, verify=True) == 0
+    assert writes == [], "every source is marked: nothing to write"
