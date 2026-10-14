@@ -23,7 +23,7 @@ A keyboard-only Settings user should be able to:
 - save a page without first escaping the field they are typing in;
 - find any rendered setting by typing its name after "/".
 
-The guards that keep "/" complete (the search-index drift guard and the rail category count) are green. They fail the pull request that breaks them, not a workflow no PR runs.
+The guards that keep "/" and the rail complete (the search-index drift guard, the rail category count and the rail group coverage) are green. They fail the pull request that breaks them, not a workflow no PR runs.
 
 ## Findings this stream closes
 
@@ -230,7 +230,7 @@ In `Tests/UI/test_settings_search_index.py`, which this task gates:
 
 **Verification steps (not committed):**
 - **Corpus probe.** An uncommitted probe under `Tests/`, run through the scratch runner. A probe outside the tree runs with no conftest. On base and branch it records `_category_search_status_text(q)` for every indexed label, every word of every label, every category title word, and the review's queries. Only the intended re-routes above may differ.
-- **Negative controls.** Delete one new row: the drift guard fails and names it. Set the literal back to 31: the rail guard fails. Both must be seen red in the lane-equivalent run.
+- **Negative controls.** Delete one new row: the drift guard fails and names it. Set the literal back to 31: the count guard fails. Take one id out of its `_category_groups()` tuple: the group-coverage guard fails. All three must be seen red in the lane-equivalent run.
 
 ### Docs
 
