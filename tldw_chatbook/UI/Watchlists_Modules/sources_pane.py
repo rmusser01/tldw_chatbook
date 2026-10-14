@@ -373,8 +373,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._update_multi_selection_ui()
 
     def set_authoritative_source_ids(self, source_ids: tuple[str, ...]) -> None:
-        """Mirror the owning screen's full-reload order for selected IDs."""
+        """Mirror the owning screen's full-reload order for selected IDs.
+
+        The selection is pruned to them in place: picks and the shift-range
+        anchor that still exist are kept (review of #3107, round 3, Q4).
+        """
         self._authoritative_source_ids = tuple(dict.fromkeys(source_ids))
+        selected = self._multi_selection.selected_ids
+        if self._authoritative_source_ids and selected:
+            self._multi_selection.prune(self._authoritative_source_ids)
+            if self._multi_selection.selected_ids != selected:
+                self._update_multi_selection_ui()
 
     def configure_create_backend(
         self, backend: str, source_types: tuple[str, ...]

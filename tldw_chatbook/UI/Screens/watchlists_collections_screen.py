@@ -5243,7 +5243,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._push_scoped_sources_to_pane()
                 pane = self.query_one("#watchlists-sources-pane", SourcesPane)
                 pane.set_authoritative_source_ids(self._loaded_source_canonical_ids())
-                pane.set_selected_source_ids(tuple(pane.selected_source_ids))  # prune
             elif section == "overview":
                 overview = self.query_one("#watchlists-overview-pane", OverviewPane)
                 overview.data = self.overview_data
