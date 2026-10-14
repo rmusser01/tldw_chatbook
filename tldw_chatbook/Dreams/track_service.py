@@ -2220,7 +2220,9 @@ async def _resume_pass(
     A subscription whose page is not a public address stays disabled; its
     riders keep the debt with the reason as ``held`` and are marked
     ``settled: "on"`` (round 3, T19) -- the Tracked row shows it, and the
-    next switch-on or re-track asks again, not every start. A hold whose
+    next switch-on or re-track asks again, not every start (a start
+    asks only when it has other reconcile work, and then this pass looks
+    every passing hold up too). A hold whose
     reason may pass -- every DNS answer: the name could not be looked up,
     or it resolved to a private or metadata address -- is also taken up
     again by every resume pass that runs, and the daily cycle runs one

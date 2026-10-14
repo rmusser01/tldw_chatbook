@@ -3658,9 +3658,10 @@ async def test_a_held_watch_is_settled_and_asked_again_by_a_pass_not_by_a_start(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """Round 3, T19, as TASK-34922 changed it (owner decision 2026-10-13:
     retry private and metadata holds on later cycles). A held watch is
-    settled "on", so a START never looks its address up again -- but a
-    resume pass that runs (and the daily cycle's retry) asks again, and
-    the page comes back once its name resolves publicly."""
+    settled "on", so a start does not look its address up unless the
+    start has other reconcile work -- but a resume pass that runs (and the
+    daily cycle's retry) asks again, and the page comes back once its name
+    resolves publicly."""
     from tldw_chatbook.Utils import egress
 
     subs_db, service = subs_stack
@@ -5251,7 +5252,7 @@ async def test_a_page_held_for_a_private_answer_clears_on_a_later_cycle(
     owned = await _held_at(
         dreams_db, service, scheduling_db, monkeypatch, address, reason)
     assert _boot_needs_switch(dreams_db, enabled=True) is False, (
-        "T19 stands: a start does not look the address up again"
+        "T19 stands: the hold alone does not make a start run a pass"
     )
     lookups = _resolve_publicly(monkeypatch)
 
