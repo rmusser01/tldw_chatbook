@@ -1283,6 +1283,50 @@ async def _source_is_gone(subs_service: Any, wrapper: dict) -> bool:
     return False
 
 
+async def _retire_replaced(
+    subs_service: Any, dreams_db: Any, dead: dict, scheduling_db_getter: Any,
+) -> None:
+    """Retire a page watch whose source the user deleted; log a failure.
+
+    Called once its replacement exists (review of #3108, X4), so the story
+    keeps a live watch to inherit its reminder, and the user's track has
+    already succeeded: a failure here is logged, not raised (round 2, Z2),
+    and the story's next track retires the dead watch then
+    (:func:`_retire_dead_siblings`).
+    """
+    try:
+        await untrack(subs_service, dreams_db, int(dead["id"]),
+                      scheduling_db_getter=scheduling_db_getter)
+    except Exception as exc:  # noqa: BLE001 - the next track retries it
+        logger.warning(
+            "Dreams track: retiring replaced item {} failed: {}",
+            dead.get("id"), type(exc).__name__)
+
+
+async def _retire_dead_siblings(
+    subs_service: Any, dreams_db: Any, wrapper: dict, scheduling_db_getter: Any,
+) -> None:
+    """Retire the story's other live page watches whose source is gone.
+
+    Review of #3108, round 2, Z2: a replacement whose retirement step
+    failed left two live watches, the dead one still holding the story's
+    reminder and counting toward the cap. Tracking the story again reuses
+    the live one, so the dead one is retired here, with it as heir.
+    """
+    story_id = wrapper.get("origin_story_id")
+    if story_id is None:
+        return
+    siblings = await asyncio.to_thread(
+        dreams_db.list_tracked_for_story, int(story_id))
+    for sibling in siblings:
+        if (int(sibling["id"]) != int(wrapper["id"])
+                and sibling.get("mechanism") == _PAGE_MECHANISM
+                and sibling.get("status") in ("active", "paused")
+                and await _source_is_gone(subs_service, sibling)):
+            await _retire_replaced(
+                subs_service, dreams_db, sibling, scheduling_db_getter)
+
+
 async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool:
     """Switch off a source Dreams created; say whether DREAMS did it.
 
@@ -1405,6 +1449,8 @@ async def track_page(
                 dreams_db, wrapper, cadence=cadence,
                 event_date=event_date,
                 scheduling_db_getter=scheduling_db_getter)
+            await _retire_dead_siblings(
+                subs_service, dreams_db, wrapper, scheduling_db_getter)
             await _retry_held_source(subs_service, dreams_db, wrapper)
             # The shared watchlist necessarily exists (this wrapper's
             # subscription joined it); resolving is idempotent and keeps
@@ -1614,8 +1660,8 @@ async def track_page(
             dreams_db=dreams_db,
         )
     if stale is not None:
-        await untrack(subs_service, dreams_db, int(stale["id"]),
-                      scheduling_db_getter=scheduling_db_getter)
+        await _retire_replaced(
+            subs_service, dreams_db, stale, scheduling_db_getter)
     logger.debug(
         "Dreams tracked page: outcome={} subscription={} item={}",
         outcome, subscription_id, tracked_item_id,

@@ -6781,3 +6781,46 @@ async def test_a_switch_off_after_the_re_tracks_check_never_leaves_the_source_on
     assert _is_active(subs_db, source_id) == 0, "Dreams is off: source off"
     assert not any(
         r["enabled"] for r in await _change_rules(service, source_id))
+
+
+@pytest.mark.asyncio
+async def test_a_failed_replacement_is_cleaned_up_by_the_next_track(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Review of #3108, round 2, Z2. Retiring the dead watch fails after
+    its replacement was made: the user's track still succeeded, and the
+    next track of the story retires the dead watch with the live one as
+    heir -- one live watch, holding the reminder at the user's time."""
+    _subs_db, service = subs_stack
+    old = await _event_page(dreams_db, service, scheduling_db)
+    (reminder,) = _all_event_reminders(scheduling_db)
+    moved_to = "2026-09-29T07:00:00+00:00"
+    scheduling_db.update_reminder_task(
+        reminder["id"], run_at=moved_to, next_run_at=moved_to)  # the user
+    await service.delete_source(old["subscription_id"])
+    real = dreams_db.set_tracked_status
+    failures = [RuntimeError("database is locked")]
+
+    def retiring_old_fails(tracked_item_id, status, **kwargs):
+        if (failures and int(tracked_item_id) == old["tracked_item_id"]
+                and status == "retired"):
+            raise failures.pop()
+        return real(tracked_item_id, status, **kwargs)
+
+    dreams_db.set_tracked_status = retiring_old_fails
+    try:
+        first = await _event_page(dreams_db, service, scheduling_db)
+    finally:
+        dreams_db.set_tracked_status = real
+    assert not failures, "fixture: the retirement failed"
+    assert first["outcome"] == "created", "the user's track succeeded"
+
+    second = await _event_page(dreams_db, service, scheduling_db)
+
+    assert second["tracked_item_id"] == first["tracked_item_id"]
+    live = [row["id"] for row in dreams_db.list_tracked_for_story(1)
+            if row["status"] in ("active", "paused")]
+    assert live == [first["tracked_item_id"]], "one live watch"
+    (kept,) = _all_event_reminders(scheduling_db)
+    assert kept["id"] == reminder["id"] and kept["enabled"]
+    assert kept["link_id"] == str(first["tracked_item_id"])
+    assert "07:00" in str(kept["run_at"])
