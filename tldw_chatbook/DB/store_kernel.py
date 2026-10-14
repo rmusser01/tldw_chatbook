@@ -65,6 +65,11 @@ class SQLiteStoreKernel:
 
     #: private-sqlite owner key for this store (subclasses must set).
     _kernel_sqlite_owner: str = ""
+
+    #: Default lock mode for ``transaction()`` (True = BEGIN IMMEDIATE,
+    #: the kernel canonical). Stores with a deferred-BEGIN contract set
+    #: this to False instead of overriding the method (ADR-228).
+    _transaction_immediate_default: bool = True
     #: resolved database path (subclasses must set before first connection).
     db_path_str: str = ""
     #: whether the store targets ``:memory:`` (subclasses must set).
@@ -167,7 +172,9 @@ class SQLiteStoreKernel:
 
     @_core_transaction
     @contextmanager
-    def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:
+    def transaction(
+        self, *, immediate: bool | None = None
+    ) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a write transaction.
 
         Required for any block whose statements must land (or not land)
@@ -192,6 +199,8 @@ class SQLiteStoreKernel:
                 ``KeyboardInterrupt`` -- task-32801.5). On clean exit the
                 transaction commits.
         """
+        if immediate is None:
+            immediate = self._transaction_immediate_default
         conn = self._held_connection()
         conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         try:
