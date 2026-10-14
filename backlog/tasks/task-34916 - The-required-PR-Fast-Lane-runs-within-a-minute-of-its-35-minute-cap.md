@@ -9,7 +9,7 @@ labels:
 priority: high
 assignee:
 - '@claude'
-updated_date: 2026-10-14 16:04
+updated_date: 2026-10-14 19:51
 ---
 
 ## Description
@@ -55,6 +55,7 @@ Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_ci_queue_pressure_
 First run of the new layout (review of #3106, W3): run 38588725796 (PR #3106, head b1d4142d65, created 15:22:23Z 2026-10-14), every job green. Queue delay (job start minus run creation) / duration / done, in min: PR Fast Lane +2.4 / 16.6 / +19.0; Dreams tracking +3.3 / 6.8 / +10.1; UI shards 1-6 +10.1 / 6.3, +5.5 / 8.9, +5.2 / 10.0, +10.1 / 9.5, +6.2 / 11.8, +3.7 / 10.7 (shards done +14.4 to +19.6); Console P0 gate +5.1 / 16.5 / +21.6; PR Fast Lane (admission-sensitive) +9.0 / 14.9 / +23.9; aggregate started +26.1, done +30.9 (the required check's wall clock). The fan-out moved cost into queueing (2.4-10.1 min starts on a 40-job account pool shared with tldw_server), but the wall clock still improved on this run. Pre-change baseline, same definitions, over the 81 pull_request runs to 2026-10-14 with every lane and the aggregate finished: required check wall clock median 39.0 / p90 66.8 / max 256.1 min; last lane done median 33.9 / p90 61.4; per-job queue delay median 2.4 / p90 17.8 min (491 jobs). AC#4 compares the 20-run median and p90 against these. No max-parallel or concurrency change in this PR.
 
 Also seen on that run, outside this task: the Console P0 regression gate took 16m30s of its 20-min cap (it measured median 13.0 / max 18.7 over 89 runs before this PR). Neither TASK-34916 nor TASK-34917 covers it; the coordinator is filing a task.
+Interim measurement, 2026-10-14 19:48Z (TASK-34986 session): 12 completed pull_request runs of derived-artifacts.yml were created after #3106 merged (17:23:53Z), fewer than the 20 the ACs ask, so no AC is ticked. 11 of them finished every lane (one, 38606466442, was cancelled at 12.8 min). Queue delay of the lane jobs: median 2.0 / p90 21.9 / max 24.8 min after the run started, 3.8 / 22.0 / 40.2 after the run was created (one run, 38616567455, sat 35.9 min in a merge-queue approval hold). Required check wall clock (run created -> aggregate done): median 28.9 / p90 43.6 / max 57.7 min (11 runs), against the pre-change baseline of 39.0 / 66.8 / 256.1 (81 runs): better so far. PR Fast Lane: n=11, median 16.5 / p90 17.7 / max 22.5 min (<= 30 so far; the 22.5 is run 38611134368, 2169 passed in 21m15s, a slow runner, not a hang). PR Fast Lane (admission-sensitive): median 16.4 / max 18.0. Re-measure at 20 runs with the scratchpad's measure.py approach: gh run list --event pull_request + gh api .../runs/<id>/jobs, runs created after 17:23:53Z.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
