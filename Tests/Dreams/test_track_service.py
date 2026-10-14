@@ -6708,3 +6708,27 @@ async def test_a_reminder_titled_by_an_older_build_takes_the_new_watchs_title(
     row = scheduling_db.get_reminder_task(reminder["id"])
     assert row["link_id"] == str(page["tracked_item_id"])
     assert row["title"] == "Dreams: tracked event"
+
+
+@pytest.mark.asyncio
+async def test_tracking_again_after_deleting_the_source_keeps_the_users_reminder(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """X4. The new watch is made first and the dead one retired after, so
+    the story's reminder -- at the time the user moved it to -- moves to
+    the new watch instead of a fresh one at the default time."""
+    _subs_db, service = subs_stack
+    old = await _event_page(dreams_db, service, scheduling_db)
+    (reminder,) = _all_event_reminders(scheduling_db)
+    moved_to = "2026-09-29T07:00:00+00:00"
+    scheduling_db.update_reminder_task(
+        reminder["id"], run_at=moved_to, next_run_at=moved_to)  # the user
+    await service.delete_source(old["subscription_id"])
+
+    again = await _event_page(dreams_db, service, scheduling_db)
+
+    assert again["outcome"] == "created"
+    assert dreams_db.get_tracked_item(old["tracked_item_id"])["status"] == "retired"
+    (kept,) = _all_event_reminders(scheduling_db)
+    assert kept["id"] == reminder["id"], "the same reminder, not a new one"
+    assert kept["link_id"] == str(again["tracked_item_id"]) and kept["enabled"]
+    assert "07:00" in str(kept["run_at"])

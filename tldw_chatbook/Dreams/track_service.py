@@ -1351,6 +1351,7 @@ async def track_page(
         raise TrackInvalidURL(f"refusing to track a non-http(s) URL: {url!r}")
 
     cadence = max(int(cadence_seconds or 0), _min_interval_seconds())
+    stale: dict | None = None  # a watch whose source the user deleted
 
     # Reuse before anything is written (Qodo #2, PR #2890): a story that
     # already owns an ACTIVE page wrapper keeps it -- refresh the plan
@@ -1368,11 +1369,11 @@ async def track_page(
             # TASK-34927. The user deleted the watch's source in Watchlists
             # -- what the notices and the guide tell them to do with one
             # that is stuck -- and is tracking again: the old watch has
-            # nothing behind it. It is retired (its reminder disarmed and
-            # recorded) and a new watch is made below, on a new source.
-            await untrack(subs_service, dreams_db, int(wrapper["id"]),
-                          scheduling_db_getter=scheduling_db_getter)
-            wrapper = None
+            # nothing behind it. A new watch is made below, on a new
+            # source, and only THEN is the old one retired, with the new
+            # one there to inherit the story's reminder as the user left
+            # it (review of #3108, X4).
+            stale, wrapper = wrapper, None
         if wrapper is not None:
             await _refresh_wrapper_plan(
                 dreams_db, wrapper, cadence=cadence,
@@ -1397,9 +1398,12 @@ async def track_page(
             }
 
     # Cap guard FIRST: the whole point is that a capped runtime creates
-    # nothing, so this precedes every write below.
+    # nothing, so this precedes every write below. A dead watch about to be
+    # replaced does not count.
     cap = _cap()
     active = await asyncio.to_thread(dreams_db.count_active_tracked)
+    if stale is not None and stale.get("status") == "active":
+        active -= 1
     if active >= cap:
         raise TrackCapReached(
             f"track cap reached: {active} active tracked items (cap {cap})"
@@ -1565,6 +1569,9 @@ async def track_page(
          "event_date": event_date, "origin_story_id": origin_story_id},
         dreams_db=dreams_db,
     )
+    if stale is not None:
+        await untrack(subs_service, dreams_db, int(stale["id"]),
+                      scheduling_db_getter=scheduling_db_getter)
     logger.debug(
         "Dreams tracked page: outcome={} subscription={} item={}",
         outcome, subscription_id, tracked_item_id,
