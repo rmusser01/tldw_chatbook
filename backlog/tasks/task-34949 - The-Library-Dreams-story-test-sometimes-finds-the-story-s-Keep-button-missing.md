@@ -19,8 +19,7 @@ Tests/UI/test_library_dreams_reader.py::test_production_library_dreams_story_act
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The test passes 20 consecutive CI runs after aea8948fdb, or, if it fails again, the cause of the missing button is identified in the test or the product
-- [ ] #2 The test passes 20 consecutive runs in CI, or fails only for a real defect
-- [ ] #3 If the product was at fault, a test that fails deterministically without the fix pins it
+- [ ] #2 If the product was at fault, a test that fails deterministically without the fix pins it
 <!-- AC:END -->
 
 ## Implementation Notes

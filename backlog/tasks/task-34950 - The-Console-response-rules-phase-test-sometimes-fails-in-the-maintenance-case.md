@@ -19,8 +19,7 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The test passes 20 consecutive CI runs after PR #3020's changes, or, if it fails again, the cause is identified in the test or the product
-- [ ] #2 The test passes 20 consecutive runs in CI, or fails only for a real defect
-- [ ] #3 If the product was at fault, a test that fails deterministically without the fix pins it
+- [ ] #2 If the product was at fault, a test that fails deterministically without the fix pins it
 <!-- AC:END -->
 
 ## Implementation Notes
