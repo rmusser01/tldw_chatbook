@@ -4107,6 +4107,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if event.previous.is_collapsed(Region.ITEMS) and not event.layout.is_collapsed(
             Region.ITEMS
         ):
+            self._reseed_active_section_pane()  # a re-created pane (#3107, V1)
             self._restore_items_view_state()
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:

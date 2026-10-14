@@ -724,6 +724,92 @@ async def test_a_load_landing_while_a_section_pane_mounts_reaches_that_pane(
 
 
 @pytest.mark.asyncio
+async def test_a_load_landing_while_the_items_region_is_recreated_reaches_its_pane(
+    monkeypatch,
+):
+    """Review of #3107, item V1: re-expanding a collapsed Items region on Read
+    rebuilds its pane through the same factory-then-mount path, and a Read
+    reload committing in between (no pane to present into) was dropped: the
+    re-created pane showed the rows from before the reload."""
+    from datetime import UTC, datetime
+
+    from textual.widget import Widget
+
+    from Tests.Watchlists.test_watchlists_scoped_rebuilds import _open, _seed, _settle
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    app = _build_test_app()
+    watchlist_id = _seed(app, items=2)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        assert len(screen._loaded_items) == 2
+        screen._toggle_preferred_region(Region.ITEMS)
+        await _until(pilot, lambda: not screen.query("#watchlists-items-pane"))
+        assert not screen.query("#watchlists-items-pane"), "Items did not collapse"
+
+        db = app.watchlist_bundle_service.db
+        source_id = db.get_all_subscriptions()[0]["id"]
+        with db.transaction() as conn:
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://ai-news.example/late",
+                    "title": "Late story",
+                    "content": "body of the late story",
+                    "content_hash": "hash-late",
+                    "content_kind": "article",
+                    "content_format": "text",
+                },
+                run_id=None,
+                now=datetime.now(UTC).isoformat(),
+            )
+        release = asyncio.Event()
+        list_page = screen._controller.list_reader_items_page
+
+        async def held_page(**kwargs):
+            await release.wait()
+            return await list_page(**kwargs)
+
+        screen._controller.list_reader_items_page = held_page
+        screen._load_active_section_data()  # the reload is held until the rebuild
+        mount = Widget.mount
+        landed = []
+
+        def mount_after_the_reload(self, *widgets, **kwargs):
+            if landed or not any(w.id == "wl-region-items" for w in widgets):
+                return mount(self, *widgets, **kwargs)
+
+            async def later():
+                # The re-created Items region is built but not mounted.
+                release.set()
+                await asyncio.gather(
+                    *(
+                        worker.wait()
+                        for worker in host.workers
+                        if worker.node is screen and worker.group == "wc_items"
+                    ),
+                    return_exceptions=True,
+                )
+                landed.append(len(screen._loaded_items))
+                return await mount(self, *widgets, **kwargs)
+
+            return later()
+
+        monkeypatch.setattr(Widget, "mount", mount_after_the_reload)
+        screen._toggle_preferred_region(Region.ITEMS)
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        shown = len(pane.items)
+
+    assert landed == [3]
+    assert shown == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
     """Backend-only repaints must not replace a focused create-form field."""
