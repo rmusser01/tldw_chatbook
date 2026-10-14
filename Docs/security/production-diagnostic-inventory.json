@@ -911,8 +911,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 346,
-      "diagnostic_digest": "06bf8119057a509a2b8c",
+      "call_count": 308,
+      "diagnostic_digest": "63ec51ad8ad4963366bb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -939,8 +939,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 129,
-      "diagnostic_digest": "0ac5f945d3d70bfdd61f",
+      "call_count": 117,
+      "diagnostic_digest": "a2bac74d3c88bfb52a43",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Prompts_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -971,6 +971,13 @@
       "diagnostic_digest": "c7e081542ed2f8099216",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/chachanotes_fts_backfill.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 19,
+      "diagnostic_digest": "642d9e8385c3c9144409",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/DB/keyword_store.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -5656,24 +5663,6 @@
             "self.db_path_str"
           ],
           "scope": "MediaDatabase.delete_sync_log_entries_older_than",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0ac3d7be5b54e837",
-          "method": "error",
-          "path_expressions": [
-            "self.db_path_str"
-          ],
-          "scope": "MediaDatabase.fetch_media_for_keywords",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "693633d452a6989f",
-          "method": "error",
-          "path_expressions": [
-            "self.db_path_str"
-          ],
-          "scope": "MediaDatabase.fetch_media_for_keywords",
           "status": "legacy_unreviewed"
         },
         {
