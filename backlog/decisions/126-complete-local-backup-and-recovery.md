@@ -1294,3 +1294,30 @@ provenance: the source store and actual fetch boundary own that decision. New
 finite thread work drains under existing maintenance owners and retires only its
 own acquired native handles. No namespace exemption, borrowed-handle closure or
 weakened schema validator is authorized by adding these owners.
+
+### 2026-10-14 — Fresh Windows metadata prerequisite, before optimization selection
+
+The independently reviewed supported Windows capability run38515921962 keeps
+the original73 controls passing and records12 failures solely for absent
+metadata APIs/retained-close type. These are capability failures, not evidence
+that any new native metadata behavior ran. Under TASK34406/34563.36 add only
+fresh named scalar and batch metadata observations with the current TokenUser
+security projection and copied exact self-relative descriptor bytes. Both APIs
+use the same checked native handle custody. Full component chains remain
+validated before native access; one-name validation is not selected.
+
+Every newly acquired handle incarnation enters custody before metadata/NTFS
+validation can fail. Retire each once, including failures before publication;
+a false or raising CloseHandle retains the exact native owner, numeric handle,
+known identity, path and close error in the defining exception, without retry.
+A retained numeric handle alone never authorizes later cleanup. Ordinary
+stat/fstat, their custom callback arguments and existing error behavior remain
+unchanged. No process-wide closer or authority cache is introduced.
+
+Keep current fixed creation-intent durability, full derivation, Windows reuse
+exclusions, TokenUser policy and all ordinary security guards. TokenOwner,
+scoped acquisition reuse and OPT09/36/74/task22 require separate release. The
+scalar and batch uncertainty tests must each exercise real protected-HANDLE
+failure plus injected before/after/raising outcomes, with exact incarnation
+cleanup and no blind retry. Independent frozen review and actual Windows
+behavior/refusal/retirement qualification precede optimization selection.
