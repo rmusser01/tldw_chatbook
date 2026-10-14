@@ -23,6 +23,9 @@ class _FakeResponse:
 
     status_code = 200
 
+    def raise_for_status(self):
+        return None
+
     def __init__(self, payload=None):
         self.text = ""
         self._payload = payload or {
@@ -48,26 +51,13 @@ def captured_post(monkeypatch):
             captured["json"] = json
             return _FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _FakeSession(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _FakeSession(), raising=False)
-    # Pooled seam (task-34387): production may reach the session through
-    # create_pooled_default_session(mount_retry=..., mount_prefixes=...);
-    # patch BOTH names so either production shape is intercepted.
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: _FakeSession(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: _FakeSession())
     # TASK-32854: llama posts through the shared _post_with_retry transport
     # in Summarization_General_Lib, so the session seam moves there too
     # (kept on BOTH modules while the remaining local handlers migrate).
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _FakeSession(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _FakeSession(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _FakeSession(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _FakeSession())
     return captured
 
 
@@ -191,28 +181,13 @@ def test_summarize_with_llama_parses_the_openai_response_shape(monkeypatch):
         def post(self, *_a, **_k):
             return _FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "SUMMARY"
 
@@ -229,20 +204,10 @@ def test_summarize_with_llama_still_parses_the_native_completion_shape(monkeypat
         def post(self, *_a, **_k):
             return _FakeResponse({"content": " NATIVE "})
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "NATIVE"
 
@@ -259,20 +224,10 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
         def post(self, *_a, **_k):
             return _FakeResponse({"unexpected": True})
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
 
@@ -341,20 +296,10 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
 
@@ -375,6 +320,11 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
 
     settings = _settings()
     settings["api_settings"]["llama_cpp"]["max_tokens"] = 16384
+    # The chat handler resolves the URL from the modern table only (the
+    # legacy api_ip fallback lived in the retired LS resolution).
+    settings["api_settings"]["llama_cpp"]["api_url"] = (
+        "http://modern.invalid/v1/chat/completions"
+    )
     monkeypatch.setattr(lib, "load_settings", lambda: settings)
 
     seen = {}
@@ -401,20 +351,28 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: _Session(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as _local
+
+    # TASK-34895: llama_cpp routes through the chat handler; the transport
+    # and config seams now live on LLM_API_Calls_Local.
+    monkeypatch.setattr(_local, "create_default_session", lambda: _Session())
+
+    class _Snapshot:
+        values = settings
+
+    monkeypatch.setattr(_local, "get_runtime_config_snapshot", lambda: _Snapshot)
+
+    # The chat-dispatch core resolves model/key from the legacy top-level
+    # sections through sgl.get_cli_setting.
+    def _fake_get_cli_setting(section, key, *args, **kwargs):
+        default = args[0] if args else kwargs.get("default")
+        return settings.get(section, {}).get(key, default)
+
+    monkeypatch.setattr(_general, "get_cli_setting", _fake_get_cli_setting)
 
     result = analyze(
         input_data="a chunk of packed evidence",

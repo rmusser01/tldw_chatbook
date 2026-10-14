@@ -29,6 +29,7 @@ from typing import Optional, Union, Generator, Any, Dict, List, Callable, Iterab
 # 3rd-Party Imports
 from loguru import logger
 import requests
+from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
 #
@@ -2589,6 +2590,7 @@ def summarize_with_mock_llm(
 #
 
 
+# FIXME
 def summarize_chunk(
     api_name, text, custom_prompt_input, api_key, temp=None, system_message=None
 ):
@@ -2598,17 +2600,8 @@ def summarize_chunk(
         return "No summary available"
 
     try:
-        # TASK-34845: this call previously rotated the first three
-        # arguments into analyze (text landing on api_name) and swapped
-        # temp/system_message; analyze's signature is (api_name, input_data,
-        # custom_prompt_arg, api_key, system_message, temp, ...).
         result = analyze(
-            api_name,
-            text,
-            custom_prompt_input,
-            api_key=api_key,
-            system_message=system_message,
-            temp=temp,
+            text, custom_prompt_input, api_name, api_key, temp, system_message
         )
 
         # Handle streaming generator responses
@@ -2725,12 +2718,24 @@ _CHAT_SUMMARIZER_DEFAULT_SYSTEM = (
 class _SummarizerChatSpec:
     endpoint: str
     legacy_section: str
-    default_model: str
-    default_temp: float
+    default_model: Optional[str]
+    default_temp: Optional[float]
     missing_key_message: str
     empty_message: str
     error_template: str
-    prompt_first: bool = False
+    # Local endpoints have no key requirement (auth optional or absent);
+    # the keyless in-band refusal applies only where the legacy function
+    # had one.
+    require_key: bool = True
+    # "text" -> f"{text} \n\n\n\n{cp}" (the openai-family order);
+    # "mistral" -> f"{cp}\n\n\n\n{text} " (legacy summarize_with_mistral);
+    # "huggingface" -> f"{cp}\n\n\n{text}" (legacy summarize_with_huggingface).
+    prompt_style: str = "text"
+    # The chat path already applies the model_capabilities sampling gates
+    # (openai max_completion_tokens swap, anthropic temperature/top_k/top_p
+    # predicates) when the model is forwarded, so specs only carry the
+    # per-provider system-message default the legacy function used.
+    system_default: str = _CHAT_SUMMARIZER_DEFAULT_SYSTEM
 
 
 _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
@@ -2768,7 +2773,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         ),
         empty_message="Mistral: Summary not available",
         error_template="Mistral: Error occurred while processing summary: {detail}",
-        prompt_first=True,
+        prompt_style="mistral",
     ),
     "openrouter": _SummarizerChatSpec(
         endpoint="openrouter",
@@ -2783,6 +2788,207 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
             "openrouter: Error occurred while processing summary with "
             "openrouter: {detail}"
         ),
+    ),
+    "openai": _SummarizerChatSpec(
+        endpoint="openai",
+        legacy_section="openai_api",
+        default_model="gpt-4o",
+        default_temp=0.7,
+        missing_key_message=("Error: OpenAI API Key Not Provided/Found or is empty."),
+        empty_message="Error: OpenAI Summary not found in response.",
+        error_template="Error: OpenAI API request failed: {detail}",
+        system_default="You are a helpful AI assistant.",
+    ),
+    "anthropic": _SummarizerChatSpec(
+        endpoint="anthropic",
+        legacy_section="anthropic_api",
+        default_model="claude-haiku-4-5",
+        default_temp=0.1,
+        missing_key_message=(
+            "Anthropic: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Anthropic: Summary not available",
+        error_template=(
+            "Anthropic: Error occurred while processing summary with "
+            "Anthropic: {detail}"
+        ),
+    ),
+    "cohere": _SummarizerChatSpec(
+        endpoint="cohere",
+        legacy_section="cohere_api",
+        default_model="command-a-03-2025",
+        default_temp=0.3,
+        missing_key_message=(
+            "Cohere: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Cohere: Expected data not found in API response.",
+        error_template=(
+            "Cohere: Error occurred while processing summary with Cohere: {detail}"
+        ),
+    ),
+    "google": _SummarizerChatSpec(
+        endpoint="google",
+        legacy_section="google_api",
+        default_model="gemini-1.5-pro",
+        default_temp=0.2,
+        missing_key_message=(
+            "Google: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Google: Summary not available",
+        error_template="Google: Unexpected error occurred: {detail}",
+    ),
+    "huggingface": _SummarizerChatSpec(
+        endpoint="huggingface",
+        legacy_section="huggingface_api",
+        default_model="mistralai/Mistral-7B-Instruct-v0.2",
+        default_temp=0.1,
+        missing_key_message=(
+            "HuggingFace: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="HuggingFace: Expected 'generated_text' in API response.",
+        error_template=(
+            "HuggingFace: Error occurred while processing summary with "
+            "HuggingFace: {detail}"
+        ),
+        prompt_style="huggingface",
+    ),
+    "llama.cpp": _SummarizerChatSpec(
+        endpoint="llama_cpp",
+        legacy_section="llama_cpp_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Llama: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Llama: No choices in response data",
+        error_template="Llama: Error occurred while processing summary with Llama: {detail}",
+        require_key=False,
+        prompt_style="template_nl",
+    ),
+    "kobold": _SummarizerChatSpec(
+        endpoint="koboldcpp",
+        legacy_section="kobold_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Kobold: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Kobold: Expected data not found in API response.",
+        error_template="Kobold: Error occurred while processing summary with Kobold: {detail}",
+        require_key=False,
+        prompt_style="template_nl4",
+    ),
+    "ooba": _SummarizerChatSpec(
+        endpoint="oobabooga",
+        legacy_section="ooba_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Ooba API: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Ooba API: Failed to process summary.",
+        error_template="Ooba API: Unexpected error occurred: {detail}",
+        require_key=False,
+    ),
+    "tabbyapi": _SummarizerChatSpec(
+        endpoint="tabbyapi",
+        legacy_section="tabby_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="TabbyAPI: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Error: Received an invalid response structure from TabbyAPI.",
+        error_template="TabbyAPI: Unexpected error in summarization process: {detail}",
+        require_key=False,
+        prompt_style="template_nl4",
+    ),
+    "vllm": _SummarizerChatSpec(
+        endpoint="vllm",
+        legacy_section="vllm_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="vLLM Summarization: API Key Not Provided/Found in Config file or is empty",
+        empty_message="vLLM Summarization: Summary not available",
+        error_template="vLLM Summarization: Unexpected error occurred: {detail}",
+        require_key=False,
+    ),
+    "local-llm": _SummarizerChatSpec(
+        endpoint="local-llm",
+        legacy_section="local_llm",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Local LLM: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Local LLM: Summary not available",
+        error_template="Local LLM: Error occurred while processing summary: {detail}",
+        require_key=False,
+    ),
+    "ollama": _SummarizerChatSpec(
+        endpoint="ollama",
+        legacy_section="ollama_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Ollama: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Ollama: Summarization API response missing text.",
+        error_template="Ollama: Error occurred while summarizing: {detail}",
+        require_key=False,
+        prompt_style="ollama",
+    ),
+    "custom-openai-api": _SummarizerChatSpec(
+        endpoint="custom-openai-api",
+        legacy_section="custom_openai_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message=(
+            "Custom OpenAI API: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Custom OpenAI API: Chat not available",
+        error_template="OpenAI: Failed to process chat response. Status code: {detail}",
+        prompt_style="template_nl4",
+    ),
+    "custom-openai-api-2": _SummarizerChatSpec(
+        endpoint="custom-openai-api-2",
+        legacy_section="custom_openai_api_2",
+        default_model=None,
+        default_temp=None,
+        missing_key_message=(
+            "Custom OpenAI API API-2: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Custom OpenAI API API-2: Chat not available",
+        error_template="OpenAI: Failed to process chat response. Status code: {detail}",
+        prompt_style="template_nl4",
+    ),
+    # --- engine presets (task-34895): summarization can now select any
+    # chat-dispatch endpoint; these had NO legacy per-provider function,
+    # so there is no legacy behavior to preserve -- the chat handler's own
+    # defaults govern model/temperature.
+    "moonshot": _SummarizerChatSpec(
+        endpoint="moonshot",
+        legacy_section="moonshot_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="Moonshot: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Moonshot: Summary not available",
+        error_template="Moonshot: Error occurred while processing summary: {detail}",
+    ),
+    "zai": _SummarizerChatSpec(
+        endpoint="zai",
+        legacy_section="zai_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="ZAI: API Key Not Provided/Found in Config file or is empty",
+        empty_message="ZAI: Summary not available",
+        error_template="ZAI: Error occurred while processing summary: {detail}",
+    ),
+    "aphrodite": _SummarizerChatSpec(
+        endpoint="aphrodite",
+        legacy_section="aphrodite_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="Aphrodite: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Aphrodite: Summary not available",
+        error_template="Aphrodite: Error occurred while processing summary: {detail}",
+    ),
+    "mlx_lm": _SummarizerChatSpec(
+        endpoint="mlx_lm",
+        legacy_section="mlx_lm_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="MLX: API Key Not Provided/Found in Config file or is empty",
+        empty_message="MLX: Summary not available",
+        error_template="MLX: Error occurred while processing summary: {detail}",
     ),
 }
 
@@ -2849,8 +3055,23 @@ def _summarize_via_chat_api(
     else:
         raise ValueError(f"{spec.endpoint}: Invalid input data format")
 
-    if spec.prompt_first:
+    if spec.prompt_style == "mistral":
         user_content = f"{custom_prompt_arg}\n\n\n\n{text} "
+    elif spec.prompt_style == "huggingface":
+        user_content = f"{custom_prompt_arg}\n\n\n{text}"
+    elif spec.prompt_style in ("template_nl", "template_nl4", "ollama"):
+        # The local summarizers fall back to the registry's local template
+        # when the caller brings no custom prompt (the five LS call sites
+        # the internal-prompts migration pinned).
+        effective_cp = custom_prompt_arg or get_internal_prompt(
+            "summarization.local_summarizer_template"
+        )
+        if spec.prompt_style == "ollama":
+            user_content = f"{effective_cp}\n\n{text}"
+        elif spec.prompt_style == "template_nl":
+            user_content = f"{effective_cp}\n\n{text}"
+        else:
+            user_content = f"{effective_cp}\n\n\n\n{text}"
     else:
         user_content = f"{text} \n\n\n\n{custom_prompt_arg}"
     messages = [{"role": "user", "content": user_content}]
@@ -2869,22 +3090,25 @@ def _summarize_via_chat_api(
     # never a credential. Refusing HERE (in-band, before the chat dispatch)
     # keeps the legacy refusal shape and keeps the chat handler's own
     # settings resolution off the keyless path entirely.
+    raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
     if api_key and api_key.strip():
         resolved_key = api_key
     else:
-        resolved_key = without_ciphertext(
-            get_cli_setting(spec.legacy_section, "api_key")
-        )
-    if not resolved_key or not resolved_key.strip():
-        return spec.missing_key_message
+        resolved_key = without_ciphertext(raw_config_key)
+    if not (resolved_key and resolved_key.strip()):
+        # Refuse where the provider requires a key, and wherever a key WAS
+        # declared but is ciphertext -- `enc:` text is never a credential,
+        # even for providers where auth is otherwise optional.
+        if spec.require_key or raw_config_key:
+            return spec.missing_key_message
 
     try:
         result = chat_api_call(
             spec.endpoint,
             messages,
             api_key=resolved_key,
-            temp=spec.default_temp if temp is None else float(temp),
-            system_message=system_message or _CHAT_SUMMARIZER_DEFAULT_SYSTEM,
+            temp=(spec.default_temp if temp is None else float(temp)),
+            system_message=system_message or spec.system_default,
             model=get_cli_setting(spec.legacy_section, "model", spec.default_model),
             streaming=streaming,
         )
@@ -2897,8 +3121,42 @@ def _summarize_via_chat_api(
         return _chat_stream_text_chunks(result)
     summary = chat_reply_text(result).strip()
     if not summary:
-        return spec.empty_message
+        return spec.empty_message + _reasoning_only_completion_detail(result)
     return summary
+
+
+def _reasoning_only_completion_detail(result: Any) -> str:
+    """Explain an empty completion that spent its budget on reasoning.
+
+    Port of the legacy llama summarizer's diagnostic (task-17384): a
+    response with choices but no message content usually spent its token
+    budget on ``reasoning_content``. The empty-message prefix stays
+    spec-owned so the Web_Scraping failure detector keeps recognizing it.
+    """
+    if not isinstance(result, dict):
+        return ""
+    first = (result.get("choices") or [{}])[0]
+    if not isinstance(first, dict):
+        return ""
+    finish = first.get("finish_reason")
+    message = first.get("message")
+    reasoning = ""
+    if isinstance(message, dict):
+        reasoning = str(message.get("reasoning_content") or "")
+    spent = (result.get("usage") or {}).get("completion_tokens")
+    parts = []
+    if finish:
+        parts.append(f"finish_reason={finish}")
+    if spent is not None:
+        parts.append(f"completion_tokens={spent}")
+    if reasoning:
+        parts.append(
+            f"reasoning-only completion ({len(reasoning)} chars "
+            "of reasoning, no content)"
+        )
+    if parts:
+        return " (" + "; ".join(parts) + ")"
+    return ""
 
 
 # --- TASK-33245: dispatch table replacing the per-provider elif chain ---
@@ -2906,23 +3164,23 @@ def _summarize_via_chat_api(
 # module-level provider names, so entries must be lambdas resolving
 # globals at call time -- direct function references would bypass them.
 _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
-    "openai": lambda ak, text, cp, temp, sm, st: summarize_with_openai(
-        ak, text, cp, temp, sm, st
+    "openai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "openai", ak, text, cp, temp, sm, st
     ),
-    "anthropic": lambda ak, text, cp, temp, sm, st: summarize_with_anthropic(
-        ak, text, cp, temp, sm, st
+    "anthropic": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "anthropic", ak, text, cp, temp, sm, st
     ),
-    "cohere": lambda ak, text, cp, temp, sm, st: summarize_with_cohere(
-        ak, text, cp, temp, sm, st
+    "cohere": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "cohere", ak, text, cp, temp, sm, st
     ),
-    "google": lambda ak, text, cp, temp, sm, st: summarize_with_google(
-        ak, text, cp, temp, sm, st
+    "google": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "google", ak, text, cp, temp, sm, st
     ),
     "groq": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
         "groq", ak, text, cp, temp, sm, st
     ),
-    "huggingface": lambda ak, text, cp, temp, sm, st: summarize_with_huggingface(
-        ak, text, cp, temp, st
+    "huggingface": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "huggingface", ak, text, cp, temp, sm, st
     ),
     "openrouter": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
         "openrouter", ak, text, cp, temp, sm, st
@@ -2939,44 +3197,31 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     ),
     # --- Local LLM Calls (adapters preserve each function's original
     # argument order) ---
-    "llama.cpp": lambda ak, text, cp, temp, sm, st: summarize_with_llama(
-        text, cp, ak, temp, sm, st
+    "llama.cpp": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "llama.cpp", ak, text, cp, temp, sm, st
     ),
-    # TASK-34812: kobold's signature is (input_data, api_key,
-    # custom_prompt_input, system_message, temp, kobold_api_ip, streaming);
-    # the old positional order silently bound system_message=temp,
-    # temp=system_message, the streaming flag onto kobold_api_ip, and left
-    # streaming False.
-    "kobold": lambda ak, text, cp, temp, sm, st: summarize_with_kobold(
-        text, ak, cp, sm, temp, streaming=st
+    "kobold": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "kobold", ak, text, cp, temp, sm, st
     ),
-    "ooba": lambda ak, text, cp, temp, sm, st: summarize_with_oobabooga(
-        text, ak, cp, sm, temp=temp, streaming=st
+    "ooba": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "ooba", ak, text, cp, temp, sm, st
     ),
-    # TASK-34812: tabbyapi's signature is (input_data,
-    # custom_prompt_input, system_message, api_key, temp, api_IP,
-    # streaming); the old positional order bound system_message=temp,
-    # api_key=system_message, and temp=streaming.
-    "tabbyapi": lambda ak, text, cp, temp, sm, st: summarize_with_tabbyapi(
-        text, cp, sm, ak, temp, streaming=st
+    "tabbyapi": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "tabbyapi", ak, text, cp, temp, sm, st
     ),
-    "vllm": lambda ak, text, cp, temp, sm, st: summarize_with_vllm(
-        ak, text, cp, temp, sm, st
+    "vllm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "vllm", ak, text, cp, temp, sm, st
     ),
-    "local-llm": lambda ak, text, cp, temp, sm, st: summarize_with_local_llm(
-        text, cp, temp, sm, st
+    "local-llm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "local-llm", ak, text, cp, temp, sm, st
     ),
-    "custom-openai-api": lambda ak, text, cp, temp, sm, st: (
-        summarize_with_custom_openai(ak, text, cp, temp, sm, st)
+    "custom-openai-api": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "custom-openai-api", ak, text, cp, temp, sm, st
     ),
-    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: (
-        summarize_with_custom_openai_2(ak, text, cp, temp, sm, st)
+    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "custom-openai-api-2", ak, text, cp, temp, sm, st
     ),
-    # TASK-34812: ollama's signature is (input_data, custom_prompt,
-    # api_url, api_key, temp, system_message, model, ...); the old
-    # positional call landed the streaming flag on model (api_url
-    # correctly received None and resolves from config).
-    "ollama": lambda ak, text, cp, temp, sm, st: summarize_with_ollama(
-        text, cp, api_key=ak, temp=temp, system_message=sm, streaming=st
+    "ollama": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "ollama", ak, text, cp, temp, sm, st
     ),
 }

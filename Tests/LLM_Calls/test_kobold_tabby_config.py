@@ -73,23 +73,10 @@ def captured_post(monkeypatch):
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: FakeSession(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: FakeSession(), raising=False)
-    # Pooled seam (task-34387): production may reach the session through
-    # create_pooled_default_session(mount_retry=..., mount_prefixes=...);
-    # patch BOTH names so either production shape is intercepted.
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: FakeSession(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: FakeSession())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: FakeSession(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: FakeSession(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: FakeSession(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: FakeSession())
     return captured
 
 
@@ -112,6 +99,12 @@ def settings(**overrides):
         "api_settings": {
             "koboldcpp": {"api_url": "http://kobold.invalid/v1/chat/completions"},
             "tabbyapi": {"api_url": "http://tabby.invalid/v1/chat/completions"},
+            # chat_with_tabbyapi reads the "tabby_api" spelling from the
+            # api_settings table (LLM_API_Calls_Local.py) -- both live.
+            "tabby_api": {
+                "api_url": "http://tabby.invalid/v1/chat/completions",
+                "model": "tabby-model",
+            },
         },
         "kobold_api": {
             "api_ip": "http://legacy-kobold.invalid/api/v1/generate",
@@ -259,20 +252,10 @@ def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
             seen["url"] = url
             return StreamResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: StreamSession(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: StreamSession(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: StreamSession(),
-        raising=False,
-    )
+    monkeypatch.setattr(lib, "create_default_session", lambda: StreamSession())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: StreamSession(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: StreamSession(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: StreamSession(),
-        raising=False,
-    )
+    monkeypatch.setattr(_general, "create_default_session", lambda: StreamSession())
 
     drain(lib.summarize_with_kobold("text", None, "Summarize.", streaming=True))
 
@@ -313,20 +296,31 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
             seen["url"] = url
             return FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: Session(), raising=False)
-    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: Session(), raising=False)
-    monkeypatch.setattr(
-        lib, "create_pooled_default_session", lambda **kwargs: Session(),
-        raising=False,
-    )
-    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(lib, "create_default_session", lambda: Session())
+    from types import SimpleNamespace
 
-    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: Session(), raising=False)
-    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: Session(), raising=False)
-    monkeypatch.setattr(
-        _general, "create_pooled_default_session", lambda **kwargs: Session(),
-        raising=False,
-    )
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as _local
+
+    monkeypatch.setattr(_general, "create_default_session", lambda: Session())
+    # TASK-34895: tabbyapi routes through the chat handler; the transport
+    # and config seams now live on LLM_API_Calls_Local.
+    monkeypatch.setattr(_local, "create_default_session", lambda: Session())
+
+    class _Snapshot:
+        values = settings()
+
+    monkeypatch.setattr(_local, "get_runtime_config_snapshot", lambda: _Snapshot)
+
+    # The chat-dispatch core resolves model/key from the legacy top-level
+    # sections through sgl.get_cli_setting.
+    _fake_settings = settings()
+
+    def _fake_get_cli_setting(section, key, *args, **kwargs):
+        default = args[0] if args else kwargs.get("default")
+        return _fake_settings.get(section, {}).get(key, default)
+
+    monkeypatch.setattr(_general, "get_cli_setting", _fake_get_cli_setting)
 
     result = drain(
         analyze(

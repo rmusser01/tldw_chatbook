@@ -57,12 +57,7 @@ def _install(monkeypatch, fake: _FakeChatDispatch, cfg_key: Any = "cfg-key") -> 
     monkeypatch.setattr(sgl, "get_cli_setting", fake_setting)
 
 
-SPEC_BY_NAME = {
-    "groq": sgl._SUMMARIZER_CHAT_SPECS["groq"],
-    "deepseek": sgl._SUMMARIZER_CHAT_SPECS["deepseek"],
-    "mistral": sgl._SUMMARIZER_CHAT_SPECS["mistral"],
-    "openrouter": sgl._SUMMARIZER_CHAT_SPECS["openrouter"],
-}
+SPEC_BY_NAME = dict(sgl._SUMMARIZER_CHAT_SPECS)
 
 
 @pytest.mark.parametrize("name", list(SPEC_BY_NAME))
@@ -84,13 +79,16 @@ def test_core_forwards_prompt_model_and_defaults(monkeypatch, name):
     assert call["kwargs"]["model"] == spec.default_model
     assert call["kwargs"]["temp"] == spec.default_temp
     assert call["kwargs"]["streaming"] is False
-    assert (
-        call["kwargs"]["system_message"]
-        == "You are a helpful AI assistant who does whatever the user requests."
-    )
+    assert call["kwargs"]["system_message"] == spec.system_default
     user = call["messages"][0]["content"]
-    if spec.prompt_first:
+    if spec.prompt_style == "mistral":
         assert user == "Summarize.\n\n\n\nBODY "
+    elif spec.prompt_style == "huggingface":
+        assert user == "Summarize.\n\n\nBODY"
+    elif spec.prompt_style == "template_nl4":
+        assert user == "Summarize.\n\n\n\nBODY"
+    elif spec.prompt_style in ("template_nl", "ollama"):
+        assert user == "Summarize.\n\nBODY"
     else:
         assert user == "BODY \n\n\n\nSummarize."
 
@@ -112,12 +110,15 @@ def test_core_refuses_keyless_before_the_chat_dispatch(monkeypatch):
     fake = _FakeChatDispatch()
     _install(monkeypatch, fake, cfg_key=None)
 
-    for name in SPEC_BY_NAME:
-        spec = SPEC_BY_NAME[name]
+    for name, spec in SPEC_BY_NAME.items():
+        if not spec.require_key:
+            continue
         assert (
             sgl._summarize_via_chat_api(name, None, "B", "cp", None, None, False)
             == spec.missing_key_message
         )
+    # Optional-key locals with NO declared key proceed to the chat
+    # dispatch; a declared-but-ciphertext key still refuses in-band.
     assert fake.calls == []
     # Ciphertext refusal is pinned through the real dispatch path in
     # Tests/Chat/test_encrypted_api_key_never_sent.py (_dispatch_to_api

@@ -4282,7 +4282,9 @@ def test_general_core_dispatch_exception_preserves_in_band_error_without_traceba
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    real_openai = general_summarization.summarize_with_openai
+    # TASK-34895: openai routes through the chat-dispatch core; that is
+    # the seam _dispatch_to_api resolves, so the canary raises there.
+    real_openai = general_summarization._summarize_via_chat_api
     signature = inspect.signature(real_openai)
 
     def failing_openai(*args: object, **kwargs: object) -> str:
@@ -4291,7 +4293,7 @@ def test_general_core_dispatch_exception_preserves_in_band_error_without_traceba
 
     monkeypatch.setattr(
         general_summarization,
-        "summarize_with_openai",
+        "_summarize_via_chat_api",
         failing_openai,
     )
 
