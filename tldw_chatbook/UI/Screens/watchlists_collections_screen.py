@@ -5249,9 +5249,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             elif section == "sources":  # rows and tree choices (TASK-34951)
                 self._push_scoped_sources_to_pane()
             elif section == "overview":
-                self.query_one(
-                    "#watchlists-overview-pane", OverviewPane
-                ).watchlist_count = len(self._tree_watchlists)
+                overview = self.query_one("#watchlists-overview-pane", OverviewPane)
+                overview.data = self.overview_data
+                overview.watchlist_count = len(self._tree_watchlists)
             elif section == "runs":
                 self._reseed_live_detail_pane()
             elif section == "rules":
