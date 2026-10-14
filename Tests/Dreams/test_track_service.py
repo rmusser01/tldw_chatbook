@@ -5348,7 +5348,12 @@ async def test_a_page_held_for_its_scheme_is_not_asked_about_daily(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """A non-web scheme is a fact about the address, not a DNS answer: the
     only lasting hold. The daily retry makes no lookup for it and does not
-    even start a pass."""
+    even start a pass.
+
+    In practice the hold is out of reach: a Dreams source is http(s) when
+    it is tracked and nothing in the app edits a source's URL, so the test
+    puts the scheme in place with a raw database write (review of #3101,
+    N3). It pins the rule, not a path a user can take."""
     subs_db, service = subs_stack
     owned = await _event_page(dreams_db, service, scheduling_db)
     await _switch(service, dreams_db, scheduling_db, off=True)
