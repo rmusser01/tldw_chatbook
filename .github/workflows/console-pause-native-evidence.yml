@@ -24,8 +24,9 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       AC77_EXPECTED_COMMIT: ${{ inputs.expected_commit }}
       AC77_SOURCE_MANIFEST_SHA256: ${{ inputs.source_manifest_sha256 }}
-      AC77_OUTPUT: ${{ runner.temp }}/ac77-linux-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Define evidence output
+        run: echo "AC77_OUTPUT=$RUNNER_TEMP/ac77-linux-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
