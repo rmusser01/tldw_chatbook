@@ -1373,3 +1373,26 @@ def test_stream_forwards_token_usage_from_message_end(mock_post):
         "completion_tokens": 5,
         "total_tokens": 16,
     }
+
+
+@patch("requests.Session.post")
+def test_multiple_text_parts_are_concatenated_in_order(mock_post):
+    """v2 replies arrive as a content parts array; the assistant text is the
+    in-order concatenation of the text parts (re-pins the behavior the
+    summarizer-side suite carried before TASK-34895 consolidated it here)."""
+    result = _call_cohere_get_result(
+        mock_post,
+        {
+            "id": "resp-1",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "First part. "},
+                    {"type": "text", "text": "Second part."},
+                ],
+            },
+            "finish_reason": "COMPLETE",
+        },
+        [{"role": "user", "content": "hi"}],
+    )
+    assert result["choices"][0]["message"]["content"] == ("First part. Second part.")

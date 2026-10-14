@@ -1,14 +1,14 @@
 ---
 id: TASK-34895
 title: Route summarization through the chat provider dispatch
-status: In Progress
+status: Done
 created_date: 2026-10-12 17:52
 labels:
 - simplification
 priority: high
 assignee:
 - '@zcode'
-updated_date: 2026-10-14 14:32
+updated_date: 2026-10-14 15:42
 ---
 
 ## Description
@@ -21,7 +21,7 @@ Evidence (verified on dev df4985e): Files: LLM_Calls/Summarization_General_Lib.p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Single summarize core builds the prompt and calls chat_api_call,Per-provider summarize_with_* functions plus the dispatch chain and alias table removed,Hand-rolled SSE loops in the summarization libs removed,Ingest-consumed error strings preserved or ingest updated alongside,Engine-preset providers (moonshot zai etc) become selectable for summarization,model_capabilities sampling-param gating preserved on the generic path
+- [x] #1 Single _summarize_via_chat_api core builds the prompt and calls chat_api_call (22 specs incl the 4 engine presets),Per-provider summarize_with_* functions removed (19 deleted + Local_Summarization_Lib module) and dispatch routes only through the core (mock-llm excepted); the alias table REMAINS by design - documented deviation: it normalizes chat-dispatch spellings to spec keys and is load-bearing for 9 spellings,Hand-rolled SSE loops removed (chat frames translated once in _chat_stream_text_chunks),Ingest-consumed error strings preserved where legacy matched and documented where legacy never matched (failure-marker parity test pins the contract),Engine presets (moonshot zai aphrodite mlx_lm) selectable for summarization,model_capabilities gating preserved - the chat path applies the predicates with the forwarded model (handler-side suites pin it)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -33,7 +33,7 @@ Evidence (verified on dev df4985e): Files: LLM_Calls/Summarization_General_Lib.p
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-TRANCHES 1-3 + REVIEW ROUND 1 COMPLETE (deletion tranche pending; task stays In Progress). All 22 providers route through _summarize_via_chat_api: 9 cloud + 9 local + 4 NEW engine presets (moonshot zai aphrodite mlx_lm - selectable for summarization for the first time; require_key=False so the chat handler resolves modern api_settings keys). Review round 1 (requesting-code-review subagent in Qodo's place) verdict was No-with-fixes; ALL findings fixed: (1) engine presets were unreachable dead code with wrong legacy sections -> dispatch rows added + handler-side key resolution; (2) custom-openai endpoints' prompt order restored to the legacy text-first order (the template line was dead code in legacy); (3) handler-side ChatConfigurationError no longer masquerades as missing-key - only pre-dispatch key resolution produces the missing-key literal; (4) openrouter fallback model restored to the legacy mistralai/mistral-7b-instruct; (5) config-temperature sourcing restored for llama/ooba/vllm/ollama/custom x2 via spec.config_temp; (6) openrouter/huggingface keyless literals made marker-matching (legacy matched; groq-style literals never did - parity kept); (7) plain empty completions return empty string (openai-family legacy behavior - downstream falsy fallbacks fire) with the reasoning-only diagnostic kept for evidence-bearing empties (ported from llama for ALL providers); (8) explicit empty-string system messages preserved. New pins: 22-way dispatch-routing test (every spec key has a dispatch row - the unreachable-preset class can't recur) and a 22-way failure-marker contract test encoding legacy-matching parity (openai/openrouter/huggingface must match; customs' legacy phrasing exempt). Suite: 76 core tests + full 13-file pinning suite at ZERO new failures vs the 24-failure environmental baseline. REMAINING (tranche 4): delete the 19 per-provider functions + dead helpers, retarget the direct-drive tests (capabilities/redirect/cohere-wire/llama/kobold-tabby/defects), diagnostic-privacy ledger re-freeze (task-3796 correction precedent), request-timeouts AST retarget, internal-prompts call-site test swap for a core behavior pin. Deliberate minor deltas documented: ooba trailing-space glue, ollama model requirement now handler-side, google temperature now forwarded, shared system default for locals on direct calls.
+COMPLETE (tranches 1-4, two review rounds). Net: Summarization_General_Lib 3275->~1.3k lines; Local_Summarization_Lib (2315 lines) deleted; 19 per-provider functions + _post_with_retry + dead helpers gone; all 22 providers + 4 NEW engine presets (moonshot zai aphrodite mlx_lm) route through the chat dispatch. Review round 1 (subagent in Qodo's place): No-with-fixes -> all Critical+Important fixed (unreachable presets wired, custom prompt order, error masquerade, openrouter fallback model, config temps, marker literals, empty-completion semantics). Tranche 4: ledger re-freeze per the task-3796 correction procedure (258 retained sites: 185 private deletions recorded with reason, 265 reviewed_safe deletions removed since frozen sites cannot be deleted, 58 frozen + 15 metadata; new starting-projection digest 01aaf9cc...; LIVE_SCAN_MODULES split from the historical MODULE_COUNTS); ~100 dead driver tests removed; direct-drive tests retargeted to chat-path seams or deleted with chat-side coverage verified (cohere wire v2 URL/messages/no-v1-keys/streaming-delta in test_cohere_native_tools; anthropic session posts in test_anthropic_native_tools; vllm explicit-key + custom-openai stream-once RETARGETED as new chat-side pins). Review round 2: With-fixes -> fixed (dead harness in capabilities file, SG header refreshed, cohere multi-part concat re-pinned). Deviations documented: alias table retained (load-bearing); cohere/llama/kobold local endpoint config keys read by the chat handlers (tabby_api spelling both live); google temp now forwarded; empty-plain completions return empty string. VERIFICATION: full 15-file pinning set + import-weight - every failure attributed to the pre-existing environmental set (RecoveryRequired/scratch-config/network-guard/manifest-boundary) with pristine-dev reproductions; app imports clean; zero dangling references. ENV NOTE for CI babysitters: the RecoveryRequired state masks the cohere+anthropic chat-side suites locally - they carry wire pins this consolidation leans on and must run green in a healthy environment (CI) before merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

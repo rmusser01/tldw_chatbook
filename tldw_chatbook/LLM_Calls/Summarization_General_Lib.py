@@ -8,10 +8,10 @@
 # Function List
 #
 # 1. extract_text_from_segments(segments: List[Dict]) -> str
-# 2. summarize_with_openai(api_key, file_path, custom_prompt_arg)
-# 3. summarize_with_anthropic(api_key, file_path, model, custom_prompt_arg, max_retries=3, retry_delay=5)
-# 4. summarize_with_cohere(api_key, file_path, model, custom_prompt_arg)
-# 5. summarize_with_groq(api_key, file_path, model, custom_prompt_arg)
+# 2. analyze(api_name, input_data, custom_prompt_arg, ...) -- the public
+#    entry; dispatches every provider through _summarize_via_chat_api
+#    (per-provider spec table, TASK-34895) over the unified chat dispatch
+# 3. summarize_with_mock_llm(...) -- the test LLM
 #
 #
 ####################
@@ -659,12 +659,6 @@ def analyze(
 ###################################################################################
 #
 # API Calls
-
-
-# Summarize with Cohere
-
-
-# https://console.groq.com/docs/quickstart
 
 
 def summarize_with_mock_llm(

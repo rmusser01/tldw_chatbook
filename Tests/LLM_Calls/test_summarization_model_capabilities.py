@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.LLM_Calls import Summarization_General_Lib as sgl
 from tldw_chatbook.model_capabilities import (
     ModelCapabilities,
     anthropic_model_rejects_temperature_top_p_combination,
@@ -44,114 +43,14 @@ from tldw_chatbook.model_capabilities import (
 # ---------------------------------------------------------------------------
 
 
-class _FakeOpenAIResponse:
-    status_code = 200
-
-    def raise_for_status(self) -> None:  # pragma: no cover - trivial
-        return None
-
-    def json(self) -> dict:
-        return {"choices": [{"message": {"content": "openai summary"}}]}
-
-    def close(self) -> None:  # pragma: no cover - trivial
-        return None
-
-
-class _FakeAnthropicResponse:
-    status_code = 200
-
-    def json(self) -> dict:
-        return {"content": [{"type": "text", "text": "anthropic summary"}]}
-
-    def close(self) -> None:  # pragma: no cover - trivial
-        return None
-
-
-def _capture_openai_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> dict:
-    _install_model_setting(monkeypatch, "openai_api", model)
-    captured: dict = {}
-
-    def fake_session_post(
-        self, url, headers=None, json=None, stream=False, timeout=None, **kwargs
-    ):
-        captured["url"] = url
-        captured["json"] = json
-        return _FakeOpenAIResponse()
-
-    monkeypatch.setattr(sgl.requests.Session, "post", fake_session_post)
-    result = sgl.summarize_with_openai("test-key", "some input text", "Summarize this.")
-    assert result == "openai summary", result
-    assert "json" in captured, "summarize_with_openai never posted a request"
-    return captured["json"]
-
-
-def _capture_anthropic_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> dict:
-    _install_model_setting(monkeypatch, "anthropic_api", model)
-    captured: dict = {}
-
-    def fake_post(self, url, headers=None, json=None, stream=False, **kwargs):
-        captured["url"] = url
-        captured["json"] = json
-        return _FakeAnthropicResponse()
-
-    # TASK-32853 Phase C re-key: anthropic posts through the shared
-    # _post_with_retry transport's session, so the fake moves to the
-    # Session.post seam like the other providers.
-    monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
-    result = sgl.summarize_with_anthropic(
-        "test-key", "some input text", "Summarize this."
-    )
-    assert result == "anthropic summary", result
-    assert "json" in captured, "summarize_with_anthropic never posted a request"
-    return captured["json"]
-
-
 # ---------------------------------------------------------------------------
 # Anthropic payload pins (AC #1 / #3 / #4)
 # ---------------------------------------------------------------------------
 
-_ANTHROPIC_REJECTING_MODELS = [
-    "claude-sonnet-5",  # the shipped [api_settings.anthropic] default
-    "claude-opus-5",
-    "claude-fable-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-]
-
 # Served models that still accept sampling parameters individually but reject
 # the ``temperature``+``top_p`` pair (TASK-19020 probes, module docstring).
-_ANTHROPIC_SAMPLING_COMBO_MODELS = [
-    "claude-haiku-4-5",  # the function's fallback default
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-6",
-    "claude-opus-4-6",
-    "claude-opus-4-5",
-]
-
 # Number-first 3.x-generation ids never parse into a family; the payload for
 # them keeps its historical shape (the generation is retired server-side).
-_ANTHROPIC_UNPARSED_LEGACY_MODELS = [
-    "claude-3-haiku-20240307",  # the function's former (retired) fallback default
-]
-
-
-def _expected_anthropic_base_payload(model: str) -> dict:
-    """The exact non-sampling payload TASK-18802 pinned, byte-for-byte."""
-    return {
-        "model": model,
-        "max_tokens": 4096,
-        "messages": [
-            {"role": "user", "content": "some input text \n\n\n\nSummarize this."}
-        ],
-        "stop_sequences": ["\n\nHuman:"],
-        "metadata": {"user_id": "example_user_id"},
-        "stream": False,
-        "system": (
-            "You are a helpful AI assistant who does whatever the user requests."
-        ),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Anthropic combination-rule predicate unit pins (TASK-19020)
 # ---------------------------------------------------------------------------
@@ -223,23 +122,6 @@ def test_anthropic_combination_predicate_survives_user_capability_table():
 # ---------------------------------------------------------------------------
 # OpenAI payload pins (AC #2 / #3 / #4)
 # ---------------------------------------------------------------------------
-
-_OPENAI_MODERN_MODELS = [
-    "gpt-5",
-    "gpt-5.6",
-    "gpt-5.6-terra",  # the shipped chat-path default id shape
-    "gpt-5-2025-08-07",
-    "o3",
-    "o4-mini",
-]
-
-_OPENAI_LEGACY_MODELS = [
-    "gpt-4o",  # the function's own fallback default
-    "gpt-4.1",
-    "gpt-4-turbo",
-    "gpt-3.5-turbo",
-]
-
 
 # ---------------------------------------------------------------------------
 # OpenAI predicate unit pins
