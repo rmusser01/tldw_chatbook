@@ -2,7 +2,7 @@
 """Guard: Textual's worker contract, and DOM lookups that resume after an await.
 
 TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime review
-(`qa/core-code-review-2026-09-17/report.md`) were the same defect class, and
+(`Docs/QA/core-code-review-2026-09-17/report.md`) were the same defect class, and
 nothing in the repo could catch it:
 
 * `Widgets/audio_troubleshooting_dialog.py` ran a plain ``def`` as an async

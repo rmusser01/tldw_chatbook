@@ -1018,7 +1018,7 @@ toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
 value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
 `action_first()`. Reproduced in a pilot probe on the modal's own Select
 construction; see the task-33003.8 Implementation Notes and the live captures
-in qa/model-config-p3-2026-09-28/task-8/.)
+in Docs/QA/model-config-p3-2026-09-28/task-8/.)
 
 ## A Collapsible's background paints only its title row: the body is `Contents`
 
