@@ -5934,6 +5934,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         watchlist = created["watchlist"]
         self._selected_source_ids = ()
+        for pane in self.query("#watchlists-sources-pane").results(SourcesPane):
+            pane.set_selected_source_ids(())  # was left to the next reload
         self._request_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=int(watchlist["id"]))
         )
@@ -7889,9 +7891,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     sources_pane = self.query_one(
                         "#watchlists-sources-pane", SourcesPane
                     )
-                    sources_pane.sources = self.scoped_loaded_sources()
-                    sources_pane.set_authoritative_source_ids(authoritative_ids)
-                    sources_pane.set_selected_source_ids(self._selected_source_ids)
+                    # The pane prunes its own selection in place (anchor kept).
+                    self._seed_sources_pane(sources_pane, mounted=True)
+                    if not authoritative_ids:  # nothing to prune against
+                        sources_pane.set_selected_source_ids(())
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:

@@ -1285,6 +1285,35 @@ async def test_expanding_in_a_fresh_rail_before_its_layout_message_builds_it_onc
 
 
 @pytest.mark.asyncio
+async def test_a_sources_reload_on_a_mounted_pane_keeps_the_range_anchor():
+    """Review of #3107, round 4, item R2: _load_sources followed the in-place
+    prune with set_selected_source_ids(screen copy), whose replace() reset
+    the shift-range anchor (and could put back the screen's older copy)."""
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    source_id = db.add_subscription(
+        name="One", type="rss", source="https://o.example/f"
+    )
+    picked = f"local:subscription:{source_id}"
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 1)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane._multi_selection.toggle(picked)  # a click: the pick is the anchor
+        pane._update_multi_selection_ui()
+        await pilot.pause()
+        await screen._load_sources()
+        anchor = pane._multi_selection.anchor_id
+        selected = pane.selected_source_ids
+
+    assert selected == {picked}
+    assert anchor == picked
+
+
+@pytest.mark.asyncio
 async def test_the_reseed_keeps_the_selection_range_anchor():
     """Review of #3107, round 3, item Q4: re-applying the pane's selection
     through replace() also reset its shift-range anchor, so a shift-click
