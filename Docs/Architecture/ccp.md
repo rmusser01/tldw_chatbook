@@ -38,7 +38,7 @@ ADR-004 (`004-personas-destination-native-workbench.md` — the CCP route retire
 
 ## Verified gotchas
 
-1. Never call it "Coding CoPilot" in new writing — grep for "copilot" finds nothing in code; the coding lineage is the separately deleted `TAB_CODING` tab.
+1. Never call it "Coding CoPilot" in new writing — no coding-copilot feature exists (the only "copilot" strings in code are unrelated model ids like `o365-copilot`); the coding lineage is the separately deleted `TAB_CODING` tab.
 2. `resolve_screen_target("ccp")` reports canonical tab `personas` — highlight logic must use the canonical tab, not the requested route.
 3. `ccp_enhanced_handlers`' dead branches are load-bearing history — the hasattr guards are why the layer still works against a screen that no longer has those attributes.
 4. The `worker_events.chat_wrapper_function` docstring's "CCP … still use" claim is stale — zero production callers remain (the census test `Tests/Event_Handlers/test_retained_worker_adapter.py` pins the approved-caller set to empty); this doc supersedes the docstring.

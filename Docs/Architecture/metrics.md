@@ -16,9 +16,9 @@ Note: `Metrics/__init__.py` is empty — imports must name the submodule.
 
 ## The three paths and who actually uses them
 
-1. **`Metrics.metrics` (prometheus_client)** — what feature code calls: ~76 modules import `log_counter`/`log_histogram` from here. Instruments accumulate in-process in a dynamic registry.
+1. **`Metrics.metrics` (prometheus_client)** — the **exposition path**: the only one wired to a registry and the opt-in scrape listener. Only a handful of modules import it directly (app startup phases, app entry, speech wiring, one character-chat module); instruments accumulate in-process in a dynamic registry.
 2. **`Metrics.Otel_Metrics`** — initialized at boot (MeterProvider + PrometheusMetricReader + system instrumentor) but its instrument functions have essentially no feature call sites on this tree. The only OTel exporter wired is the Prometheus reader; **there is no OTLP/remote exporter**.
-3. **`Metrics/metrics_logger`** — a separate loguru-based path emitting `METRIC`-level structured lines when enabled; consumed by evals/chat/scheduling handlers for run logs, not by the registry.
+3. **`Metrics/metrics_logger`** — the **dominant call-site path**: ~70 modules import `log_counter`/`log_histogram` from here, emitting `METRIC`-level structured lines when enabled (consumed by evals/chat/scheduling/watchlists handlers for run logs). It never touches the prometheus registry.
 
 ## Instrumented examples (verified)
 
@@ -49,6 +49,6 @@ There is **no dedicated metrics/telemetry ADR** — the rationale lives in code 
 
 ## Verified gotchas
 
-1. The de-facto metrics API is `Metrics.metrics`; adding instruments via `Otel_Metrics` today would create a second, essentially unread path.
+1. Call-site dominance and exposition are different paths: ~70 modules instrument through the loguru `metrics_logger` (run logs only), while only the prometheus `Metrics.metrics` path feeds the opt-in scrape listener — pick by whether you need exposition or run logs. Adding instruments via `Otel_Metrics` today would create a second, essentially unread path.
 2. No dashboards and no Logs-screen integration exist — exposition is scrape-only when enabled.
 3. The OTel design doc's config section is aspirational; do not copy its keys.

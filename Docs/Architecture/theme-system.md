@@ -37,7 +37,7 @@ A theme's `variables` dict only has runtime effect for names **no `.tcss` source
 
 ## Governing decisions and docs
 
-ADR-150 (`150-design-token-system-and-design-language.md`; constitution in `backlog/docs/design-language.md`). Specs/plans: `Docs/superpowers/specs/2026-09-24-theme-picker-redesign-design.md` (+ three PR plans), `2026-09-03-theme-editor-ux-fixes.md`. Implementation summaries: `Docs/Development/Theme-Editor-Implementation-Summary.md`, `Docs/Theme-Editor-Horizontal-Layout-Summary.md`. Design-system contract test: `Tests/UI/test_master_shell_design_system_contract.py`.
+ADR-150 (`150-design-token-system-and-design-language.md`; constitution in `backlog/docs/design-language.md`). Specs/plans: `Docs/superpowers/specs/2026-09-24-theme-picker-redesign-design.md` (+ three PR plans), `Docs/superpowers/plans/2026-09-03-theme-editor-ux-fixes.md`. Implementation summaries: `Docs/Development/Theme-Editor-Implementation-Summary.md`, `Docs/Theme-Editor-Horizontal-Layout-Summary.md`. Design-system contract test: `Tests/UI/test_master_shell_design_system_contract.py`.
 
 ## Verified gotchas
 
