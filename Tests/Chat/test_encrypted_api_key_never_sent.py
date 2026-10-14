@@ -31,13 +31,12 @@ MISSING_KEY = re.compile(r"api.?key", re.IGNORECASE)
 LOCAL_URL = "http://127.0.0.1:9/v1"
 
 #: Every module that binds ``create_default_session`` by name for a handler
-#: under test.
+#: under test. (TASK-34895: the summarization modules no longer bind a
+#: transport -- the dispatch rides the chat handlers above.)
 TRANSPORT_MODULES = (
     "tldw_chatbook.LLM_Calls.hosted_chat",
     "tldw_chatbook.LLM_Calls.LLM_API_Calls",
     "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local",
-    "tldw_chatbook.LLM_Calls.Local_Summarization_Lib",
-    "tldw_chatbook.LLM_Calls.Summarization_General_Lib",
 )
 
 
@@ -300,23 +299,11 @@ def test_custom_openai_2_refuses_ciphertext(monkeypatch, sent):
     _assert_missing_key_refusal(error, sent)
 
 
+#: Representative dispatch keys: one cloud provider that requires a key and
+#: one local provider that does not (TASK-34895: the per-provider
+#: summarizers are gone; the refusal contract is the dispatch core's).
 SUMMARIZERS = (
     "openai",
-    "anthropic",
-    "cohere",
-    "google",
-    "groq",
-    "huggingface",
-    "openrouter",
-    "deepseek",
-    "mistral",
-    "llama.cpp",
-    "kobold",
-    "ooba",
-    "tabbyapi",
-    "vllm",
-    "custom-openai-api",
-    "custom-openai-api-2",
     "ollama",
 )
 
@@ -375,10 +362,12 @@ def _summarization_config() -> dict:
 @pytest.mark.parametrize("passed_key", [None, CIPHERTEXT], ids=["config", "argument"])
 @pytest.mark.parametrize("api_name", SUMMARIZERS)
 def test_summarizers_never_send_ciphertext(monkeypatch, sent, api_name, passed_key):
-    # Review round 1: the summarization libraries read keys raw from config
-    # (and accept a raw `api_key` argument) on a path chat_api_call never
-    # screens. Ciphertext from either source must never reach the wire.
-    from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_lib
+    # TASK-34895: the per-provider summarization functions are gone; the
+    # dispatch core resolves the credential itself (parameter first, then
+    # the legacy section; ciphertext is never a credential) BEFORE the chat
+    # handler's transport. Ciphertext from either source must never reach
+    # the wire -- pinned at the dispatch level for a key-requiring cloud
+    # provider and a key-optional local one.
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as general_lib
 
     config = _summarization_config()
@@ -387,11 +376,7 @@ def test_summarizers_never_send_ciphertext(monkeypatch, sent, api_name, passed_k
         value = config.get(section, {}).get(key)
         return default if value is None else value
 
-    monkeypatch.setattr(local_lib, "load_settings", lambda: config)
-    for module in (local_lib, general_lib):
-        monkeypatch.setattr(module, "get_cli_setting", setting)
-    # The TLS policy reads the selected profile; it is not under test here.
-    monkeypatch.setattr(general_lib, "requests_verify", lambda: True)
+    monkeypatch.setattr(general_lib, "get_cli_setting", setting)
 
     result = general_lib._dispatch_to_api(
         "text to summarize", "summarize", api_name, passed_key, 0.1, None, False

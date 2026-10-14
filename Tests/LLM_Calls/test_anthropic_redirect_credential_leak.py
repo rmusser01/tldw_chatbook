@@ -1,11 +1,12 @@
 """task-19557: ``x-api-key`` must never survive a cross-origin redirect.
 
-Both Anthropic call sites (``chat_with_anthropic`` in ``LLM_API_Calls.py``
-and ``summarize_with_anthropic`` in ``Summarization_General_Lib.py``) send
-the API key in the custom ``x-api-key`` header over ``requests``.
-``requests`` strips only ``Authorization``/``Cookie`` on a cross-host
-redirect -- it has no notion of ``x-api-key`` -- so a redirecting or
-compromised endpoint could otherwise capture the real key verbatim.
+``chat_with_anthropic`` in ``LLM_API_Calls.py`` sends the API key in the
+custom ``x-api-key`` header over ``requests``. ``requests`` strips only
+``Authorization``/``Cookie`` on a cross-host redirect -- it has no notion
+of ``x-api-key`` -- so a redirecting or compromised endpoint could
+otherwise capture the real key verbatim. (TASK-34895: the summarization
+path no longer has its own HTTP copy -- it rides this same handler through
+``chat_api_call``, so this pin covers it too.)
 
 Fixed by passing ``allow_redirects=False`` on every ``session.post``/
 ``requests.post`` call that carries the header and explicitly refusing any
@@ -13,27 +14,27 @@ Fixed by passing ``allow_redirects=False`` on every ``session.post``/
 ``x-goog-api-key`` fix for Google (``LLM_API_Calls.py``
 ``chat_with_google``, task-686/lines ~3528-3549).
 
-Born-red: reverting either ``allow_redirects=False`` guard (and the
-explicit 3xx check that follows it) makes the corresponding test below fail
-by showing the sentinel key delivered to the cross-origin host.
+Born-red: reverting the ``allow_redirects=False`` guard (and the explicit
+3xx check that follows it) makes the test below fail by showing the
+sentinel key delivered to the cross-origin host.
 
-Qodo round 2 finding: ``summarize_with_anthropic``'s refusal branch
-returned an error string on a 3xx WITHOUT calling ``response.close()`` --
-a leaked ``requests`` connection on every refused redirect (the redirect
-this task's own fix makes reachable). Fixed by closing before returning,
-same as the other two refusal sites (``chat_with_anthropic``,
-``chat_with_google``).
+Qodo round 2 finding (history): ``summarize_with_anthropic``'s refusal
+branch once returned an error string on a 3xx WITHOUT calling
+``response.close()`` -- a leaked ``requests`` connection on every refused
+redirect. That function was deleted by the TASK-34895 chat-dispatch
+cutover; the explicit-close discipline it was taught lives on in the
+assertion below.
 
-Both tests below assert an explicit-close count of exactly 2, not merely
+The test below asserts an explicit-close count of exactly 2, not merely
 that SOME close happened: ``requests.Session.send()`` calls
 ``resolve_redirects(..., yield_requests=True)`` to populate
 ``Response._next`` even under ``allow_redirects=False``, and that
 generator's own bookkeeping closes any response with a redirect
 ``Location`` regardless of what the calling code does -- so a plain
-``>= 1``/``is_closed`` check would have passed even with
-``summarize_with_anthropic``'s ``response.close()`` call missing (this
-was verified directly, not assumed, before the assertion was written this
-way -- see ``_fake_response``'s docstring).
+``>= 1``/``is_closed`` check would have passed even with the refusal
+site's ``response.close()`` call missing (this was verified directly, not
+assumed, before the assertion was written this way -- see
+``_fake_response``'s docstring).
 
 Transport is faked at ``requests.adapters.HTTPAdapter.send`` -- the layer
 just above the real socket -- so ``requests``' own redirect/session
@@ -51,7 +52,6 @@ import requests
 import requests.adapters
 
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls
-import tldw_chatbook.LLM_Calls.Summarization_General_Lib as summarization_lib
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 
 # Synthetic sentinel -- never a real credential.
@@ -135,12 +135,12 @@ def _install_redirecting_adapter(
 ) -> list[int]:
     """Patch ``HTTPAdapter.send`` so ``good_host`` 302s to ``evil.example``.
 
-    Both fixed call sites build their own ``requests.Session`` (or, for
-    ``summarize_with_anthropic``, let ``requests.post`` build one
-    internally) but ultimately dispatch through a ``requests.adapters.
-    HTTPAdapter`` instance either way -- a custom-mounted one or the
-    library's own default. Patching the class method intercepts both
-    without needing to know which path a given call takes.
+    The fixed call site builds its own ``requests.Session`` (historically
+    the deleted ``summarize_with_anthropic`` instead let ``requests.post``
+    build one internally) but ultimately dispatches through a
+    ``requests.adapters.HTTPAdapter`` instance either way -- a custom-mounted
+    one or the library's own default. Patching the class method intercepts
+    both without needing to know which path a given call takes.
 
     Returns:
         A list that accumulates one entry per ``.close()`` call on the
@@ -183,8 +183,7 @@ def test_chat_with_anthropic_refuses_cross_origin_redirect(
     ``x-api-key``, which neither ``requests`` nor httpx strips on a
     cross-host hop -- to ``evil.example`` verbatim. Also pins that the
     refusal path closes the redirect response rather than leaking the
-    connection (verified correct here; see ``summarize_with_anthropic``'s
-    sibling test for the refusal site that Qodo round 2 found did NOT).
+    connection.
     """
     seen_headers_by_host: dict[str, dict[str, str]] = {}
     redirect_close_calls = _install_redirecting_adapter(
@@ -233,76 +232,4 @@ def test_chat_with_anthropic_refuses_cross_origin_redirect(
         f"expected the refusal site's own response.close() call in "
         f"addition to requests' own resolve_redirects() close; observed "
         f"{len(redirect_close_calls)} close() call(s)"
-    )
-
-
-def test_summarize_with_anthropic_refuses_cross_origin_redirect(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``summarize_with_anthropic`` must not forward ``x-api-key`` either.
-
-    Same defect as ``chat_with_anthropic``, different failure convention:
-    this function reports a redirect refusal by RETURNING an error string
-    rather than raising, so the credential-leak assertion is checked
-    independently of that return value.
-
-    Also pins the Qodo round 2 finding: this refusal branch returned
-    WITHOUT calling ``response.close()`` -- a real leaked ``requests``
-    connection on every refused redirect, undetected by the original
-    version of this test (which asserted only on headers and the returned
-    string, never on whether the response was released).
-    """
-    seen_headers_by_host: dict[str, dict[str, str]] = {}
-    # summarize_with_anthropic's endpoint is a hardcoded literal
-    # ("https://api.anthropic.com/v1/messages"), not configurable, so the
-    # "good" host for this test is that literal host rather than a
-    # caller-chosen one.
-    redirect_close_calls = _install_redirecting_adapter(
-        monkeypatch,
-        seen_headers_by_host,
-        good_host="api.anthropic.com",
-        ok_body=b'{"content": [{"type": "text", "text": "stolen"}]}',
-    )
-
-    result = summarization_lib.summarize_with_anthropic(
-        api_key=_SENTINEL_KEY,
-        input_data="Some text to summarize.",
-        custom_prompt_arg="Summarize this.",
-        streaming=False,
-        max_retries=1,
-    )
-
-    # Sanity: the first hop really did carry the credential.
-    assert "api.anthropic.com" in seen_headers_by_host
-    assert seen_headers_by_host["api.anthropic.com"].get("x-api-key") == _SENTINEL_KEY
-
-    # Load-bearing, checked independently of the returned message: the
-    # credential must never reach the cross-origin host.
-    evil_headers = seen_headers_by_host.get("evil.example", {})
-    assert "x-api-key" not in evil_headers, (
-        f"x-api-key leaked to the cross-origin redirect target: {evil_headers}"
-    )
-
-    # The function reports failure by returning a string rather than
-    # raising (its established convention -- see the "API Key Not
-    # Provided"/"Network error" returns elsewhere in the same function);
-    # a successful summary would not mention a redirect.
-    assert isinstance(result, str)
-    assert "redirect" in result.lower()
-
-    # Qodo round 2 -- the load-bearing addition: the refusal path must
-    # EXPLICITLY release the connection, not merely rely on requests' own
-    # incidental close. Same mechanism as chat_with_anthropic's sibling
-    # assertion above: requests' own resolve_redirects() peek-ahead
-    # closes a genuine redirect response once regardless of what this
-    # function does, so >= 1 would pass even with the response.close()
-    # call removed (verified: it did, before this assertion was
-    # tightened to == 2). Two calls means summarize_with_anthropic's own
-    # close ran too.
-    assert len(redirect_close_calls) == 2, (
-        f"expected summarize_with_anthropic's own response.close() call "
-        f"in addition to requests' own resolve_redirects() close; "
-        f"observed {len(redirect_close_calls)} close() call(s) -- this "
-        f"is the exact Qodo round 2 finding: the refusal branch returned "
-        f"without closing the response"
     )

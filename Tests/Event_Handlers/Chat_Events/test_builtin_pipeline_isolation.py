@@ -39,9 +39,7 @@ def _restore_global_pipelines():
 
 
 def _snapshot() -> dict:
-    return copy.deepcopy(
-        {name: BUILTIN_PIPELINES[name] for name in _WATCHED_PIPELINES}
-    )
+    return copy.deepcopy({name: BUILTIN_PIPELINES[name] for name in _WATCHED_PIPELINES})
 
 
 @pytest.mark.asyncio
@@ -84,9 +82,7 @@ async def test_reranker_override_does_not_mutate_global(
         if step.get("function") == "rerank_results"
     ]
     assert rerank_steps, "expected a rerank step on the per-call config"
-    assert all(
-        step["config"]["model"] == "nondefault-model" for step in rerank_steps
-    )
+    assert all(step["config"]["model"] == "nondefault-model" for step in rerank_steps)
     global_overrides = [
         (name, step)
         for name in _WATCHED_PIPELINES
@@ -134,47 +130,30 @@ async def test_rerank_removal_does_not_mutate_global(
 
 
 def _install_stream_fakes(monkeypatch: pytest.MonkeyPatch, chunk_count: int):
-    # owned_json_post yields one record per SSE line with the "data: " prefix
-    # already stripped; .data is the JSON payload text (or "[DONE]").
-    payloads = [
-        json.dumps({"choices": [{"delta": {"content": f"chunk-{i}"}}]})
+    # TASK-34895: summarization rides the unified chat dispatch. The chat
+    # handler streams OpenAI-style SSE wire frames ("data: {...}" lines with
+    # a terminal "data: [DONE]"); fake chat_api_call itself so the frames
+    # flow through the dispatch core's stream translation.
+    import tldw_chatbook.Chat.Chat_Functions as chat_functions
+
+    frames = [
+        f"data: {json.dumps({'choices': [{'delta': {'content': f'chunk-{i}'}}]})}\n\n"
         for i in range(chunk_count)
     ]
-    payloads.append("[DONE]")
-    closed = {"records": 0}
+    frames.append("data: [DONE]\n\n")
 
-    class _Record:
-        def __init__(self, data) -> None:
-            self.data = data
+    def fake_chat_api_call(endpoint, messages, **kwargs):
+        assert endpoint == "openrouter"
+        return iter(frames)
 
-    class _Records:
-        def __iter__(self):
-            return iter([_Record(payload) for payload in payloads])
+    monkeypatch.setattr(chat_functions, "chat_api_call", fake_chat_api_call)
 
-        def close(self):
-            closed["records"] += 1
-
-    monkeypatch.setattr(
-        general_summarization, "owned_json_post", lambda **kwargs: _Records()
-    )
-    monkeypatch.setattr(
-        general_summarization,
-        "HostedHTTPTransportConfig",
-        lambda **kwargs: None,
-    )
-    monkeypatch.setattr(
-        general_summarization, "load_and_log_configs", lambda: None
-    )
-
-    def fake_get_cli_setting(section, key, default=None, **kwargs):
-        if key == "api_retries":
-            return 0
-        if key == "api_retry_delay":
-            return 0
-        return default
+    def fake_get_cli_setting(section, key, *args, **kwargs):
+        if key == "api_key":
+            return "cfg-key"
+        return args[0] if args else kwargs.get("default")
 
     monkeypatch.setattr(general_summarization, "get_cli_setting", fake_get_cli_setting)
-    return closed
 
 
 def test_openrouter_stream_emits_no_per_chunk_log(
@@ -191,11 +170,16 @@ def test_openrouter_stream_emits_no_per_chunk_log(
 
     monkeypatch.setattr(general_summarization.logging, "info", spy_info)
 
-    result = general_summarization.summarize_with_openrouter(
-        "fixed-openrouter-key",
-        "fixed input",
-        "fixed prompt",
-        streaming=True,
+    result = "".join(
+        general_summarization._summarize_via_chat_api(
+            "openrouter",
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+            None,
+            None,
+            True,
+        )
     )
 
     assert result == "chunk-0chunk-1chunk-2chunk-3chunk-4"

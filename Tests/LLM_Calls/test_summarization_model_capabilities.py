@@ -67,19 +67,6 @@ class _FakeAnthropicResponse:
         return None
 
 
-def _install_model_setting(
-    monkeypatch: pytest.MonkeyPatch, section: str, model: str
-) -> None:
-    """Route the module's config lookups: the model under test, defaults otherwise."""
-
-    def fake_get_cli_setting(sec: str, key: str, default: object = None) -> object:
-        if sec == section and key == "model":
-            return model
-        return default
-
-    monkeypatch.setattr(sgl, "get_cli_setting", fake_get_cli_setting)
-
-
 def _capture_openai_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> dict:
     _install_model_setting(monkeypatch, "openai_api", model)
     captured: dict = {}
@@ -163,80 +150,6 @@ def _expected_anthropic_base_payload(model: str) -> dict:
             "You are a helpful AI assistant who does whatever the user requests."
         ),
     }
-
-
-@pytest.mark.parametrize("model", _ANTHROPIC_REJECTING_MODELS)
-def test_anthropic_rejecting_model_omits_sampling_params(monkeypatch, model):
-    payload = _capture_anthropic_payload(monkeypatch, model)
-    offending = [k for k in ("temperature", "top_k", "top_p") if k in payload]
-    assert offending == [], (
-        f"{model} rejects sampling params but the summarization payload "
-        f"still carries {offending}"
-    )
-    # AC #4: the whole request is byte-identical to the TASK-18802 shape.
-    assert payload == _expected_anthropic_base_payload(model)
-
-
-@pytest.mark.parametrize("model", _ANTHROPIC_SAMPLING_COMBO_MODELS)
-def test_anthropic_sampling_model_sends_temperature_and_top_k_without_top_p(
-    monkeypatch, model
-):
-    payload = _capture_anthropic_payload(monkeypatch, model)
-    assert "top_p" not in payload, (
-        f"{model} rejects temperature and top_p together (400 `temperature` "
-        f"and `top_p` cannot both be specified) but the summarization payload "
-        f"still carries top_p={payload.get('top_p')!r}"
-    )
-    # Temperature wins the pair, and top_k stays: probe-verified compatible
-    # alongside temperature (req_011CeEDXVk4nXXCoBGdf9mFm on claude-haiku-4-5,
-    # msg_011CeEFGzjeXQ6ftPf9KH45n on claude-opus-4-6).
-    assert payload["temperature"] == pytest.approx(0.1)
-    assert payload["top_k"] == 0
-    assert payload == {
-        **_expected_anthropic_base_payload(model),
-        "temperature": 0.1,
-        "top_k": 0,
-    }
-
-
-@pytest.mark.parametrize("model", _ANTHROPIC_UNPARSED_LEGACY_MODELS)
-def test_anthropic_unparsed_legacy_id_payload_unchanged(monkeypatch, model):
-    payload = _capture_anthropic_payload(monkeypatch, model)
-    assert payload["temperature"] == pytest.approx(0.1)
-    assert payload["top_k"] == 0
-    assert payload["top_p"] == pytest.approx(1.0)
-
-
-def test_anthropic_fallback_default_model_is_currently_served(monkeypatch):
-    """AC #3: with no model configured, the function's own fallback default
-    must resolve to a currently-served model, not the retired
-    ``claude-3-haiku-20240307`` (404, req_011CeEDXZ8iS29MZCgyySwQa)."""
-
-    def fake_get_cli_setting(sec: str, key: str, default: object = None) -> object:
-        return default  # nothing configured anywhere
-
-    monkeypatch.setattr(sgl, "get_cli_setting", fake_get_cli_setting)
-    captured: dict = {}
-
-    def fake_post(self, url, headers=None, json=None, stream=False, **kwargs):
-        captured["json"] = json
-        return _FakeAnthropicResponse()
-
-    # TASK-32853 Phase C re-key: anthropic posts through the shared
-    # _post_with_retry transport's session, so the fake moves to the
-    # Session.post seam like the other providers.
-    monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
-    result = sgl.summarize_with_anthropic(
-        "test-key", "some input text", "Summarize this."
-    )
-    assert result == "anthropic summary", result
-    payload = captured["json"]
-    assert payload["model"] == "claude-haiku-4-5"
-    # The fallback model rejects the temperature+top_p pair, so the payload it
-    # gets must already respect the combination rule.
-    assert "top_p" not in payload
-    assert payload["temperature"] == pytest.approx(0.1)
-    assert payload["top_k"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -326,33 +239,6 @@ _OPENAI_LEGACY_MODELS = [
     "gpt-4-turbo",
     "gpt-3.5-turbo",
 ]
-
-
-@pytest.mark.parametrize("model", _OPENAI_MODERN_MODELS)
-def test_openai_modern_model_omits_temperature(monkeypatch, model):
-    payload = _capture_openai_payload(monkeypatch, model)
-    assert "temperature" not in payload, (
-        f"{model} rejects non-default temperature but the summarization "
-        f"payload still carries temperature={payload.get('temperature')!r}"
-    )
-
-
-@pytest.mark.parametrize("model", _OPENAI_MODERN_MODELS)
-def test_openai_modern_model_uses_max_completion_tokens(monkeypatch, model):
-    payload = _capture_openai_payload(monkeypatch, model)
-    assert "max_tokens" not in payload, (
-        f"{model} rejects 'max_tokens' (400 unsupported_parameter) but the "
-        f"summarization payload still carries it"
-    )
-    assert payload.get("max_completion_tokens") == 4096, payload
-
-
-@pytest.mark.parametrize("model", _OPENAI_LEGACY_MODELS)
-def test_openai_legacy_model_payload_unchanged(monkeypatch, model):
-    payload = _capture_openai_payload(monkeypatch, model)
-    assert payload["temperature"] == pytest.approx(0.7)
-    assert payload["max_tokens"] == 4096
-    assert "max_completion_tokens" not in payload
 
 
 # ---------------------------------------------------------------------------

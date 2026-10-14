@@ -2,12 +2,18 @@
 
 Each test drives the real function/module with the HTTP layer mocked; none
 touches storage, so they run without the ADR-126 admission binding.
+
+TASK-34895: the per-provider summarizer functions defects 1-3 lived in are
+deleted (summarization rides ``chat_api_call`` now), so those pins moved to
+the chat handlers the dispatch rides -- same defect classes, same faked-wire
+style. Defect 2 folded into the existing chat-side pin (see the comment at
+its old location below).
 """
 
 import types
 from unittest.mock import Mock
 
-from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as lsl
+from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
 from tldw_chatbook.LLM_Calls import Summarization_General_Lib as sgl
 from tldw_chatbook.LLM_Calls import hosted_chat as hc
 from tldw_chatbook.LLM_Calls import qwencloud as qc
@@ -30,118 +36,117 @@ class FakeResponse:
     def close(self):
         return None
 
-    def iter_lines(self):
-        for line in self._lines:
-            yield line
+    def iter_lines(self, **_kwargs):
+        yield from self._lines
 
 
 class FakeSession:
     def __init__(self, response):
         self._response = response
         self.posts = 0
+        self.headers_seen = []
 
     def mount(self, *_a, **_k):
         pass
 
-    def post(self, *_a, **_k):
+    def post(self, *_a, headers=None, **_k):
         self.posts += 1
+        self.headers_seen.append(headers or {})
         return self._response
 
     def close(self):
         pass
 
 
-# --- Defect 1: summarize_with_vllm crashed on an explicit api_key ---
+# --- Defect 1: an explicit api_key must survive the handler's config reads
+# (originally: summarize_with_vllm raised UnboundLocalError on the
+# explicit-key branch because `loaded_config_data` was bound only when the
+# key was absent; retargeted to chat_with_vllm, the handler the
+# summarization dispatch now rides) ---
 def test_vllm_explicit_key_returns_a_summary(monkeypatch):
-    """`loaded_config_data` was bound only on the no-key branch, so an explicit
-    key raised UnboundLocalError at the retry-count reads."""
     cfg = {
-        "vllm_api": {
-            "model": "m",
-            "api_ip": "http://vllm.invalid/v1/chat/completions",
-            "max_tokens": 64,
-            "api_retries": 0,
-            "api_retry_delay": 0,
-            "api_key": "cfg-key",
-            "temperature": 0.7,
+        "api_settings": {
+            "vllm_api": {
+                "model": "m",
+                "api_url": "http://vllm.invalid/v1/chat/completions",
+                "max_tokens": 64,
+                "api_retries": 0,
+                "api_retry_delay": 0,
+                "api_key": "cfg-key",
+                "temperature": 0.7,
+            }
         }
     }
-    monkeypatch.setattr(lsl, "load_settings", lambda *a, **k: cfg)
-    resp = FakeResponse(json_data={"choices": [{"message": {"content": " THE SUMMARY "}}]})
-    # The vllm summarizer posts through Summarization_General_Lib's shared
-    # _post_with_retry transport, which resolves its session factory from
-    # sgl's module globals at call time (same seam as
-    # test_anthropic_posts_through_the_session below).
-    monkeypatch.setattr(sgl, "create_default_session", lambda *a, **k: FakeSession(resp), raising=False)
-    monkeypatch.setattr(sgl, "create_pooled_default_session", lambda *a, **k: FakeSession(resp), raising=False)
-
-    result = lsl.summarize_with_vllm("explicit-key", "some text", "Summarize.")
-
-    assert isinstance(result, str), result
-    assert "loaded_config_data" not in result, result
-    assert result.strip() == "THE SUMMARY", result
-
-
-# --- Defect 3: streaming summarizers re-emitted the whole summary at the end ---
-def test_custom_openai_stream_yields_the_summary_once(monkeypatch):
-    """A trailing `yield collected_messages` doubled the text for any consumer
-    that joins the chunks."""
-    cfg = {
-        "custom_openai_api": {
-            "api_key": "k",
-            "model": "m",
-            "max_tokens": 64,
-            "api_ip": "http://custom.invalid/v1/chat/completions",
-            "api_retries": 0,
-            "api_retry_delay": 0,
-            "temperature": 0.7,
-        }
-    }
-    monkeypatch.setattr(lsl, "load_settings", lambda *a, **k: cfg)
-    lines = [
-        b'data: {"choices":[{"delta":{"content":"Hello "}}]}',
-        b'data: {"choices":[{"delta":{"content":"world"}}]}',
-        b"data: [DONE]",
-    ]
-    # Same shared-transport seam as test_vllm_explicit_key_returns_a_summary
-    # above: the custom-openai streamer resolves its session factory from
-    # sgl's module globals inside _post_with_retry.
-    monkeypatch.setattr(sgl, "create_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
-    monkeypatch.setattr(sgl, "create_pooled_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
-
-    result = lsl.summarize_with_custom_openai(
-        "k", "some text", "Summarize.", streaming=True
-    )
-
-    assert not isinstance(result, str), "streaming must return an iterator"
-    assert "".join(result) == "Hello world"  # not "Hello worldHello world"
-
-
-# --- Defect 2: summarize_with_anthropic posted through a bare requests.post ---
-def test_anthropic_posts_through_the_session(monkeypatch):
-    """The retry adapter is mounted on a session; the request must go through it
-    (bare requests.post bypasses the configured api_retries)."""
-    session = FakeSession(
-        FakeResponse(json_data={"content": [{"type": "text", "text": "ANTHROPIC SUMMARY"}]})
-    )
-    # Keep the call off the config/storage path (the ADR-126 admission gate
-    # fires from a real config read in a clean worktree).
     monkeypatch.setattr(
-        sgl, "get_cli_setting", lambda _section, _key, default=None: default
+        local, "get_runtime_config_snapshot", lambda: types.SimpleNamespace(values=cfg)
     )
-    monkeypatch.setattr(sgl, "requests_verify", lambda: True)
-    monkeypatch.setattr(sgl, "create_default_session", lambda *a, **k: session, raising=False)
-    monkeypatch.setattr(sgl, "create_pooled_default_session", lambda *a, **k: session, raising=False)
+    session = FakeSession(
+        FakeResponse(json_data={"choices": [{"message": {"content": " THE SUMMARY "}}]})
+    )
+    monkeypatch.setattr(local, "create_default_session", lambda: session)
 
-    def _boom(*_a, **_k):
-        raise AssertionError("bare requests.post used; the retry adapter is bypassed")
+    result = local.chat_with_vllm(
+        [{"role": "user", "content": "some text"}], api_key="explicit-key", model="m"
+    )
 
-    monkeypatch.setattr(sgl.requests, "post", _boom)
+    assert result["choices"][0]["message"]["content"].strip() == "THE SUMMARY", result
+    # The explicit key -- not the config's -- is the credential that
+    # reaches the wire (the config reads must not have crashed or shadowed
+    # it, the original defect's two faces).
+    assert session.headers_seen[0]["Authorization"] == "Bearer explicit-key"
 
-    result = sgl.summarize_with_anthropic("key", "some text", "Summarize.")
 
-    assert result == "ANTHROPIC SUMMARY", result
-    assert session.posts == 1
+# --- Defect 3: a streamed summary must reach the consumer exactly once
+# (originally: summarize_with_custom_openai's trailing
+# `yield collected_messages` doubled the joined text; retargeted to the
+# chat_with_custom_openai wire the summarization dispatch now rides) ---
+def test_custom_openai_stream_yields_the_summary_once(monkeypatch):
+    cfg = {
+        "api_settings": {
+            "custom": {
+                "api_key": "k",
+                "model": "m",
+                "max_tokens": 64,
+                "api_url": "http://custom.invalid/v1/chat/completions",
+                "api_retries": 0,
+                "api_retry_delay": 0,
+                "temperature": 0.7,
+            }
+        },
+        "custom_openai_api": {"api_key": "k"},
+    }
+    monkeypatch.setattr(
+        local, "get_runtime_config_snapshot", lambda: types.SimpleNamespace(values=cfg)
+    )
+    lines = [
+        'data: {"choices":[{"delta":{"content":"Hello "}}]}',
+        'data: {"choices":[{"delta":{"content":"world"}}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr(
+        local, "create_default_session", lambda: FakeSession(FakeResponse(lines=lines))
+    )
+    monkeypatch.setattr(
+        sgl,
+        "get_cli_setting",
+        lambda section, key, default=None: cfg.get(section, {}).get(key, default),
+    )
+
+    stream = sgl._summarize_via_chat_api(
+        "custom-openai-api", "explicit-key", "some text", "Summarize.", None, None, True
+    )
+    result = "".join(stream)
+
+    assert result == "Hello world"  # not "Hello worldHello world"
+
+
+# --- Defect 2: summarize_with_anthropic posted through a bare requests.post
+# (bypassing the session's retry adapter). Deleted with the function in the
+# TASK-34895 chat-dispatch cutover: the summarization path now rides
+# chat_with_anthropic, whose session-transport contract is pinned chat-side
+# in Tests/Chat/test_anthropic_native_tools.py (patches requests.Session.post
+# and drives the real chat_api_call dispatch -- a bare requests.post would
+# bypass that patch and fail every test there). ---
 
 
 # --- Defect 4: a provider Retry-After header was slept uncapped on a worker ---
@@ -160,6 +165,8 @@ def test_qwencloud_retry_after_is_clamped():
     policy.increment.return_value = nxt
     resp = types.SimpleNamespace(status_code=429, headers={"Retry-After": "99999999"})
 
-    _next, delay = qc._advance_retry_policy(policy, api_url="http://q.invalid", response=resp)
+    _next, delay = qc._advance_retry_policy(
+        policy, api_url="http://q.invalid", response=resp
+    )
 
     assert 0.0 <= delay <= qc._MAX_RETRY_AFTER_SECONDS
