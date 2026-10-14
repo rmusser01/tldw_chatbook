@@ -1580,9 +1580,9 @@ class LibraryCollectionsController:
         if detail is None or not controller.state.identity_actions_enabled:
             return
         try:
-            # TASK-34937: OS spawn off the UI thread; a thread-worker
-            # failure cannot reach the except below, so the notify for a
-            # failed spawn is handled by exit_on_error=False instead.
+            # TASK-34937: OS spawn off the UI thread. Follow-up note:
+            # a spawn failure is swallowed by exit_on_error=False here
+            # (no toast); the except below only covers pre-spawn reads.
             self.run_worker(
                 webbrowser.open,
                 detail.capture.canonical_url,

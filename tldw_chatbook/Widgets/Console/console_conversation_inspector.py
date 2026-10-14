@@ -1907,15 +1907,32 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         try:
             import pyperclip
 
-            # TASK-34937: pbcopy spawn off the UI thread; copy runs whole.
+            # TASK-34937: pbcopy spawn off the UI thread; copy runs
+            # whole. Follow-up: a runtime clipboard failure (headless
+            # hosts) must surface as a sanitized notice, not the success
+            # toast -- a plain worker swallows it via exit_on_error.
+            def _copy_and_report() -> None:
+                try:
+                    pyperclip.copy(text)
+                except Exception as exc:  # noqa: BLE001 - sanitized categories only
+                    logger.error(
+                        "Clipboard copy failed exception_type={}",
+                        type(exc).__name__,
+                    )
+                    self.app.call_from_thread(
+                        self.notify,
+                        f"Copy failed ({type(exc).__name__}).",
+                        severity="error",
+                    )
+                    return
+                self.app.call_from_thread(self.notify, "JSON copied to clipboard.")
+
             self.run_worker(
-                pyperclip.copy,
-                text,
+                _copy_and_report,
                 thread=True,
                 exit_on_error=False,
                 name="copy-json",
             )
-            self.notify("JSON copied to clipboard.")
         except Exception as exc:  # noqa: BLE001 - disclose only sanitized failure categories
             # No exception text: ``text`` in this frame's locals is the
             # export-scrubbed next-send payload (system prompt, messages,
