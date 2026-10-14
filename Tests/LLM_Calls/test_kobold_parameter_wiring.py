@@ -69,3 +69,16 @@ def test_provided_system_message_is_prepended(monkeypatch) -> None:
     _, payload = _run_kobold(monkeypatch, system_message="fixed system")
     assert payload["prompt"].startswith("fixed system\n\nfixed instruction")
     assert payload["prompt"].endswith("fixed input text")
+
+
+def test_analyze_default_system_message_is_prepended(monkeypatch) -> None:
+    """Composition pin (review round 1): analyze()'s substituted default
+    system message reaches the kobold payload prompt as the prefix."""
+    from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
+    try:
+        default_system = get_internal_prompt("summarization.analyze_default_system")
+    except Exception:
+        pytest.skip("internal-prompt source unavailable in this environment")
+    _, payload = _run_kobold(monkeypatch, system_message=default_system)
+    assert payload["prompt"].startswith(default_system)

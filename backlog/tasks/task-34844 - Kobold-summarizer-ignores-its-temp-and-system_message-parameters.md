@@ -25,7 +25,7 @@ Found during the TASK-34812 review: summarize_with_kobold accepts temp and syste
 
 ## Implementation Notes
 
-**Wired, with default-path preservation** (PR on fix/task-34844-kobold-dead-params). Kobold's generate-style API has no system role, so a PROVIDED system_message is prepended to the prompt (`system\n\n{prompt}`); None keeps the historical prompt byte-identical. temp is honored when provided (`float(temp)`), with the historical 0.7 retained as the default. Sibling convention checked against vllm (which uses the shared default string + messages array — not applicable to kobold's single-prompt shape).
+**Wired, with default-path preservation** (PR on fix/task-34844-kobold-dead-params). Kobold's generate-style API has no system role, so a PROVIDED system_message is prepended to the prompt (`system\n\n{prompt}`); None keeps the historical prompt byte-identical at the function seam. Composition note (review round 1): via `analyze()`, the substituted default system message is always prepended, so every analyze-routed kobold summary's prompt gains the system prefix by design — matching the llama/vllm/ooba siblings; byte-preservation holds only for direct calls passing None. temp is honored when provided (`float(temp)`), with the historical 0.7 retained as the default. Sibling convention checked against vllm (which uses the shared default string + messages array — not applicable to kobold's single-prompt shape).
 
 Pins: Tests/LLM_Calls/test_kobold_parameter_wiring.py — defaults preserve the historical payload byte-for-byte, provided temp honored, provided system_message prepended; driven through the real function with the transport and config seams stubbed. Battery with kobold config/redirect/leak suites + dispatch routing pins: 23/23.
 
