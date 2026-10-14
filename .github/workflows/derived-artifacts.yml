@@ -290,11 +290,11 @@ jobs:
     # 33-36 of those 91 runs, losing exactly that report. Six, because a
     # replay said so: each census entry's time was read from 26 green runs'
     # shard logs (progress-line timestamps; the replay reproduces the
-    # measured 4-shard times to within 0.1 min median, 0.8 max) and
-    # re-dealt. Heaviest shard over the 26 runs: 4 -> 19.6, 5 -> 17.4
+    # measured 4-shard times to within 0.1 min median, 0.6 max) and
+    # re-dealt. Heaviest shard over the 26 runs: 4 -> 19.7, 5 -> 17.4
     # (round-robin is not monotonic: the fifth shard collects the
-    # CSS-comments, rename and hostile-text files), 6 -> 14.0 (shard 3, the
-    # hanging test's), which leaves ~3 min for one hung test. No census
+    # CSS-comments, rename and hostile-text files), 6 -> 14.1 (shard 3, the
+    # hanging test's), which leaves ~2.6 min for one hung test. No census
     # reorder, so census order still holds inside a shard.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))

@@ -5,7 +5,7 @@
 
 **Incident.** UI Fast Lane shard 3 of 4 ran at max 19.7 min against a 20-min cap; the
 lane's rule is "add a shard". Replaying 26 green PR runs' shard logs against the census
-put the heaviest shard at 19.6 min with four shards, 17.4 with five and 14.0 with six:
+put the heaviest shard at 19.7 min with four shards, 17.4 with five and 14.1 with six:
 `entries[k::5]` happened to deal the CSS-comments, rename-consistency, hostile-text and
 pending-interrupt files (2.9 + 2.2 + 1.7 + 1.7 min) into one shard, so five would have
 missed the room the task needed (a hung test's ~3m18s report).
@@ -15,7 +15,7 @@ shard logs (`gh api repos/<repo>/actions/jobs/<id>/logs`; a pytest progress line
 stamped when it completes, so an entry's time is its last line's timestamp minus the
 previous entry's; consecutive node ids of one file share a line, and the first entry's
 time sits inside collection) and re-deal them for each candidate count. Check the replay
-against the shards' measured times first: here it matched within 0.1 min median, 0.8 max.
+against the shards' measured times first: here it matched within 0.1 min median, 0.6 max.
 
 ## Aggregate lint counts can hide a new per-file finding (TASK-21236, 2026-10-11)
 

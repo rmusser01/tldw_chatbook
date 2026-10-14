@@ -144,7 +144,7 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     assert strategy["fail-fast"] is False  # one red shard must not hide another
     assert list(strategy["matrix"]) == ["shard"]
     # TASK-34917: six, chosen by replaying 26 PR runs' shard logs against the
-    # census (heaviest shard 19.6 min at four, 17.4 at five, 14.0 at six; the
+    # census (heaviest shard 19.7 min at four, 17.4 at five, 14.1 at six; the
     # cap is 20 and a hung private-profile test needs ~3m18s to be reported).
     # A different count re-deals every entry: replay before changing it.
     assert strategy["matrix"]["shard"] == [1, 2, 3, 4, 5, 6]
