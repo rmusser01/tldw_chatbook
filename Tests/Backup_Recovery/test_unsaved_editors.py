@@ -458,6 +458,53 @@ def test_retained_speech_realtime_draft_is_compared_without_panel_sync(changed):
     assert store._entries["settings"].snapshot["speech_tts_panel_draft"] is snapshot
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_retained_speech_pipeline_voice_draft_is_compared(changed):
+    """A pipeline voice edit typed just before leaving reaches save_state in
+    the panel's draft before DraftModified marks settings_drafts, so the
+    Speech snapshot is the only place it shows. The check compared the state
+    and Realtime pairs only and called the visit clean (TASK-33007)."""
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+        load_global_speech_tts_state,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
+        _PipelineVoiceSettingsDraft,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+        _RealtimeSettingsDraft,
+    )
+
+    realtime = _RealtimeSettingsDraft(
+        False, "openai", "gpt-realtime", "", "30", "auto", "semantic_vad", "0.5", "500",
+        "", False,
+    )
+    snapshot = SpeechTTSPanelDraftSnapshot(
+        state=load_global_speech_tts_state({}),
+        original_state=load_global_speech_tts_state({}),
+        realtime_draft=realtime,
+        realtime_original=realtime,
+        configure_provider="audio_cpp",
+        draft_revision=1,
+        pipeline_voice_draft=_PipelineVoiceSettingsDraft(
+            "2000" if changed else "700", True
+        ),
+        pipeline_voice_original=_PipelineVoiceSettingsDraft("700", True),
+    )
+    store = ScreenStateStore()
+    store.save(
+        "settings",
+        {"settings_drafts": {}, "speech_tts_panel_draft": snapshot},
+        RuntimeIdentity("local"),
+    )
+    assert bool(probe_unsaved_editors(screen_state_store=store)) is changed
+
+
 @pytest.mark.parametrize("route", ["library", "personas", "stts"])
 @pytest.mark.parametrize("changed", [False, True])
 def test_retained_navigation_snapshots_are_clean_without_losing_drafts(route, changed):

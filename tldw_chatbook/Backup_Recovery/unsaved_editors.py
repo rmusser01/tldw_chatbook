@@ -1,7 +1,7 @@
 """Read-only refusal for unsaved installed editor state before maintenance."""
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from textual.containers import Vertical
 from textual.css.query import QueryError
@@ -61,10 +61,22 @@ def _speech_snapshot_dirty(snapshot) -> bool:
         "SpeechTTSPanelDraftSnapshot",
     ):
         raise TypeError("unknown speech settings snapshot")
-    return (
-        snapshot.state != snapshot.original_state
-        or snapshot.realtime_draft != snapshot.realtime_original
-    )
+    # Every field but the two navigation ones is half of a draft/original
+    # pair. Read from the dataclass, so a pair added later is compared too
+    # (the pipeline voice pair was not, TASK-33007); a field that pairs with
+    # nothing is an unknown shape, never clean.
+    values = {item.name: getattr(snapshot, item.name) for item in fields(snapshot)}
+    values.pop("configure_provider", None)
+    values.pop("draft_revision", None)
+    dirty = False
+    for original in [name for name in values if "original" in name]:
+        draft = original.removeprefix("original_").replace("_original", "_draft")
+        if draft not in values:
+            raise TypeError("unknown speech settings snapshot")
+        dirty = values.pop(original) != values.pop(draft) or dirty
+    if values:
+        raise TypeError("unknown speech settings snapshot")
+    return dirty
 
 
 def _clean_settings_form(owner) -> bool:
