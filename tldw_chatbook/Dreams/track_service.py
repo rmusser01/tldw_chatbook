@@ -1875,13 +1875,17 @@ def _suspension_record(item: Any) -> dict | None:
 
 
 #: Refusal reasons that are facts about the address itself: only a scheme
-#: that is not a web one. Every other hold is a DNS answer -- a failed
-#: lookup, and also a private or cloud-metadata address, which a hotel,
-#: airport or VPN resolver gives for every name -- and may be gone
+#: that is not a web one. Every other hold Dreams meets is a DNS answer --
+#: a failed lookup, and also a private or cloud-metadata address, which a
+#: hotel, airport or VPN resolver gives for every name -- and may be gone
 #: tomorrow, so it is asked about again without the user doing anything
 #: (round 4, B2; TASK-34922, owner decision 2026-10-13: retry private and
-#: metadata holds on later cycles). A retry is the same public-address
-#: check, so it can never switch on a page that still resolves privately.
+#: metadata holds on later cycles). A private IP literal or a metadata
+#: hostname would be a fact about the address too, but Dreams does not
+#: hold a page for either: ``_require_public_url`` refuses both when the
+#: page is tracked (review of #3101, N2). A retry is the same
+#: public-address check, so it can never switch on a page that still
+#: resolves privately.
 _LASTING_HOLDS = frozenset({"scheme"})
 
 
