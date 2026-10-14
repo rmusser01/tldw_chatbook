@@ -1084,7 +1084,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._tree_active_tag: str | None = None
         self._tree_load_generation = 0
         self._tree_snapshot = TreeDataSnapshot((), (), (), {}, {})
-        self._rail_shows = self._tree_snapshot  # what the mounted rail shows
         self._tree_snapshot_failures: frozenset[str] = frozenset()
         self._tree_failure_episode_active = False
         # task-895: one tree write (each of which owns a modal dialog) at a
@@ -2164,9 +2163,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         this the selection highlight would reset to nothing every time,
         even though the scope itself survived on the screen.
         """
-        recovering = self.active_section == "items" and self._read_recovery_active
-        self._rail_shows = self._tree_snapshot
-        return WatchlistTree(
+        inputs = self._rail_inputs()
+        recovering = inputs[0]
+        tree = WatchlistTree(
             watchlists=[] if recovering else self._tree_watchlists,
             counts={} if recovering else self._tree_counts,
             source_rows_loader=(
@@ -2189,6 +2188,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ),
             unread_pin_source_id=self._unread_pin_source_id(),
             id="wl-tree",
+        )
+        tree.built_from = inputs
+        return tree
+
+    def _rail_inputs(self) -> tuple[Any, ...]:
+        """What `_build_tree_pane` renders from; each tree carries its own copy.
+
+        The rail has no in-place data pushes, so a reopened rail is rebuilt
+        only when these moved between its build and its mount (review of
+        #3107, Q2); a full rebuild costs 200-500 ms on a 30-watchlist rail.
+        """
+        return (
+            self.active_section == "items" and self._read_recovery_active,
+            self._tree_snapshot,
+            self.tree_scope,
+            self._tree_active_tag,
+            self._tree_expanded_watchlist_ids,
+            self._tree_expanded_root_kinds,
+            self._tree_write_disabled_reason(),
+            self._tree_selection_disabled_reason(),
+            self._unread_pin_source_id(),
         )
 
     @staticmethod
@@ -4012,8 +4032,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._restore_items_view_state()
         if Region.RIGHT_RAIL in reopened:
             self._reseed_inspector_rail()
-        if Region.LEFT_RAIL in reopened and self._rail_shows is not self._tree_snapshot:
-            self._request_surface_refresh(self._SURFACE_RAIL)
+        if Region.LEFT_RAIL in reopened:
+            inputs = self._rail_inputs()
+            rail = self.query("#wl-tree").results(WatchlistTree)
+            if any(getattr(tree, "built_from", None) != inputs for tree in rail):
+                self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".

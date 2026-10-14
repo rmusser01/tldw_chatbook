@@ -1127,6 +1127,81 @@ async def test_a_check_starting_while_the_right_rail_is_recreated_reaches_the_in
 
 
 @pytest.mark.asyncio
+async def test_a_rail_reopened_after_a_discarded_build_shows_the_landed_tree(
+    monkeypatch,
+):
+    """Review of #3107, round 3, item Q2: recording the tree snapshot when a
+    rail was BUILT let a build that was then discarded claim the reopened
+    rail was current, so the rebuild the landed load needed was skipped."""
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    land = _hold_loader(monkeypatch, "tree")
+
+    async def the_load_lands_then_a_build_is_discarded(screen):
+        await land(host, screen)
+        screen._build_tree_pane()  # built for nothing; never mounted
+        return True
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await _reopen(pilot, screen, Region.LEFT_RAIL, "wl-region-left_rail")
+        landed = _land_before_mounting(
+            monkeypatch, "wl-region-left_rail", the_load_lands_then_a_build_is_discarded
+        )
+        screen._toggle_preferred_region(Region.LEFT_RAIL)
+        await _until(pilot, lambda: bool(landed))
+
+        def shown():
+            tree = screen.query_one("#wl-tree", WatchlistTree)
+            return [int(row["id"]) for row in tree._watchlists]
+
+        await _until(pilot, lambda: shown() == [watchlist["id"]])
+        result = shown()
+
+    assert landed == [True]
+    assert result == [watchlist["id"]]
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_rail_reopen_builds_the_tree_once(monkeypatch):
+    """Review of #3107, round 3, item Q2: with nothing landing during the
+    rebuild, a reopened rail is not rebuilt a second time (a rebuild costs
+    200-500 ms on a 30-watchlist rail)."""
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app_instance = _build_test_app()
+    app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await _reopen(pilot, screen, Region.LEFT_RAIL, "wl-region-left_rail")
+        init, builds = WatchlistTree.__init__, []
+
+        def counted(self, *args, **kwargs):
+            builds.append(True)
+            init(self, *args, **kwargs)
+
+        monkeypatch.setattr(WatchlistTree, "__init__", counted)
+        screen._toggle_preferred_region(Region.LEFT_RAIL)
+        await _until(pilot, lambda: bool(screen.query("#wl-tree")))
+        await pilot.pause()
+        await pilot.pause(0.3)
+
+    assert len(builds) == 1
+
+
+@pytest.mark.asyncio
 async def test_the_reseed_keeps_the_selection_range_anchor():
     """Review of #3107, round 3, item Q4: re-applying the pane's selection
     through replace() also reset its shift-range anchor, so a shift-click
