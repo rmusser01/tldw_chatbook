@@ -1032,6 +1032,36 @@ async def test_an_open_destination_list_keeps_its_highlight_when_choices_change(
 
 
 @pytest.mark.asyncio
+async def test_the_reseed_keeps_a_selection_the_screen_has_not_heard_of_yet():
+    """Review of #3107, round 2, item Y3: a reseed handled one message after
+    the pane was shown (the Items re-creation path) replaced the pane's
+    selection with the screen's copy, which lags the pane by that message,
+    so a toggle made in the fresh pane in that instant was lost."""
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    source_id = db.add_subscription(
+        name="One", type="rss", source="https://o.example/f"
+    )
+    selected = f"local:subscription:{source_id}"
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 1)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert screen._selected_source_ids == ()
+        pane.set_selected_source_ids((selected,))  # its message is still queued
+        screen._reseed_active_section_pane()
+        kept = pane.selected_source_ids
+        await pilot.pause()
+        mirrored = screen._selected_source_ids
+
+    assert kept == {selected}
+    assert mirrored == (selected,)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
     """Backend-only repaints must not replace a focused create-form field."""
