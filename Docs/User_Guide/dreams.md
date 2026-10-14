@@ -136,11 +136,21 @@ saved pause and provenance work is verified. If ownership cannot be read,
 watchlist checks remain held too; an error does not authorize a fetch. The one
 thing a start does not
 retry is a tracked page that was left off because its address is not
-public (see [Tracking](#tracking)). On a profile restored from a backup
+public (see [Tracking](#tracking)).
+
+A restore brings Dreams' parts back from the backup groups you restore:
+its stories, watches and what each watch says Dreams stopped come with
+**Conversations, notes, and personas**, the Watchlists sources and
+change alerts of its tracked pages with **Research and subscriptions**,
+its event reminders with **Schedules, notifications, and sync**, and the
+on/off switch with **Settings**. Each comes back
+as it was when the backup was taken, and a group you leave out keeps
+what it has now, so restore them together to get Dreams back as it was.
+On a profile restored from a backup
 and still waiting for your review, Dreams cycles, tracked checks and this startup
 reconciliation remain inactive until the Dreams owner is approved. Reconciliation
-also requires approval for the Watchlists and scheduler stores it changes.
-Stored enabled settings do not provide that approval. Legacy Watchlists URLs
+also requires approval for the Dreams, Watchlists and scheduler stores it
+changes. Stored enabled settings do not provide that approval. Legacy Watchlists URLs
 without recorded user-entered provenance remain untrusted on their first fetch,
 even when Dreams is disabled; explicitly recorded user-entered URLs retain their
 existing access.

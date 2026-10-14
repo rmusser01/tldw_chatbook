@@ -436,15 +436,16 @@ async def backfill_egress_marks(
 ) -> int:
     """Stamp every subscription Dreams created that carries no mark yet.
 
-    Review of #2921, round 3, T1 (security). The mark was stamped when a
-    subscription was created and when Dreams re-enabled it, and "no mark"
-    reads as "the user typed this URL: trust its origin". So a
-    subscription created by a build without the mark -- which also had no
-    public-destination check at all -- stayed a trusted egress origin for
-    as long as the user never toggled Dreams. The mark is owed by
-    OWNERSHIP: every subscription a ``created_by_dreams`` wrapper names,
-    whatever the wrapper's status and whatever the master switch says
-    (the source exists either way and can be run from Watchlists).
+    Review of #2921, round 3, T1. When this was written, a source with no
+    mark was fetched as one the user typed: its URL was a trusted egress
+    origin. Since the URL-provenance rework (ADR-207) that is no longer
+    so: only an explicit user-entered record earns trust, and a source
+    with no record, or a malformed one, is fetched under the public-only
+    rule like a marked one (``Utils.egress.provenance_of_stored_source``).
+    The mark is still written -- every Dreams source says in so many words
+    that nobody typed its URL -- and it is owed by OWNERSHIP: every
+    subscription a ``created_by_dreams`` wrapper names, whatever the
+    wrapper's status and whatever the master switch says.
 
     Runs from the startup reconcile, once: ``DreamsDB`` keeps the list of
     what is still to do (``subscriptions_awaiting_egress_mark``), each
@@ -454,23 +455,21 @@ async def backfill_egress_marks(
     stays on the list for the next start. Marking never changes whether
     a source is active.
 
-    That list is a HINT (round 4, B4). It lives in dreams.sqlite, the
-    mark lives in the subscriptions store, and only the subscriptions
-    store is covered by backup: restore it from a generation taken
-    before the mark and Dreams' sources come back unmarked while the list
-    says "done". ``verify=True`` therefore ignores the list and reads the
-    real options of every source Dreams owns. It is what runs whenever
-    Dreams is reading the subscriptions anyway -- a start whose reconcile
-    has work, and once per daily cycle -- and the suspend pass, an attach
-    and a re-enable stamp from the real options too.
-
-    The limit that remains: reading every Dreams source on every start
-    would cost a first open of the subscriptions store and one read per
-    source Dreams ever created, on the boot path, for a case that needs a
-    partial restore. So a start with no other work does not verify. With
-    Dreams ON the next cycle does (at most a day later); with Dreams OFF
-    nothing does until Dreams is switched -- an unmarked restored source
-    that is still active is fetched as a trusted origin until then.
+    That list is a HINT (round 4, B4). It lives in the Dreams store and
+    the mark in the subscriptions store, and a backup restores them as
+    parts of two different groups ("conversations" and "research",
+    ``Backup_Recovery.data_groups``): restore the subscriptions from a
+    generation taken before the mark and Dreams' sources come back
+    unmarked while the list says "done". ``verify=True`` therefore
+    ignores the list and reads the real options of every source Dreams
+    owns. It is what runs whenever Dreams is reading the subscriptions
+    anyway -- a start whose reconcile has work, and every cycle run --
+    and the suspend pass, an attach and a re-enable stamp from the real
+    options too. A start with no other work does not verify: an
+    unmarked source is not trusted any more (above), so there is nothing
+    for the cost to buy -- the subscriptions store opened and one read
+    per source Dreams ever created, on every boot. Verifying writes only
+    where something changed (TASK-34928).
 
     Args:
         subs_service: The app's ``LocalWatchlistsService``, or None.
