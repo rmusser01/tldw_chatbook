@@ -131,32 +131,45 @@ async def test_explicit_user_entered_private_url_remains_allowed(monitor, wire):
     assert wire.sent == [_URL]
 
 
+_SUB_URL = "https://sub.later-private.example/pricing"
+_IPV4_URL = "http://192.168.1.20/rss"
+_IPV6_URL = "http://[fd00::5]/rss"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("allowed", "fetched"),
-    [(["later-private.example"], True),
-     (["later-private.example:443"], False),
-     (["*.example"], False)],
-    ids=["host", "with-port", "wildcard"],
+    ("url", "allowed", "fetched"),
+    [(_URL, ["later-private.example"], True),
+     (_URL, ["later-private.example:443"], False),
+     (_URL, ["*.example"], False),
+     (_SUB_URL, ["later-private.example"], False),
+     (_IPV4_URL, ["192.168.1.20"], True),
+     (_IPV6_URL, ["fd00::5"], True),
+     (_IPV6_URL, ["[fd00::5]"], False)],
+    ids=["host", "with-port", "wildcard", "subdomain", "ipv4-literal",
+         "ipv6-bare", "ipv6-bracketed"],
 )
 async def test_an_older_private_source_runs_once_its_host_is_allowed(
-        monitor, wire, monkeypatch, allowed, fetched):
+        monitor, wire, monkeypatch, url, allowed, fetched):
     """TASK-34926: the guide's remedy for an older or imported source at a
     private address (Docs/User_Guide/watchlists.md, "Feeds at a private
-    address") -- list the bare host in ``[web_security] allowed_hosts``; a
-    port or a wildcard does not match."""
+    address") -- list the host in ``[web_security] allowed_hosts`` as the
+    guide says: matched exactly, so a port, a wildcard, a parent of the
+    host or an IPv6 address in brackets does not match; an IP literal (the
+    guide's example) and a bare IPv6 address do (review of #3101, R3/R6)."""
     monkeypatch.setattr(
         egress, "get_cli_setting",
         lambda section, key, default=None: (
             allowed if key == "allowed_hosts" else default))
     wire.resolves_to = ["192.168.1.1"]
+    source = {**_subscription(None), "source": url}
 
     if fetched:
-        await monitor._fetch_url_content(_subscription(None))
-        assert wire.sent == [_URL]
+        await monitor._fetch_url_content(source)
+        assert wire.sent == [url]
     else:
         with pytest.raises(FetchBlockedError):
-            await monitor._fetch_url_content(_subscription(None))
+            await monitor._fetch_url_content(source)
         assert wire.sent == []
 
 
