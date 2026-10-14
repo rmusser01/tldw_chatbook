@@ -6658,3 +6658,53 @@ async def test_a_switch_off_during_a_re_tracks_lookup_switches_nothing_on(
 
     assert switched, "fixture: the switch-off ran during the lookup"
     assert _is_active(subs_db, source_id) == 0, "Dreams is off: source off"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when", ["at-retirement", "at-switch-on"])
+async def test_a_reminder_title_the_user_chose_survives_the_hand_over(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, when):
+    """X3. Schedules lets the user rename a reminder; the hand-over gives a
+    reminder the receiving watch's title only while it still carries the
+    old watch's own title."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    scheduling_db.update_reminder_task(
+        reminder["id"], title="Buy tickets for the festival!")  # the user
+    if when == "at-switch-on":
+        settings["enabled"] = False
+        await _switch(service, dreams_db, scheduling_db, off=True)
+    await untrack(service, dreams_db, page["tracked_item_id"],
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+    if when == "at-switch-on":
+        settings["enabled"] = True
+        await _switch(service, dreams_db, scheduling_db, off=False)
+
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert row["link_id"] == str(question_id) and row["enabled"]
+    assert row["title"] == "Buy tickets for the festival!"
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_titled_by_an_older_build_takes_the_new_watchs_title(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Builds before round 4 wrote the title with its square brackets; that
+    is still the old watch's own title, not one the user chose."""
+    _subs_db, service = subs_stack
+    question_id = await track_question(
+        dreams_db, query_template=_BRACKETED_QUERY, intent="event",
+        event_date="2026-10-01", origin_story_id=7,
+        scheduling_db_getter=_sched_getter(scheduling_db))
+    page = await _event_page(dreams_db, service, scheduling_db, story_id=7)
+    (reminder,) = _all_event_reminders(scheduling_db)
+    assert reminder["link_id"] == str(question_id), "fixture"
+    scheduling_db.update_reminder_task(
+        reminder["id"], title=f"Dreams: {_BRACKETED_QUERY}")  # as written then
+
+    await untrack(service, dreams_db, question_id,
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert row["link_id"] == str(page["tracked_item_id"])
+    assert row["title"] == "Dreams: tracked event"

@@ -804,6 +804,7 @@ def _retire_reminders_sync(
     to_disarm: list[str] = []
     handed: list[str] = []
     debt: list[str] = []
+    titles = {str(row["id"]): row.get("title") for row in rows}
     for row in rows:
         if str(row.get("link_id")) != item_id:
             continue
@@ -840,7 +841,8 @@ def _retire_reminders_sync(
         scheduling_db.update_reminder_task(reminder_id, enabled=False)
     for reminder_id in handed:
         scheduling_db.update_reminder_task(
-            reminder_id, link_id=str(heir["id"]), title=_reminder_title(heir))
+            reminder_id, link_id=str(heir["id"]),
+            **_handed_title(titles.get(reminder_id), item, heir))
     if handed:
         dreams_db.set_tracked_reminder_date(
             int(heir["id"]), str(heir["event_date"]))
@@ -892,10 +894,19 @@ def _orphaned_reminders(
 def _take_over_reminders(
     scheduling_db: Any, dreams_db: Any, item: dict, reminder_ids: list[str],
 ) -> None:
-    """Link reminders to a live watch, under its title (sync)."""
+    """Link reminders to a live watch, under its title (sync).
+
+    The title changes only when the reminder still carries its retired
+    holder's own (:func:`_handed_title`).
+    """
     for reminder_id in reminder_ids:
+        row = scheduling_db.get_reminder_task(reminder_id) or {}
+        holder = (dreams_db.get_tracked_item(int(row["link_id"]))
+                  if str(row.get("link_id") or "").isdigit() else None)
         scheduling_db.update_reminder_task(
-            reminder_id, link_id=str(item["id"]), title=_reminder_title(item))
+            reminder_id, link_id=str(item["id"]),
+            **(_handed_title(row.get("title"), holder, item)
+               if holder is not None else {}))
     if reminder_ids:
         dreams_db.set_tracked_reminder_date(
             int(item["id"]), str(item["event_date"]))
@@ -1880,6 +1891,20 @@ def _reminder_body(event_date: Any) -> str:
 def _reminder_title(item: Any) -> str:
     """The title of the reminder a watch holds: its question, or a generic one."""
     return _label(f"Dreams: {item.get('query_template') or 'tracked event'}")
+
+
+def _handed_title(title: Any, holder: Any, heir: Any) -> dict:
+    """The title change a hand-over makes, as update fields (maybe none).
+
+    Schedules lets the user rename a reminder (review of #3108, X3): only
+    a reminder still carrying its holder's own title -- as Dreams writes it
+    now, or with its square brackets, as builds before round 4 did (the
+    same two forms :func:`_change_rule_name` recognises) -- takes the new
+    holder's title. A title the user chose stays.
+    """
+    own = {_reminder_title(holder),
+           f"Dreams: {holder.get('query_template') or 'tracked event'}"}
+    return {"title": _reminder_title(heir)} if title in own else {}
 
 
 #: ``settled`` value of the record a wrapper is left with when it is

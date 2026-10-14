@@ -259,9 +259,9 @@ that date, and one you switched off or moved stays as you left it. It is
 re-made only when the event's date changes. When a story is both tracked
 and watched and one of the two ends — you untrack it, or it retires as
 quiet — the reminder stays with the one that is left, at the time you
-last gave it, and takes that watch's name. If that happens while Dreams
-is off, the reminder moves when you switch Dreams on again. When the
-story's last watch ends, a reminder that has not
+last gave it, and takes that watch's name unless you renamed it. If that
+happens while Dreams is off, the reminder moves when you switch Dreams on
+again. When the story's last watch ends, a reminder that has not
 fired yet is disarmed, and tracking the story again arms one for the
 event again. If a story's event date can no longer be read, the reminder
 still pending for the old date is switched off.
