@@ -815,10 +815,18 @@ async def test_a_load_landing_while_the_items_region_is_recreated_reaches_its_pa
 
 
 @pytest.mark.asyncio
-async def test_an_open_create_form_offers_a_watchlist_the_tree_load_adds():
+@pytest.mark.parametrize("private_names", ["present", "absent"])
+async def test_an_open_create_form_offers_a_watchlist_the_tree_load_adds(
+    monkeypatch, private_names
+):
     """Review of #3107, item V3: a tree load pushing new watchlist choices into
     a pane whose create form is already open also refreshes the form's
-    Select, and keeps the destination the user chose."""
+    Select, and keeps the destination the user chose; also without the
+    private Textual name the highlight restore uses (round 3, Q3)."""
+    from tldw_chatbook.UI.Watchlists_Modules import sources_pane
+
+    if private_names == "absent":
+        monkeypatch.setattr(sources_pane, "SelectOverlay", None)
     app_instance = _build_test_app()
     chosen = app_instance.watchlist_bundle_service.create("Research")
     host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
@@ -972,6 +980,22 @@ async def test_a_load_landing_while_a_rail_is_recreated_reaches_it(monkeypatch, 
 
     assert landed == [True]
     assert result == expected
+
+
+def test_the_private_select_names_the_highlight_restore_uses_still_exist():
+    """Review of #3107, round 3, item Q3: the restore reads Textual's private
+    `SelectOverlay` and `Select._options`; it degrades without them, so this
+    makes a Textual upgrade that renames them fail here, loudly."""
+    from textual.widgets import OptionList
+    from textual.widgets._select import SelectOverlay
+
+    from tldw_chatbook.UI.Watchlists_Modules import sources_pane
+
+    select = Select([("Alpha", 1), ("Beta", 2)], allow_blank=False)
+    assert sources_pane.SelectOverlay is SelectOverlay
+    assert issubclass(SelectOverlay, OptionList)
+    assert select._options == [("Alpha", 1), ("Beta", 2)]
+    assert hasattr(Select, "expanded") and hasattr(OptionList, "highlighted")
 
 
 @pytest.mark.asyncio

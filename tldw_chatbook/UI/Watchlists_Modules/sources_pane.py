@@ -13,7 +13,6 @@ from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 from textual.widgets._data_table import CellDoesNotExist
-from textual.widgets._select import SelectOverlay
 
 from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.noise_defaults import (
@@ -28,6 +27,11 @@ from .bulk_sources_modal import OpenBulkSourcesRequested
 from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 from .table_selection import IdSelectionModel, row_with_id
+
+try:  # Private Textual name, pinned by a test; without it a list loses its highlight.
+    from textual.widgets._select import SelectOverlay
+except ImportError:  # pragma: no cover - only after a Textual upgrade renames it
+    SelectOverlay = None
 
 
 DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
@@ -451,14 +455,18 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         highlight; it is put back on the same choice when that is still
         offered (review of #3107, round 2, item Y2).
         """
-        overlay = destination.query_one(SelectOverlay)
-        highlighted = overlay.highlighted if destination.expanded else None
-        keep = None if highlighted is None else destination._options[highlighted][1]
+        overlay = None
+        if SelectOverlay is not None and destination.expanded:
+            overlay = next(iter(destination.query(SelectOverlay)), None)
+        shown = getattr(destination, "_options", None)  # private, pinned likewise
+        index = None if overlay is None else overlay.highlighted
+        keep = None if index is None or shown is None else shown[index][1]
+        options = self._destination_options()
         with destination.prevent(Select.Changed):
-            destination.set_options(self._destination_options())
+            destination.set_options(options)
             destination.value = self._resolved_destination()
-        values = [value for _label, value in destination._options]
-        if keep in values:
+        values = [value for _label, value in options]
+        if keep is not None and keep in values:
             overlay.highlighted = values.index(keep)
 
     def _sync_create_backend_controls(self) -> None:
