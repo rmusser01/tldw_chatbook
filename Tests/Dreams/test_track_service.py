@@ -3654,8 +3654,13 @@ async def test_mixed_ownership_riders_stop_and_restore_their_source_once(
 
 
 @pytest.mark.asyncio
-async def test_a_held_watch_is_settled_and_retried_only_on_the_next_switch_on(
+async def test_a_held_watch_is_settled_and_asked_again_by_a_pass_not_by_a_start(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Round 3, T19, as TASK-34922 changed it (owner decision 2026-10-13:
+    retry private and metadata holds on later cycles). A held watch is
+    settled "on", so a START never looks its address up again -- but a
+    resume pass that runs (and the daily cycle's retry) asks again, and
+    the page comes back once its name resolves publicly."""
     from tldw_chatbook.Utils import egress
 
     subs_db, service = subs_stack
@@ -3678,15 +3683,14 @@ async def test_a_held_watch_is_settled_and_retried_only_on_the_next_switch_on(
     )
 
     lookups.clear()
-    assert await _switch(service, dreams_db, scheduling_db, off=False) == 0
-    assert lookups == [], "and no pass looks its address up again by itself"
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert lookups, "a resume pass asks again"
+    assert _is_active(subs_db, source_id) == 0, "still private: still held"
+    assert _record(dreams_db, item_id)["held"] == "private"
 
-    # Off and on again is the retry -- and the page is public by then.
     answer[:] = ["93.184.216.34"]
-    await _switch(service, dreams_db, scheduling_db, off=True)
     await _switch(service, dreams_db, scheduling_db, off=False)
 
-    assert lookups, "the next switch-on asks again"
     assert _is_active(subs_db, source_id) == 1
     assert _record(dreams_db, item_id) is None
 
@@ -5122,7 +5126,9 @@ async def test_a_reactivated_watch_is_not_paused_again_before_it_is_checked(
 # Every held source was settled "on", whatever the reason. "The address is
 # private" is a fact about the address; "the name could not be looked up" is
 # a fact about that minute -- and nothing ever asked again without the user
-# switching Dreams off and on or tracking the page again.
+# switching Dreams off and on or tracking the page again. (TASK-34922 widened
+# this: a private or metadata answer is a DNS answer too, so only a non-web
+# scheme is lasting; see the TASK-34922 block below.)
 
 
 async def _held_for_dns(dreams_db, service, scheduling_db, monkeypatch):
@@ -5196,17 +5202,115 @@ async def test_a_lookup_that_still_fails_leaves_the_page_held(
     assert _boot_needs_switch(dreams_db, enabled=True) is False
 
 
+# --- TASK-34922: private and metadata holds are retried too ----------------------
+#
+# Owner decision 2026-10-13: retry private and metadata holds on later
+# cycles. Both are DNS answers, and a hotel, airport or VPN resolver can
+# answer every name with a private address; a retry is the same public
+# check, so it can never switch on a page that still resolves privately.
+
+
+def _no_request_may_be_sent(monkeypatch) -> list[str]:
+    """Record any HTTP request the code under test tries to send."""
+    import httpx
+
+    sent: list[str] = []
+
+    def refuse_sync(self, request, *args, **kwargs):
+        sent.append(str(request.url))
+        raise AssertionError("a request was sent")
+
+    async def refuse_async(self, request, *args, **kwargs):
+        sent.append(str(request.url))
+        raise AssertionError("a request was sent")
+
+    monkeypatch.setattr(httpx.Client, "send", refuse_sync)
+    monkeypatch.setattr(httpx.AsyncClient, "send", refuse_async)
+    return sent
+
+
+async def _held_at(dreams_db, service, scheduling_db, monkeypatch, address,
+                   reason):
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _resolve_everything_to(monkeypatch, address)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert _record(dreams_db, owned["tracked_item_id"])["held"] == reason
+    return owned
+
+
 @pytest.mark.asyncio
-async def test_a_page_held_because_it_is_private_is_not_asked_about_daily(
+@pytest.mark.parametrize(
+    "address, reason",
+    [("10.0.0.5", "private"), ("192.168.1.1", "private"),
+     ("169.254.169.254", "metadata")])
+async def test_a_page_held_for_a_private_answer_clears_on_a_later_cycle(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        address, reason):
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, address, reason)
+    assert _boot_needs_switch(dreams_db, enabled=True) is False, (
+        "T19 stands: a start does not look the address up again"
+    )
+    lookups = _resolve_publicly(monkeypatch)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert lookups, "the daily retry asked again"
+    assert _is_active(subs_db, owned["subscription_id"]) == 1
+    assert _record(dreams_db, owned["tracked_item_id"]) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "address, reason",
+    [("10.0.0.5", "private"), ("169.254.169.254", "metadata")])
+async def test_a_page_that_still_resolves_privately_stays_held_and_is_never_fetched(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        address, reason):
+    """A retry is the same public-address check: it can never switch on a
+    page that still resolves privately, and nothing is requested from it."""
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, address, reason)
+    lookups: list[str] = []
+    from tldw_chatbook.Utils import egress
+
+    async def still_private(host):
+        lookups.append(host)
+        return [address]
+
+    monkeypatch.setattr(egress, "_resolve_async", still_private)
+    sent = _no_request_may_be_sent(monkeypatch)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert lookups, "it was asked about again"
+    assert sent == [], "and nothing was requested from it"
+    assert _is_active(subs_db, owned["subscription_id"]) == 0
+    record = _record(dreams_db, owned["tracked_item_id"])
+    assert (record["held"], record["settled"]) == (reason, "on")
+
+
+@pytest.mark.asyncio
+async def test_a_page_held_for_its_scheme_is_not_asked_about_daily(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
-    """A private address is a fact about the address: the daily retry makes
-    no lookup for it, and does not even start a pass."""
+    """A non-web scheme is a fact about the address, not a DNS answer: the
+    only lasting hold. The daily retry makes no lookup for it and does not
+    even start a pass."""
     subs_db, service = subs_stack
     owned = await _event_page(dreams_db, service, scheduling_db)
     await _switch(service, dreams_db, scheduling_db, off=True)
-    _resolve_everything_to(monkeypatch, "10.0.0.5")
+    subs_db.update_subscription(
+        owned["subscription_id"], source="ftp://example.com/flights")
     await _switch(service, dreams_db, scheduling_db, off=False)
-    assert _record(dreams_db, owned["tracked_item_id"])["held"] == "private"
+    assert _record(dreams_db, owned["tracked_item_id"])["held"] == "scheme"
     lookups = _resolve_publicly(monkeypatch)
 
     assert await retry_unfinished_resume(

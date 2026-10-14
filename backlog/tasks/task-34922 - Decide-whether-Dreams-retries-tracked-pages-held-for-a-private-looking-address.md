@@ -1,12 +1,13 @@
 ---
 id: TASK-34922
 title: Decide whether Dreams retries tracked pages held for a private-looking address
-status: To Do
+status: Done
 created_date: 2026-10-12 23:18
 labels:
 - dreams
 - decision
 priority: low
+updated_date: 2026-10-14 00:42
 ---
 
 ## Description
@@ -17,17 +18,32 @@ When Dreams is switched on, a tracked page whose address resolves to a private o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner's decision on retrying private and metadata holds is recorded
-- [ ] #2 The behaviour and the user guide match the decision
-- [ ] #3 A test pins the decided behaviour
+- [x] #1 The owner's decision on retrying private and metadata holds is recorded
+- [x] #2 The behaviour and the user guide match the decision
+- [x] #3 A test pins the decided behaviour
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Owner decision 2026-10-13: retry private and metadata holds on later cycles.
+2. Read the merged hold code on dev (track_service.py: _LASTING_HOLDS, _hold_may_pass, _resume_has_work, retry_unfinished_resume, the resume pass) and its tests.
+3. Tests first: a private and a metadata hold clear on a later cycle once the name resolves publicly; while it still resolves privately the page stays held and no request is sent to it; a scheme hold stays lasting; update the T19 test to the new rule (a start still makes no lookup, a resume pass asks again).
+4. Make every hold except scheme retryable: _LASTING_HOLDS = {scheme}; update the docstrings that state the old rule.
+5. Update the guide's hold paragraph in Docs/User_Guide/dreams.md.
+6. Run Tests/Dreams and Tests/Subscriptions; notes, ACs, Done.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Owner decision 2026-10-13: retry private and metadata holds on later cycles.
 
+- track_service.py: _LASTING_HOLDS is now {scheme} only. A private or metadata answer is a DNS answer like a failed lookup, so _hold_may_pass/_resume_has_work treat it as passing: retry_unfinished_resume (the daily cycle) and any resume pass ask again, while a start still makes no lookup (settled on; the boot check never resolves names). A retry is the same _public_url_refusal check, so a page that still resolves privately stays held. Docstrings that stated the old rule were updated.
+- Tests (Tests/Dreams/test_track_service.py): a private (10.0.0.5, 192.168.1.1) and a metadata (169.254.169.254) hold clear on a later daily cycle once the name resolves publicly; a page that still resolves privately or to metadata stays held, its record stays (reason, on), and no HTTP request is sent (httpx Client/AsyncClient send patched to record and raise); a scheme hold (ftp://) is not asked about daily. The T19 test became test_a_held_watch_is_settled_and_asked_again_by_a_pass_not_by_a_start. Seen red before the fix: 6 failed, 1 passed (the scheme test, already lasting).
+- Docs/User_Guide/dreams.md: the Public addresses only paragraph now says Dreams asks again at its next daily cycle, on switch-on or re-track, never on a start, including a private-looking answer; a still-private page stays off and nothing is requested; only a non-web address is not asked about again by itself.
+- Verified on branch fix/task-34922-34926-dreams-holds-and-legacy-sources off dev 729f99d0ed, 2026-10-13: test_track_service + test_track_reconcile + test_cycle_service 338 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

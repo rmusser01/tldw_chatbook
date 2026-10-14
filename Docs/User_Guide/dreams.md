@@ -260,11 +260,16 @@ refused and shows as a failed check in Watchlists — nothing is requested
 from the private address), and before Dreams turns such a page back on
 after you re-enable Dreams (a page that is no longer public stays off,
 and its **Tracked** row says "paused" with the reason; Dreams asks again
-the next time you switch Dreams on, or when you track the page again —
-not on every start. When the reason is only that the address could not
-be looked up at that moment, Dreams also asks again by itself, at its
-next daily cycle). A page you tracked with an earlier version of the
-app is brought under the same rule the next time the app starts. A
+by itself at its next daily cycle, the next time you switch Dreams on,
+or when you track the page again — not on every start. That includes a
+page held because its address looked private: on a hotel, airport or
+VPN network every name can resolve to a private address, and the page
+comes back once its name resolves publicly again. Asking again is the
+same check, so a page whose address is still private stays off and
+nothing is requested from it. Only an address that is not a web
+address at all is not asked about again by itself). A page you tracked
+with an earlier version of the app is brought under the same rule the
+next time the app starts. A
 source you added to Watchlists yourself is yours: Dreams can attach a
 watch to it, and it is fetched exactly as before, private address or
 not. `[web_security] allowed_hosts` in `config.toml` admits a host you

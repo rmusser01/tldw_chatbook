@@ -1853,9 +1853,10 @@ def _suspension_record(item: Any) -> dict | None:
     record names has been applied -- the watch is fully suspended.
     ``"on"``: a resume restored everything it may; what the record still
     owes is ``held`` (the page is not a public address) until the next
-    switch-on or re-track -- and, when the reason may pass (a failed
-    lookup, see ``_LASTING_HOLDS``), until the daily cycle or any resume
-    pass asks again (round 4, B2). Absent: unfinished -- the write-ahead record
+    switch-on or re-track -- and, when the reason may pass (any DNS
+    answer: a failed lookup, a private or metadata address; see
+    ``_LASTING_HOLDS``), until the daily cycle or any resume pass asks
+    again (round 4, B2; TASK-34922). Absent: unfinished -- the write-ahead record
     of a stop that has not (all) landed, or a resume that could not reach
     a service -- and the next pass in the switch's direction takes it up.
 
@@ -1873,10 +1874,15 @@ def _suspension_record(item: Any) -> dict | None:
     return record if isinstance(record, dict) else {}
 
 
-#: Refusal reasons that are facts about the address itself. A hold for
-#: any other reason -- ``dns_failure`` -- may be gone tomorrow, and is
-#: asked about again without the user doing anything (round 4, B2).
-_LASTING_HOLDS = frozenset({"private", "metadata", "scheme"})
+#: Refusal reasons that are facts about the address itself: only a scheme
+#: that is not a web one. Every other hold is a DNS answer -- a failed
+#: lookup, and also a private or cloud-metadata address, which a hotel,
+#: airport or VPN resolver gives for every name -- and may be gone
+#: tomorrow, so it is asked about again without the user doing anything
+#: (round 4, B2; TASK-34922, owner decision 2026-10-13: retry private and
+#: metadata holds on later cycles). A retry is the same public-address
+#: check, so it can never switch on a page that still resolves privately.
+_LASTING_HOLDS = frozenset({"scheme"})
 
 
 def _hold_may_pass(raw: Any) -> bool:
@@ -2215,10 +2221,11 @@ async def _resume_pass(
     riders keep the debt with the reason as ``held`` and are marked
     ``settled: "on"`` (round 3, T19) -- the Tracked row shows it, and the
     next switch-on or re-track asks again, not every start. A hold whose
-    reason may pass (the name could not be looked up) is also taken up
+    reason may pass -- every DNS answer: the name could not be looked up,
+    or it resolved to a private or metadata address -- is also taken up
     again by every resume pass that runs, and the daily cycle runs one
-    for it (round 4, B2, :func:`retry_unfinished_resume`); a private
-    address is not asked about again by itself. A debt that is left only
+    for it (round 4, B2; TASK-34922, :func:`retry_unfinished_resume`);
+    only a non-web scheme is not asked about again by itself. A debt that is left only
     because a service could not be reached leaves the wrapper unsettled
     instead, so the next pass does retry it.
 
@@ -2567,7 +2574,11 @@ async def retry_unfinished_resume(
     Round 4, B2. A tracked page that was left off because its name could
     not be looked up when Dreams was switched on stayed off until the
     user switched Dreams off and on, or tracked it again: every hold was
-    settled for good, whatever the reason. The startup check must not
+    settled for good, whatever the reason. Since TASK-34922 the same goes
+    for a page held because its name resolved to a private or metadata
+    address (a portal or VPN resolver answers every name that way); the
+    retry is the same public-address check, so it can never switch on a
+    page that still resolves privately. The startup check must not
     look addresses up on every start (round 3, T19), so the cycle -- at
     most once a day, and only while Dreams is on -- does it instead: when
     any live watch's record still has work for a resume pass
