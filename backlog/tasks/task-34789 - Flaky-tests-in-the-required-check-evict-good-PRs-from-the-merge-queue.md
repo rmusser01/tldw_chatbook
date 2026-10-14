@@ -10,7 +10,7 @@ labels:
 priority: high
 assignee:
 - '@claude'
-updated_date: '2026-10-14 14:04'
+updated_date: 2026-10-14 15:20
 ---
 
 ## Description
@@ -61,6 +61,11 @@ Re-measured after the fixes (2026-10-14), from every pull_request run of the req
 Owner decision (AC 3), 2026-10-13, confirmed after this re-measurement: the fail-twice eviction stays as it is.
 
 AC 1 stays open: test_session_owned_pending_projection_journeys, test_opening_console_during_a_headless_delivery_arms_the_poll and test_applying_on_anthropic_submits_none_of_the_hidden_fields are not root-caused and have not yet passed 20 consecutive runs (none failed on otherwise passing code in the 13 attempts above). The hidden-fields test now reports where it hangs (PR #3091).
+
+Re-checked on 2026-10-14 (dev 1ef4fcf4ae), the three Console tests still open:
+- Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys: each CI failure on good code since 2026-10-06 matches a fix now on dev. The session tab-strip MountError (run 37507013858) was fixed by 2b0de11184; the activity-stack MountError (38018112427, 38084008605) by fe18d17335; the Inspector read before its deferred config sync had published ("assert 0 == 1" in 37565637296, "AssertionError: Run" in 38115106400) by 752587c2f8, which waits for the publication. All four failures since 2026-10-13 18:35Z are on perf/34386-34388-hot-path-efficiency: three identical ("Waiting for your answer" where approval was expected: 38448015362, 38448095587, 38460089272) and one of that branch's UnboundLocalError on run_activity (38493363303). One remains unexplained: 38017133258 (codex/console-send-lag-integration, 2026-10-10), where the approval card never displayed and the compact approval layout test failed in the same run. Locally on dev: 6 of 6 passed, 64-110 s per run; in one timed run the six journeys took 5.7-13.4 s each. No change: no remaining cause found. The residual risk is the 180 s budget (slowest passing CI run 115 s).
+- Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll: one CI failure (38070630182 attempt 2, 2026-10-10), a WaitForScreenTimeout at the pilot.pause() right after navigating back to Console with a delivery marked in flight; an earlier failure (37173315027, 2026-10-04) was a different assertion on an older tree. Not reproduced: 15 serial runs, and 3 runs alongside five other Console suites under xdist at load 13-16, all passed. Code reading: Pilot._wait_for_screen waits for one callback per mounted widget, and a widget whose message pump task is cancelled after accepting the callback never runs it. One such path is known (TASK-34814: stopping the transcript poll while its paint awaits a row prune cancels the pruned rows' tasks); that it happened here is inferred, not verified. No change.
+- Tests/UI/test_console_settings_hidden_fields.py::test_applying_on_anthropic_submits_none_of_the_hidden_fields: no failure on good code in the 42 runs of the required workflow from #3091's merge (2026-10-13 19:26Z) to 2026-10-14 14:22Z. Its one failure since (38493363303, the perf branch) is that branch's UnboundLocalError, quoted from the child's own JUnit report with no timeout, which is the #3091 report working. The three before it (38205198030, 38327021865, 38344301420) were bare parent timeouts on branches without #3091. Still not root-caused; the next hang will carry the child's stacks.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
