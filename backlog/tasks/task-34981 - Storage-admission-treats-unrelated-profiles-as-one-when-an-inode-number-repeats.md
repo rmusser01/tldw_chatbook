@@ -1,5 +1,5 @@
 ---
-id: TASK-34813
+id: TASK-34981
 title: Storage admission treats unrelated profiles as one when an inode number repeats
 status: To Do
 created_date: 2026-10-12 05:26
@@ -38,3 +38,9 @@ Admission decides which storage namespaces must not run at the same time by comp
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34813 to TASK-34981 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

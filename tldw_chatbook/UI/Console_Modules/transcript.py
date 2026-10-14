@@ -116,7 +116,7 @@ class ConsoleChangeReviewProjection:
         self._marker_blocks: list[Any] = []
 
     def revision_key(self) -> tuple[str | None, int] | None:
-        """Cheap input token for screen-side skip gates (TASK-34920).
+        """Cheap input token for screen-side skip gates (TASK-34958).
 
         Mirrors ``project``'s own cache key: when this and the caller's
         other inputs are unchanged, ``project`` would inject the same

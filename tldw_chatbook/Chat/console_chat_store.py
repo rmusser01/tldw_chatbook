@@ -14307,7 +14307,7 @@ class ConsoleChatStore:
     def append_stream_chunk(self, message_id: str, chunk: str) -> None:
         """Append streamed assistant content to an existing message.
 
-        Returns ``None`` on purpose (TASK-34923): this runs once per
+        Returns ``None`` on purpose (TASK-34961): this runs once per
         streamed chunk and every production caller discarded the returned
         snapshot copy, so the hot path no longer pays a full ~50-field
         message copy per token. Callers wanting state read
@@ -17942,7 +17942,7 @@ class ConsoleChatStore:
         message.thinking = envelope
         message.opaque_thinking_json = None
         message.thinking_warning = None
-        # TASK-34920 review: live thinking envelopes mutate the rendered
+        # TASK-34958 review: live thinking envelopes mutate the rendered
         # transcript without any content chunk -- without this bump the
         # screen's tick gate would hold reasoning text at the ~3s forced
         # pass cadence during thinking-only phases.
@@ -21652,7 +21652,7 @@ class ConsoleChatStore:
         return self._display_projection_revisions.get(session_id, 0)
 
     def _bump_display_revision_for_message(self, message_id: str) -> None:
-        """Invalidate the token for one message's session (TASK-34920).
+        """Invalidate the token for one message's session (TASK-34958).
 
         The screen's 0.2s transcript tick gates on the token, so every
         transcript-visible mutation must advance it. Extra bumps are always

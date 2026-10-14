@@ -1,5 +1,5 @@
 ---
-id: TASK-34800
+id: TASK-34968
 title: Reserve Canvas context in the Personal Context Next Send preview
 status: In Progress
 assignee:
@@ -83,3 +83,9 @@ Task6 private latest-owner transplant (2026-10-12): exact actual dev df4985eca6c
 ## Renumbering provenance
 
 The source Personal Context Canvas task used TASK-33165, which collides with the older Dreams query-angle task retained on dev. This new CLI-allocated identity preserves all four source acceptance criteria, the original plan and clearly historical implementation notes. Its criteria are reopened until the current integration is qualified. Source `49c5ebf4eec858df40b56c65e46b5d94414ccb7a` and the frozen source branch preserve the original completed record; live Personal Context references use this task's new identity.
+
+## Renumbering provenance
+
+Renumbered from task-34800 to TASK-34968 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

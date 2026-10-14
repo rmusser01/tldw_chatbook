@@ -1,5 +1,5 @@
 ---
-id: TASK-34810
+id: TASK-34978
 title: Research workspace deletes a note on the UI loop
 status: To Do
 created_date: 2026-10-12 04:58
@@ -37,3 +37,9 @@ Deleting a note from the Research workspace runs the database write on the app's
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34810 to TASK-34978 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

@@ -1,5 +1,5 @@
 ---
-id: TASK-34809
+id: TASK-34977
 title: Three documents and the code disagree about the private MCP tool surface
 status: Done
 assignee: []
@@ -115,3 +115,9 @@ Modified: `Tests/MCP/test_mcp_documentation_contract.py`, `Docs/User_Guide/mcp.m
 `Docs/Design/MCP.md`, `Docs/Development/release-recovery-setup.md`,
 `tldw_chatbook/MCP/server.py` (docstring only).
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34809 to TASK-34977 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

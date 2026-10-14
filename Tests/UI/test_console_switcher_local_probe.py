@@ -576,7 +576,7 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         identity = console_send_connection(
             settings, app_config=console._provider_readiness_app_config()
         )
-        # TASK-34918 follow-up: the poll now carries a cheap pre-gate whose
+        # TASK-34956 follow-up: the poll now carries a cheap pre-gate whose
         # version component reopens it, so the settle is driven directly on
         # the evidence store (as a real off-thread settle would be) instead
         # of as a side effect of the build hook -- the pre-gate would skip

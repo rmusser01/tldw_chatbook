@@ -1,5 +1,5 @@
 ---
-id: TASK-34807
+id: TASK-34975
 title: Qualify integrated Console response rules and document evidence
 status: In Progress
 assignee:
@@ -105,3 +105,9 @@ R2 hosted UI4 pending journey at3a865 read Inspector before its full configurati
 ## Renumbering provenance
 
 Source TASK-34362 at codex/wave2-source-pr-3010 (73823fde3a4e) was created on 2026-10-04. The older current-dev task keeps 34362; this preserved younger response-rules task is TASK-34807. Original implementation history remains above; references and dependency identities follow this remap.
+
+## Renumbering provenance
+
+Renumbered from task-34807 to TASK-34975 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

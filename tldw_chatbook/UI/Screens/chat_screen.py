@@ -7416,7 +7416,7 @@ class ChatScreen(BaseAppScreen):
         # Message action, preview, speaking, and swipe state lives on
         # `self._message`; compatibility properties below proxy that owner.
         self._console_transcript_sync_timer: Any | None = None
-        # TASK-34920: skip-gate state for the 0.2s transcript tick -- the
+        # TASK-34958: skip-gate state for the 0.2s transcript tick -- the
         # store's constant-time display token plus projection inputs, with a
         # forced full pass every 15th tick (~3s) bounding staleness from any
         # mutation the token does not cover.
@@ -11611,7 +11611,7 @@ class ChatScreen(BaseAppScreen):
             or getattr(self, "_console_sync_maintenance_paused", False)
         ):
             return
-        # TASK-34918: cheap pre-gate BEFORE the ~8ms derivation-scope
+        # TASK-34956: cheap pre-gate BEFORE the ~8ms derivation-scope
         # build. Same signals the snapshot gate relies on -- status()
         # reports a credential's time-based expiry with no revision bump,
         # and version covers connection-evidence settlements. Provider and
@@ -18128,7 +18128,7 @@ class ChatScreen(BaseAppScreen):
         """Render native Console messages in the native transcript.
 
         Args:
-            force: Skip the TASK-34920 tick gate entirely. Direct callers
+            force: Skip the TASK-34958 tick gate entirely. Direct callers
                 that mutate transcript presentation while the app is idle
                 (no run active, so no 0.2s tick is running) must pass
                 ``True`` -- the review-notes edit/delete reload otherwise
@@ -18139,7 +18139,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
-        # TASK-34920: cheap gate BEFORE the O(session) message pipeline
+        # TASK-34958: cheap gate BEFORE the O(session) message pipeline
         # (snapshot materialization, projections, grouping, spec walks).
         # The store's display token covers transcript-visible mutations
         # (stream chunks and folds via the speech fence; appends, terminal
@@ -18163,7 +18163,7 @@ class ChatScreen(BaseAppScreen):
                 projection_key = self._change_review_projection.revision_key()
             except Exception:  # noqa: BLE001 - torn-down runtime: never gate
                 projection_key = object()
-            # Run-activity component (task-34920 review follow-up): the
+            # Run-activity component (task-34958 review follow-up): the
             # turn-activity line, the jump-indicator chip and the abandon
             # affordance all read the controller's per-session run state and
             # approval-round registry, neither of which bumps the store's
@@ -23277,7 +23277,7 @@ class ChatScreen(BaseAppScreen):
                         database, store, conversation_id
                     )
                     # force=True: this is precisely the idle path the
-                    # TASK-34920 gate cannot see -- edit/delete bumps no
+                    # TASK-34958 gate cannot see -- edit/delete bumps no
                     # store token and no tick is running, so the gated sync
                     # would skip and leave the stale marker row mounted.
                     await self._sync_native_console_transcript(force=True)

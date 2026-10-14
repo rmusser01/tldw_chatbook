@@ -1,5 +1,5 @@
 ---
-id: TASK-34804
+id: TASK-34972
 title: >-
   Dreams stories cannot be opened: no route in the app reaches the screen that
   lists them
@@ -67,3 +67,9 @@ R3 PR3020 UI4 qualification: actual held Textual batch reproduces a mounted/disp
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34804 to TASK-34972 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

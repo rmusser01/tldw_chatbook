@@ -238,7 +238,7 @@ MAX_TRACE_RESPONSE_ITEMS = 1_024
 
 
 def _capture_sanitizer_for(known_credentials: tuple[str, ...]) -> Any:
-    """Build one credential sanitizer per exchange flight (TASK-34919).
+    """Build one credential sanitizer per exchange flight (TASK-34957).
 
     ``None`` on any construction failure: the per-chunk call site then
     falls back to constructing from ``known_credentials`` exactly as
@@ -1337,7 +1337,7 @@ class ConsoleProviderCallSignals:
                 "response_truncation_inventory": [],
                 "credential_omission_inventory": [],
                 "known_credentials": known_credentials,
-                # TASK-34919: one sanitizer per exchange flight; the
+                # TASK-34957: one sanitizer per exchange flight; the
                 # per-chunk mutation path reuses it instead of rebuilding.
                 "credential_sanitizer": _capture_sanitizer_for(known_credentials),
                 "capture_detail": self.capture_detail,
@@ -2519,7 +2519,7 @@ def _provider_response_envelope(
 def _json_escaped_string_bytes(text: str) -> int | None:
     """Length of ``text`` as a JSON string literal, without serializing.
 
-    TASK-34924: the per-token hot path must not build an envelope and run a
+    TASK-34962: the per-token hot path must not build an envelope and run a
     full ``json.dumps`` per chunk. With ``ensure_ascii=False`` only quotes,
     backslashes and C0 control characters gain escape bytes (newline/tab/
     carriage return -- the realistic ones in model text -- add exactly one

@@ -1,5 +1,5 @@
 ---
-id: TASK-34806
+id: TASK-34974
 title: Expose learned response rules in composer and scoped settings
 status: In Progress
 assignee:
@@ -62,3 +62,9 @@ Task3 fix round1 addresses T3-1: mutation-selected reloads now reconcile saved i
 ## Renumbering provenance
 
 Source TASK-34361 at codex/wave2-source-pr-3010 (73823fde3a4e) was created on 2026-10-04. The older current-dev task keeps 34361; this preserved younger response-rules task is TASK-34806. Original implementation history remains above; references and dependency identities follow this remap.
+
+## Renumbering provenance
+
+Renumbered from task-34806 to TASK-34974 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

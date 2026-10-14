@@ -1,5 +1,5 @@
 ---
-id: TASK-34811
+id: TASK-34979
 title: Library text areas can raise when painted once more after their pane is removed
 status: To Do
 created_date: 2026-10-12 04:58
@@ -37,3 +37,9 @@ When a Library pane is removed while the screen's handler is still running, the 
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34811 to TASK-34979 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

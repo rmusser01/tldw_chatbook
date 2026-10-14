@@ -1750,7 +1750,7 @@ def test_store_buffers_stream_chunks_until_messages_are_materialized():
 
     store.append_stream_chunk(message.id, "hel")
 
-    # TASK-34923: the chunk no longer returns a snapshot copy; streamed
+    # TASK-34961: the chunk no longer returns a snapshot copy; streamed
     # content stays buffered (never written onto message.content) until
     # materialization.
     assert message.content == ""
@@ -4435,7 +4435,7 @@ def test_store_drops_late_stream_chunks_for_stopped_message_silently():
     assert stopped.status == "stopped"
     assert stopped.content == "before stop"
 
-    # TASK-34923: no returned snapshot; the late chunk is dropped silently
+    # TASK-34961: no returned snapshot; the late chunk is dropped silently
     # and the stored message stays exactly as Stop finalized it.
     store.append_stream_chunk(assistant.id, "late chunk")
     unchanged = store.get_message(assistant.id)

@@ -1283,7 +1283,7 @@ def _console_markdown_body_ends_in_open_fence(body: str) -> bool:
     false "open" verdict here is now purely a *delayed-highlight* risk, not
     a drop risk, regardless of how this scan is wrong.
 
-    Known cost (TASK-34921, fixed): the streaming row keeps incremental
+    Known cost (TASK-34959, fixed): the streaming row keeps incremental
     parity (``_StreamingFenceParity``) so complete lines fold once and only
     the trailing partial line is judged per tick; this one-shot helper
     remains for whole-body verdicts and delegates to the same fold rules.
@@ -1586,7 +1586,7 @@ class ConsoleMessageHeader(Horizontal):
             and raw_cli.started_at_monotonic is not None
         )
         if active and timer is None:
-            # TASK-34925: 2Hz, not 10Hz. The label shows elapsed time in
+            # TASK-34963: 2Hz, not 10Hz. The label shows elapsed time in
             # tenths; half-second ticks keep it visibly advancing in
             # consistent .5s steps while repainting 5x less often. Terminal
             # states land immediately via sync_header, not this timer.
@@ -1743,7 +1743,7 @@ class ConsoleMarkdownMessage(Vertical):
         # open fence), plus the monotonic deadline by which it must flush.
         self._pending_fence_delta = ""
         self._fence_defer_deadline: float | None = None
-        # TASK-34921: incremental fence parity for ``self._body_text`` --
+        # TASK-34959: incremental fence parity for ``self._body_text`` --
         # complete lines fold once (append-only), only the trailing partial
         # line is judged per streamed tick.
         self._body_fence_parity = _StreamingFenceParity()
@@ -3112,7 +3112,7 @@ class ConsoleTranscript(VerticalScroll):
         self._unit_spans_by_index: tuple[
             tuple[int, int, str, tuple[str, ...]], ...
         ] = ()
-        # TASK-34922: shared per-ingest caches keyed on the identity of the
+        # TASK-34960: shared per-ingest caches keyed on the identity of the
         # current ``self._messages`` list (replaced, never mutated).
         self._units_cache_source: list[ConsoleChatMessage] | None = None
         self._units_cache: tuple[ConsoleTranscriptUnit, ...] = ()
@@ -3739,7 +3739,7 @@ class ConsoleTranscript(VerticalScroll):
     def _units_for_current_messages(self) -> tuple["ConsoleTranscriptUnit", ...]:
         """Grouping for the exact current ``self._messages`` list.
 
-        TASK-34922: set_messages installs a fresh list per ingest and
+        TASK-34960: set_messages installs a fresh list per ingest and
         nothing mutates it in place, so list identity is a sound cache
         token; the ingest itself, span building, ownership mapping, and
         the prune/measure helpers all share ONE grouping walk per ingest

@@ -124,7 +124,7 @@ class WorkflowsScreen(BaseAppScreen):
         return tuple(selection) if selection else None
 
     def on_mount(self):
-        # TASK-34926: authoring init (store init + a full recompose),
+        # TASK-34964: authoring init (store init + a full recompose),
         # document load, and session attach all await I/O. Awaiting them
         # inline in on_mount ran the whole sequence on the App's message
         # pump -- the trap personas_screen documents ("awaiting here ...

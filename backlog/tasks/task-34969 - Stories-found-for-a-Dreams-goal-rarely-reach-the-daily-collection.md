@@ -1,5 +1,5 @@
 ---
-id: TASK-34801
+id: TASK-34969
 title: Stories found for a Dreams goal rarely reach the daily collection
 status: In Progress
 assignee: []
@@ -52,3 +52,9 @@ Full source-bound outcomes, original failures, native owners and tradeoffs: .sup
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34801 to TASK-34969 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

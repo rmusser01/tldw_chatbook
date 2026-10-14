@@ -1,5 +1,5 @@
 ---
-id: TASK-34808
+id: TASK-34976
 title: Folder Remove and its Undo fail when another connection commits mid-mutation
 status: To Do
 created_date: 2026-10-12 04:58
@@ -39,3 +39,9 @@ Removing a Notes folder and undoing the removal each read the folder and then wr
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34808 to TASK-34976 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

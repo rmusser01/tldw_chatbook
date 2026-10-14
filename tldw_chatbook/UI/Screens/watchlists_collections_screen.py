@@ -1337,7 +1337,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
         self._recompute_effective_layout(cause="initial")
-        # TASK-34929 (review revert): the revisit-TTL gate shipped here
+        # TASK-34967 (review revert): the revisit-TTL gate shipped here
         # stranded fresh screen instances in a permanent loading state --
         # this route is NOT reusable, so every visit constructs a screen
         # with empty data state, and skipping the loaders on a rapid

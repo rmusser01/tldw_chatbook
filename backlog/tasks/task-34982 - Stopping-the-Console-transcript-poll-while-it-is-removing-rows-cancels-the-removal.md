@@ -1,5 +1,5 @@
 ---
-id: TASK-34814
+id: TASK-34982
 title: Stopping the Console transcript poll while it is removing rows cancels the
   removal
 status: To Do
@@ -38,3 +38,9 @@ The Console's transcript poll runs its paint inside the timer's own task. When t
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34814 to TASK-34982 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

@@ -1,5 +1,5 @@
 ---
-id: TASK-34816
+id: TASK-34948
 title: >-
   Extract Console realtime lifecycle controller under existing decomposition
   contract

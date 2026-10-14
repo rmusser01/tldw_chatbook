@@ -1,5 +1,5 @@
 ---
-id: TASK-34845
+id: TASK-34952
 title: Import Petdex and create characters from independent Buddy management
 status: Done
 created_date: 2026-09-10 15:16

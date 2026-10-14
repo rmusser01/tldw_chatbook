@@ -513,7 +513,7 @@ def sanitize_capture_value_with_omission(
     Args:
         known_credentials: Runtime credential values to also remove; ignored
             when ``sanitizer`` carries them already.
-        sanitizer: Pre-built sanitizer to reuse (TASK-34919: one per
+        sanitizer: Pre-built sanitizer to reuse (TASK-34957: one per
             exchange flight instead of one per streamed chunk). ``None``
             constructs from ``known_credentials`` as before.
     """
@@ -531,7 +531,7 @@ def sanitize_capture_value_with_omission(
         and len(sanitized_value) < _STUB_MIN_CHARS
         and not sanitized_value.startswith("data:")
     ):
-        # TASK-34919: the dominant streamed shapes are a short plain-text
+        # TASK-34957: the dominant streamed shapes are a short plain-text
         # delta (str) or a one-element list of one -- the exchange mutation
         # path passes each chunk as [text] (review follow-up). Both
         # post-passes provably return such values unchanged -- nested-

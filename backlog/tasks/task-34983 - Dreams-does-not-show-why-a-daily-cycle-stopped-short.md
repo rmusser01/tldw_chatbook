@@ -1,5 +1,5 @@
 ---
-id: TASK-34815
+id: TASK-34983
 title: Dreams does not show why a daily cycle stopped short
 status: In Progress
 assignee: []
@@ -54,3 +54,9 @@ Full source-bound outcomes, original failures, native owners and tradeoffs: .sup
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34815 to TASK-34983 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

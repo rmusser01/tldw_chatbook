@@ -1721,11 +1721,13 @@ class LifecycleMixin:
                 return
             if retention_days <= 0:
                 return  # Documented off-switch (ADR-229).
-            from datetime import datetime, timedelta, timezone
+            from datetime import timedelta
 
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(days=retention_days)
-            ).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            from .Utils.timestamps import to_utc_iso, utc_now
+
+            # Shared UTC helper (ADR-173 ratchet): same canonical
+            # millisecond-Z shape the hand-rolled strftime produced.
+            cutoff = to_utc_iso(utc_now() - timedelta(days=retention_days))
             for attr in ("chachanotes_db", "media_db"):
                 db = getattr(self, attr, None)
                 if db is None:

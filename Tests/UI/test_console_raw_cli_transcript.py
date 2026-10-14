@@ -1195,7 +1195,7 @@ async def test_mounted_raw_cli_row_is_literal_focusable_and_lifecycle_complete()
         assert "[bold]literal[/bold]" in body_text
         assert "[red]literal[/red]" in body_text
         assert "[link=https://invalid.example]literal[/link]" in body_text
-        # TASK-34925: the elapsed ticker fires every 0.5s -- poll until the
+        # TASK-34963: the elapsed ticker fires every 0.5s -- poll until the
         # copy advances instead of assuming a fixed-cadence wait.
         after = before
         for _attempt in range(12):

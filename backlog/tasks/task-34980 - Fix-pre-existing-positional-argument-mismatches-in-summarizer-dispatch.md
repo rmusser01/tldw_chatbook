@@ -1,5 +1,5 @@
 ---
-id: TASK-34812
+id: TASK-34980
 title: Fix pre-existing positional-argument mismatches in summarizer dispatch (kobold, tabbyapi, ollama)
 status: In Progress
 assignee:
@@ -47,3 +47,9 @@ Reason: bug fix at an existing dispatch site; no architectural decision.
 PR #3094 (stacked on #3092's table). All three adapters corrected and pinned by exact-(args, kwargs) regression tests through the real _dispatch_to_api entry. Review-verified downstream behavior: ollama now resolves model from config instead of receiving the streaming bool; kobold's streaming path is now actually reachable (its temp/system_message swap was behaviorally inert — the function never reads them; filed as follow-up); tabbyapi's api_key/system_message/temp now land where the payload reads them. No in-repo analyze() caller streams, so the newly-live streaming routes have no existing consumers. Two follow-ups filed from the review: kobold's dead parameters, and summarize_chunk's same-species argument rotation into analyze() (FIXME-marked, test-only caller).
 
 ADR: not required (bug fix at an existing site; no architectural decision).
+
+## Renumbering provenance
+
+Renumbered from task-34812 to TASK-34980 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

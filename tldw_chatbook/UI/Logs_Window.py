@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 #: app's PersistentLogHandler via ``append_record``).
 MAX_LOG_RECORDS = 10000
 
-#: TASK-34928: newest records seeded synchronously at mount (paints within
+#: TASK-34966: newest records seeded synchronously at mount (paints within
 #: one refresh regardless of session uptime); the older backlog is rebuilt
 #: in worker chunks of this size with yields between them.
 _MOUNT_SEED_RECORDS = 1000
@@ -314,7 +314,7 @@ class LogsWindow(Container):
                 getattr(self.app_instance, "_log_records", ()) or ()
             )
             self._seeded_through = getattr(self.app_instance, "_log_records_seq", 0)
-        # TASK-34928: seed only the newest slice synchronously so the mount
+        # TASK-34966: seed only the newest slice synchronously so the mount
         # paints within one refresh regardless of session uptime; the older
         # backlog is rebuilt in worker chunks and spliced in front (the
         # snapshot is immutable, so live appends during the backfill land
@@ -335,7 +335,7 @@ class LogsWindow(Container):
             )
 
     async def _backfill_records(self, backlog: tuple[tuple, ...]) -> None:
-        """Reconstruct older buffered records off the mount path (TASK-34928)."""
+        """Reconstruct older buffered records off the mount path (TASK-34966)."""
         pending: list[LogRecord] = []
         for index in range(0, len(backlog), _BACKFILL_CHUNK_RECORDS):
             pending.extend(

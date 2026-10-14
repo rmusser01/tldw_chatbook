@@ -1,5 +1,5 @@
 ---
-id: TASK-34805
+id: TASK-34973
 title: Own response rule learning and assessment in Console runtime
 status: In Progress
 assignee:
@@ -63,3 +63,9 @@ Completed app-owned learning, completed-answer assessment, source/binding CAS, e
 ## Renumbering provenance
 
 Source TASK-34360 at codex/wave2-source-pr-3010 (73823fde3a4e) was created on 2026-10-04. The older current-dev task keeps 34360; this preserved younger response-rules task is TASK-34805. Original implementation history remains above; references and dependency identities follow this remap.
+
+## Renumbering provenance
+
+Renumbered from task-34805 to TASK-34973 (2026-10-13): this ID collided
+with a concurrently filed task after the branches merged; per the
+2026-08-21 owner rule (TASK-19601) the older arrival kept the id.

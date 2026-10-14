@@ -683,7 +683,7 @@ class MCPWorkbench(Container):
         self._app_instance = app_instance
         self._mcp_recovery_token = None
         self._mcp_recovery_busy = False
-        # TASK-34915: the 0.25s save-status timer refreshes the config-file
+        # TASK-34953: the 0.25s save-status timer refreshes the config-file
         # identity (stat read) only every 8th tick (~2s); direct post-save
         # calls force a fresh read via the refresh flag.
         self._save_status_tick = 0
@@ -1368,7 +1368,7 @@ class MCPWorkbench(Container):
     async def _collect_snapshots_stale_gated(
         self, service: Any, *, force: bool = False
     ) -> list[ReadinessSnapshot]:
-        """Snapshot walk gated on the catalog fingerprint (TASK-34927).
+        """Snapshot walk gated on the catalog fingerprint (TASK-34965).
 
         Re-entering the workbench re-collects every server snapshot on a
         fresh widget each visit. The service already maintains a
@@ -1412,7 +1412,7 @@ class MCPWorkbench(Container):
             return await self._collect_snapshots()
         token = (fingerprint, current_config_identity())
         if cache is not None and cache[0] == token:
-            # Review fix (task-34927): a cache hit must restore the local
+            # Review fix (task-34965): a cache hit must restore the local
             # profile catalog along with the snapshots. `_catalog_records`
             # feeds the Hub Tools catalog, EDIT_CONFIG's record lookup and
             # show_import, and it is only populated inside
@@ -4508,7 +4508,7 @@ class MCPWorkbench(Container):
         return self._save_file_identity_cache
 
     def _sync_local_config_save_status(self) -> None:
-        # TASK-34915: external config edits only need a coarse detection
+        # TASK-34953: external config edits only need a coarse detection
         # cadence; the in-memory save-state stamp parts stay per-tick.
         self._save_status_tick += 1
         refresh_file_identity = self._save_status_tick % 8 == 1
