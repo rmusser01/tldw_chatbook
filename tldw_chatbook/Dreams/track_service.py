@@ -2310,11 +2310,13 @@ async def _resume_pass(
     async def unsettle_held_riders(subscription_id: int) -> None:
         # Review of #3101, round 2, S1. A held record skipped the
         # write-ahead (N1); its page has now passed the check, so before
-        # the source runs again it stops saying "held, settled on".
+        # the source runs again it stops saying "held, settled on". A rider
+        # whose own step failed is included (round 3, T1): its skipped
+        # write-ahead would have written exactly this, and the closing
+        # loop below leaves its record as last written.
         await _unsettle_held(dreams_db, [
             rider for rider in items
-            if int(rider.get("subscription_id") or 0) == subscription_id
-            and int(rider["id"]) not in failed])
+            if int(rider.get("subscription_id") or 0) == subscription_id])
 
     for item in pending:
         item_id = int(item["id"])

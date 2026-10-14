@@ -5429,6 +5429,55 @@ async def test_a_held_page_switched_back_on_never_runs_under_its_hold(
     assert _boot_needs_switch(dreams_db, enabled=True) is True
 
 
+async def _two_held_riders(dreams_db, service, scheduling_db, monkeypatch):
+    """Two stories watching one page, both held for a private answer."""
+    first = await _event_page(dreams_db, service, scheduling_db)
+    second = await _event_page(dreams_db, service, scheduling_db, story_id=2)
+    assert first["subscription_id"] == second["subscription_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _resolve_everything_to(monkeypatch, "10.0.0.5")
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    for owned in (first, second):
+        record = _record(dreams_db, owned["tracked_item_id"])
+        assert (record["held"], record["settled"]) == ("private", "on")
+    return first, second
+
+
+@pytest.mark.asyncio
+async def test_a_rider_whose_first_step_failed_is_un_settled_too(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, round 3, T1. Two riders share one source; the
+    first rider's own step fails (its fresh read raises), the second's
+    page passes and the source is switched on. The first rider must not
+    be left saying "held: private, settled: on" -- paused on its row, and
+    no work for the boot check -- under a running source: it is
+    un-settled with the others, which is what its skipped write-ahead
+    would have written."""
+    subs_db, service = subs_stack
+    first, second = await _two_held_riders(
+        dreams_db, service, scheduling_db, monkeypatch)
+    _resolve_publicly(monkeypatch)
+    real_read = dreams_db.get_tracked_item
+    armed = [True]
+
+    def first_read_fails(tracked_item_id):
+        if armed[0] and int(tracked_item_id) == first["tracked_item_id"]:
+            raise RuntimeError("read failed")
+        return real_read(tracked_item_id)
+
+    monkeypatch.setattr(dreams_db, "get_tracked_item", first_read_fails)
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+    armed[0] = False
+
+    assert _is_active(subs_db, first["subscription_id"]) == 1
+    record = _record(dreams_db, first["tracked_item_id"])
+    assert "held" not in record, "a running source is not reported as held"
+    assert record.get("settled") is None, "the next pass finishes it"
+    assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
 @pytest.mark.asyncio
 async def test_a_settled_record_that_owes_more_than_its_hold_is_written_ahead(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
