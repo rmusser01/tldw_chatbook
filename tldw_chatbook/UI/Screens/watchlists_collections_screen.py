@@ -275,6 +275,15 @@ WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
+#: TASK-34929 (second attempt): TTL for the app-level read cache in front
+#: of the whole-screen Watchlists reads. Unlike the reverted mount gate,
+#: the loaders still run on every visit and write the same state -- only
+#: the underlying queries are served from a fresh (<TTL) cached result,
+#: so a fresh screen instance can never be stranded with empty state.
+#: Background refreshes (``r``, sync completions) bypass the cache by
+#: construction: they call the readers through their own paths.
+WATCHLISTS_READ_CACHE_TTL_SECONDS = 2.0
+
 #: Success copy for the Inspector's ignore-rule Save (TASK-1362).
 #:
 #: The third sentence is the whole-branch review's Critical 1. Spec §3 accepts
@@ -1429,7 +1438,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_total_known,
             lookup_error,
             recovery_state,
-        ) = await self._list_local_wc_snapshot()
+        ) = await self._list_local_wc_snapshot_cached()
         self._apply_local_wc_snapshot(
             watchlists,
             watchlist_count,
@@ -1441,10 +1450,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @work(exclusive=True, group="wc_overview")
     async def _refresh_overview_data(self) -> None:
         try:
-            data = await self._controller.get_overview_data(
-                runtime_backend=self.runtime_backend,
-            )
-            self.overview_data = data
+            data = await self._overview_data_cached()
         except Exception:
             logger.opt(exception=True).debug(
                 "Failed to refresh watchlists overview data."
@@ -1469,6 +1475,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "failed_runs": [],
                 "active_alert_rules": 0,
             }
+
+    async def _overview_data_cached(self) -> dict[str, Any]:
+        """TTL read-cache for the overview aggregation (TASK-34929).
+
+        Same contract as the snapshot read-cache: the loader and its
+        reactive writes run unchanged; only the aggregation queries are
+        served from a fresh (<TTL) app-level cached result, keyed on the
+        backend the data was computed for.
+        """
+        import time as _time
+
+        cache = getattr(self.app_instance, "_wc_overview_read_cache", None)
+        now = _time.monotonic()
+        backend = self.runtime_backend
+        if (
+            cache is not None
+            and cache[0] == backend
+            and (now - cache[1]) < WATCHLISTS_READ_CACHE_TTL_SECONDS
+        ):
+            return cache[2]
+        data = await self._controller.get_overview_data(
+            runtime_backend=backend,
+        )
+        self.app_instance._wc_overview_read_cache = (backend, now, data)
+        return data
 
     def watch_overview_data(self) -> None:
         """Push new overview counts into the live panes, never recompose.
@@ -1977,6 +2008,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             count = len(records)
             total_known = False
         return records, max(count, 0), total_known
+
+    async def _list_local_wc_snapshot_cached(self) -> tuple[
+        tuple[Mapping[str, Any], ...],
+        int,
+        bool,
+        str | None,
+        DestinationRecoveryState | None,
+    ]:
+        """TTL read-cache in front of the snapshot read (TASK-34929).
+
+        Rapid revisits construct a fresh screen whose mount-time loaders
+        would otherwise re-issue the identical page query; the cached
+        result is only served inside the TTL window and the loader's
+        state writes run unchanged from it.
+        """
+        import time as _time
+
+        cache = getattr(self.app_instance, "_wc_snapshot_read_cache", None)
+        now = _time.monotonic()
+        if cache is not None and (now - cache[0]) < WATCHLISTS_READ_CACHE_TTL_SECONDS:
+            return cache[1]
+        result = await self._list_local_wc_snapshot()
+        self.app_instance._wc_snapshot_read_cache = (now, result)
+        return result
 
     async def _list_local_wc_snapshot(
         self,
