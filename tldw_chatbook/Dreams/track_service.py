@@ -773,10 +773,23 @@ def _reminder_heir(dreams_db: Any, item: dict) -> dict | None:
 
 def _retire_reminders_sync(
     scheduling_db: Any, dreams_db: Any, item: dict, hand_over: bool,
+    dreams_on: bool = True,
 ) -> tuple[list[str], list[str]]:
-    """Sync body of :func:`_retire_linked_reminders`."""
+    """Sync body of :func:`_retire_linked_reminders`.
+
+    TASK-34923. Nothing moves before it is written down: the heir's record
+    takes the debt of a reminder Dreams disabled BEFORE that reminder is
+    re-linked to it, and if that write fails the reminder stays where it
+    was, owed on the retiring watch's record, for the next switch-on to
+    hand on (:func:`_orphaned_reminders`). While Dreams is off nothing is
+    handed on here at all: a switch-off pass may be writing the heir's
+    record at this very moment, and the reminder must end up recorded on
+    exactly one watch. An armed one is disarmed and an owed one stays
+    owed -- both on the retiring watch's record -- and switching Dreams on
+    hands them on.
+    """
     item_id = str(item["id"])
-    heir = _reminder_heir(dreams_db, item) if hand_over else None
+    heir = _reminder_heir(dreams_db, item) if hand_over and dreams_on else None
     body = _reminder_body(item.get("event_date"))
     rows = scheduling_db.list_reminder_tasks_by_link(
         _REMINDER_LINK_TYPE,
@@ -786,7 +799,7 @@ def _retire_reminders_sync(
             and row.get("body") == body for row in rows):
         heir = None  # it already has a reminder of its own for this event
     owed = set(_owed(_suspension_record(item))[1])
-    disarmed: list[str] = []
+    to_disarm: list[str] = []
     handed: list[str] = []
     debt: list[str] = []
     for row in rows:
@@ -796,34 +809,94 @@ def _retire_reminders_sync(
         inherit = (heir is not None and not row.get("last_run_at")
                    and row.get("body") == body)
         if row.get("enabled") and inherit:
-            scheduling_db.update_reminder_task(
-                row["id"], link_id=str(heir["id"]))
             handed.append(reminder_id)
         elif row.get("enabled"):
-            scheduling_db.update_reminder_task(row["id"], enabled=False)
-            disarmed.append(reminder_id)
+            to_disarm.append(reminder_id)
         elif inherit and reminder_id in owed:
             # Disabled by the master switch and owed a re-arm: the debt
             # moves with the reminder, or switching Dreams on restores
             # none for the watch that is left.
-            scheduling_db.update_reminder_task(
-                row["id"], link_id=str(heir["id"]))
             handed.append(reminder_id)
             debt.append(reminder_id)
-    if handed:
-        dreams_db.set_tracked_reminder_date(
-            int(heir["id"]), str(heir["event_date"]))
     if debt:
         record = _suspension_record(heir) or {}
         subscription, reminders, rules = _owed(record)
         # "off" stays true (the reminder is disabled); anything else is
         # unfinished again, so the next resume pass re-arms it.
         still_off = settled_state(heir.get("suspension")) == SETTLED_OFF
-        dreams_db.set_tracked_suspension(int(heir["id"]), _record_text(
-            subscription=subscription, reminders=reminders + debt,
-            rules=rules, held=record.get("held"),
-            settled=SETTLED_OFF if still_off else None))
-    return disarmed, handed
+        try:
+            dreams_db.set_tracked_suspension(int(heir["id"]), _record_text(
+                subscription=subscription, reminders=reminders + debt,
+                rules=rules, held=record.get("held"),
+                settled=SETTLED_OFF if still_off else None))
+        except Exception as exc:  # noqa: BLE001 - stays owed where it is
+            logger.warning(
+                "Dreams reminder hand-over to item {} failed: {}",
+                heir.get("id"), type(exc).__name__)
+            handed = [value for value in handed if value not in debt]
+    for reminder_id in to_disarm:
+        scheduling_db.update_reminder_task(reminder_id, enabled=False)
+    for reminder_id in handed:
+        scheduling_db.update_reminder_task(
+            reminder_id, link_id=str(heir["id"]), title=_reminder_title(heir))
+    if handed:
+        dreams_db.set_tracked_reminder_date(
+            int(heir["id"]), str(heir["event_date"]))
+    return to_disarm, handed
+
+
+def _orphaned_reminders(
+    scheduling_db: Any, dreams_db: Any, item: dict,
+) -> list[str]:
+    """Reminders a live watch takes over when Dreams is switched on (sync).
+
+    TASK-34923: the second half of a hand-over that did not happen when
+    its watch retired -- Dreams was off, or the heir's record could not be
+    written. The story's reminder for this watch's event that a retired
+    watch of the same story and event still owes (one Dreams disabled) is
+    this watch's now, when no live watch of the story has a reminder for
+    the event: not for an event that is over (the sweep's
+    ``event_passed``), not one that fired, not one the user switched off
+    (no record owes those). Read-only; :func:`_take_over_reminders` moves
+    them once the watch's record lists them.
+    """
+    story_id = item.get("origin_story_id")
+    event_date = item.get("event_date")
+    if story_id is None or not event_date:
+        return []
+    siblings = dreams_db.list_tracked_for_story(int(story_id))
+    owed: set[str] = set()
+    for sibling in siblings:
+        if (sibling.get("status") == "retired"
+                and sibling.get("event_date") == event_date
+                and sibling.get("retired_reason") != "event_passed"):
+            owed.update(_owed(_suspension_record(sibling))[1])
+    if not owed:
+        return []
+    live = {str(sibling["id"]) for sibling in siblings
+            if sibling.get("status") in ("active", "paused")}
+    body = _reminder_body(event_date)
+    for_date = [
+        row for row in scheduling_db.list_reminder_tasks_by_link(
+            _REMINDER_LINK_TYPE, [str(sibling["id"]) for sibling in siblings])
+        if row.get("body") == body]
+    if any(str(row.get("link_id")) in live for row in for_date):
+        return []  # a live watch of the story has its reminder
+    return [str(row["id"]) for row in for_date
+            if str(row["id"]) in owed and not row.get("enabled")
+            and not row.get("last_run_at")][:1]
+
+
+def _take_over_reminders(
+    scheduling_db: Any, dreams_db: Any, item: dict, reminder_ids: list[str],
+) -> None:
+    """Link reminders to a live watch, under its title (sync)."""
+    for reminder_id in reminder_ids:
+        scheduling_db.update_reminder_task(
+            reminder_id, link_id=str(item["id"]), title=_reminder_title(item))
+    if reminder_ids:
+        dreams_db.set_tracked_reminder_date(
+            int(item["id"]), str(item["event_date"]))
 
 
 async def _retire_linked_reminders(
@@ -849,7 +922,11 @@ async def _retire_linked_reminders(
     watch instead (:func:`_reminder_heir`): the same row, with whatever
     time the user moved it to, armed if it was armed. One the user had
     switched off stays where it is, off. One the master switch disabled
-    moves too, and the debt to re-arm it moves onto the heir's record.
+    moves too, and the debt to re-arm it moves onto the heir's record. It
+    takes the heir's title. While Dreams is off nothing is handed on here,
+    and a hand-over whose record write failed does not happen: either way
+    the reminder stays owed on this watch's record and the next switch-on
+    hands it on (TASK-34923, see :func:`_retire_reminders_sync`).
 
     Every failure mode (no getter, raising getter, no scheduling DB,
     unwritable DB) logs and returns -- retirement itself already happened
@@ -882,7 +959,8 @@ async def _retire_linked_reminders(
         return [], []
     try:
         return await asyncio.to_thread(run_finite_local_worker,
-            _retire_reminders_sync, scheduling_db, dreams_db, item, hand_over)
+            _retire_reminders_sync, scheduling_db, dreams_db, item, hand_over,
+            bool(dreams_setting("enabled")))
     except Exception as exc:  # noqa: BLE001 - reminder degrades
         logger.warning(
             "Dreams reminder disable failed for item {}: {}",
@@ -1764,6 +1842,11 @@ def _reminder_body(event_date: Any) -> str:
     return f"Tracked Dreams event on {event_date}"
 
 
+def _reminder_title(item: Any) -> str:
+    """The title of the reminder a watch holds: its question, or a generic one."""
+    return _label(f"Dreams: {item.get('query_template') or 'tracked event'}")
+
+
 #: ``settled`` value of the record a wrapper is left with when it is
 #: retired (untrack, lifecycle sweep): what Dreams itself stopped then.
 _SETTLED_RETIRED = "retired"
@@ -1870,8 +1953,7 @@ def _ensure_reminder(
         return None, True
     created = scheduling_db.create_reminder_task(
         owner_id,
-        _label(
-            f"Dreams: {tracked_item.get('query_template') or 'tracked event'}"),
+        _reminder_title(tracked_item),
         body=body,
         schedule_kind="one_time",
         run_at=run_at,
@@ -2500,6 +2582,14 @@ async def _resume_pass(
             fresh = await asyncio.to_thread(run_finite_local_worker, dreams_db.get_tracked_item, item_id)
             if fresh is None or fresh.get("status") not in ("active", "paused"):
                 continue
+            # A hand-over that did not happen when the story's other watch
+            # retired (TASK-34923) is finished here: the reminder goes into
+            # this watch's record first, then moves, then is re-armed below.
+            taken: list[str] = []
+            if scheduling_db is not None:
+                taken = await asyncio.to_thread(run_finite_local_worker,
+                    _orphaned_reminders, scheduling_db, dreams_db, fresh)
+                reminders = reminders + taken
             # The record stops saying "settled off" BEFORE anything is
             # restored (round 4, A1), and is rewritten as each restore
             # lands (round 3, T12). A wrapper whose reminder runs again is
@@ -2516,9 +2606,13 @@ async def _resume_pass(
             # trigger would otherwise be written twice each time (review of
             # #3101, N1). It is un-settled only once its page passes the
             # check (``unsettle_held_riders``, round 2, S1).
-            if not _settled_hold_only(item.get("suspension")):
+            if taken or not _settled_hold_only(item.get("suspension")):
                 await write_unsettled(
                     item_id, subscription, reminders, rules, held_before)
+            if taken:
+                await asyncio.to_thread(run_finite_local_worker,
+                    _take_over_reminders, scheduling_db, dreams_db, fresh,
+                    taken)
             if reminders and scheduling_db is not None:
                 await asyncio.to_thread(run_finite_local_worker,
                     _restore_reminders, scheduling_db, reminders)

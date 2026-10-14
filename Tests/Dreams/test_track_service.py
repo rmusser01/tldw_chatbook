@@ -6340,3 +6340,242 @@ async def test_a_verifying_backfill_with_nothing_to_mark_writes_nothing(
 
     assert await backfill_egress_marks(service, dreams_db, verify=True) == 0
     assert writes == [], "every source is marked: nothing to write"
+
+
+# --- TASK-34923: the reminder hand-over is durable ------------------------------
+#
+# One story, one reminder per event date, linked to whichever watch was made
+# first; when that watch retires, the story's other live watch of the event
+# takes it. A failed record write used to leave it disabled and owed by
+# nobody, it kept the old watch's title, and a hand-over during a switch-off
+# could leave it recorded on no watch at all.
+
+_QUESTION_TITLE = "Dreams: flights to {region}"
+
+
+def _owing(dreams_db, reminder_id, *item_ids) -> list[int]:
+    """The watches whose record lists the reminder as owed."""
+    return [item_id for item_id in item_ids
+            if reminder_id in ((_record(dreams_db, item_id) or {})
+                               .get("reminders") or [])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing", [False, True], ids=["writes-land", "write-fails"])
+async def test_a_reminder_handed_on_while_off_is_armed_by_the_next_switch_on(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, failing):
+    """AC 1 and 2. Dreams is off; the watch that holds the reminder is
+    untracked (its retirement record write failing, or not). Switching on
+    gives the story's other watch the reminder, armed, under its title."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    page_id = page["tracked_item_id"]
+    settings["enabled"] = False
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    real = dreams_db.set_tracked_suspension
+    failures = [RuntimeError("database is locked")] if failing else []
+
+    def flaky(tracked_item_id, record, **kwargs):
+        if failures:
+            raise failures.pop()
+        return real(tracked_item_id, record, **kwargs)
+
+    dreams_db.set_tracked_suspension = flaky
+    try:
+        await untrack(service, dreams_db, page_id,
+                      scheduling_db_getter=_sched_getter(scheduling_db))
+    finally:
+        dreams_db.set_tracked_suspension = real
+    assert not failures, "fixture: the write failed"
+    assert not scheduling_db.get_reminder_task(reminder["id"])["enabled"]
+    assert len(_owing(dreams_db, reminder["id"], page_id, question_id)) == 1
+
+    settings["enabled"] = True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert row["enabled"] and row["link_id"] == str(question_id)
+    assert row["title"] == _QUESTION_TITLE
+
+
+@pytest.mark.asyncio
+async def test_a_failed_hand_over_while_dreams_is_on_is_finished_by_the_switch(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """AC 1, Dreams on: the holder still owed its reminder (a switch-on had
+    run without the scheduling store), and the heir's record write fails
+    during the hand-over. The reminder must not end disabled and owed by
+    nobody: the next switch-on re-arms it on the heir."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    page_id = page["tracked_item_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await set_tracking_suspended(service, dreams_db, suspended=False,
+                                 scheduling_db_getter=None, now=NOW)
+    assert _record(dreams_db, page_id)["reminders"] == [reminder["id"]]
+    real = dreams_db.set_tracked_suspension
+
+    def heir_write_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == question_id:
+            raise RuntimeError("database is locked")
+        return real(tracked_item_id, record, **kwargs)
+
+    dreams_db.set_tracked_suspension = heir_write_fails
+    try:
+        await untrack(service, dreams_db, page_id,
+                      scheduling_db_getter=_sched_getter(scheduling_db))
+    finally:
+        dreams_db.set_tracked_suspension = real
+    assert _owing(dreams_db, reminder["id"], page_id, question_id), (
+        "some watch still owes it")
+
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert row["enabled"] and row["link_id"] == str(question_id)
+
+
+@pytest.mark.asyncio
+async def test_a_handed_over_reminder_takes_the_receiving_watchs_title(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """AC 2, Dreams on: the reminder used to keep the page watch's title."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    assert reminder["title"] == "Dreams: tracked event", "fixture"
+
+    await untrack(service, dreams_db, page["tracked_item_id"],
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert (row["link_id"], row["title"]) == (str(question_id), _QUESTION_TITLE)
+
+
+@pytest.mark.asyncio
+async def test_a_hand_over_during_a_switch_off_leaves_the_reminder_on_one_watch(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """AC 3. The holder is untracked while the switch-off pass runs --
+    after the pass recorded both watches and before it settled them. The
+    pass's settle write of the heir used to overwrite the debt the
+    hand-over had just written, leaving the reminder recorded on nobody."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    page_id = page["tracked_item_id"]
+    settings["enabled"] = False
+    real = service.update_alert_rule
+    landed: list[bool] = []
+
+    async def untrack_during_the_stop(rule_id, **fields):
+        if not landed:
+            landed.append(True)
+            await untrack(service, dreams_db, page_id,
+                          scheduling_db_getter=_sched_getter(scheduling_db))
+        return await real(rule_id, **fields)
+
+    service.update_alert_rule = untrack_during_the_stop
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    service.update_alert_rule = real
+
+    assert landed, "fixture: the untrack landed inside the pass"
+    assert not scheduling_db.get_reminder_task(reminder["id"])["enabled"]
+    assert len(_owing(dreams_db, reminder["id"], page_id, question_id)) == 1
+
+    settings["enabled"] = True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert row["enabled"] and row["link_id"] == str(question_id)
+
+
+# AC 4: the four behaviours a mutation used to survive.
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_the_user_switched_off_stays_off_through_the_switch(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Not handed on as a debt either: a switch-off and switch-on after the
+    untrack must not arm it on the other watch over the user's decision."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    scheduling_db.update_reminder_task(reminder["id"], enabled=False)  # the user
+    await untrack(service, dreams_db, page["tracked_item_id"],
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert not any(row["enabled"] for row in _all_event_reminders(scheduling_db))
+
+
+@pytest.mark.asyncio
+async def test_a_watch_with_its_own_reminder_is_not_given_a_second(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    own = scheduling_db.create_reminder_task(  # as an older build left it
+        "local", "Dreams: flights to {region}",
+        body=reminder["body"], schedule_kind="one_time",
+        run_at=reminder["run_at"], next_run_at=reminder["run_at"],
+        link_type="dream_tracked_item", link_id=str(question_id))
+
+    await untrack(service, dreams_db, page["tracked_item_id"],
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+
+    handed = scheduling_db.get_reminder_task(reminder["id"])
+    assert handed["link_id"] == str(page["tracked_item_id"])
+    assert not handed["enabled"]
+    assert [row["id"] for row in _linked_reminders(scheduling_db, question_id)
+            if row["enabled"]] == [own]
+
+
+@pytest.mark.asyncio
+async def test_the_reminder_of_a_passed_event_is_not_handed_over(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """The sweep retires the page watch because its event is over; the
+    question watch of that event, paused after failed checks (the sweep
+    never retires a paused watch), must not inherit the nudge."""
+    _subs_db, service = subs_stack
+    page = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-09-01", origin_story_id=7,
+        scheduling_db_getter=_sched_getter(scheduling_db))
+    question_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="event",
+        event_date="2026-09-01", origin_story_id=7,
+        scheduling_db_getter=_sched_getter(scheduling_db))
+    (reminder,) = _all_event_reminders(scheduling_db)
+    assert reminder["link_id"] == str(page["tracked_item_id"]), "fixture"
+    dreams_db.set_tracked_status(question_id, "paused")
+
+    await sweep_track_lifecycle(
+        dreams_db, now=NOW, subs_service_getter=lambda: service,
+        scheduling_db_getter=_sched_getter(scheduling_db))
+
+    assert dreams_db.get_tracked_item(page["tracked_item_id"])["status"] == "retired"
+    row = scheduling_db.get_reminder_task(reminder["id"])
+    assert row["link_id"] == str(page["tracked_item_id"]) and not row["enabled"]
+
+
+@pytest.mark.asyncio
+async def test_the_retired_watch_does_not_claim_the_reminder_it_handed_on(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """A reminder Dreams disabled and the retiring watch owed, handed on
+    to the other watch, is that watch's: the retired record must not list
+    it too, or a later re-track could take it for one Dreams disarmed."""
+    _subs_db, service = subs_stack
+    page, question_id, reminder = await _page_then_question(
+        dreams_db, service, scheduling_db)
+    page_id = page["tracked_item_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await set_tracking_suspended(service, dreams_db, suspended=False,
+                                 scheduling_db_getter=None, now=NOW)
+    assert _record(dreams_db, page_id)["reminders"] == [reminder["id"]], "fixture"
+
+    await untrack(service, dreams_db, page_id,
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+
+    assert _owing(dreams_db, reminder["id"], page_id, question_id) == [question_id]
