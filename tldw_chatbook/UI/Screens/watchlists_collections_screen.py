@@ -5247,8 +5247,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self.query_one(
                     "#watchlists-items-pane", ArticleListPane
                 ).items = self._loaded_items
-            elif section == "sources":  # rows and tree choices (TASK-34951)
+            elif section == "sources":  # what _load_sources and the tree push
                 self._push_scoped_sources_to_pane()
+                pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+                pane.set_authoritative_source_ids(self._loaded_source_canonical_ids())
+                pane.set_selected_source_ids(self._selected_source_ids)
             elif section == "overview":
                 overview = self.query_one("#watchlists-overview-pane", OverviewPane)
                 overview.data = self.overview_data

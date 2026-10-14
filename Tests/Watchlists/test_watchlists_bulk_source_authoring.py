@@ -606,7 +606,8 @@ def _hold_loader(monkeypatch, loader):
 
     Args:
         monkeypatch: The test's monkeypatch.
-        loader: ``"tree"`` (the rail snapshot) or ``"overview"`` (its counts).
+        loader: ``"tree"`` (the rail snapshot), ``"overview"`` (its counts) or
+            ``"sources"`` (the Sources rows).
 
     Returns:
         ``land(host, screen)``: release the loader and await its workers.
@@ -629,13 +630,17 @@ def _hold_loader(monkeypatch, loader):
             WatchlistsCollectionsScreen, "_read_tree_data_snapshot", staticmethod(held)
         )
     else:
-        group, read = "wc_overview", WatchlistsBackendController.get_overview_data
+        group, name = {
+            "overview": ("wc_overview", "get_overview_data"),
+            "sources": ("wc_sources", "list_sources"),
+        }[loader]
+        read = getattr(WatchlistsBackendController, name)
 
         async def held(self, **kwargs):
             await asyncio.to_thread(release.wait, 30)
             return await read(self, **kwargs)
 
-        monkeypatch.setattr(WatchlistsBackendController, "get_overview_data", held)
+        monkeypatch.setattr(WatchlistsBackendController, name, held)
 
     async def land(host, screen):
         release.set()
@@ -848,6 +853,59 @@ async def test_an_open_create_form_offers_a_watchlist_the_tree_load_adds():
     assert later["id"] in offered
     assert destination.value == chosen["id"]
     assert pane.create_draft_destination == chosen["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_sources_load_landing_while_the_pane_mounts_prunes_its_selection(
+    monkeypatch,
+):
+    """Review of #3107, item V4: the swap gap also dropped the Sources loader's
+    authoritative ids and pruned selection, so the mounted pane kept a
+    selected source the reload had already found deleted."""
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    kept_id = db.add_subscription(name="Kept", type="rss", source="https://k.example/f")
+    gone_id = db.add_subscription(name="Gone", type="rss", source="https://g.example/f")
+    kept, gone = (f"local:subscription:{n}" for n in (kept_id, gone_id))
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    replace = WatchlistsWorkbench._replace_region_content
+    landed = []
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 2)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.set_selected_source_ids((kept, gone))
+        await _until(pilot, lambda: len(screen._selected_source_ids) == 2)
+        assert set(screen._selected_source_ids) == {kept, gone}
+        screen.active_section = "rules"
+        await _until(pilot, lambda: not screen.query("#watchlists-sources-pane"))
+        db.delete_subscription(gone_id)
+        land = _hold_loader(monkeypatch, "sources")
+
+        async def sources_load_lands_first(workbench, container, replacement):
+            if workbench.screen.active_section == "sources" and not landed:
+                # The Sources pane is built but not mounted: let the load land.
+                await land(host, workbench.screen)
+                landed.append(workbench.screen._selected_source_ids)
+            await replace(workbench, container, replacement)
+
+        monkeypatch.setattr(
+            WatchlistsWorkbench, "_replace_region_content", sources_load_lands_first
+        )
+        screen.active_section = "sources"
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        selected = pane.selected_source_ids
+
+    assert landed == [(kept,)]
+    assert selected == {kept}
 
 
 @pytest.mark.asyncio
