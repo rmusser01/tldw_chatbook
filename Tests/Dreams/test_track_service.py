@@ -6019,3 +6019,96 @@ async def test_a_watch_retired_during_the_switch_on_ends_with_its_source_off(
         assert _is_active(subs_db, source_id) == 0
         assert not any(
             r["enabled"] for r in await _change_rules(service, source_id))
+
+
+# --- TASK-34920: a shared source's restart debt survives its watch -------------
+#
+# Two watches ride one Dreams source. At switch-off, watch A's record write
+# fails and B's lands, so the source stops with only B owing it a restart.
+# B is then untracked while Dreams is off: the debt was left on a retired
+# watch, and switching on left A active on a source that stayed off.
+
+
+async def _two_watches_one_owing(dreams_db, service, scheduling_db):
+    """A and B ride one source; the switch-off recorded the stop on B only."""
+    first = _seed_story(dreams_db, "one")
+    second = _seed_story(dreams_db, "two")
+    a = await track_page(service, dreams_db, url=_URL, title="Flights",
+                         intent="deal", origin_story_id=first)
+    b = await track_page(service, dreams_db, url=_URL, title="Flights",
+                         intent="deal", origin_story_id=second)
+    assert a["subscription_id"] == b["subscription_id"]
+    real = dreams_db.set_tracked_suspension
+
+    def a_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == a["tracked_item_id"]:
+            raise RuntimeError("database is locked")
+        return real(tracked_item_id, record, **kwargs)
+
+    dreams_db.set_tracked_suspension = a_fails
+    try:
+        await _switch(service, dreams_db, scheduling_db, off=True)
+    finally:
+        dreams_db.set_tracked_suspension = real
+    assert _record(dreams_db, a["tracked_item_id"]) is None
+    assert _record(dreams_db, b["tracked_item_id"])["subscription"] is True
+    return first, a, b
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("another_off_pass", [False, True],
+                         ids=["on-at-once", "off-pass-first"])
+async def test_a_live_watch_gets_its_source_back_after_its_sibling_left(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db,
+        another_off_pass):
+    subs_db, service = subs_stack
+    _story, a, b = await _two_watches_one_owing(
+        dreams_db, service, scheduling_db)
+    source_id = a["subscription_id"]
+    assert _is_active(subs_db, source_id) == 0
+
+    await untrack(service, dreams_db, b["tracked_item_id"],
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+    if another_off_pass:
+        await _switch(service, dreams_db, scheduling_db, off=True)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert dreams_db.get_tracked_item(a["tracked_item_id"])["status"] == "active"
+    assert _is_active(subs_db, source_id) == 1, "A's source runs again"
+    assert not _record(dreams_db, b["tracked_item_id"])["subscription"], (
+        "the retired watch no longer owes it")
+
+
+@pytest.mark.asyncio
+async def test_tracking_a_story_again_restarts_the_source_its_watch_needs(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """AC 2: the debt is left on the retired watch (the hand-over write
+    failed, or an earlier build left it there); tracking story one again
+    turns its live watch's source back on."""
+    subs_db, service = subs_stack
+    story, a, b = await _two_watches_one_owing(
+        dreams_db, service, scheduling_db)
+    source_id = a["subscription_id"]
+    real = dreams_db.set_tracked_suspension
+
+    def a_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == a["tracked_item_id"]:
+            raise RuntimeError("database is locked")
+        return real(tracked_item_id, record, **kwargs)
+
+    dreams_db.set_tracked_suspension = a_fails
+    try:
+        await untrack(service, dreams_db, b["tracked_item_id"],
+                      scheduling_db_getter=_sched_getter(scheduling_db))
+    finally:
+        dreams_db.set_tracked_suspension = real
+    assert _record(dreams_db, b["tracked_item_id"])["subscription"] is True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert _is_active(subs_db, source_id) == 0, "fixture: left off"
+
+    again = await track_page(service, dreams_db, url=_URL, title="Flights",
+                             intent="deal", origin_story_id=story)
+
+    assert again["tracked_item_id"] == a["tracked_item_id"]
+    assert _is_active(subs_db, source_id) == 1
+    assert not _record(dreams_db, b["tracked_item_id"])["subscription"]

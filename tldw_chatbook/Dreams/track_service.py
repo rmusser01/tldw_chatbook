@@ -877,9 +877,19 @@ async def _record_retirement(
     with whatever the switch already owed the wrapper, and
     ``settled: "retired"``. A reminder handed to the story's other watch
     (``handed``, round 4, A3) is that watch's now and is not listed.
+
+    The same goes for the source (TASK-34920). When the record owes it a
+    restart -- the master switch stopped it -- and another live watch
+    still rides it, that watch is the one switching Dreams on must restart
+    it for, so the debt moves onto its record first. A debt left on a
+    retired watch is one no switch pass reads. Should that write fail,
+    the debt stays here, where tracking the story again still finds it
+    (:func:`_retry_held_source`).
     """
     owed_subscription, owed_reminders, _rules = _owed(_suspension_record(item))
     owed_reminders = [value for value in owed_reminders if value not in handed]
+    if owed_subscription and not subscription:
+        owed_subscription = not await _hand_on_source_debt(dreams_db, item)
     try:
         await asyncio.to_thread(run_finite_local_worker,
             dreams_db.set_tracked_suspension, int(item["id"]), _record_text(
@@ -890,6 +900,48 @@ async def _record_retirement(
         logger.warning(
             "Dreams retire: recording item {} failed: {}",
             item.get("id"), type(exc).__name__)
+
+
+async def _hand_on_source_debt(dreams_db: Any, item: dict) -> bool:
+    """Move a retiring watch's restart debt onto a live watch of its source.
+
+    See :func:`_record_retirement` (TASK-34920). The heir keeps whatever
+    its own record owed, and its settled state when that was "off" (the
+    source IS stopped); anything else leaves it unsettled, so the next
+    switch-on takes it up.
+
+    Returns:
+        True when a live watch now owes the restart (it already did, or
+        its record was written); False when there is none, or the write
+        failed.
+    """
+    subscription_id = int(item.get("subscription_id") or 0)
+    if not subscription_id:
+        return False
+    try:
+        riders = await asyncio.to_thread(run_finite_local_worker,
+            dreams_db.list_tracked_for_subscription, subscription_id)
+        heir = next((rider for rider in riders
+                     if int(rider["id"]) != int(item["id"])
+                     and rider.get("status") in ("active", "paused")), None)
+        if heir is None:
+            return False
+        record = _suspension_record(heir) or {}
+        subscription, reminders, rules = _owed(record)
+        if not subscription:
+            still_off = settled_state(heir.get("suspension")) == SETTLED_OFF
+            await asyncio.to_thread(run_finite_local_worker,
+                partial(dreams_db.set_tracked_suspension, only_live=True),
+                int(heir["id"]), _record_text(
+                    subscription=True, reminders=reminders, rules=rules,
+                    held=record.get("held"),
+                    settled=SETTLED_OFF if still_off else None))
+        return True
+    except Exception as exc:  # noqa: BLE001 - the debt stays on the retiree
+        logger.warning(
+            "Dreams retire: handing subscription {} on failed: {}",
+            subscription_id, type(exc).__name__)
+        return False
 
 
 def _dreams_can_account_for_disable(riders: list[dict]) -> bool:
@@ -999,9 +1051,28 @@ async def _retry_held_source(
     """
     subscription_id = int(wrapper.get("subscription_id") or 0)
     record = _suspension_record(wrapper)
-    if (not subscription_id or record is None or not _owed(record)[0]
+    if (not subscription_id
             or settled_state(wrapper.get("suspension")) == SETTLED_OFF):
         return
+    if record is None or not _owed(record)[0]:
+        # Not this watch's own debt -- but its source may still be off for
+        # Dreams' reasons, with the debt on another watch of it, a retired
+        # one included (TASK-34920: a hand-over that failed, or an earlier
+        # build). Tracking the story again is the user asking for the
+        # watch to work, so that source is restarted too. One the user
+        # switched off stays off.
+        if not int(wrapper.get("created_by_dreams") or 0):
+            return
+        try:
+            source = await subs_service.get_source(subscription_id)
+        except KeyError:
+            return
+        if bool(source.get("active")) or bool(source.get("paused")):
+            return
+        if not _dreams_can_account_for_disable(await asyncio.to_thread(
+                dreams_db.list_tracked_for_subscription, subscription_id)):
+            return
+
     async def unsettle() -> None:
         await _unsettle_held(dreams_db, await asyncio.to_thread(
             dreams_db.list_tracked_for_subscription, subscription_id))
