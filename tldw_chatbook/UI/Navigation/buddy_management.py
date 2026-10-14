@@ -1058,7 +1058,20 @@ class BuddyManagementCoordinator:
             speech is not None,
             presentation_flags,
             tuple(
-                (session.id, session.persisted_conversation_id)
+                # Review fix: scope-affecting attributes ride the tuple --
+                # resolve/includes read runtime_backend, the conversation
+                # binding revision, ephemerality, and workspace, so an
+                # in-place change of any of them (a live slot re-bound to
+                # another conversation, a workspace move, a backend flip)
+                # must reopen the gate; id/persisted alone missed those.
+                (
+                    session.id,
+                    session.persisted_conversation_id,
+                    getattr(session, "conversation_binding_revision", None),
+                    getattr(session, "ephemeral", None),
+                    getattr(session, "runtime_backend", None),
+                    getattr(session, "workspace_id", None),
+                )
                 for session in sessions
             ),
         )

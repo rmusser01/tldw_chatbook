@@ -576,20 +576,16 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         identity = console_send_connection(
             settings, app_config=console._provider_readiness_app_config()
         )
-        build = console._active_console_settings_readiness_uncached
-
-        def build_then_settle():
-            built = build()  # The poll's readiness, from before the result.
-            store = ProviderTestEvidenceStore(lambda: harness)
-            store.settle(
-                store.begin(identity),
-                ProviderProbeResult("unreachable", (), "connection_refused"),
-            )
-            return built
-
-        console._active_console_settings_readiness_uncached = build_then_settle
-        console._poll_console_credential_readiness()
-        console._active_console_settings_readiness_uncached = build
+        # TASK-34918 follow-up: the poll now carries a cheap pre-gate whose
+        # version component reopens it, so the settle is driven directly on
+        # the evidence store (as a real off-thread settle would be) instead
+        # of as a side effect of the build hook -- the pre-gate would skip
+        # the build entirely, and the simulated settle would never fire.
+        store = ProviderTestEvidenceStore(lambda: harness)
+        store.settle(
+            store.begin(identity),
+            ProviderProbeResult("unreachable", (), "connection_refused"),
+        )
         console._poll_console_credential_readiness()  # The next tick.
         await pilot.pause()
 

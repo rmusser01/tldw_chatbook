@@ -275,13 +275,6 @@ WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
-#: TASK-34929: a revisit within this window skips the five mount-time
-#: section loads. Rapid tab flipping re-queries every section per visit;
-#: the loads are off-pump workers, so this is a query-cost gate. The TTL
-#: keeps the correctness surface empty -- any data change older than the
-#: window is always seen, and `r` (action_refresh_all) always reloads.
-WATCHLISTS_REVISIT_SKIP_SECONDS = 2.0
-
 #: Success copy for the Inspector's ignore-rule Save (TASK-1362).
 #:
 #: The third sentence is the whole-branch review's Critical 1. Spec §3 accepts
@@ -1344,25 +1337,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
         self._recompute_effective_layout(cause="initial")
-        # TASK-34929: skip the five section loads on a rapid revisit. The
-        # loads are off-pump workers (this is a query-cost gate, not a
-        # freeze fix); the short TTL keeps the correctness surface empty --
-        # data changes older than the window are always seen, `r`
-        # (action_refresh_all) always reloads, and layout/section setup
-        # above still runs on every visit.
-        import time as _time
-
-        now = _time.monotonic()
-        last_visit = getattr(
-            self.app_instance, "_watchlists_last_visit_monotonic", None
-        )
-        recent_visit = (
-            last_visit is not None
-            and (now - last_visit) < WATCHLISTS_REVISIT_SKIP_SECONDS
-        )
-        self.app_instance._watchlists_last_visit_monotonic = now
-        if recent_visit:
-            return
+        # TASK-34929 (review revert): the revisit-TTL gate shipped here
+        # stranded fresh screen instances in a permanent loading state --
+        # this route is NOT reusable, so every visit constructs a screen
+        # with empty data state, and skipping the loaders on a rapid
+        # revisit left nothing to render from. Reload every visit until a
+        # data-carrying snapshot cache exists (see the task file).
         server_read = self.active_section == "items" and self.runtime_backend != "local"
         if server_read:
             self._enter_server_read_recovery()

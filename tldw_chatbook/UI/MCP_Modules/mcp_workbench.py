@@ -1390,21 +1390,27 @@ class MCPWorkbench(Container):
         # fingerprint's connection-state projection actually joins the token.
         # The default ``profiles=()`` excluded connection states entirely, so
         # a server connect/disconnect with no store change served stale
-        # readiness. `_catalog_records` is the last full pass's local catalog
-        # (re-derived from the same fingerprinted store, whose identity
-        # component already covers membership changes); an empty first visit
-        # passes () exactly as before and always takes the full walk (the
-        # cache is empty too).
+        # readiness. Review follow-up: this route is NOT reusable, so a
+        # production revisit builds a FRESH widget whose `_catalog_records`
+        # is empty -- deriving profiles from it silently excluded
+        # connection states from the fingerprint on every revisit. The
+        # CACHE's records describe exactly the snapshots the token would
+        # validate, so they lead; the widget's own records cover the
+        # same-widget forced path; a true first visit passes () and always
+        # takes the full walk (the cache is empty too).
+        cache = getattr(self.app_instance, "_mcp_workbench_snapshot_cache", None)
+        records_for_profiles = (
+            cache[2] if cache is not None else None
+        ) or self._catalog_records
         profiles = tuple(
             (profile_id, bool(record.get("plugin_owner")))
-            for profile_id, record in self._catalog_records.items()
+            for profile_id, record in records_for_profiles.items()
         )
         try:
             fingerprint = await fingerprint_runner(profiles)
         except Exception:  # noqa: BLE001 - admission refusal: full load
             return await self._collect_snapshots()
         token = (fingerprint, current_config_identity())
-        cache = getattr(self.app_instance, "_mcp_workbench_snapshot_cache", None)
         if cache is not None and cache[0] == token:
             # Review fix (task-34927): a cache hit must restore the local
             # profile catalog along with the snapshots. `_catalog_records`

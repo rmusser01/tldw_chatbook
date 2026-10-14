@@ -531,18 +531,22 @@ def sanitize_capture_value_with_omission(
         and len(sanitized_value) < _STUB_MIN_CHARS
         and not sanitized_value.startswith("data:")
     ):
-        # TASK-34919: the dominant streamed shape is a short plain-text
-        # delta, and both post-passes provably return such a string
-        # unchanged -- nested-credential removal passes plain strings
-        # through, and the binary stub gate requires a data: prefix or a
-        # canonical length >= _STUB_MIN_CHARS (canonical <= raw). Skip the
-        # whitespace-strip copy and base64 regex over every chunk.
-        # Honesty note (review follow-up): the per-chunk capture callers
-        # hand this function a 1-element LIST, so on that named path the
-        # isinstance(str) check above never matches and the skip does not
-        # fire there -- today only string-typed callers take this shortcut.
-        # The behavior is equivalent on both paths; the guard logic is left
-        # untouched (redaction-sensitive).
+        # TASK-34919: the dominant streamed shapes are a short plain-text
+        # delta (str) or a one-element list of one -- the exchange mutation
+        # path passes each chunk as [text] (review follow-up). Both
+        # post-passes provably return such values unchanged -- nested-
+        # credential removal passes plain strings through, and the binary
+        # stub gate requires a data: prefix or a canonical length >=
+        # _STUB_MIN_CHARS (canonical <= raw) -- so the whitespace-strip
+        # copy and base64 regex are skipped over every chunk.
+        return sanitized_value, result.redacted
+    if (
+        type(sanitized_value) is list
+        and len(sanitized_value) == 1
+        and isinstance(sanitized_value[0], str)
+        and len(sanitized_value[0]) < _STUB_MIN_CHARS
+        and not sanitized_value[0].startswith("data:")
+    ):
         return sanitized_value, result.redacted
     return (
         stub_binary_strings(_remove_nested_credentials(sanitized_value)),

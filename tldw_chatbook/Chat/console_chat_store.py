@@ -17942,6 +17942,11 @@ class ConsoleChatStore:
         message.thinking = envelope
         message.opaque_thinking_json = None
         message.thinking_warning = None
+        # TASK-34920 review: live thinking envelopes mutate the rendered
+        # transcript without any content chunk -- without this bump the
+        # screen's tick gate would hold reasoning text at the ~3s forced
+        # pass cadence during thinking-only phases.
+        self._bump_display_revision_for_message(message.id)
         return self._snapshot(message)
 
     def settle_message_thinking(

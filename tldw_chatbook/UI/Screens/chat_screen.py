@@ -11626,9 +11626,8 @@ class ChatScreen(BaseAppScreen):
             subscription_readiness_revision(),
             version,
         )
-        if pre_gate == self._console_credential_pre_gate:
+        if pre_gate == getattr(self, "_console_credential_pre_gate", None):
             return
-        self._console_credential_pre_gate = pre_gate
         from contextlib import ExitStack
 
         from tldw_chatbook import config
@@ -11656,6 +11655,11 @@ class ChatScreen(BaseAppScreen):
                 self._sync_console_settings_summary()
                 if self._sync_console_control_bar():
                     self._console_credential_snapshot = snapshot
+                # Commit the pre-gate only from a completed pass (review
+                # finding): lock contention, a dropped deferred sync, or a
+                # build failure must leave it unset so the next tick
+                # retries -- the contract the old comment promised.
+                self._console_credential_pre_gate = pre_gate
 
         with ExitStack() as acquired:
             for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
@@ -18225,12 +18229,16 @@ class ChatScreen(BaseAppScreen):
                 run_activity,
                 delete_arm,
             )
-            self._console_transcript_sync_ticks += 1
-            forced = self._console_transcript_sync_ticks % 15 == 0
+            # getattr fail-open: bare test shells build this screen via
+            # __new__ and do not run __init__ (review finding).
+            ticks = getattr(self, "_console_transcript_sync_ticks", 0) + 1
+            self._console_transcript_sync_ticks = ticks
+            forced = ticks % 15 == 0
             if (
                 not force
                 and not forced
-                and gate == self._console_transcript_sync_token
+                and gate
+                == getattr(self, "_console_transcript_sync_token", None)
             ):
                 return
             self._console_transcript_sync_token = gate

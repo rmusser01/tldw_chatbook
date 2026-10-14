@@ -6,7 +6,7 @@ import asyncio
 from functools import partial
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual import events, on, work

@@ -3903,7 +3903,7 @@ class SettingsScreen(BaseAppScreen):
         self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
             None
         )
-        self._subscription_readiness_gate: tuple[str, str, str, int] | None = None
+        self._subscription_readiness_gate: tuple[Any, ...] | None = None
         self._provider_subscription_test: tuple[str, int] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
