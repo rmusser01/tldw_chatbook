@@ -6847,3 +6847,47 @@ def test_the_switch_lock_is_one_per_event_loop_and_stays_put():
         second.close()
     assert a1 is a2 and b1 is b2
     assert a1 is not b1
+
+
+# --- TASK-34985: a re-track after an untrack while Dreams was off alerts ------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["dreams-created", "users-own"])
+async def test_tracking_again_after_untracking_while_off_alerts_again(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, source):
+    """The switch-off silenced Dreams' change rule and its record said so;
+    retiring the watch while Dreams was off dropped that, and tracking the
+    page again reused the rule as it stood: a tracked page that never
+    alerts. A user's own disabled rule on their own source stays off."""
+    _subs_db, service = subs_stack
+    users_rule = None
+    if source == "dreams-created":
+        owned = await _event_page(dreams_db, service, scheduling_db)
+        source_id, item_id = owned["subscription_id"], owned["tracked_item_id"]
+        track_again = lambda: _event_page(dreams_db, service, scheduling_db)
+    else:
+        source_id, attached = await _attach_to_users_source(
+            dreams_db, service, provenance=UrlProvenance.USER_ENTERED)
+        item_id = attached["tracked_item_id"]
+        users_rule = await _users_rule(service, job_id=source_id)
+        await service.update_alert_rule(users_rule["rule_id"], enabled=False)
+        track_again = lambda: track_page(
+            service, dreams_db, url="https://example.com/users-own",
+            title="Theirs", intent="topic", origin_story_id=2)
+    dreams_rule = _rule_id_on_record(dreams_db, item_id)
+    settings["enabled"] = False
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await untrack(service, dreams_db, item_id,
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+    settings["enabled"] = True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    await track_again()
+
+    rules = {r["rule_id"]: r["enabled"]
+             for r in await service.list_alert_rules(job_id=source_id)}
+    assert rules[dreams_rule] is True or rules[dreams_rule] == 1, (
+        "the tracked page alerts again")
+    if users_rule is not None:
+        assert not rules[users_rule["rule_id"]], "the user's own rule stays off"

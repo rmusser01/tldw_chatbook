@@ -1035,7 +1035,8 @@ async def _record_retirement(
     the debt stays here, where tracking the story again still finds it
     (:func:`_retry_held_source`).
     """
-    owed_subscription, owed_reminders, _rules = _owed(_suspension_record(item))
+    owed_subscription, owed_reminders, owed_rules = _owed(
+        _suspension_record(item))
     owed_reminders = [value for value in owed_reminders if value not in handed]
     if owed_subscription and not subscription:
         owed_subscription = not await _hand_on_source_debt(dreams_db, item)
@@ -1043,7 +1044,10 @@ async def _record_retirement(
         await asyncio.to_thread(run_finite_local_worker,
             dreams_db.set_tracked_suspension, int(item["id"]), _record_text(
                 subscription=subscription or owed_subscription,
-                reminders=owed_reminders + reminders, rules=[],
+                # The rules the switch silenced stay owed (TASK-34985):
+                # tracking the page again re-enables them
+                # (:func:`_restore_rules_left_off`).
+                reminders=owed_reminders + reminders, rules=owed_rules,
                 settled=_SETTLED_RETIRED))
     except Exception as exc:  # noqa: BLE001 - the retirement stands
         logger.warning(
@@ -1139,7 +1143,7 @@ async def _settle_source_restored(dreams_db: Any, riders: list[dict]) -> None:
         text: str | None = None
         if retired:
             text = _record_text(
-                subscription=False, reminders=reminders, rules=[],
+                subscription=False, reminders=reminders, rules=rules,
                 settled=_SETTLED_RETIRED)
         elif reminders or rules:
             text = _record_text(
@@ -1274,6 +1278,43 @@ async def _retry_held_source(
         logger.warning(
             "Dreams re-track: settling subscription {} failed: {}",
             subscription_id, type(exc).__name__)
+
+
+async def _restore_rules_left_off(
+    subs_service: Any, dreams_db: Any, subscription_id: int,
+    dreams_rules: dict[int, dict],
+) -> None:
+    """Re-enable the Dreams rules a retired watch's record still owes.
+
+    TASK-34985. The switch-off silences Dreams' change rule and the watch's
+    record says so; a watch retired while Dreams was off keeps that debt on
+    its retirement record, and no switch pass reads a retired watch. A page
+    tracked again (Dreams is on: :func:`_require_dreams_on`) gets its rule
+    back here, and the debt leaves the record. Only a rule a record owes is
+    touched: one the user switched off themselves, or a user's own rule,
+    never is.
+    """
+    riders = await asyncio.to_thread(
+        dreams_db.list_tracked_for_subscription, subscription_id)
+    for rider in riders:
+        if rider.get("status") != "retired":
+            continue
+        record = _suspension_record(rider) or {}
+        subscription, reminders, rules = _owed(record)
+        owed = [rule_id for rule_id in rules if rule_id in dreams_rules]
+        if not owed:
+            continue
+        for rule_id in owed:
+            if not bool(dreams_rules[rule_id].get("enabled", True)):
+                try:
+                    await subs_service.update_alert_rule(rule_id, enabled=True)
+                except KeyError:
+                    pass  # the user deleted the rule
+        await asyncio.to_thread(
+            dreams_db.set_tracked_suspension, int(rider["id"]), _record_text(
+                subscription=subscription, reminders=reminders,
+                rules=[rule_id for rule_id in rules if rule_id not in owed],
+                held=record.get("held"), settled=_SETTLED_RETIRED))
 
 
 async def _source_is_gone(subs_service: Any, wrapper: dict) -> bool:
@@ -1625,6 +1666,8 @@ async def track_page(
             subs_service, dreams_db, subscription_id)
         if dreams_rules:
             alert_rule_id = min(dreams_rules)
+            await _restore_rules_left_off(
+                subs_service, dreams_db, subscription_id, dreams_rules)
         else:
             created_rule = await subs_service.create_alert_rule(
                 name=_change_rule_name(title),
