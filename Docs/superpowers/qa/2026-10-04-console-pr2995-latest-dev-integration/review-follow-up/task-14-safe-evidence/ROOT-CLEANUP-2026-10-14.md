@@ -8,7 +8,7 @@ point-in-time records and are intentionally **not** edited.
 
 On 2026-10-14 the root was deliberately cleaned up; if you are diffing
 a current tree against these snapshots, the following divergences are
-the known, intentional ones (branch `chore/clean-dev-root`):
+the known, intentional ones (PR #3102, branch `chore/clean-dev-root`):
 
 - **Removed** (one-off artifacts): `IMPLEMENTATION_PLAN_personal_context_first_link.md`,
   `IMPLEMENTATION_PLAN_personal_context_sync_capabilities.md`,
