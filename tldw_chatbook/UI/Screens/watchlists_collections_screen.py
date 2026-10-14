@@ -5214,30 +5214,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.debug("No section tab to restore focus to after the swap.")
 
     def _reseed_active_section_pane(self) -> None:
-        """Re-apply the section's loaded rows to the pane the swap mounted.
+        """Re-apply loaded state to the section pane a rebuild just mounted.
 
-        `watch_active_section` dispatches this section's loader and the swap
-        in the same breath, and `WatchlistsWorkbench.refresh_region_content`
-        deliberately calls the region factory BEFORE detaching the old pane
-        (so a factory that raises leaves what is on screen standing). Those
-        two facts open a window: the factory reads screen state, then the
-        remove/mount pair awaits, and a loader that lands in that gap writes
-        its rows to `self._loaded_*` and then fails to find its pane, because
-        the replacement is built but not yet mounted. The pane then renders
-        the state as it was one instant before the data arrived, with nothing
-        left to correct it -- measured as an Alert-rules table that stayed
-        empty over a `self._loaded_rules` holding the row.
+        A section swap, and a layout change that re-creates the Items region,
+        call the pane factory (it reads screen state) BEFORE the old pane's
+        remove and the new one's mount await. A loader landing in that gap
+        writes `self._loaded_*` (or the tree, overview or source ids) and
+        finds no pane to push into, so the pane would keep the state of one
+        instant before -- measured as an Alert-rules table left empty over
+        `self._loaded_rules`, and in TASK-34951 as a Sources form offering no
+        watchlist. The whole-screen recompose this replaced had no gap.
 
-        (The whole-screen `refresh(recompose=True)` this replaced did not have
-        the gap: Textual's `Widget.recompose` removes its children first and
-        calls `compose()` only afterwards, so it always read screen state on
-        the late side of the yield.)
-
-        Re-applying after the mount closes it from the other end, and costs
-        nothing when no loader landed: these are reactive assignments, and an
-        unchanged value fires no watcher and no recompose. It is also what
-        keeps a section switch to ONE pane build -- the loader's own push,
-        arriving later, finds the values already in place.
+        These are reactive assignments: an unchanged value fires no watcher
+        or recompose, so a section switch stays ONE pane build and a loader
+        arriving later finds its values already in place.
         """
         if not self._dom_is_live:
             return
