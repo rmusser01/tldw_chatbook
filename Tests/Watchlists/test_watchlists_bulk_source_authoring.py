@@ -1061,6 +1061,71 @@ async def test_the_reseed_keeps_a_selection_the_screen_has_not_heard_of_yet():
     assert mirrored == (selected,)
 
 
+def _land_before_mounting(monkeypatch, node_id, landing):
+    """Run ``landing(screen)`` once, after the region ``node_id`` is built and
+    before it mounts; returns the list ``landing`` results are appended to."""
+    from textual.widget import Widget
+
+    mount = Widget.mount
+    landed = []
+
+    def mount_after_landing(self, *widgets, **kwargs):
+        if landed or not any(w.id == node_id for w in widgets):
+            return mount(self, *widgets, **kwargs)
+
+        async def later():
+            landed.append(await landing(self.screen))
+            return await mount(self, *widgets, **kwargs)
+
+        return later()
+
+    monkeypatch.setattr(Widget, "mount", mount_after_landing)
+    return landed
+
+
+async def _reopen(pilot, screen, region, node_id):
+    """Collapse ``region`` if it is open, and return once it is gone."""
+    if screen.query(f"#{node_id}"):
+        screen._toggle_preferred_region(region)
+        await _until(pilot, lambda: not screen.query(f"#{node_id}"))
+    assert not screen.query(f"#{node_id}"), f"{node_id} did not collapse"
+
+
+@pytest.mark.asyncio
+async def test_a_check_starting_while_the_right_rail_is_recreated_reaches_the_inspector(
+    monkeypatch,
+):
+    """Review of #3107, round 3, item Q1: the Inspector's factory seeds the
+    busy source ids, and _set_check_now_busy pushes them into a mounted
+    Inspector only, so a check starting while the right rail re-expanded
+    left its Check-now state stale."""
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    host = BulkSourcesScreenHarness(_build_test_app(), "watchlists_collections")
+
+    async def a_check_starts(screen):
+        screen._checks_in_flight.add("local:subscription:1")
+        screen._set_check_now_busy()
+        return True
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await _reopen(pilot, screen, Region.RIGHT_RAIL, "wl-region-right_rail")
+        landed = _land_before_mounting(
+            monkeypatch, "wl-region-right_rail", a_check_starts
+        )
+        screen._toggle_preferred_region(Region.RIGHT_RAIL)
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        busy = screen.query_one(InspectorPane).busy_source_ids
+
+    assert landed == [True]
+    assert busy == {"local:subscription:1"}
+
+
 @pytest.mark.asyncio
 async def test_the_reseed_keeps_the_selection_range_anchor():
     """Review of #3107, round 3, item Q4: re-applying the pane's selection
