@@ -112,6 +112,31 @@ recorded outcome says the same input can be retried. For authentication,
 access, invalid-feed, and policy failures, make the stated configuration or
 content change first and then use **Check now**.
 
+## Feeds at a private address
+
+The network safety policy fetches a source at a private address — a NAS,
+an intranet server, `localhost` — only when you typed that address into
+this screen yourself, with **New source** or **Add several…**. Such a
+source needs no further setup. Every other source must resolve to a public
+address, and so must anything a feed links to.
+
+A source made by an earlier version of the app, or brought in by an OPML or
+bundle import, does not count as typed in. If its address is private, its
+checks now fail with **Blocked by network safety policy**. Watchlists cannot
+change a source's address, so to let such a source run again, list its host
+in `config.toml` and restart the app:
+
+```toml
+[web_security]
+allowed_hosts = ["nas.local", "192.168.1.20"]
+```
+
+Write each host exactly as it appears in the source's address, without the
+scheme, port or path; there are no wildcards. A listed host is admitted for
+every fetch the app makes, not only for that source's checks — including
+links inside any feed and a cloud-metadata address that is otherwise always
+refused — so list only hosts you trust.
+
 ## Exporting briefings and podcast feeds
 
 The **Artifacts** section of a watchlist holds its briefings — text digests

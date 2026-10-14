@@ -131,6 +131,35 @@ async def test_explicit_user_entered_private_url_remains_allowed(monitor, wire):
     assert wire.sent == [_URL]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("allowed", "fetched"),
+    [(["later-private.example"], True),
+     (["later-private.example:443"], False),
+     (["*.example"], False)],
+    ids=["host", "with-port", "wildcard"],
+)
+async def test_an_older_private_source_runs_once_its_host_is_allowed(
+        monitor, wire, monkeypatch, allowed, fetched):
+    """TASK-34926: the guide's remedy for an older or imported source at a
+    private address (Docs/User_Guide/watchlists.md, "Feeds at a private
+    address") -- list the bare host in ``[web_security] allowed_hosts``; a
+    port or a wildcard does not match."""
+    monkeypatch.setattr(
+        egress, "get_cli_setting",
+        lambda section, key, default=None: (
+            allowed if key == "allowed_hosts" else default))
+    wire.resolves_to = ["192.168.1.1"]
+
+    if fetched:
+        await monitor._fetch_url_content(_subscription(None))
+        assert wire.sent == [_URL]
+    else:
+        with pytest.raises(FetchBlockedError):
+            await monitor._fetch_url_content(_subscription(None))
+        assert wire.sent == []
+
+
 # --- Review round 3, T17: every fetch arm honours the mark ----------------------
 #
 # The mark was read only by the ``url`` arm. The feed, sitemap and API arms

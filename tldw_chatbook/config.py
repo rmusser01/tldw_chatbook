@@ -5515,11 +5515,12 @@ default = "pixels"
 
 [web_security]
 # Egress guard (SSRF protection) for web scraping / ingestion / subscription
-# fetches. When enabled, content-derived URLs (redirects, sitemap/crawl
-# discoveries, feed items) must resolve to public IPs; URLs you explicitly
-# configure (feed sources, Confluence base_url, ingest URLs) may be private.
-# Cloud metadata endpoints (169.254.169.254 etc.) are always blocked unless
-# the exact host is listed in allowed_hosts.
+# fetches. When enabled, a URL must resolve to public IPs unless you typed it
+# into the app (Watchlists New source / Add several, an ingest URL, a
+# Confluence base_url); redirects, crawl discoveries, feed items, and watch
+# sources from an older version or an OPML/bundle import never count.
+# allowed_hosts admits each listed host (exact name, no port) for every
+# fetch, cloud metadata endpoints included (otherwise always blocked).
 enabled = true
 allowed_hosts = []
 # Default (connect, read) timeout applied by `Utils/egress.py`'s
