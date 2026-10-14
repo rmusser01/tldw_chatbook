@@ -1,7 +1,7 @@
 ---
 id: TASK-34918
 title: The Console and Library screen files are over their size budgets on dev
-status: In Progress
+status: Done
 created_date: 2026-10-12 22:38
 labels:
 - architecture
@@ -9,7 +9,7 @@ labels:
 priority: medium
 assignee:
 - '@claude'
-updated_date: 2026-10-14 16:47
+updated_date: 2026-10-14 16:50
 ---
 
 ## Description
