@@ -22,7 +22,7 @@ Findings closed:
 
 B11 is excluded (see Out of scope).
 
-The owner chose this stream. Its copy rule is this plan's extension of the approved model-config spec §4 rule 2 (`backlog/docs/spec-2026-09-26-model-config-redesign.md`, "Raw config keys never appear in UI copy"), which Phase 7 applied to Providers & Models.
+The owner chose this stream on 2026-10-14 (as one of the four Settings-wide streams); the owner did not set its copy rule. That rule is this plan's extension of the approved model-config spec §4 rule 2 (`backlog/docs/spec-2026-09-26-model-config-redesign.md`, "Raw config keys never appear in UI copy"), which Phase 7 applied to Providers & Models.
 
 ## Goal
 
@@ -78,7 +78,7 @@ A first-time user can read every Settings page, banner, Inspector and F1 panel i
   - TASK-35018 depends on TASK-35016, which owns the view-only pages' "Planned" row and their Inspector read-only line (it rewrites `read_only_reason` to "Change these in \<owner\>"), plus the User Guide's category map and view-only count. S4 leaves all of these as TASK-35016 ships them.
   - TASK-35019 depends on TASK-35017. TASK-35017's first commit moves `SettingsScreen._render_console_behavior_card` into `UI/Settings_Modules/console_behavior_card.py`, and it reshapes `compose_goal_policy`; TASK-35019 edits the card and the goal help in their new places. TASK-35017 also moves the guide's Goal runs section under Console Behavior.
   - TASK-35021 owns the guide's Tab sentence.
-- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories) and owns the rail-size guard; TASK-35016 adds no category and leaves that guard alone. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time after #3057: it fixes the red guards at today's truth (33 categories) and owns the rail-size guard; TASK-35016 adds no category and leaves that guard alone. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 - **Merge queue is on.**
   - Arm auto-merge only after Qodo has reviewed the current head and every thread is resolved.
   - Never `update-branch` an armed PR.
