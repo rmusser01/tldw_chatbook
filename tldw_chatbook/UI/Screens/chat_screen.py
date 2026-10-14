@@ -24790,33 +24790,6 @@ class ChatScreen(BaseAppScreen):
             )
             return False
 
-    def _restore_collapsible_states(self) -> None:
-        """Restore collapsible states from saved state."""
-        if not self.ui_state.collapsible_states:
-            logger.debug("No collapsible states to restore")
-            return
-
-        try:
-            # Find all collapsibles in the sidebar
-            collapsibles = self.query(Collapsible)
-            restored_count = 0
-
-            for collapsible in collapsibles:
-                if (
-                    collapsible.id
-                    and collapsible.id in self.ui_state.collapsible_states
-                ):
-                    collapsed_state = self.ui_state.collapsible_states[collapsible.id]
-                    collapsible.collapsed = collapsed_state
-                    restored_count += 1
-                    logger.debug(
-                        f"Restored {collapsible.id}: collapsed={collapsed_state}"
-                    )
-
-            logger.info(f"Restored {restored_count} collapsible states")
-        except Exception as e:
-            logger.error(f"Error restoring collapsible states: {e}")
-
     @on(SkillScriptConfirmCard.ScriptDecided)
     def handle_console_skill_script_decided(self, event: Any) -> None:
         event.stop()

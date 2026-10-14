@@ -58,16 +58,16 @@ Budgets are not lowered. Chat sits 192 lines under, inside the 200-line slack te
 **library_screen.py**
 - Deleted five methods nothing calls: `_structural_records_for_comparison` and `_decorative_rail_counts_for_comparison` (callers removed by 0dfadf4637), `_safe_sync_scope_text`, `_hub_source_count_label` and `_library_workspace_scope_label`.
 - Removed 19 unused imports. None is in the Library_Modules re-export contract or reached as `library_screen.<name>` (AST scan). `set_mode` stays because a test reaches it through the module.
-- Moved the TASK-21243 ordinary-shell builders (`_build_library_ordinary_shell_trio`, `_library_single_notes_stage`) into `Library_Modules/library_browse_route_swap.py`, which already calls them, and kept the lazy import used by `compose_content`'s other route-swap import.
+- Moved the TASK-21243 ordinary-shell builders (`_build_library_ordinary_shell_trio`, `_library_single_notes_stage`) into `Library_Modules/library_browse_route_swap.py`, which already calls them, with a second, unconditional lazy import in `compose_content`, so the module now loads on the first compose of any Library route (it is not resident at UI ready, and its dependencies are already loaded by library_screen).
 
 **Evidence**
 - Tests/Architecture was run serially before and after; failures are compared by name and value. The two screen-ratchet failures are gone.
-- The one new red is expected drift: the diagnostic inventory row for chat_screen.py goes from 124 to 123 calls, because the deleted duplicate held one copy of the `logger.info` that the live handler still has. It is not regenerated here.
+- The one new red is expected drift: the diagnostic inventory row for chat_screen.py goes from 124 to 123 calls, because the deleted duplicate held one copy of the `logger.info` that the live handler still has. It was regenerated in this PR (the inventory check passes).
 - `test_surface_swap_guard[#outgoing]` failed twice while the machine was overloaded (load average around 30), then passed 16 out of 16 runs. It uses a self-contained app.
 - The Console and Library UI and Chat test files that exercise every moved or deleted symbol were run on this branch and on a clean dev worktree with the same arguments. They show no failure that is new on this branch; the differences are timing flakes that fail on both trees when rerun.
-- Preflight passes except for the inventory drift above. The markup census and the textual worker contract checker pass.
+- Preflight passes. The markup census and the textual worker contract checker pass.
 - /verify (an app launch) was not run: this session forbids launching the app.
-The status stays In Progress. Preflight's production diagnostic inventory check stays red until the inventory is regenerated for the chat_screen.py row (124 to 123 calls); move the task to Done after that.
+Review of PR #3109 found a second, byte-identical copy of `ChatScreen._restore_collapsible_states` (ruff F811 does not flag identical copies); its first copy is deleted too (its only caller is `set_timer(0.1, self._restore_collapsible_states)`, a bound method). That put chat_screen.py 219 lines under its row, past the ratchet's 200-line slack, so the row is lowered to the exact measurement, 24985/754. Library is 53 lines and 5 methods under its unchanged row.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

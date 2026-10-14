@@ -1336,4 +1336,8 @@ But `test_screen_size_ratchet.py` counted it for a month, in both the line
 budget and the method budget, and that cost was part of why the ratchet went
 red. To catch the other half of this failure, run
 `ruff check --isolated --select F811 <file>` on a heavily merged class-body
-file. It flags the shadowed copy whichever copy wins.
+file. It flags the shadowed copy whichever copy wins, but only when the two
+bodies differ: the same review found a byte-identical second copy of
+`ChatScreen._restore_collapsible_states` that ruff 0.16.6 F811 does not report.
+An AST pass over the class body that lists duplicate method names (skipping
+property getter/setter pairs) finds both kinds.
