@@ -1,8 +1,10 @@
 # Plan: Settings speaks plain language: the Inspector, F1 help, page copy and the User Guide (stream S4-copy)
 
-> **Owner rulings, 2026-10-14.** The recommendation was applied for both; the owner was told and did not object:
-> - OD-1 **(a)**: F1 gets an "Includes:" line drawn from the `/` search index.
-> - OD-2 **(a)**: the raw-CLI card title becomes "Danger: raw CLI and Terminal run commands as your user, with no sandbox".
+> **Owner rulings, 2026-10-14.**
+> - Supersede TASK-34792's controller ruling R1 (owner choice): the Dreams budget and cadence rows get plain-language labels, and their TOML keys move into a 'Saved as' disclosure.
+> - The recommendation was applied for these two; the owner was told and did not object:
+>   - OD-1 **(a)**: F1 gets an "Includes:" line drawn from the `/` search index.
+>   - OD-2 **(a)**: the raw-CLI card title becomes "Danger: raw CLI and Terminal run commands as your user, with no sandbox".
 
 Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/critique/2026-10-14T15-26-24Z__tldw-chatbook-ui-screens-settings-screen-py.md`), reviewed on origin/dev 1ef4fcf4ae.
 
@@ -225,7 +227,7 @@ Closes: D4 (the page, banner and status half), D question 7 (the raw-CLI copy), 
    - Add `GUARDIAN_READ_ONLY_WORDS` and `DREAMS_READ_ONLY_WORDS` to `settings_help_copy.py`, imported inside the functions. Examples: `fixation_share_threshold` → "Fixation alert share"; `stories_per_cycle` → "Stories per cycle". The rows read "<words>: <value>".
    - The headings say "read-only here; change them in Advanced Config".
    - Under each block, add one `_config_key_disclosure` holding "Saved as: [guardian] fixation_share_threshold, …".
-   - **Pending owner ruling (asked 2026-10-14): supersede TASK-34792 R1 — plain-language labels with the keys in a 'Saved as' disclosure — or keep R1.** R1 is that task's controller ruling that the Dreams budget and cadence rows are labelled by their TOML key. This step and TASK-35019 AC#3 are written for superseding it; R1's purpose, letting users find the key, is kept by the disclosure. If the owner keeps R1, the Dreams rows are excluded from this step and from AC#3 (they keep their key labels), and Guardian's rows still change.
+   - **Owner ruling (2026-10-14): supersede TASK-34792 R1.** R1 is that task's controller ruling that the Dreams budget and cadence rows are labelled by their TOML key. These rows get plain-language labels, and the keys move into a 'Saved as' disclosure under the block. R1's purpose, letting users find the key, is kept by the disclosure. Guardian's rows change the same way.
 8. **Console Behavior help** (after TASK-35017; the card lives in `UI/Settings_Modules/console_behavior_card.py`).
    - In `AGENT_BUDGET_FIELDS`, rewrite the `help_text` of `agent_max_total_tokens`, `agent_max_wall_seconds` and `agent_max_tool_call_seconds` in plain words, keeping every safety fact:
      - Spend grows faster each turn, because the whole conversation is re-sent.
@@ -438,7 +440,7 @@ Use the sandboxed recipe that has been verified to work. Never point the app at 
   - `_detail_row` already uses `markup=False`. Any new Static that interpolates runtime text does too.
   - Run `python scripts/check_markup_interpolation.py`; it should show no new sites.
 - **Superseded rulings, said out loud in the PR.**
-  - TASK-34792's R1 (keys as Dreams row labels): pending owner ruling (asked 2026-10-14) — supersede R1 (plain-language labels with the keys in a 'Saved as' disclosure) or keep it. If it is superseded, say so in the PR; if it is kept, the Dreams rows stay as R1 has them and the PR says so.
+  - TASK-34792's R1 (keys as Dreams row labels): superseded by owner ruling, 2026-10-14. Plain-language labels; the keys stay findable in the 'Saved as' disclosure. Say so in the PR.
   - P7 review R1 #27's Providers Inspector boundary line: the fact moves to F1.
   - The raw-CLI plan's exact title (OD-2).
 - **Branch conflicts.**
