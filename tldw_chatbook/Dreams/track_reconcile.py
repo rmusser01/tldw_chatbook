@@ -233,15 +233,13 @@ def _stores_may_run(app: Any, dreams_db: Any) -> bool:
     review (ADR-126), where a false answer "permits local inspection
     only". It is a check made once, before the work, as ``app.py`` makes
     its own -- not an ``activation.execution_scope`` retained through it.
-    That scope is meant to be held inside one synchronous worker
-    (``activation.execution_allowed``: "the eventual worker must retain
-    its own scope"), and this pass is many awaits long: thread hops,
-    watchlists service calls, name lookups. A storage maintenance pause
-    (a backup capture) drains live storage leases before it proceeds and
-    gives up at its deadline (``storage_admission._LocalPause.drain``), so
-    holding one through those awaits would make a capture wait on name
-    lookups. The cost of checking once: a restore that begins after this
-    check is not held off by it. File I/O; the caller thread-offloads it.
+    This pass is many awaits long: thread hops, watchlists service calls,
+    name lookups. A storage maintenance pause (a backup capture) drains
+    live storage leases before it proceeds and gives up at its deadline
+    (``storage_admission._LocalPause.drain``), so holding a scope's lease
+    through those awaits would make a capture wait on name lookups. The
+    cost of checking once: a restore that begins after this check is not
+    held off by it. File I/O; the caller thread-offloads it.
 
     Returns:
         True when every store there is to ask about is cleared for
