@@ -27,7 +27,7 @@ One `stream_chat()` invocation = one provider call. The gateway runs the provide
 
 The transcript re-renders via the Console's 0.2 s poll with O(delta) diffing (see [console.md](./console.md)). Non-streaming responses are normalized by `normalize_provider_response` — a full mapping is yielded as a single chunk, and synthetic fallback copy (no content / unsupported shape) is flagged so usage and trace never mislabel it as provider output.
 
-`Chat/Chat_Functions.chat()` remains only for **non-streaming** callers (CCP, media analysis, library, evals); its worker wrapper raises `ValueError` on `streaming=True` — streaming is exclusively owned by the Console gateway.
+`Chat/Chat_Functions.chat()` is the non-streaming entry (its worker wrapper raises `ValueError` on `streaming=True` — streaming is exclusively owned by the Console gateway); its production caller set is now empty, pinned by a census test — see [ccp.md](./ccp.md).
 
 ## Per-send transforms
 
