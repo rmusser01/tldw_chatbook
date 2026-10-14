@@ -325,10 +325,9 @@ _CHAT_DISPATCH_NAME_ALIASES = {
     "local_vllm": "vllm",
     "local_llm": "local-llm",
 }
-# NOT aliased (no summarize_with_* implementation here): aphrodite,
-# mlx_lm/local_mlx_lm, moonshot, zai. Callers see the in-band
-# "Error: Invalid API Name" for those, which the ingest payload boundary
-# now converts into a visible "analysis failed" warning.
+# aphrodite, mlx_lm/local_mlx_lm, moonshot and zai are covered by the
+# TASK-34895 engine-preset specs below (they had no legacy per-provider
+# function; the chat handler resolves their modern api_settings keys).
 
 
 def _dispatch_to_api(
@@ -2727,6 +2726,9 @@ class _SummarizerChatSpec:
     # the keyless in-band refusal applies only where the legacy function
     # had one.
     require_key: bool = True
+    # Read `<section>.temperature` when the caller passes no temp, the
+    # way the legacy local functions did.
+    config_temp: bool = False
     # "text" -> f"{text} \n\n\n\n{cp}" (the openai-family order);
     # "mistral" -> f"{cp}\n\n\n\n{text} " (legacy summarize_with_mistral);
     # "huggingface" -> f"{cp}\n\n\n{text}" (legacy summarize_with_huggingface).
@@ -2778,10 +2780,13 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
     "openrouter": _SummarizerChatSpec(
         endpoint="openrouter",
         legacy_section="openrouter_api",
-        default_model="microsoft/wizardlm-2-8x22b",
+        default_model="mistralai/mistral-7b-instruct",
         default_temp=0.1,
+        # Marker-matching on purpose: Web_Scraping's failure detector
+        # recognizes "error occurred", not the legacy "not provided" shape.
         missing_key_message=(
-            "OpenRouter: API Key Not Provided/Found in Config file or is empty"
+            "OpenRouter: Error occurred while processing summary with "
+            "OpenRouter: API key not provided/found or is empty"
         ),
         empty_message="openrouter: Expected data not found in API response.",
         error_template=(
@@ -2843,7 +2848,8 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         default_model="mistralai/Mistral-7B-Instruct-v0.2",
         default_temp=0.1,
         missing_key_message=(
-            "HuggingFace: API Key Not Provided/Found in Config file or is empty"
+            "HuggingFace: Error occurred while processing summary with "
+            "HuggingFace: API key not provided/found or is empty"
         ),
         empty_message="HuggingFace: Expected 'generated_text' in API response.",
         error_template=(
@@ -2862,6 +2868,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         error_template="Llama: Error occurred while processing summary with Llama: {detail}",
         require_key=False,
         prompt_style="template_nl",
+        config_temp=True,
     ),
     "kobold": _SummarizerChatSpec(
         endpoint="koboldcpp",
@@ -2883,6 +2890,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         empty_message="Ooba API: Failed to process summary.",
         error_template="Ooba API: Unexpected error occurred: {detail}",
         require_key=False,
+        config_temp=True,
     ),
     "tabbyapi": _SummarizerChatSpec(
         endpoint="tabbyapi",
@@ -2904,6 +2912,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         empty_message="vLLM Summarization: Summary not available",
         error_template="vLLM Summarization: Unexpected error occurred: {detail}",
         require_key=False,
+        config_temp=True,
     ),
     "local-llm": _SummarizerChatSpec(
         endpoint="local-llm",
@@ -2925,6 +2934,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         error_template="Ollama: Error occurred while summarizing: {detail}",
         require_key=False,
         prompt_style="ollama",
+        config_temp=True,
     ),
     "custom-openai-api": _SummarizerChatSpec(
         endpoint="custom-openai-api",
@@ -2936,7 +2946,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         ),
         empty_message="Custom OpenAI API: Chat not available",
         error_template="OpenAI: Failed to process chat response. Status code: {detail}",
-        prompt_style="template_nl4",
+        config_temp=True,
     ),
     "custom-openai-api-2": _SummarizerChatSpec(
         endpoint="custom-openai-api-2",
@@ -2948,7 +2958,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         ),
         empty_message="Custom OpenAI API API-2: Chat not available",
         error_template="OpenAI: Failed to process chat response. Status code: {detail}",
-        prompt_style="template_nl4",
+        config_temp=True,
     ),
     # --- engine presets (task-34895): summarization can now select any
     # chat-dispatch endpoint; these had NO legacy per-provider function,
@@ -2962,6 +2972,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="Moonshot: API Key Not Provided/Found in Config file or is empty",
         empty_message="Moonshot: Summary not available",
         error_template="Moonshot: Error occurred while processing summary: {detail}",
+        require_key=False,
     ),
     "zai": _SummarizerChatSpec(
         endpoint="zai",
@@ -2971,6 +2982,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="ZAI: API Key Not Provided/Found in Config file or is empty",
         empty_message="ZAI: Summary not available",
         error_template="ZAI: Error occurred while processing summary: {detail}",
+        require_key=False,
     ),
     "aphrodite": _SummarizerChatSpec(
         endpoint="aphrodite",
@@ -2980,6 +2992,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="Aphrodite: API Key Not Provided/Found in Config file or is empty",
         empty_message="Aphrodite: Summary not available",
         error_template="Aphrodite: Error occurred while processing summary: {detail}",
+        require_key=False,
     ),
     "mlx_lm": _SummarizerChatSpec(
         endpoint="mlx_lm",
@@ -2989,6 +3002,7 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="MLX: API Key Not Provided/Found in Config file or is empty",
         empty_message="MLX: Summary not available",
         error_template="MLX: Error occurred while processing summary: {detail}",
+        require_key=False,
     ),
 }
 
@@ -3033,6 +3047,14 @@ def _chat_stream_text_chunks(stream: Iterable[Any]) -> Generator[str, None, None
             piece = delta.get("content") or choices[0].get("text") or ""
             if piece:
                 yield piece
+
+
+def _resolve_summarizer_temp(spec: "_SummarizerChatSpec", temp: Any) -> Any:
+    if temp is not None:
+        return float(temp)
+    if spec.config_temp:
+        return get_cli_setting(spec.legacy_section, "temperature", spec.default_temp)
+    return spec.default_temp
 
 
 def _summarize_via_chat_api(
@@ -3107,21 +3129,33 @@ def _summarize_via_chat_api(
             spec.endpoint,
             messages,
             api_key=resolved_key,
-            temp=(spec.default_temp if temp is None else float(temp)),
-            system_message=system_message or spec.system_default,
+            temp=_resolve_summarizer_temp(spec, temp),
+            system_message=(
+                spec.system_default if system_message is None else system_message
+            ),
             model=get_cli_setting(spec.legacy_section, "model", spec.default_model),
             streaming=streaming,
         )
-    except (ChatAuthenticationError, ChatConfigurationError) as exc:
-        return spec.missing_key_message
     except ChatAPIError as exc:
+        # Handler-side failures (auth, missing URL/model, provider status)
+        # all use the generic template: the pre-dispatch key resolution
+        # above is the only source of the missing-key literal, so a
+        # valid-but-rejected key or a missing local URL reports what
+        # actually happened instead of masquerading as "no key".
         return spec.error_template.format(detail=str(exc))
 
     if streaming:
         return _chat_stream_text_chunks(result)
     summary = chat_reply_text(result).strip()
     if not summary:
-        return spec.empty_message + _reasoning_only_completion_detail(result)
+        # An empty completion with reasoning-content evidence gets the
+        # spec's diagnostic; a plain empty completion returns "" (the
+        # openai-family legacy behavior) so downstream falsy-summary
+        # fallbacks fire instead of storing a pseudo-error string.
+        detail = _reasoning_only_completion_detail(result)
+        if detail:
+            return spec.empty_message + detail
+        return ""
     return summary
 
 
@@ -3223,5 +3257,19 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     ),
     "ollama": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
         "ollama", ak, text, cp, temp, sm, st
+    ),
+    # --- engine presets (task-34895): no legacy function ever existed;
+    # the chat handler resolves keys/models from api_settings ---
+    "moonshot": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "moonshot", ak, text, cp, temp, sm, st
+    ),
+    "zai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "zai", ak, text, cp, temp, sm, st
+    ),
+    "aphrodite": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "aphrodite", ak, text, cp, temp, sm, st
+    ),
+    "mlx_lm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "mlx_lm", ak, text, cp, temp, sm, st
     ),
 }
