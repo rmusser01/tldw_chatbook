@@ -602,6 +602,86 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["sources", "overview"])
+async def test_tree_load_landing_while_a_section_pane_mounts_reaches_that_pane(
+    monkeypatch, target
+):
+    """TASK-34951: the section swap builds the new pane, then awaits its
+    remove/mount; a tree load landing in that gap found no pane to push its
+    watchlists into, and the post-mount reseed restored the rows only. The
+    Sources create form then offered no watchlist, and choosing one raised
+    InvalidSelectValueError (the backend-switch test's CI failure); the
+    Overview kept counting no watchlists."""
+    import threading
+
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    release = threading.Event()
+    read_snapshot = WatchlistsCollectionsScreen._read_tree_data_snapshot
+
+    def read_once_released(*args):
+        assert release.wait(30), "the tree load was never released"
+        return read_snapshot(*args)
+
+    monkeypatch.setattr(
+        WatchlistsCollectionsScreen,
+        "_read_tree_data_snapshot",
+        staticmethod(read_once_released),
+    )
+    replace = WatchlistsWorkbench._replace_region_content
+    swaps, landed = [], []
+
+    async def tree_load_lands_first(workbench, container, replacement):
+        screen = workbench.screen
+        swaps.append(screen.active_section)
+        if screen.active_section == target and swaps.count(target) == 1:
+            # The target pane is built but not mounted: let the load land.
+            release.set()
+            await asyncio.gather(
+                *(
+                    worker.wait()
+                    for worker in host.workers
+                    if worker.node is screen and worker.group == "wc_tree"
+                )
+            )
+            landed.append(watchlist["id"] in {r["id"] for r in screen._tree_watchlists})
+        await replace(workbench, container, replacement)
+
+    monkeypatch.setattr(
+        WatchlistsWorkbench, "_replace_region_content", tree_load_lands_first
+    )
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        for section in ("sources",) if target == "sources" else ("sources", target):
+            screen.active_section = section
+            for _ in range(100):
+                if section in swaps:
+                    break
+                await pilot.pause(0.05)
+        for _ in range(100):
+            if landed:
+                break
+            await pilot.pause(0.05)
+        await pilot.pause()
+        if target == "sources":
+            pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+            shown = {int(row["id"]) for row in pane.watchlist_choices}
+        else:
+            pane = screen.query_one("#watchlists-overview-pane", OverviewPane)
+            shown = pane.watchlist_count
+
+    assert landed == [True]
+    assert shown == ({watchlist["id"]} if target == "sources" else 1)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
     """Backend-only repaints must not replace a focused create-form field."""
