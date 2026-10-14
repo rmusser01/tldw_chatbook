@@ -13,6 +13,7 @@ from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 from textual.widgets._data_table import CellDoesNotExist
+from textual.widgets._select import SelectOverlay
 
 from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.noise_defaults import (
@@ -425,8 +426,31 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
         The Select shows `_resolved_destination()`: the user's draft while it
         is still offered, Unassigned otherwise (review of #3107, item V3).
+        Only the destination Select is touched.
         """
-        self._sync_create_backend_controls()
+        try:
+            self._sync_destination_options(
+                self.query_one("#sources-create-watchlist", Select)
+            )
+        except NoMatches:
+            pass
+
+    def _sync_destination_options(self, destination: Select) -> None:
+        """Re-offer the destination choices, keeping an open list's highlight.
+
+        `Select.set_options` rebuilds the expanded overlay and drops its
+        highlight; it is put back on the same choice when that is still
+        offered (review of #3107, round 2, item Y2).
+        """
+        overlay = destination.query_one(SelectOverlay)
+        highlighted = overlay.highlighted if destination.expanded else None
+        keep = None if highlighted is None else destination._options[highlighted][1]
+        with destination.prevent(Select.Changed):
+            destination.set_options(self._destination_options())
+            destination.value = self._resolved_destination()
+        values = [value for _label, value in destination._options]
+        if keep in values:
+            overlay.highlighted = values.index(keep)
 
     def _sync_create_backend_controls(self) -> None:
         """Patch the small backend-dependent surface in place when mounted."""
@@ -492,9 +516,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 "Watchlist" if local_backend else "Watchlist (Local only)"
             )
             destination = self.query_one("#sources-create-watchlist", Select)
-            with destination.prevent(Select.Changed):
-                destination.set_options(self._destination_options())
-                destination.value = self._resolved_destination()
+            self._sync_destination_options(destination)
             destination.disabled = not local_backend
         except NoMatches:
             pass

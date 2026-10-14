@@ -975,6 +975,63 @@ async def test_a_load_landing_while_a_rail_is_recreated_reaches_it(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_an_open_destination_list_keeps_its_highlight_when_choices_change():
+    """Review of #3107, round 2, item Y2: re-offering the choices under an
+    expanded destination list kept it open but dropped its highlight; the
+    source-type list was re-set too. Both now keep their state."""
+    from textual.widgets._select import SelectOverlay
+
+    app_instance = _build_test_app()
+    service = app_instance.watchlist_bundle_service
+    service.create("Alpha")
+    second = service.create("Beta")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async def tree_loaded(screen):
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == "wc_tree"
+            )
+        )
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await tree_loaded(screen)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        kind = pane.query_one("#sources-create-type", Select)
+        kind.expanded = True
+        await pilot.pause()
+        kind_overlay = kind.query_one(SelectOverlay)
+        kind_overlay.highlighted = 1
+        kind.expanded = False
+        destination.expanded = True
+        await pilot.pause()
+        overlay = destination.query_one(SelectOverlay)
+        overlay.highlighted = 2  # Unassigned, Alpha, Beta: two rows down
+        assert destination._options[2][1] == second["id"]
+        service.create("Gamma")
+        screen._load_tree_data()
+        await pilot.pause()
+        await tree_loaded(screen)
+        await pilot.pause()
+        expanded, highlighted = destination.expanded, overlay.highlighted
+        offered = len(destination._options)
+        kind_highlighted = kind_overlay.highlighted
+
+    assert offered == 4
+    assert expanded
+    assert highlighted == 2
+    assert kind_highlighted == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size):
     """Backend-only repaints must not replace a focused create-form field."""
