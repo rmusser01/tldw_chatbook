@@ -2379,7 +2379,9 @@ async def _resume_pass(
     for it (round 4, B2; TASK-34922, :func:`retry_unfinished_resume`);
     only a non-web scheme is not asked about again by itself. A debt that is left only
     because a service could not be reached leaves the wrapper unsettled
-    instead, so the next pass does retry it.
+    instead, so the next pass does retry it -- unless the watch was held
+    already: it stays held for the reason it recorded, through every write
+    of a pass that does not finish (TASK-34921).
 
     Returns:
         How many wrappers the pass worked on.
@@ -2397,17 +2399,24 @@ async def _resume_pass(
     # Subscriptions whose held riders could not be un-settled, so their
     # source stayed off (review of #3101, round 3, T3).
     unsettle_failed: set[int] = set()
+    # Subscriptions whose page passed and whose held riders were
+    # un-settled: their old hold reason no longer applies (TASK-34921).
+    unsettled: set[int] = set()
     # Dreams rules this pass re-enabled, by subscription (TASK-34919).
     restored_rules: dict[int, set[int]] = {}
 
     async def write_unsettled(
-        item_id: int, subscription: bool, reminders: list[str], rules: list[int]
+        item_id: int, subscription: bool, reminders: list[str],
+        rules: list[int], held: str | None,
     ) -> None:
+        # ``held`` rides along (TASK-34921): until this pass decides the
+        # source, the watch is still held for the reason it recorded, and
+        # its Tracked row says so even if the pass stops here.
         await asyncio.to_thread(run_finite_local_worker,
             partial(dreams_db.set_tracked_suspension, only_live=True),
             item_id, _record_text(
                 subscription=subscription, reminders=reminders,
-                rules=rules))
+                rules=rules, held=held))
 
     async def unsettle_held_riders(subscription_id: int) -> None:
         # Review of #3101, round 2, S1. A held record skipped the
@@ -2423,10 +2432,12 @@ async def _resume_pass(
         except Exception:
             unsettle_failed.add(subscription_id)
             raise
+        unsettled.add(subscription_id)
 
     for item in pending:
         item_id = int(item["id"])
         subscription, reminders, rules = _owed(_suspension_record(item))
+        held_before = (_suspension_record(item) or {}).get("held")
         try:
             # The list was read when the pass began. A lifecycle sweep (a
             # cycle, a track check) may have retired this watch since, and
@@ -2454,12 +2465,14 @@ async def _resume_pass(
             # #3101, N1). It is un-settled only once its page passes the
             # check (``unsettle_held_riders``, round 2, S1).
             if not _settled_hold_only(item.get("suspension")):
-                await write_unsettled(item_id, subscription, reminders, rules)
+                await write_unsettled(
+                    item_id, subscription, reminders, rules, held_before)
             if reminders and scheduling_db is not None:
                 await asyncio.to_thread(run_finite_local_worker,
                     _restore_reminders, scheduling_db, reminders)
                 reminders = []
-                await write_unsettled(item_id, subscription, reminders, rules)
+                await write_unsettled(
+                    item_id, subscription, reminders, rules, held_before)
             if rules and subs_service is not None:
                 for rule_id in rules:
                     try:
@@ -2470,7 +2483,8 @@ async def _resume_pass(
                     restored_rules.setdefault(
                         int(item.get("subscription_id") or 0), set()).add(rule_id)
                 rules = []
-                await write_unsettled(item_id, subscription, reminders, rules)
+                await write_unsettled(
+                    item_id, subscription, reminders, rules, held_before)
         except Exception as exc:  # noqa: BLE001 - one failed wrapper stops nothing
             logger.warning(
                 "Dreams resume: switching tracked item {} failed: {}",
@@ -2536,13 +2550,8 @@ async def _resume_pass(
         record = _suspension_record(item)
         if record is None:
             continue
-        if (int(item.get("subscription_id") or 0) in unsettle_failed
-                and _settled_hold_only(item.get("suspension"))):
-            # The page passed but its source stayed off, because un-settling
-            # failed: the hold stands as recorded (round 3, T3), not as a
-            # bare debt the next start would look up.
-            continue
-        outcome = outcomes.get(int(item.get("subscription_id") or 0))
+        subscription_id = int(item.get("subscription_id") or 0)
+        outcome = outcomes.get(subscription_id)
         if item_id in left:
             subscription, reminders, rules = left[item_id]
         elif item_id in failed:
@@ -2553,7 +2562,13 @@ async def _resume_pass(
             subscription, reminders, rules = _owed(record)
         else:
             continue
-        held: str | None = None
+        # Undecided -- the service failed or was missing, or un-settling
+        # failed (round 3, T3) -- the hold stands for the reason recorded
+        # (TASK-34921), not as a bare debt the next start would look up.
+        # Only a page that passed the check, its riders un-settled, drops
+        # it.
+        held: str | None = (
+            None if subscription_id in unsettled else record.get("held"))
         if subscription and outcome is not None:
             resolved, held = outcome
             subscription = not resolved
@@ -2567,12 +2582,14 @@ async def _resume_pass(
         # #3101, N1). Comparing with the row read at pass start is enough;
         # no "did this pass write it" guard is needed (round 2, S3). A
         # final text equal to that row is either a held record that is
-        # still held -- skipped its write-ahead, never un-settled, so
-        # nothing was written -- or an unsettled one that owes no reminder
-        # or rule (restoring one changes the text, a failed restore skips
-        # this loop), whose write-ahead wrote exactly that text. An
-        # un-settled rider never matches: its page passed, so its final
-        # text has no hold, and its start row had one.
+        # still held -- skipped its write-ahead and was never un-settled,
+        # or un-settled and put back when un-settling failed (best effort,
+        # see ``_unsettle_held``) -- or an unsettled one that owes no
+        # reminder or rule (restoring one changes the text, a failed
+        # restore skips this loop), whose write-ahead wrote exactly that
+        # text: a held reason it carried would have made the final text
+        # "settled: on" (TASK-34921). A rider whose page passed never
+        # matches: its final text has no hold, and its start row had one.
         if text is not None and json.loads(text) == record:
             continue
         try:

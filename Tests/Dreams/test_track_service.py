@@ -6112,3 +6112,121 @@ async def test_tracking_a_story_again_restarts_the_source_its_watch_needs(
     assert again["tracked_item_id"] == a["tracked_item_id"]
     assert _is_active(subs_db, source_id) == 1
     assert not _record(dreams_db, b["tracked_item_id"])["subscription"]
+
+
+# --- TASK-34921: a switch-on that stops part-way keeps the hold ----------------
+#
+# A watch held at switch-on records why, and its Tracked row says "paused"
+# with that reason. A later pass that did not finish -- the watchlists
+# service failed, or was not there -- wrote its record back without the
+# reason: the row lost its label while the source was still off, and the
+# next start ran a lookup it is documented not to make.
+
+
+def _tracked_row(dreams_db, item_id):
+    from tldw_chatbook.Dreams.dreams_view import list_tracked_updates
+
+    return next(row for row in list_tracked_updates(dreams_db)
+                if row["id"] == item_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unfinished", ["service-fails", "no-service"])
+async def test_a_pass_that_does_not_finish_keeps_the_hold(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        unfinished):
+    subs_db, service = subs_stack
+    owned = await _held_for_dns(dreams_db, service, scheduling_db, monkeypatch)
+    item_id = owned["tracked_item_id"]
+    before = _record(dreams_db, item_id)
+    _resolve_publicly(monkeypatch)
+    if unfinished == "service-fails":
+        async def unreachable(source_id):
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(service, "get_source", unreachable)
+        await retry_unfinished_resume(
+            service, dreams_db,
+            scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+    else:
+        await _switch(None, dreams_db, scheduling_db, off=False)
+
+    assert _record(dreams_db, item_id) == before, "the hold stands as it was"
+    assert _tracked_row(dreams_db, item_id)["held"] == "dns_failure"
+    assert _boot_needs_switch(dreams_db, enabled=True) is False
+    assert _is_active(subs_db, owned["subscription_id"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_hold_with_work_left_keeps_its_reason_through_the_pass(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """A held watch whose reminder is still owed (the switch-on ran without
+    the scheduling DB) is written ahead and trimmed as the pass works; it
+    keeps its reason all the way, and when the pass cannot decide the
+    source it ends held, as before, with the reminder restored."""
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id = owned["tracked_item_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _fail_resolution(monkeypatch)
+    await set_tracking_suspended(service, dreams_db, suspended=False,
+                                 scheduling_db_getter=None, now=NOW)
+    record = _record(dreams_db, item_id)
+    assert record["held"] == "dns_failure" and record["reminders"], "fixture"
+    seen: list[str | None] = []
+    real = dreams_db.set_tracked_suspension
+
+    def watch_writes(tracked_item_id, text, **kwargs):
+        if int(tracked_item_id) == item_id:
+            seen.append((json.loads(text) if text else {}).get("held"))
+        return real(tracked_item_id, text, **kwargs)
+
+    async def unreachable(source_id):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", watch_writes)
+    monkeypatch.setattr(service, "get_source", unreachable)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert seen and set(seen) == {"dns_failure"}, "every write keeps it"
+    record = _record(dreams_db, item_id)
+    assert (record["held"], record.get("settled"), record["reminders"]) == (
+        "dns_failure", "on", [])
+    assert _tracked_row(dreams_db, item_id)["held"] == "dns_failure"
+
+
+@pytest.mark.asyncio
+async def test_a_watch_whose_restore_failed_keeps_its_last_record(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """AC 3: the closing step leaves a watch whose own restore failed as
+    last written. The first watch the pass works on has its reminder
+    re-armed (and dropped from its record) before its rule step fails; the
+    other then decides the shared source. Writing the failed watch's record
+    from the row the pass read at its start would list the re-armed
+    reminder as owed again, to be re-armed over the user's head by the
+    next pass."""
+    subs_db, service = subs_stack
+    first = await _event_page(dreams_db, service, scheduling_db, story_id=1)
+    second = await _event_page(dreams_db, service, scheduling_db, story_id=2)
+    a, b = first["tracked_item_id"], second["tracked_item_id"]
+    assert first["subscription_id"] == second["subscription_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    assert _record(dreams_db, a)["reminders"] and _record(dreams_db, a)["rules"]
+    real = service.update_alert_rule
+    failures = [RuntimeError("database is locked")]
+
+    async def first_rule_step_fails(rule_id, **fields):
+        if failures and fields.get("enabled") is True:
+            raise failures.pop()
+        return await real(rule_id, **fields)
+
+    service.update_alert_rule = first_rule_step_fails
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert not failures, "fixture: one watch's rule step failed"
+    assert _is_active(subs_db, first["subscription_id"]) == 1, (
+        "the other decided the source")
+    (failed,) = [item for item in (a, b) if _record(dreams_db, item)]
+    record = _record(dreams_db, failed)
+    assert record["reminders"] == [], "the re-armed reminder is not owed again"
+    assert record["rules"], "the rule it could not restore is still owed"
