@@ -223,7 +223,9 @@ _BUDGETS: dict[str, int] = {
     # edit is forgotten once saved or reverted (+1): 35,779.
     # The Speech draft is kept and restored with replace(), so its pipeline
     # voice pair is no longer dropped (-13): 35,766.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35766,
+    # Undoing an audio.cpp review merge copies the draft with replace() and
+    # compares it on every field, so a pipeline voice edit survives (+1): 35,767.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35767,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

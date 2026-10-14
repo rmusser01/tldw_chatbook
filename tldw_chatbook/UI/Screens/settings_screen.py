@@ -10,7 +10,7 @@ import copy
 import json
 from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 import logging
 import math
 import os
@@ -843,6 +843,24 @@ class _AudioCppResultCleanup:
     restore_complete: bool = False
 
 
+def _same_speech_draft_except(
+    left: SpeechTTSPanelDraftSnapshot,
+    right: SpeechTTSPanelDraftSnapshot,
+    *names: str,
+) -> bool:
+    """Compare two Speech drafts on every field but ``names``.
+
+    Reading the dataclass's own fields means one added later (as the pipeline
+    voice pair was) cannot be left out of the comparison (TASK-33007).
+    """
+
+    return all(
+        getattr(left, item.name) == getattr(right, item.name)
+        for item in fields(left)
+        if item.name not in names
+    )
+
+
 def _restore_audio_cpp_merge_delta(
     before: SpeechTTSPanelDraftSnapshot,
     merged: SpeechTTSPanelDraftSnapshot,
@@ -850,12 +868,8 @@ def _restore_audio_cpp_merge_delta(
 ) -> SpeechTTSPanelDraftSnapshot | None:
     """Remove only this transaction's package/default delta from a newer draft."""
 
-    if (
-        merged.original_state != before.original_state
-        or merged.realtime_draft != before.realtime_draft
-        or merged.realtime_original != before.realtime_original
-        or merged.configure_provider != before.configure_provider
-        or merged.draft_revision != before.draft_revision + 1
+    if merged.draft_revision != before.draft_revision + 1 or not (
+        _same_speech_draft_except(merged, before, "state", "draft_revision")
     ):
         return None
     if current == merged:
@@ -895,13 +909,9 @@ def _restore_audio_cpp_merge_delta(
         else:
             restored_values.pop(key, None)
     try:
-        return SpeechTTSPanelDraftSnapshot(
-            state=restored_state,
-            original_state=current.original_state,
-            realtime_draft=current.realtime_draft,
-            realtime_original=current.realtime_original,
-            configure_provider=current.configure_provider,
-            draft_revision=current.draft_revision + 1,
+        # replace() keeps every other field, e.g. a pipeline voice edit.
+        return replace(
+            current, state=restored_state, draft_revision=current.draft_revision + 1
         )
     except (TypeError, ValueError):
         return None
@@ -927,22 +937,13 @@ def _force_restore_audio_cpp_merge_delta(
             restored_values[key] = copy.deepcopy(before_values[key])
         else:
             restored_values.pop(key, None)
-    if (
-        restored_state == before.state
-        and current.original_state == before.original_state
-        and current.realtime_draft == before.realtime_draft
-        and current.realtime_original == before.realtime_original
-        and current.configure_provider == before.configure_provider
+    if restored_state == before.state and _same_speech_draft_except(
+        current, before, "state", "draft_revision"
     ):
         return before
     try:
-        return SpeechTTSPanelDraftSnapshot(
-            state=restored_state,
-            original_state=current.original_state,
-            realtime_draft=current.realtime_draft,
-            realtime_original=current.realtime_original,
-            configure_provider=current.configure_provider,
-            draft_revision=current.draft_revision + 1,
+        return replace(
+            current, state=restored_state, draft_revision=current.draft_revision + 1
         )
     except (TypeError, ValueError):
         return None
