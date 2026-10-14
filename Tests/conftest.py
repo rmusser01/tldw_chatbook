@@ -1666,6 +1666,18 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_home_screen.py",
             "test_home_triage_rail.py",
             "test_home_dashboard_seams.py",
+            # TASK-34991 (2026-10-14): the layout-cost A/B suite hit the same
+            # admission signature -- its `_disable_model_catalog_refresh`
+            # fixture (Tests/UI/conftest.py) monkeypatches
+            # `tldw_chatbook.app.TldwCli`, which imports the app AFTER the
+            # per-test redirect, and every node in the file errored in setup
+            # with RecoveryRequired("raw_source_selection_changed") on a
+            # clean tree. The suite never re-selects a config itself, and its
+            # mounts DO read config (SplashScreen reads [splash_screen]), so
+            # rebinding the module (install_config_source) breaks the splash
+            # mounts instead -- keeping the bootstrap profile is the fit, as
+            # for the Home cluster above.
+            "test_timer_path_layout_cost.py",
         }
     )
     test_data_dir = (
