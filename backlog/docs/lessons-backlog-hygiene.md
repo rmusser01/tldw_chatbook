@@ -1328,3 +1328,20 @@ to one and re-verify against the intended base version. Treat a clean
 auto-merge of a heavily edited class-body file as *unverified*, not verified,
 and trust the pinned census/ratchet tests over the shape of the diff: they are
 the one instrument that can see a silently shadowed method.
+
+**Second instance (TASK-34918, 2026-10-14).** PR #2643's merge (2026-09-12)
+left an older 204-line `ChatScreen.on_button_pressed` above the live one. This
+time the stale copy came first, so nothing misbehaved and no census caught it.
+But `test_screen_size_ratchet.py` counted it for a month, in both the line
+budget and the method budget, and that cost was part of why the ratchet went
+red. To catch the other half of this failure, run
+`ruff check --isolated --select F811 <file>` on a heavily merged class-body
+file. It flags the shadowed copy whichever copy wins, but by default only for
+names that do not start with `_`: ruff's default `dummy-variable-rgx` exempts
+every `_`-prefixed name from F811, so most of ChatScreen (mostly private
+methods) is invisible to it. The same review found a second, byte-identical copy
+of `ChatScreen._restore_collapsible_states` that the plain command did not
+report; `ruff check --isolated --select F811 --config 'lint.dummy-variable-rgx = "^_$"' <file>`
+does (identical bodies are flagged too, probed on ruff 0.16.6). An AST pass over
+the class body that lists duplicate method names (skipping property
+getter/setter pairs) is the other way to see them.

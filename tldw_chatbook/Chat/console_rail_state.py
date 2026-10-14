@@ -644,6 +644,16 @@ def _has_row_readiness_match(rows: tuple[Any, ...], category_terms: set[str]) ->
     return False
 
 
+def console_badge_inspector_rows(inspector_state: Any) -> tuple[Any, ...]:
+    """Return only rows whose blocked state should outrank review badges."""
+    return tuple(
+        row
+        for row in inspector_state.rows
+        if str(getattr(row, "label", "")).strip().lower()
+        in {"provider", "rag/source", "evidence", "source"}
+    )
+
+
 def build_console_inspector_rail_badge(
     *,
     run_status: Any = None,

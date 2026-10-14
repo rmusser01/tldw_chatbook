@@ -45,9 +45,11 @@ from tldw_chatbook.Widgets.Library import (
     LIBRARY_BROWSE_ROUTE_NOTES,
     LibraryBrowseReaderShell,
     LibraryNoteWorkPane,
+    LibraryNavigationRailHandle,
     LibraryNotesCanvas,
     LibraryRail,
 )
+from tldw_chatbook.Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 
 from .canvas_sync import _sync_library_canvas
 from .screen_constants import (
@@ -234,6 +236,87 @@ async def _apply_library_notes_source_strip(
         await strip.remove()
 
 
+def library_single_notes_stage(screen: LibraryScreen) -> bool:
+    """Whether the Notes compact/focused-task single-stage layout applies.
+
+    TASK-21243: extracted from ``compose_content`` (its single
+    computation site) so the targeted adaptive-shell leave builds the
+    ordinary shell with the SAME stage display rules the compose path
+    applies -- the two composers must not drift.
+    """
+    return (
+        screen._notes_state.compact and screen._library_notes_compact_stage_applies()
+    ) or (
+        not screen._notes_state.compact and screen._library_notes_focused_task_active()
+    )
+
+
+def build_library_ordinary_shell_trio(
+    screen: LibraryScreen, shell: LibraryShellState, single_notes_stage: bool
+) -> tuple[
+    LibraryNavigationRailHandle,
+    LibraryRail,
+    Vertical,
+    LibraryEmergencyReturn,
+    Vertical,
+]:
+    """Build the ordinary (non-adaptive) shell's grid children.
+
+    TASK-21243: extracted verbatim from ``compose_content``'s ordinary
+    tail so the ONE construction serves both composers -- the screen
+    recompose and the targeted "leave the adaptive reader shell" swap
+    (``leave_library_browse_shell_for_ordinary``) -- and the two cannot
+    drift apart. The pieces are returned UNATTACHED: the compose
+    generator nests them with its own ``yield`` contexts, and the
+    leave helper mounts them onto the grid (host first, then the
+    host's always-present chrome inside it) in the same order.
+
+    Args:
+        screen: The Library screen whose state the display rules read.
+        shell: The freshly built shell state for the destination route.
+        single_notes_stage: The compact-notes single-stage flag the
+            display rules below read, computed by the caller (compose
+            derives it once for all of its branches).
+
+    Returns:
+        ``(rail_handle, rail, canvas_host, emergency_return,
+        route_content)`` in compose order.
+    """
+    rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
+    rail_handle.add_class("h-full")
+    rail_handle.display = screen._library_rail_collapsed and not single_notes_stage
+    rail = LibraryRail(
+        shell,
+        screen._library_rail_preferences(),
+        query=screen._library_rail_search_value(),
+        search_placeholder=screen._library_rail_search_placeholder(),
+        workspaces_body_factory=screen._compose_workspaces_rail_body,
+        top_action_factory=screen._compose_library_rail_top_action,
+        lifecycle=screen._library_lifecycle,
+        onboarding_all_empty=screen._library_onboarding_all_empty,
+        id="library-rail",
+        classes="destination-workbench-pane",
+    )
+    rail.add_class("h-full")
+    rail.display = (
+        not single_notes_stage or screen._notes_state.stage == "rail"
+    ) and not (screen._library_rail_collapsed and not single_notes_stage)
+    canvas_host = Vertical(id="library-canvas", classes="destination-workbench-pane")
+    canvas_host.add_class("w-13fr")
+    canvas_host.styles.min_width = 40
+    canvas_host.add_class("h-full")
+    canvas_host.set_class(screen._notes_state.compact, "library-notes-compact")
+    canvas_host.display = (
+        not single_notes_stage or screen._notes_state.stage == "notes"
+    )
+    emergency_return = LibraryEmergencyReturn(id="library-emergency-return")
+    emergency_return.display = False
+    route_content = Vertical(id="library-canvas-route-content")
+    route_content.add_class("h-fill")
+    route_content.styles.min_height = 0
+    return rail_handle, rail, canvas_host, emergency_return, route_content
+
+
 async def leave_library_browse_shell_for_ordinary(
     screen: "LibraryScreen", mounted_reader_selector: str
 ) -> bool:
@@ -247,7 +330,7 @@ async def leave_library_browse_shell_for_ordinary(
     whole-screen ``Screen.recompose()``, rebuilding the largest screen in
     the app for a routine per-click action. This helper swaps the grid's
     one child for the ordinary trio built by the SAME constructor
-    ``compose_content`` uses (``_build_library_ordinary_shell_trio``), so
+    ``compose_content`` uses (``build_library_ordinary_shell_trio``), so
     a leave cannot drift from a compose.
 
     The destination's canvas child is deliberately NOT mounted here: the
@@ -289,8 +372,8 @@ async def leave_library_browse_shell_for_ordinary(
         canvas_host,
         emergency_return,
         route_content,
-    ) = screen._build_library_ordinary_shell_trio(
-        shell, screen._library_single_notes_stage()
+    ) = build_library_ordinary_shell_trio(
+        screen, shell, library_single_notes_stage(screen)
     )
     await _apply_library_notes_source_strip(screen, shell.canvas_kind)
     if screen.is_running:

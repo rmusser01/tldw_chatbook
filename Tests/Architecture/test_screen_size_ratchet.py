@@ -91,7 +91,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: original tree measures 25204/759. The latest-dev replay also retires
     #: two unreferenced control helpers and the one-use widget lookup:
     #: combined tree measures 25204/756; no ceiling rises.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25204, 756),
+    #: TASK-34918 brought the file back under this row after dev had grown
+    #: it to 25349/762: dead code (a never-run first copy of
+    #: `on_button_pressed`, a byte-identical second copy of
+    #: `_restore_collapsible_states`, four uncalled methods) and two moved
+    #: helpers. Lowered to the exact measurement: 24985/754.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24985, 754),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

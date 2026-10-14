@@ -224,9 +224,7 @@ from ...Chat.console_settings_defaults import (
     next_console_default_intent_generation,
     prepare_console_default_intent_reservation,
     prepare_console_default_runtime_publication,
-    publish_console_default_runtime_if_current,
     refresh_console_runtime_after_saved_default,
-    reserve_console_default_intent_generation,
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -418,6 +416,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
     console_setup_staged_receipt,
+    launch_targets_chatbook_artifact,
 )
 from ...Chat.console_command_suggestions import (
     CommandSuggestion,
@@ -458,6 +457,7 @@ from ...Chat.console_rail_state import (
     build_console_rail_state,
     coerce_console_rail_preferences,
     collect_prunable_console_rail_keys,
+    console_badge_inspector_rows,
     console_context_reveal_preferences,
     console_rail_width_band,
     normalize_console_rail_layout_scope,
@@ -2942,45 +2942,6 @@ class ChatScreen(BaseAppScreen):
             app_instance.console_settings_durability_tasks = owner.tasks
         return owner
 
-    def _reserve_console_default_intent(
-        self,
-        submission: ConsoleSettingsSubmission,
-    ) -> ConsoleDefaultMutationIntent:
-        """Synchronously reserve an intent for non-production callers/tests."""
-
-        if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
-            raise ValueError("Apply to chat does not create a default intent")
-        state = self._console_default_durability_state()
-        generation = next_console_default_intent_generation(
-            state.newest_intent_generation
-        )
-        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
-            intent = build_console_default_intent(
-                generation=generation,
-                action=submission.action,
-                provider_config_key=provider_identity_key(
-                    submission.draft.settings.provider
-                ),
-                literal_model_id=str(submission.draft.settings.model or ""),
-                field_drafts=submission.draft.field_drafts,
-                field_mask=submission.default_field_mask,
-                endpoint=submission.draft.endpoint_draft,
-            )
-            if reserve_console_default_intent_generation(
-                intent,
-                pending_runtime_publisher=(
-                    self._accept_console_default_runtime_publication
-                ),
-            ):
-                break
-            generation = next_console_default_intent_generation(generation)
-        else:
-            raise RuntimeError("Console default reservation changed repeatedly")
-        self.app_instance.console_default_durability_state = (
-            ConsoleDefaultDurabilityState(newest_intent_generation=generation)
-        )
-        return intent
-
     async def _reserve_console_default_intent_off_event_loop(
         self,
         submission: ConsoleSettingsSubmission,
@@ -3190,23 +3151,6 @@ class ChatScreen(BaseAppScreen):
             if cancelled:
                 raise asyncio.CancelledError
         raise RuntimeError("Default runtime publication changed repeatedly")
-
-    def _publish_console_default_outcome(
-        self,
-        intent: ConsoleDefaultMutationIntent,
-        outcome: ConsoleDefaultMutationOutcome,
-    ) -> bool:
-        """Publish a fresh runtime mapping once for the newest intent."""
-
-        return publish_console_default_runtime_if_current(
-            intent,
-            outcome,
-            lambda settings_view: self._accept_console_default_runtime_publication(
-                intent.generation,
-                intent.action,
-                settings_view,
-            ),
-        )
 
     def _accept_console_default_runtime_publication(
         self,
@@ -5262,10 +5206,6 @@ class ChatScreen(BaseAppScreen):
         focused = bool(getattr(self.app_instance, "focus_mode", False))
         self.set_class(focused, "-focus")
         self._register_console_footer_shortcuts()
-
-    def _clear_console_footer_shortcuts(self) -> None:
-        """Clear Console Workbench shortcuts from this screen's own footer."""
-        self.clear_footer_shortcuts(source="console")
 
     async def action_open_console_session_switcher(
         self,
@@ -13295,7 +13235,7 @@ class ChatScreen(BaseAppScreen):
             workspace_label=workspace_context_state.workspace_label,
             session_label=getattr(active_session, "title", ""),
             run_status=self._current_console_run_status_value(),
-            inspector_rows=self._console_badge_inspector_rows(inspector_state),
+            inspector_rows=console_badge_inspector_rows(inspector_state),
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
@@ -13496,18 +13436,6 @@ class ChatScreen(BaseAppScreen):
             self._console_fleet_inspector_dismissed = False
         elif self._console_fleet_rows_present:
             self._console_fleet_inspector_dismissed = True
-
-    @staticmethod
-    def _console_badge_inspector_rows(
-        inspector_state: ConsoleInspectorState,
-    ) -> tuple[Any, ...]:
-        """Return only rows whose blocked state should outrank review badges."""
-        return tuple(
-            row
-            for row in inspector_state.rows
-            if str(getattr(row, "label", "")).strip().lower()
-            in {"provider", "rag/source", "evidence", "source"}
-        )
 
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
@@ -14007,16 +13935,6 @@ class ChatScreen(BaseAppScreen):
             group="console-workspace-files-open",
         )
 
-    @staticmethod
-    def _launch_targets_chatbook_artifact(
-        pending_launch: Optional[ConsoleLiveWorkLaunch],
-    ) -> bool:
-        if pending_launch is None:
-            return False
-        source = str(pending_launch.source or "").strip().lower()
-        target_id = str(pending_launch.payload.get("target_id") or "").strip()
-        return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
-
     def _console_pending_approval_count(self) -> int:
         controller = self._console_chat_controller
         count = getattr(controller, "pending_round_count", None)
@@ -14108,7 +14026,7 @@ class ChatScreen(BaseAppScreen):
         """
         return bool(
             getattr(self.app_instance, "console_chatbook_artifact_available", False)
-            or self._launch_targets_chatbook_artifact(pending_launch)
+            or launch_targets_chatbook_artifact(pending_launch)
         )
 
     def _build_console_inspector_state(
@@ -15011,57 +14929,6 @@ class ChatScreen(BaseAppScreen):
             return
         self._console_guidance_dismissed = True
         self._sync_console_transcript_guidance()
-
-    def _configure_console_copy_block(
-        self,
-        widget: Static,
-        copy: str,
-        *,
-        visible: bool,
-    ) -> None:
-        """Update a compact Console status copy block without remounting it.
-
-        task-280: skips the ``.update()``/style writes when both the copy
-        and the show/hide state already match what was last applied to this
-        exact widget instance. The applied tuple is stored ON the widget
-        (PR #660 review): it dies with the widget, so a recomposed fresh
-        instance always gets its first apply, nothing accumulates across
-        recomposes, and a recycled ``id()`` can never alias a new widget to
-        a dead one's cache entry.
-
-        Args:
-            widget: The Static copy block being configured.
-            copy: The status copy to display (may be empty).
-            visible: Whether the block should be shown at all.
-
-        Returns:
-            None.
-        """
-        cache_value = (copy, visible)
-        if getattr(widget, "_console_copy_block_applied", None) == cache_value:
-            return
-        should_show = visible and bool(copy.strip())
-        widget.update(copy if should_show else "")
-        if should_show:
-            row_count = copy.count("\n") + 1
-            widget.styles.display = "block"
-            widget.remove_class(
-                *(name for name in widget.classes if name.startswith("h-"))
-            )
-            # ds-runtime: Recovery copy line count determines its visible row count.
-            widget.set_styles(height=row_count)
-            widget.styles.min_height = row_count
-            widget.styles.max_height = row_count
-        else:
-            widget.styles.display = "none"
-            widget.remove_class(
-                *(name for name in widget.classes if name.startswith("h-"))
-            )
-            widget.set_styles(height=None)
-            widget.add_class("h-0")
-            widget.styles.min_height = 0
-            widget.styles.max_height = 0
-        widget._console_copy_block_applied = cache_value
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
@@ -20629,7 +20496,7 @@ class ChatScreen(BaseAppScreen):
     def _save_console_chatbook_from_visible_action(self) -> None:
         """Route available Chatbook artifacts through the existing Artifacts handoff."""
         launch = self._consume_pending_console_launch()
-        if self._launch_targets_chatbook_artifact(launch):
+        if launch_targets_chatbook_artifact(launch):
             handler = getattr(
                 self.app_instance, "open_console_live_work_primary_action", None
             )
@@ -22207,7 +22074,7 @@ class ChatScreen(BaseAppScreen):
 
     def _console_chatbook_action_available(self) -> bool:
         """Return True when the composer Chatbook action has a real target."""
-        return self._launch_targets_chatbook_artifact(
+        return launch_targets_chatbook_artifact(
             self._pending_console_launch_context
         ) and callable(
             getattr(self.app_instance, "open_console_live_work_primary_action", None)
@@ -24739,210 +24606,6 @@ class ChatScreen(BaseAppScreen):
             event.allow, event.remember, request_id=event.request_id
         )
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """
-        Handle button events at the screen level.
-        This ensures buttons work properly with screen-based navigation.
-        """
-        button_id = event.button.id
-
-        # Log for debugging
-        logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")
-
-        if button_id == "console-composer-menu":
-            event.stop()
-            await self._open_console_composer_menu()
-            return
-        if button_id == "console-send-message":  # TASK-33620.15: as Enter
-            event.stop()
-            _send_acknowledgement().request_visible_send(self)
-            return
-        if button_id == "console-dictation":
-            event.stop()
-            self._dictation._handle_console_dictation_button()
-            return
-        if button_id in {
-            "console-stop-generation",
-            "console-collapsed-stop-generation",
-        }:
-            await self.handle_console_stop_generation(event)
-            return
-        if button_id == "console-settings-open":
-            await self.on_console_settings_open(event)
-            return
-        if button_id == "console-model-section-configure":  # "Change  Alt+M"
-            event.stop()
-            await self.action_open_console_model_popover()
-            return
-        if button_id == "console-agent-drilldown-back":
-            event.stop()
-            self._console_agent_drilldown_run_id = None
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-            return
-        if button_id == "console-agent-view-full-log":
-            event.stop()
-            self._agent._open_console_agent_run_log_viewer()
-            return
-        if button_id == "console-new-chat-tab":
-            event.stop()
-            await self._session._create_native_console_session_from_active_context()
-            return
-        if button_id and button_id.startswith(
-            "console-conversation-browser-section-toggle-"
-        ):
-            event.stop()
-            self._workspace._toggle_console_conversation_browser_section(
-                str(getattr(event.button, "group_id", "") or "").strip()
-            )
-            return
-        if button_id and button_id.startswith(
-            "console-conversation-browser-group-toggle-"
-        ):
-            event.stop()
-            self._workspace._toggle_console_conversation_browser_group(
-                str(getattr(event.button, "group_id", "") or "").strip()
-            )
-            return
-        if button_id and button_id.startswith("console-conversation-star-"):
-            event.stop()
-            self._workspace._toggle_console_conversation_star(
-                str(getattr(event.button, "conversation_id", "") or "").strip(),
-                starred=bool(getattr(event.button, "starred", False)),
-                conversation_title=str(
-                    getattr(event.button, "conversation_title", "") or ""
-                ),
-            )
-            return
-        # NOTE: the `console-workspace-conversations-toggle` branch that stood
-        # here was deleted in wave 4. Commit 3b0374479 removed the only button
-        # carrying that id; the string survives only as a CSS class on toggles
-        # whose ids are `console-conversation-browser-{section,group}-toggle-*`,
-        # and those take their own branches below. The body was dead twice over:
-        # it also required `state.conversation_browser is None`, a state that
-        # same commit retired. `Tests/UI/test_console_button_routing.py` pins the
-        # id's absence so it cannot quietly come back as a branch nobody reaches.
-        if button_id == "console-new-workspace-conversation":
-            event.stop()
-            await self._session._create_native_console_session_from_active_context()
-            return
-        if button_id == "console-workspace-conversation-search-clear":
-            event.stop()
-            self._workspace.clear_console_conversation_browser_search()
-            return
-        if button_id and button_id.startswith("console-workspace-conversation-"):
-            event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            row_key = str(getattr(event.button, "row_key", "") or "").strip()
-            browser_row = self._workspace._find_console_browser_row(
-                row_key or conversation_id,
-                conversation_id=conversation_id,
-            )
-            if browser_row is not None:
-                self._workspace._activate_console_workspace_for_browser_row(browser_row)
-                row_conversation_id = str(browser_row.conversation_id or "").strip()
-                session_id = self._session._console_session_id_for_browser_row(
-                    browser_row
-                )
-            else:
-                row_conversation_id = conversation_id
-                session_id = (
-                    self._workspace._console_session_id_for_workspace_conversation(
-                        conversation_id
-                    )
-                )
-            if session_id is None:
-                if not row_conversation_id:
-                    self.app_instance.notify(
-                        "This conversation row is no longer available.",
-                        severity="warning",
-                    )
-                    return
-                # task-457(b): the resume is awaited inline and can be slow or
-                # fail; flag the pressed row loading for the duration so it does
-                # not read as a dead click, and always clear it afterwards (a
-                # successful resume also recomposes the rail, which drops the
-                # flag; the finally covers the not-resumable/error return).
-                self._set_console_conversation_row_loading(row_conversation_id, True)
-                try:
-                    resumed = (
-                        await self._workspace._resume_console_workspace_conversation(
-                            row_conversation_id,
-                            target_scope_type=(
-                                browser_row.scope_type
-                                if browser_row is not None
-                                else None
-                            ),
-                            target_workspace_id=(
-                                browser_row.workspace_id
-                                if browser_row is not None
-                                else None
-                            ),
-                        )
-                    )
-                finally:
-                    self._set_console_conversation_row_loading(
-                        row_conversation_id, False
-                    )
-                if resumed:
-                    await self._workspace._refresh_console_conversation_browser_after_selection()
-                    return
-                if resumed is None:
-                    # Transient failure; the resume path already explained it.
-                    return
-                # TASK-717: the record is missing - say so honestly (Library
-                # has no affordance for a nonexistent record) and mark the
-                # row visibly broken so it stops presenting as openable.
-                self._mark_console_conversation_row_broken(row_conversation_id)
-                self.app_instance.notify(
-                    "This saved conversation could not be loaded - "
-                    "its record is missing.",
-                    severity="warning",
-                )
-                return
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id != session_id:
-                if browser_row is None:
-                    self._workspace._set_active_workspace_for_console_session(
-                        session_id
-                    )
-                controller.switch_session(session_id)
-                await self._sync_native_console_chat_ui()
-                # task-7 review: an already-open native tab for this
-                # conversation is never ephemeral, but the PREVIOUS active
-                # session might have been -- `_sync_native_console_chat_ui`
-                # above never touches the temporary chip (see
-                # `_sync_console_temporary_chip`), so without this the chip
-                # could keep reading "Temporary" after switching onto a
-                # saved conversation.
-                self._sync_console_temporary_chip()
-            self._focus_console_composer_if_needed(force=True)
-            await (
-                self._workspace._refresh_console_conversation_browser_after_selection()
-            )
-            return
-        if button_id and button_id.startswith("console-close-session-tab-"):
-            event.stop()
-            self._session.start_close_console_session_tab(
-                button_id.removeprefix("console-close-session-tab-")
-            )
-            return
-        if button_id and button_id.startswith("console-session-tab-"):
-            event.stop()
-            await self._session._handle_console_session_tab_press(
-                button_id.removeprefix("console-session-tab-")
-            )
-            return
-        if button_id and button_id.startswith("console-message-action-"):
-            handled = await self.handle_console_message_action(event)
-            if handled:
-                return
-
     def watch_sidebar_state(self, new_state: dict) -> None:
         """Debounce persistence when sidebar state changes.
 
@@ -25126,33 +24789,6 @@ class ChatScreen(BaseAppScreen):
                 self._sidebar_state_persistence_error,
             )
             return False
-
-    def _restore_collapsible_states(self) -> None:
-        """Restore collapsible states from saved state."""
-        if not self.ui_state.collapsible_states:
-            logger.debug("No collapsible states to restore")
-            return
-
-        try:
-            # Find all collapsibles in the sidebar
-            collapsibles = self.query(Collapsible)
-            restored_count = 0
-
-            for collapsible in collapsibles:
-                if (
-                    collapsible.id
-                    and collapsible.id in self.ui_state.collapsible_states
-                ):
-                    collapsed_state = self.ui_state.collapsible_states[collapsible.id]
-                    collapsible.collapsed = collapsed_state
-                    restored_count += 1
-                    logger.debug(
-                        f"Restored {collapsible.id}: collapsed={collapsed_state}"
-                    )
-
-            logger.info(f"Restored {restored_count} collapsible states")
-        except Exception as e:
-            logger.error(f"Error restoring collapsible states: {e}")
 
     @on(SkillScriptConfirmCard.ScriptDecided)
     def handle_console_skill_script_decided(self, event: Any) -> None:
