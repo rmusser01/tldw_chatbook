@@ -13,12 +13,12 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Tests/UI/test_library_dreams_reader.py::test_production_library_dreams_story_actions_goals_and_literal_notice failed twice in the required check, on two unrelated pull requests (PR #3097 on 2026-10-13, and a branch changing the default web font size on 2026-10-13), each time with 'DreamsStoryModal did not mount #dsm-keep-button', and passed on the re-run. It passed every local run tried (4 of 4 on dev, 4 of 4 on PR #3097's branch, the whole file 3 of 3). A flaky test in the required check can evict a good pull request from the merge queue. Found while re-measuring the required check for TASK-34789.
+Tests/UI/test_library_dreams_reader.py::test_production_library_dreams_story_actions_goals_and_literal_notice failed three times in the required check with 'DreamsStoryModal did not mount #dsm-keep-button': on feat/dreams-phase-4 (PR #2921, 2026-10-12), on PR #3097 (2026-10-13) and on the branch of PR #3020 (2026-10-13). It passed every local run tried (4 of 4 on dev, 4 of 4 on PR #3097's branch, the whole file 3 of 3). Commit aea8948fdb ('test(library): wait for Dreams action hit targets'), which reached dev with PR #3020 on 2026-10-13 22:58Z, rewrote this test to wait for the actions button to be a real hit target and to assert that the click lands, which is exactly the failure above; all three failures predate it and none has been seen since. A flaky test in the required check can evict a good pull request from the merge queue. Found while re-measuring the required check for TASK-34789.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The cause of the missing button is identified, in the test or the product
+- [ ] #1 The test passes 20 consecutive CI runs after aea8948fdb, or, if it fails again, the cause of the missing button is identified in the test or the product
 - [ ] #2 The test passes 20 consecutive runs in CI, or fails only for a real defect
 - [ ] #3 If the product was at fault, a test that fails deterministically without the fix pins it
 <!-- AC:END -->
