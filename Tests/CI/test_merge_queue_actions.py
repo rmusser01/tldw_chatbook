@@ -682,6 +682,14 @@ def test_an_old_green_head_that_dev_has_moved_past_is_rebased_not_evicted_as_stu
         assert not any(c[0] == "disarm" or (c[0] == "comment" and "evict" in c[2]) for c in gh.calls)
 
 
+def test_a_fresh_green_head_that_dev_has_moved_past_is_rebased_at_once():
+    """The same stale merge state hides a head whose green run is minutes old: auto-merge cannot fire
+    on a head that is behind, so waiting on it would hold the line until some unrelated event."""
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]}, behind_by={OLD: 2})
+    decision = _run(gh)[0][1]
+    assert decision.kind == "rebase" and gh.calls[0] == ("rebase", "PR_1", OLD)
+
+
 def test_an_old_green_head_up_to_date_with_dev_is_still_evicted_as_stuck():
     gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]})
     decision = _run(gh)[0][1]

@@ -9,7 +9,7 @@ labels:
 - ci
 - merge-queue
 priority: medium
-updated_date: 2026-10-14 13:14
+updated_date: 2026-10-14 14:23
 ---
 
 ## Description
@@ -24,6 +24,7 @@ On 2026-10-11 the queue removed #3070 from the line twice as 'green for over 15 
 - [x] #2 A front PR in that state that is up to date with dev is still evicted as stuck, as before
 - [x] #3 A failed check of whether the head is behind dev fails the queue run and leaves the PR armed
 - [x] #4 The merge queue spec's decision table describes the check
+- [x] #5 A green front PR whose required check went green under 15 minutes ago is rebased at once, not waited on, when dev has commits its head lacks
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,8 +40,8 @@ On 2026-10-11 the queue removed #3070 from the line twice as 'green for over 15 
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 One GitHub call (compare dev...head, per_page=1), made only when the queue is about to evict as stuck, so normal decisions cost nothing extra. decide_front stays pure; the check lives in _decide, the impure seam that already reads checks and runs, so dry mode reports the same decision. A compare error propagates (GhError): the run fails and the next event decides again, following the spec rule that transient errors never disarm. Evidence for the cause: #3070 timeline 2026-10-11 16:10:51 force-push by the tick in derived-artifacts run 38152170228 (#3029's head), 16:10:53 evict-stuck comment on the old head from merge-queue run 38154337453 (pull_request closed for #3029, merged 16:10:19), 16:11:00 rebased comment; the 03:54Z eviction followed #3071's merge at 03:53:43 the same way. Earlier stuck evictions (#2874, #3026 on 10-06) were the dispatched-check problem fixed by #3039. Files: scripts/merge_queue.py, Tests/CI/test_merge_queue_actions.py, Docs/superpowers/specs/2026-10-03-merge-queue-design.md.
+Extended 2026-10-14 after an independent review of the tldw_server port found the same gap: a green PR whose check is under 15 minutes old also reads as up to date right after a merge, and the queue waited on it ('green; auto-merge should fire') although auto-merge cannot fire on a head that is behind; the line then waited for an unrelated event. The green-wait row now carries slug 'green' and gets the same compare (one GET per green decision). Test: test_a_fresh_green_head_that_dev_has_moved_past_is_rebased_at_once.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
