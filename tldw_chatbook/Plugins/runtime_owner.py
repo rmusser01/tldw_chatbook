@@ -108,6 +108,15 @@ class PluginRuntimeOwner:
         self._registry: PluginRegistry | None = None
         self.session_id = uuid4().hex
         self.root_usage = None
+        self.acquisition_tasks = set()
+
+    def acquisition_destination(self, operation_id: str) -> Path:
+        """Return the sole managed output name for a retained acquisition label."""
+        import hashlib
+
+        _text(operation_id, "operation_id")
+        name = hashlib.sha256(operation_id.encode("utf-8")).hexdigest()
+        return self.root / "staging" / name / "snapshot"
 
     def try_acquire(self) -> bool:
         """Return false only for contention; fail closed on qualification/OS errors."""
@@ -378,6 +387,8 @@ class PluginRuntimeOwner:
 
     def close(self) -> None:
         """Close owned handles, retaining the stable lock file and child evidence."""
+        if any(not task.done() for task in self.acquisition_tasks):
+            raise PermissionError("plugin_acquisition_cleanup_not_drained")
         try:
             if self._registry is not None:
                 self._registry.close()

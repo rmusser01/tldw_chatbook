@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import unicodedata
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -213,12 +214,16 @@ def _member_fd(root_fd: int, member: PurePosixPath):
         os.close(descriptor)
 
 
-def capture_package(root: Path) -> PackageCapture:
+def capture_package(
+    root: Path, *, checkpoint: Callable[[], None] | None = None
+) -> PackageCapture:
     """Capture bounded regular files; report unsafe members without reading them.
 
     Raises:
         PackageFileError: For root failures, exhaustion, or concurrent changes.
     """
+    if checkpoint is not None:
+        checkpoint()
     try:
         root = validate_canonical_directory(root)
         capture = PackageCapture(root, {}, set(), [], [])
@@ -251,6 +256,8 @@ def capture_package(root: Path) -> PackageCapture:
                 before = os.fstat(directory_fd)
                 with os.scandir(directory_fd) as entries:
                     for entry in entries:
+                        if checkpoint is not None:
+                            checkpoint()
                         member = prefix / entry.name
                         path = member.as_posix()
                         try:
@@ -306,6 +313,8 @@ def capture_package(root: Path) -> PackageCapture:
                                         MAX_PACKAGE_BYTES - total + 1,
                                     ),
                                 ):
+                                    if checkpoint is not None:
+                                        checkpoint()
                                     total += len(block)
                                     data.extend(block)
                                     if len(data) > MAX_FILE_BYTES:
@@ -354,6 +363,8 @@ def capture_package(root: Path) -> PackageCapture:
         if not capture.errors:
             digest = hashlib.sha256()
             for name, file in sorted(capture.files.items()):
+                if checkpoint is not None:
+                    checkpoint()
                 header = canonical_json(
                     [name, file.executable_mode, len(file.data)]
                 ).encode()
@@ -390,7 +401,12 @@ def _output_parent(root_fd: int, path: str):
         os.close(descriptor)
 
 
-def materialize_package(source: Path, destination: Path) -> PackageInspection:
+def materialize_package(
+    source: Path,
+    destination: Path,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> PackageInspection:
     """Validate and copy into an absent child of a canonical directory.
 
     Existing destinations are never replaced. POSIX descriptor support is
@@ -400,7 +416,7 @@ def materialize_package(source: Path, destination: Path) -> PackageInspection:
     """
     from .inspection import inspect_capture
 
-    capture = capture_package(source)
+    capture = capture_package(source, checkpoint=checkpoint)
     if capture.errors:
         raise PackageFileError(capture.errors[0].code)
     inspection = inspect_capture(capture)
@@ -429,9 +445,13 @@ def materialize_package(source: Path, destination: Path) -> PackageInspection:
                 for directory in sorted(
                     capture.directories, key=lambda value: (value.count("/"), value)
                 ):
+                    if checkpoint is not None:
+                        checkpoint()
                     with _output_parent(destination_fd, directory) as (fd, name):
                         os.mkdir(name, mode=0o700, dir_fd=fd)
                 for path, file in capture.files.items():
+                    if checkpoint is not None:
+                        checkpoint()
                     with _output_parent(destination_fd, path) as (fd, name):
                         output = os.open(
                             name,
@@ -440,7 +460,10 @@ def materialize_package(source: Path, destination: Path) -> PackageInspection:
                             dir_fd=fd,
                         )
                         with os.fdopen(output, "wb") as stream:
-                            stream.write(file.data)
+                            for offset in range(0, len(file.data), CHUNK_BYTES):
+                                if checkpoint is not None:
+                                    checkpoint()
+                                stream.write(file.data[offset : offset + CHUNK_BYTES])
                             stream.flush()
                             os.fchmod(stream.fileno(), 0o400 | file.executable_mode)
                 if (
@@ -453,7 +476,7 @@ def materialize_package(source: Path, destination: Path) -> PackageInspection:
                     or _identity(parent.stat()) != parent_identity
                 ):
                     raise PackageFileError("destination_changed")
-                copied = capture_package(destination)
+                copied = capture_package(destination, checkpoint=checkpoint)
                 if copied.digest != capture.digest or copied.errors:
                     raise PackageFileError("destination_changed")
                 return inspection.model_copy(

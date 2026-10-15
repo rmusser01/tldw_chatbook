@@ -15,6 +15,7 @@ PURPOSES = frozenset(
         "issued_operation",
         "legacy_cutover",
         "archive-pin-v1",
+        "acquisition-custody-v1",
     }
 )
 

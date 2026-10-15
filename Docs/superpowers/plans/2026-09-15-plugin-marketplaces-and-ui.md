@@ -581,3 +581,29 @@ and full-suite qualification remain outside this increment.
 
 
 I2 accepted with implementation `9de71a8694` and reviewed Fix1 `38daa5315c`: version-pinned portable/OpenAI/Cursor inventories, public catalog replay and pure vendor command-hook codecs use the existing owners. Fix1 preserves usable MCP siblings through inspection, selected-good publication, authenticated recovery and actual admission, with deterministic diagnostic identities for malformed source names (R82). Fresh scoped review closed I1 with no new findings. Final affected113adapter/136owner tests pass; unchanged36component-context/238hook results remain qualified in their recorded contexts. Only the component/context pair required approved normal-host execution after the exact native boot probe returned EPERM in the tool sandbox. Parser captures do not claim original-host execution; other platforms, external services/keychain/UI/full-suite and prior resource/startup/timing observations remain explicit later-task/final-review boundaries. Existing ADR162/163 and R77/R78/R82 govern these contracts.
+
+### I3 implemented owner/API handoff
+
+R83/R84 and TASK-32688's recorded CLI2/CLI4 scope add existing
+`Plugins/service.py`, `runtime_owner.py`, `authority_store.py`, `authority.py`
+(the acquisition-only purpose constant), `models.py`, and the repository-owned
+`Tests/Plugins/acquisition_process_support.py` fixture to the I3 paths above.
+No installed schema, authority transition, runtime/process controller or F7
+retention implementation is replaced. F1 accepts optional internal checkpoints;
+unchanged callers retain their validation.
+
+The service exposes `acquisition_destination`, `acquire_snapshot`,
+`release_acquired_snapshot` and `cleanup_acquisitions`. The original worker and
+owner retain uncertain process/thread cleanup even after a waiter cancels;
+shutdown refuses until it drains. Acquired results retain a recovery reference;
+call release only after consuming or discarding the result. Separate origin,
+commit and selected-tree fields are not yet persisted installation provenance.
+I4 must carry them into authenticated selected-source review/recovery rather
+than reduce the result to a path. See the design's **I3 acquisition operation
+contract (R83/R84)** for supported sources/authentication, limits, no-replay
+eligible R85 receipt retirement/refusal, conservative restart behavior and qualification boundaries.
+
+R86 restores the shared native_console fixture to its canonical `marker` path,
+matching unchanged retained restart consumers. The five ordinary neighbor files
+and two recorded native fixture-consumer nodes qualify this one-line correction;
+missing-marker failures are distinct from native boot-probe restrictions.
