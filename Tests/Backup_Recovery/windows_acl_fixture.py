@@ -96,3 +96,37 @@ def preserve_windows_dacl(path):
         _preserve_dacl(native, handle),
     ):
         yield
+
+
+def _replace_protected_windows_dacl(path, sddl):
+    """Replace only a fixture directory's protected DACL on its pinned object."""
+    from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+    from tldw_chatbook.Utils.windows_files import _READ_CONTROL, _WRITE_DAC, _native
+
+    native = _native()
+    descriptor = C.c_void_p()
+    try:
+        native.check(
+            native.advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl, 1, C.byref(descriptor), None
+            )
+        )
+        dacl = C.c_void_p()
+        present, defaulted = C.c_int32(), C.c_int32()
+        native.check(
+            native.advapi.GetSecurityDescriptorDacl(
+                descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
+            )
+        )
+        with (
+            pinned_directory(path) as fd,
+            native.reopen(native.handle(fd), _READ_CONTROL | _WRITE_DAC) as handle,
+        ):
+            result = native.advapi.SetSecurityInfo(
+                handle, 1, 4 | 0x80000000, None, None, dacl, None
+            )
+            if result:
+                raise C.WinError(result)
+    finally:
+        if descriptor.value:
+            native.kernel.LocalFree(descriptor)
