@@ -59,13 +59,43 @@ body {
   min-width: 0;
   min-height: 52px;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  /* Visible hairline (visual round 3): --border (#303544) sits too close
+     to --surface (#1c1f27) to read at phone DPI; a translucent white line
+     does. */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
   padding-top: calc(8px + env(safe-area-inset-top));
   padding-bottom: 8px;
   padding-left: calc(12px + env(safe-area-inset-left));
   padding-right: calc(12px + env(safe-area-inset-right));
   z-index: 10;
+}
+
+/* Phone-width header fit (visual round 3): below 480px the actions
+   cluster takes its own full-width row, so the rightmost link ("Sign
+   out") can never share a row with the brand/Back button and be pushed
+   past the right viewport edge. Measured at 390px: the cluster needs
+   ~305px (13px links: Approvals+badge, Open terminal, Sign out, gaps)
+   against 370px available (390 − 2×10px padding) — ~65px of slack.
+   Links stay nowrap so their text never truncates mid-word. */
+@media (max-width: 480px) {
+  .app-header {
+    gap: 6px;
+    padding-left: calc(10px + env(safe-area-inset-left));
+    padding-right: calc(10px + env(safe-area-inset-right));
+  }
+
+  .header-actions {
+    flex-basis: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .header-link,
+  .header-button {
+    font-size: 13px;
+  }
 }
 
 .brand {

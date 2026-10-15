@@ -345,6 +345,43 @@ async def test_mobile_css_keeps_the_hidden_attribute_authoritative(
 
 
 @pytest.mark.asyncio
+async def test_mobile_css_header_fits_narrow_viewports(tmp_path) -> None:
+    """Header right-edge fit + visible divider (visual round 3).
+
+    At 390px the actions cluster ("Approvals [n]" + "Open terminal" +
+    "Sign out") measures ~305px at 13px link font. The pinned media query
+    gives the cluster its own full-width row below 480px, so its available
+    width is the whole content box — 390 − 2×10px padding = 370px — and
+    "Sign out" can no longer be pushed past the right edge (the round-3
+    clip: it shared a row with the brand and overflowed). The divider
+    hairline is pinned to a translucent white that reads against the dark
+    surface, unlike the old --border tone. The arithmetic below is the
+    acceptance computation; the substring pins keep the rules from
+    silently regressing.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.css")
+        assert response.status == 200
+        body = await response.text()
+
+    viewport_px = 390
+    header_padding_px = 10  # per side, in the narrow band
+    cluster_measured_px = 305  # Approvals+badge, Open terminal, Sign out, gaps
+    available_px = viewport_px - 2 * header_padding_px
+    assert available_px == 370
+    assert available_px > cluster_measured_px + 40  # ≥ 40px of slack
+
+    # Own-row fit: the cluster spans the full row below 480px, right-anchored.
+    assert "@media (max-width: 480px)" in body
+    assert "flex-basis: 100%" in body
+    assert "justify-content: flex-end" in body
+    # Links never truncate mid-word.
+    assert ".header-link" in body and "white-space: nowrap" in body
+    # Perceivable divider hairline.
+    assert "rgba(255, 255, 255, 0.12)" in body
+
+
+@pytest.mark.asyncio
 async def test_unknown_mobile_asset_is_404(tmp_path) -> None:
     async with _logged_in_client(tmp_path) as client:
         response = await client.get("/static/mobile/not-an-asset.js")
