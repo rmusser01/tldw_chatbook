@@ -197,7 +197,12 @@ def test_the_census_tail_block_keeps_the_shape_write_relies_on():
     count = int(announced.group(1))
     blank = next((i for i in range(header, len(lines)) if not lines[i].strip()), None)
     assert blank is not None, "no blank line ends the block header"
-    assert all(line.lstrip().startswith("#") for line in lines[header:blank])
+    assert all(line.lstrip().startswith("#") for line in lines[header:blank]), (
+        "a non-comment line inside the block header"
+    )
+    assert blank + 1 < len(lines) and lines[blank + 1].strip(), (
+        "more than one blank line ends the block header, or no entry follows it"
+    )
     rows = [
         i
         for i in range(blank + 1, len(lines))

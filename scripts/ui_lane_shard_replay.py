@@ -15,8 +15,9 @@ file is scored at the WORST of the runs given. Pass more than one run.
 
 Usage:
     # one directory per CI run, one file per shard job; --shards is the UI
-    # lane's matrix size, --tail the entries from the block to re-order to
-    # the end of the census:
+    # lane's matrix size, --tail the number of entries to re-order, counted
+    # back from the end of the census (the block's announced count plus any
+    # entries appended after it):
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
     python scripts/ui_lane_shard_replay.py --shards 10 run1 run2
     python scripts/ui_lane_shard_replay.py --shards 10 --tail 92 --write run1 run2
