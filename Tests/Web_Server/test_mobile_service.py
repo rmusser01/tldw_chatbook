@@ -340,3 +340,161 @@ async def test_messages_cursor(tmp_path: Path) -> None:
         )
     finally:
         await _shutdown(service, subscriber)
+
+
+async def test_send_after_run_completed_is_accepted_immediately(
+    tmp_path: Path,
+) -> None:
+    """A send reacting to ``run_completed`` in its first slice is admitted.
+
+    Deterministic pin for the admission half of the turn-slot race
+    (re-review round 1). Mechanism, by construction: the event fan-out is
+    synchronous (``put_nowait``), so the instant ``run_completed`` is
+    emitted, this subscriber's ``Queue.get`` wakeup is queued on the loop's
+    ready list. Pre-fix, the emit happened inside ``_run_turn`` while the
+    session lock was held and the session was still in ``turns_in_flight``
+    (cleanup lived only in the task-done callback) — and a finishing task's
+    done-callback is queued strictly AFTER anything queued during the
+    task's body. The subscriber therefore always ran first and its send
+    deterministically raised ``MobileSendRefused``. The fix releases the
+    admission slot BEFORE announcing terminal (no ``await`` between), so
+    this send is always admitted.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    outcome: list[str] = []
+    session_id_holder: list[str] = []
+
+    async def _reactive_subscriber() -> None:
+        """On the first ``run_completed`` for the target session, send again
+        immediately — in this wakeup slice, before anything else runs."""
+        async for event in service.events():
+            if (
+                event.type == "run_completed"
+                and event.session_id in session_id_holder
+            ):
+                assert outcome == [], "second run_completed before send settled"
+                try:
+                    await service.send(event.session_id, "immediate follow-up")
+                except MobileSendRefused:
+                    outcome.append("refused")
+                else:
+                    outcome.append("accepted")
+                return
+
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    reactive = asyncio.create_task(_reactive_subscriber())
+    try:
+        session = await service.create_session(title="reactive send")
+        session_id_holder.append(session["id"])
+        await service.send(session["id"], "first turn")
+        await _wait_for(
+            lambda: len(outcome) == 1,
+            timeout=15,
+            what="reactive send outcome after first run_completed",
+        )
+        # The pin: the immediate send was admitted, never refused.
+        assert outcome == ["accepted"], outcome
+        # And its turn really completed (second terminal event observed).
+        await _wait_for(
+            lambda: len([e for e in got if e.type == "run_completed"]) == 2,
+            timeout=15,
+            what="second run_completed event",
+        )
+        messages = service.session_messages(session["id"])["messages"]
+        assert [m["content"] for m in messages if m["role"] == "user"] == [
+            "first turn",
+            "immediate follow-up",
+        ]
+    finally:
+        await _shutdown(service, reactive)
+        await _shutdown(service, subscriber)
+
+
+async def test_pump_tick_in_the_return_window_delivers_fast_run_content(
+    tmp_path: Path,
+) -> None:
+    """A pump tick inside the return window delivers the content; it must
+    not baseline it away.
+
+    Deterministic pin for the streaming half of the turn-slot race
+    (re-review round 1). Mechanism: in agent mode the assistant row only
+    becomes scannable with content at finalize, so the first pump tick
+    that can ever see the message sees it already terminal, while the
+    owning turn still holds its admission slot inside ``submit_draft``'s
+    finalize-to-flush window. Two facts make a naive timing pin useless
+    (both observed live): idle, that window is sub-millisecond — a tick
+    only lands in it under load, which is how the original flake surfaced
+    at the production 0.5 s cadence; and a tick that lands MID-run
+    instead creates a pending track, which lets even pre-fix code deliver
+    via the tracked path. So this test removes both timing inputs: the
+    real pump is cancelled (the tick below is the only scan) and the
+    service's own flush seam is wrapped so that when the turn performs
+    its send-time flush, a real ``_poll_once`` tick runs FIRST — flush
+    time is inside the window by construction, with ``track`` guaranteed
+    None. Pre-fix, that tick scanned the session as inactive, took the
+    silent first-observation baseline, and the flush then had zero
+    remaining content: no ``delta`` and no ``message_done`` ever fired
+    (and the tick announced ``run_completed`` before any content). The
+    fix treats the slot-owned session as live: full delta +
+    ``message_done`` first, terminal announcement after.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    # Build the engine, then kill the real pump: the wrapper's tick below
+    # becomes the only scan, so the pre-flush track state is deterministic.
+    await service._ensure_started()
+    assert service._pump_task is not None
+    service._pump_task.cancel()
+    try:
+        await service._pump_task
+    except asyncio.CancelledError:
+        pass
+    original_scan = service._scan_stream
+
+    def _tick_then_scan(engine, session_id, *, active, flush=False):
+        if flush:
+            # A pump tick lands in the return window just before the turn's
+            # own flush would deliver — the exact interleaving the race
+            # window produces when a tick gets scheduled inside it.
+            service._poll_once(engine)
+        return original_scan(engine, session_id, active=active, flush=flush)
+
+    service._scan_stream = _tick_then_scan
+
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="fast run")
+        await service.send(session["id"], "answer fast")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="run_completed event",
+        )
+
+        deltas = [
+            e
+            for e in got
+            if e.type == "delta" and e.session_id == session["id"]
+        ]
+        dones = [
+            e
+            for e in got
+            if e.type == "message_done" and e.session_id == session["id"]
+        ]
+        assert deltas, "pump tick in the return window baselined the content"
+        assert dones, "terminal message_done never fired for the fast run"
+        delivered = "".join(e.payload["text"] for e in deltas)
+        assert delivered == FINAL_ANSWER, delivered
+        # The deltas and the terminal message_done reference one message.
+        assert {e.payload["message_id"] for e in deltas} == {
+            e.payload["message_id"] for e in dones
+        }
+        # Content precedes the terminal announcement — the tick cannot
+        # announce run_completed for content the subscriber never got.
+        types = [e.type for e in got]
+        assert types.index("delta") < types.index("run_completed"), types
+    finally:
+        await _shutdown(service, subscriber)
