@@ -832,8 +832,10 @@ class PluginCoordinator:
         if inspection.materialized_identity:
             reinspect(inspection, Path(inspection.materialized_identity))
         else:
-            current = inspect_package(
-                Path(inspection.source_identity), dialect=inspection.dialect
+            from .retained_inspection import _reinspect_expected
+
+            current = _reinspect_expected(
+                capture_package(Path(inspection.source_identity)), inspection
             )
             if inspection_identity(current) != inspection_identity(inspection):
                 raise ValueError("stale review package inputs")
@@ -919,7 +921,7 @@ class PluginCoordinator:
             update={"materialized_identity": str(destination)}
         )
         if not os.path.lexists(destination):
-            copied = materialize_package(source, destination, dialect=review.inspection.dialect)
+            copied = materialize_package(source, destination, dialect=review.inspection.dialect, expected=review.inspection)
             if copied.content_digest != retained.content_digest:
                 raise ValueError("stale package during materialization")
         reinspect(retained, destination)

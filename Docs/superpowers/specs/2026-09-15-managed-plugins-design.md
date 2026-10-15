@@ -1640,3 +1640,110 @@ same-installation/revision MCP targets and dependency closure. The general
 canonical-new-review rule has this narrow builtin-alias exception so integration
 does not remove current host functionality. It introduces no third stored form,
 conversion, dispatcher, permission owner or grant. Unknown target families refuse.
+
+### I2 reviewed branch adapter subset (2026-10-15; TASK-32687)
+
+This records the published branch recipe. The PR3148 reconciliation below governs
+fresh /2 inspections and retained interpretation; historical unsupported hooks
+cannot become supported merely through recovery.
+
+`chatbook-codex/1` and `chatbook-cursor/1` pin package interpretation to the official
+contracts researched on 2026-09-16; `documented-2026-09-16` is a documentation date,
+not an upstream package version. Root portable identity and fixed skill/MCP paths
+survive OpenAI overlays; an inline OpenAI object replaces the entire compatibility
+object, including when empty. Cursor manifest fields replace catalog fields and
+explicit paths replace discovery, including empty arrays. Invalid portable roots
+cannot fall through to a standalone vendor interpretation. Recognized malformed
+native constraints remain blocking in every selected vendor interpretation.
+
+The existing inventory owner validates normalized vendor records, counts,
+duplicates, variables and complete dependency closure. Supported instruction
+metadata maps to native manual-only/inline/fork semantics. File-glob Cursor rules
+are explicitly manual; no file activation is inferred. Agents require explicit
+tool declarations; empty stays empty, unavailable models/tools require the same
+native mappings. Unsupported declarations remain visible. Foreign app/OAuth
+metadata supplies neither grants nor connections. The inert Linear capture's
+`http` spelling normalizes to native `streamable-http`; this establishes parsing,
+not a live Linear or OAuth connection.
+
+Public catalog data uses the authenticated `catalog-v1:` carrier (R77), bounded to
+16384 UTF-8 bytes including prefix, with existing JSON depth/node bounds. Duplicate,
+malformed, unknown-version and noncanonical carriers refuse. Unknown top-level catalog fields (including host credential references) refuse;
+nested declarations use the existing structural validators. Public variable names
+and literal headers remain valid. The parser does not detect secret content:
+callers must supply public catalog metadata, never private host/vendor state. Review, materialized
+recapture and recovery replay the same carrier without reading a mutable catalog.
+Package bytes retain their original content digest. Vendor effective identity also
+binds those bytes, normalized definitions, constraints, and reviewed catalog data.
+
+Pinned selected captures and exact notice limits live in
+`Tests/Plugins/fixtures/interop/README.md` and `upstream/provenance.json`. Parser
+fixtures are never executed. Separately authored temporary packages qualify the
+native owners. No original Cursor/Codex host equivalence is claimed.
+
+
+## PR3148 current-dev reconciliation (2026-10-17, TASK32695)
+
+Integrate the reviewed branch into current dev's existing owners; this amendment
+records compatibility, not new permission or runtime authority. The accepted
+proposal is the integration plan's StageA proposal/addendum (SHA256
+`9648b48ea2683c95633f9e6cad449a591aa325e88db92d0e7043ac567013dfa2`).
+
+- Keep current `NativeHooks`, `host_references` and `MCPProviderGroup` as the
+  defining seams. Port accepted launch-value, requirement, exact root/scratch and
+  cancellation behavior there. Do not retain parallel NativeHookSet/NativeMCPProviders
+  runtimes. Preserve current trust-directory selection, finite workspace connection
+  ownership and lazy service construction.
+- Retain the two closed existing host-reference forms. Historical dev model
+  records keep `native-model-*` identity and `provider::model`; historical dev
+  native tool records keep `native-tool-*` identity and kind `tool`. Canonical
+  records keep `<component>:model` catalog identity and
+  `<component>:tool:<hash>`/kind `configuration` with an exact reviewed target.
+  New model/MCP reviews write canonical records; fresh builtin aliases retain the
+  existing `dev_tool` form under the builtin-reference continuity amendment. Dispatch by exact kind, recomputed identity
+  and component owner, never by delimiter alone. Validate complete retained rows
+  with the original catalog/MCP/variable owner, dependency closure, credentials,
+  generation and installation/revision binding. Unknown, substituted or competing
+  representations refuse. EMPTY and actual-parent ceilings remain narrowing.
+  There is no automatic conversion, re-signing, new grant or plaintext fallback.
+- New inspections use `chatbook-portable/2`, `chatbook-codex/2` and
+  `chatbook-cursor/2`, with dialects `portable`, `openai`, `cursor`. Source formats
+  stay separately versioned. New identity never silently changes old interpretation.
+  Retained portable `chatbook-portable/1` may use only the bounded pinned-dev and
+  published-branch historical recipes. Retained openai
+  `chatbook-openai/2026-10-01.1` and cursor `chatbook-cursor/2026-10-01.1` use
+  only the pinned-dev recipe; openai `chatbook-codex/1` and cursor
+  `chatbook-cursor/1` use only the published-branch recipe. `/2` uses only the
+  integrated recipe. All other pairs refuse. These recipes share pure parsing
+  where identical; they add no extensible normalizer framework or runtime owner.
+- Retained interpretation selection follows verified protected authority and
+  exact safe byte capture. Compare the complete retained revision/component
+  projection, variables, dependencies, blockers, content/effective identity and
+  original source custody. Registry labels, diagnostics or a matching version
+  alone are insufficient. Coalesce only identical complete selected semantics;
+  zero matches or multiple distinct matching semantic results refuse. Never pick
+  the newest, ready or least restrictive candidate. Keep exact in-process review
+  identity stricter than observational diagnostic/candidate-menu reconstruction.
+  The private selector is not exported and cannot authenticate or mint authority.
+- Materialization may accept a trailing `expected` inspection only to preserve
+  an already checked original interpretation; it does not bypass capture, path,
+  quota, provenance, review or commit checks. Review, recovery and rollback use
+  the same bounded comparison. Explicit new inspection requires normal `/2`
+  review and selection; old unsupported hooks stay unsupported under recovery.
+- Preserve current ChaChaNotes v81 and the shipped v74-to-v75 hook receipt step;
+  the old branch's v73-to-v74 receipt DDL is identical and must not duplicate it
+  or displace the shipped auxiliary-failure/response-rule/recovery migrations.
+  The accepted plugin-registry v4-to-v5 marketplace-source step remains separate.
+
+Preserve current ADR126/197/230/232 lifetime, consent, source and machine-followup
+contracts. Existing/current-profile compatibility is qualified with independently
+produced historical projections, real protected recovery and negative controls;
+new-base tests and independent review remain required. No success follows merely
+from this amendment, and no new schema of authenticated authority is introduced.
+
+
+### Integrated adapter catalog and agent-tool decisions (2026-10-17)
+
+Fresh `/2` inspections use the captured regular-file `.chatbook-plugin/catalog.json` when no explicit external overlay is supplied. An explicitly reviewed external overlay uses the bounded canonical `catalog-v1:` carrier. Conflicting simultaneous captured and external catalog inputs refuse before review; no carrier silently wins. Manifest fields replace catalog fields wholesale. Historical dev and published-branch recipes retain their original carrier and replacement rules.
+
+Fresh `/2` foreign agents require an explicit supported tool contract. Omitted tools leave that agent unavailable with a visible blocker while independently valid siblings remain inspectable. An explicit empty tool list stays EMPTY; omission never means inheritance or a wider authority ceiling. Unsupported source constraints remain visible and fence the affected scope. Historical dev inheritance and published-branch explicit-tool semantics remain exact under their closed retained recipes. Existing actual-parent, mapping and permission-store gates still apply.

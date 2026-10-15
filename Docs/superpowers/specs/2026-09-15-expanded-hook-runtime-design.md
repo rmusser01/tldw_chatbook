@@ -1423,3 +1423,65 @@ Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations
 `_NativeHookProcessOwner` binds the exact original `CommandJob` cancellation callback before launch. F8 reserves dirty/root/revision custody before process access, publishes actual process provenance before stdin, and settles only on positive terminal proof. A failed registration settles its unlaunched reservation. Workspace revocation cancels only matching job ownership; independent scopes retain their work. The original adapter remains attached for late cleanup.
 
 Worker admission/launch/result checks perform full owning-service recapture. Main-loop synchronous effect-currentness uses only the live fence and cannot replace those reads. Final provider dispatch waits for full recapture and checks the live fence again after worker completion; changed or unavailable authority refuses delivery. No synchronous main-loop wait on the plugin worker is introduced.
+
+### I2 command protocol adaptation (2026-10-15; TASK-32687)
+
+The closed `vendor_protocol` marker selects pure input/output codecs on the same
+HookHandler and CommandJob. `codex/1` supports UserPromptSubmit, PreToolUse and
+PostToolUse; `cursor/1` supports beforeSubmitPrompt, preToolUse,
+beforeMCPExecution, postToolUse and postToolUseFailure. Source hook files retain
+Cursor's numeric version 1. Command parsing is qualified on Darwin only, for
+simple POSIX argv with no shell operators, interpolation, globbing, substitutions
+or comments; only explicit host/declaration placeholders survive for one native
+expansion. Windows/Linux argv conversion is unqualified and refuses.
+
+Matcher support is absent/empty or universal `.*` only. Aliases, regex filters,
+command-text matchers and unlisted events refuse. The Cursor MCP-specific event
+filters the actual MCP provider and serializes tool_input as JSON text; generic
+pre-events carry a JSON object. Cursor postToolUse runs only on actual successful,
+non-error outcomes. Codex post completion and Cursor failure events retain their
+separate producer outcomes. Unsupported output fields, `ask`, invalid JSON and
+undeclared effects refuse. `allow` means pass to normal Chatbook permission review,
+never permission bypass. Source exit 2 can deny only after the unchanged authority,
+output-bound, deadline and cancellation checks.
+
+Retained package cwd and Chatbook's fail-closed guard failure policy are explicit
+adaptations from vendor session cwd/fail-open defaults. The existing owner supplies
+PLUGIN_ROOT/PLUGIN_DATA and expands declared variables; activation grants no folder
+binding. Every source pre-guard becomes a dependency of all effective non-hook
+components, including native-extension siblings. Unknown guard scope blocks that
+installation's capabilities. Mixed deny/input-transform mappings execute once in
+the transformer phase and cannot satisfy a required final guard: dependent
+components carry `dependency_guard_unqualified:<hook-id>`. Pure-deny MCP/prompt
+mappings can satisfy their qualified event requirements. Distinct native final
+validators still see final arguments; no vendor command is invoked twice to claim
+a guard guarantee. No approval-bypass, Stop continuation, editor/Tab event, generic
+regex or original-host runtime equivalence is claimed.
+
+
+## PR3148 current-owner hook reconciliation (2026-10-17, TASK32695)
+
+Keep current dev's single `NativeHooks` facade and hook engine. Its existing
+consent `launch_guard`, `effect_authority_check`, `event_projector`, authenticated
+current-delivery and exactly-once SessionEnd/teardown paths remain authoritative.
+Thread the actual optional keyword-only `scratch_manager`/`scratch_snapshot` pair
+through `PluginService.hook_configuration` into that facade. Add the already
+approved `process_owner_for` and `command_launch` engine callbacks alongside,
+not instead of, those current gates. Engine copies/child/compaction replacements
+carry both sets. The job captures one private adapter to the existing process/root
+owner; native and fallback paths cannot both reserve the same job, and unavailable
+native requirements cannot escape through fallback.
+
+`CommandLaunchValues` remains frozen and repr-free; resolved protected values
+stay launch locals. Bare host selection is absolute before child cwd/environment
+overlays; explicit contained package executables remain separate. Preserve strict
+standalone cwd validation, original matcher/event scope for unavailable required
+constraints, current counters/deadlines, scratch incarnation and positive terminal
+proof before resource release. Signature metadata contains no resolved secrets.
+
+Current received-intent/configuration/native commit, saved consent, response-rule
+settlement and machine-followup admission remain in their current owners under
+ADR197/230/232. Do not restore removed facades, move work back to views, introduce
+new schedulers or treat history as renewed authority. This is direct integration
+of the accepted hook/ownership contracts; behavioral and native lifetime checks
+must run on the rebased source before qualification.
