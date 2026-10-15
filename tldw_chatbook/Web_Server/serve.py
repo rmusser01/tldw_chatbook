@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlsplit, urlunparse
 
 from loguru import logger
 
@@ -750,6 +750,11 @@ class ChatbookWebServerMixin:
                 name="devices_revoke",
             ),
             web.post(
+                "/auth/devices/revoke-all",
+                self.handle_devices_revoke_all,
+                name="devices_revoke_all",
+            ),
+            web.post(
                 "/auth/devices/rename",
                 self.handle_devices_rename,
                 name="devices_rename",
@@ -1011,7 +1016,9 @@ class ChatbookWebServerMixin:
         tests: one ``<section class="device">`` per session carrying
         ``data-session-id`` and a ``data-current-device`` flag for the
         requesting device, with all dynamic values HTML-escaped and the
-        per-session CSRF token in the ``chatbook-csrf`` meta tag.
+        per-session CSRF token in the ``chatbook-csrf`` meta tag. A
+        header-level "Sign out all devices" incident-response control sits
+        outside those sections (ADR-233 decision 4).
         """
 
         from aiohttp import web
@@ -1057,6 +1064,8 @@ class ChatbookWebServerMixin:
             f'<meta name="chatbook-csrf" content="{csrf}">'
             "<title>Chatbook devices</title></head><body>"
             "<main><h1>Your devices</h1>"
+            '<button type="button" class="device-revoke-all">'
+            "Sign out all devices</button>"
             '<section class="device-pairing"><h2>Add a device</h2>'
             '<button type="button" class="device-pair">Add a device</button>'
             '<canvas class="device-pair-qr" hidden></canvas>'
@@ -1101,6 +1110,24 @@ class ChatbookWebServerMixin:
         )
         return web.json_response(
             {"ok": revoked}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_devices_revoke_all(self, request):
+        """Revoke every device session, including the requesting browser's.
+
+        The incident-response control (ADR-233 decision 4): one authed POST
+        empties the session table and persists that emptiness, so even a
+        restart cannot resurrect a revoked device. The requesting session
+        dies with the rest, so the browser is expected to navigate away
+        rather than reload.
+        """
+
+        from aiohttp import web
+
+        await _read_device_json(request)
+        self._web_auth.revoke_all()
+        return web.json_response(
+            {"ok": True}, headers={"Cache-Control": "no-store"}
         )
 
     async def handle_devices_rename(self, request):
@@ -1855,10 +1882,28 @@ def create_server(
     return server
 
 
+#: Bind hosts a QR can never reach: a URL carrying one of these as its host
+#: (e.g. the auto-derived ``https://<bind-host>:<port>`` when TLS is set
+#: without an explicit public_url) is unusable from any other device.
+_PAIR_QR_UNREACHABLE_HOSTS = frozenset({"0.0.0.0", "::", ""})
+
+
 def _print_pair_qr(server, *, echo=print) -> bool:
     """Print a one-use pairing QR for a server about to start (ADR-233 §3.3)."""
-    if not getattr(server, "public_url", None):
+    public_url = getattr(server, "public_url", None)
+    if not public_url:
         echo("--pair skipped: [web_server] public_url is not configured.")
+        return False
+    url_host = urlsplit(public_url).hostname
+    if (url_host or "").lower() in _PAIR_QR_UNREACHABLE_HOSTS:
+        # create_server auto-derives https://<bind-host>:<port> under TLS, so
+        # a wildcard bind (0.0.0.0, ::) yields a URL no phone could open;
+        # printing it as a QR would advertise a dead link.
+        echo(
+            "--pair skipped: [web_server] public_url "
+            f"{public_url!r} has a wildcard/unspecified host; "
+            "configure an explicit public_url to pair."
+        )
         return False
     url = server.issue_browser_bootstrap_url()
     try:
@@ -1893,7 +1938,8 @@ def run_web_server(
         title: Page title (default: from config or "tldw chatbook")
         debug: Enable debug mode (default: from config or False)
         pair: Print a one-use phone pairing QR before serving
-            (default: False; skipped with a notice when public_url is unset)
+            (default: False; skipped with a notice when public_url is unset
+            or its host is a wildcard/unspecified bind address)
 
     Raises:
         ImportError: If textual-serve is not installed

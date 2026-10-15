@@ -43,6 +43,7 @@ Approach (Tasks 1-8 of the Phase 1a plan, on `feat/served-auth-phase1a`):
 Verification: Phase 1a-targeted tests green (`Tests/Web_Server/test_web_auth_integration.py` +5 new pass; `test_session_store.py`, `Tests/Canvas/test_web_auth.py` 80 pass, `Tests/Chat/test_approval_constants.py` pass; 18 passed under the Phase 1a filter). The 11 failures in `test_web_auth_integration.py` are the documented pre-branch environmental baseline (identical failure set before/after — `Backup_Recovery` `RecoveryRequired` fence), as are the 209 in `Tests/Agents/test_local_tool_provider.py`.
 
 No lessons-*.md entry: nothing generalizable beyond what the spike doc already records in place.
+Final review fix wave: added Revoke-all route/page/JS/test (C1).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

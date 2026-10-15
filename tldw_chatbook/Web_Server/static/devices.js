@@ -115,6 +115,14 @@
         .catch(() => undefined);
       return;
     }
+    // Header-level incident response (revoke-all also ends THIS session, so
+    // navigating to the login page — a reload would 401).
+    if (button.classList.contains("device-revoke-all")) {
+      post("/auth/devices/revoke-all")
+        .then(() => window.location.assign("/auth/login"))
+        .catch(() => undefined);
+      return;
+    }
     if (!sessionId) {
       return;
     }

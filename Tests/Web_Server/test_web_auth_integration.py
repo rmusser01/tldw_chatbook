@@ -561,6 +561,46 @@ async def test_revoking_another_device_ends_only_that_session(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_revoke_all_ends_every_device_session(tmp_path) -> None:
+    async with _logged_in_client(tmp_path, remember="1") as client:
+        second = await _fresh_client(client.chatbook_test_server)
+        async with second:
+            login = await second.post(
+                "/auth/login",
+                data={"access_token": _DEVICES_ACCESS_TOKEN, "remember": "1"},
+                allow_redirects=False,
+            )
+            assert login.status == 303
+
+            # The devices page offers the incident-response control at the
+            # header level, distinct from any per-device revoke button.
+            page = await client.get("/auth/devices")
+            body = await page.text()
+            assert page.status == 200
+            assert "Sign out all devices" in body
+            assert 'class="device-revoke-all"' in body
+
+            resp = await client.post(
+                "/auth/devices/revoke-all",
+                headers={CSRF_HEADER_NAME: await _csrf(client)},
+            )
+            assert resp.status == 200
+            assert (await resp.json())["ok"] is True
+            assert resp.headers["Cache-Control"] == "no-store"
+
+            # Every device is signed out, including both requesting browsers:
+            # the root GET bounces to the login page and a device-manager
+            # request is denied outright.
+            after_first = await client.get("/", allow_redirects=False)
+            assert after_first.status == 303
+            assert after_first.headers["Location"] == "/auth/login"
+            assert (await second.get("/auth/devices")).status == 401
+
+    # Nothing survives on disk: a restart would come up session-free.
+    assert WebSessionStore(tmp_path / "web_sessions.json").load() == {}
+
+
+@pytest.mark.asyncio
 async def test_rename_updates_and_escapes_the_devices_page(tmp_path) -> None:
     async with _logged_in_client(tmp_path) as client:
         resp = await client.post(

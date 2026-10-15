@@ -1,7 +1,6 @@
 # Tests/Web_Server/test_session_store.py
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from tldw_chatbook.Web_Server.session_store import StoredSession, WebSessionStore
