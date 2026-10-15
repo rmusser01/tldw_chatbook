@@ -78,17 +78,31 @@ async def _back_at_the_storage_choice(app, pilot, picker, artifact, how: str):
     return app.screen
 
 
-def _assert_the_same_video_waits_alone(console, artifact) -> None:
+def _assert_the_same_video_waits_alone(
+    console, artifact, *, operation_attempted: bool = False
+) -> None:
     """The one staged video is still owned, open and unduplicated."""
     video = console._video
     assert video._owns_pending_console_video(artifact)
     assert not artifact.stream.closed
     assert artifact.stream.close_calls == 0
     # The same staged payload, not a second copy: one registry entry, and no
-    # operation, publication gate or deferred close left behind by the picker.
+    # active operation or deferred close left behind by the picker/copy.
     assert video._pending_console_video_artifacts() == {artifact.message_id: artifact}
     assert video._pending_video_active_operations == {}
-    assert video._pending_video_operation_cancels == {}
+    if operation_attempted:
+        from tldw_chatbook.Video_Generation.video_store import VideoPublicationGate
+
+        # A real attempted copy retains this artifact's cancellation gate until
+        # its final disposition, even though the native operation has retired.
+        gates = video._pending_video_operation_cancels
+        assert set(gates) == {artifact.message_id}
+        gate = gates[artifact.message_id]
+        assert isinstance(gate, VideoPublicationGate)
+        with gate.claim_publication() as allowed:
+            assert allowed
+    else:
+        assert video._pending_video_operation_cancels == {}
     assert video._pending_video_deferred_closes == {}
     artifact.rewind()
     assert artifact.stream.read() == b"paid generation"
@@ -109,7 +123,7 @@ async def _open_the_picker_from(app, pilot, choice) -> EnhancedFileSave:
 async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
     monkeypatch, tmp_path: Path
 ):
-    """Escape, then Cancel, each return to the choice; a later save completes."""
+    """Cancels retain the video; a later save honors native capabilities."""
     from Tests.Chat.test_console_video_capacity import _artifact
 
     app = _build_test_app(configured_default="chat")
@@ -119,7 +133,7 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
     destination = tmp_path / "saved"
     destination.mkdir()
     target = destination / "kept.mp4"
-    async with app.run_test(size=(140, 44)) as pilot:
+    async with app.run_test(size=(140, 44), notifications=True) as pilot:
         console = await _mounted_console(app, pilot)
         opened: list[Path] = []
         monkeypatch.setattr(console, "_open_video_with_os", opened.append)
@@ -164,25 +178,119 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
         assert _choice_labels(choice) == _OVER_CAPACITY_CHOICES
         _assert_the_same_video_waits_alone(console, artifact)
 
-        # 3. The video survived both cancels, so a third try still saves it.
+        # 3. The original gate determines whether native external save is
+        # supported. Do not replace it or the copy: unsupported platforms must
+        # retain the paid video and offer another explicit storage decision.
+        try:
+            console._video._require_external_video_pinned_capabilities()
+        except OSError as exc:
+            assert str(exc) == "pinned external save unsupported"
+            external_save_supported = False
+        else:
+            external_save_supported = True
+
         third_picker = await _open_the_picker_from(app, pilot, choice)
         third_picker.query_one("#filename-input", Input).value = str(target)
-        await pilot.click("#select")
+        previous_toasts = tuple(app.query("Toast"))
+        assert await pilot.click("#select"), "the final Save click missed its button"
+        if not external_save_supported:
+            try:
+                await _until(
+                    pilot,
+                    lambda: isinstance(app.screen, ConsoleVideoCapacityModal)
+                    and app.screen is not choice
+                    and any(
+                        toast not in previous_toasts
+                        and toast.is_on_screen
+                        and toast.has_class("-error")
+                        and "Could not save the generated video to "
+                        in toast.render().plain
+                        and str(target) in toast.render().plain
+                        for toast in app.screen.query("Toast")
+                    ),
+                    "the unsupported save to show its error and return to the choice",
+                    timeout=5.0,
+                )
+            except AssertionError as exc:
+                # Diagnose the original predicate without another wait or any
+                # replacement of notification, capability or copy behavior.
+                try:
+                    toast_rows = []
+                    for screen in app.screen_stack[-8:]:
+                        for toast in list(screen.query("Toast"))[:8]:
+                            rendered = toast.render().plain
+                            toast_rows.append(
+                                {
+                                    "screen_class": type(screen).__name__,
+                                    "on_current_screen": screen is app.screen,
+                                    "previous_toast": toast in previous_toasts,
+                                    "is_on_screen": toast.is_on_screen,
+                                    "error_class": toast.has_class("-error"),
+                                    "save_prefix_matches": (
+                                        "Could not save the generated video to "
+                                        in rendered
+                                    ),
+                                    "target_matches": str(target) in rendered,
+                                    "text": rendered[:512],
+                                }
+                            )
+                    exc.add_note(
+                        "Unsupported-save UI state: "
+                        + repr(
+                            {
+                                "screen_class": type(app.screen).__name__,
+                                "new_capacity_choice": (
+                                    isinstance(app.screen, ConsoleVideoCapacityModal)
+                                    and app.screen is not choice
+                                ),
+                                "is_previous_choice": app.screen is choice,
+                                "picker_on_stack": third_picker in app.screen_stack,
+                                "notifications_disabled": app._disable_notifications,
+                                "notifications": [
+                                    (note.severity, note.message[:512])
+                                    for note in list(app._notifications)[:8]
+                                ],
+                                "toasts": toast_rows,
+                            }
+                        )
+                    )
+                except Exception as diagnostic_error:
+                    exc.add_note(
+                        "Unsupported-save UI diagnostic failed: "
+                        f"{type(diagnostic_error).__name__}"
+                    )
+                raise
+            assert third_picker not in app.screen_stack
+            assert _choice_labels(app.screen) == _OVER_CAPACITY_CHOICES
+            _assert_the_same_video_waits_alone(
+                console, artifact, operation_attempted=True
+            )
+            assert not target.exists()
+            assert list(destination.iterdir()) == []
+            assert opened == []
+            assert await pilot.click("#video-capacity-discard")
+
         await _until(
             pilot,
             lambda: artifact.stream.closed,
-            "the save to finish and release the staged video",
+            "the save or explicit discard to release the staged video",
             timeout=5.0,
         )
         await pilot.pause(0.2)
 
-        assert target.read_bytes() == b"paid generation"
-        # Exactly one file: no staging sibling left behind by any round.
-        assert sorted(destination.iterdir()) == [target]
-        assert [path.resolve() for path in opened] == [target.resolve()]
+        if external_save_supported:
+            assert target.read_bytes() == b"paid generation"
+            # Exactly one file: no staging sibling left behind by any round.
+            assert sorted(destination.iterdir()) == [target]
+            assert [path.resolve() for path in opened] == [target.resolve()]
+        else:
+            assert list(destination.iterdir()) == []
+            assert opened == []
         assert artifact.stream.close_calls == 1
         assert console._video._pending_console_video_artifacts() == {}
         assert console._video._pending_video_operation_cancels == {}
+        assert console._video._pending_video_active_operations == {}
+        assert console._video._pending_video_deferred_closes == {}
         assert not [
             screen
             for screen in app.screen_stack

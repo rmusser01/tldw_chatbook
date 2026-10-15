@@ -1,0 +1,93 @@
+{
+  "status": "ROOT_BOUND_AND_INDEPENDENTLY_REVIEWED",
+  "publication_parent": "33e67b27248e2975e5ac747099623f53dffd3b0f",
+  "goal_snapshot_origin_commit": "33e67b27248e2975e5ac747099623f53dffd3b0f",
+  "goal_snapshot_source_map_sha256": "d707872012b23ee1a919c7173ff984ce297d920fc0b459f54599221120000485",
+  "python_source_map_sha256": "86de6986af5f223a01280a76af5dc169417c6b26a7aeeb70038654838d53044d",
+  "python_source_rows": 8532,
+  "workflow_path": ".github/workflows/console-pause-native-evidence.yml",
+  "packet_zip_path": ".github/qualification/pr3023-video-r1/packet.zip",
+  "changed_paths": [
+    ".github/qualification/pr3023-video-r1/binding.json",
+    ".github/qualification/pr3023-video-r1/outer.py.txt",
+    ".github/qualification/pr3023-video-r1/packet.zip",
+    ".github/workflows/console-pause-native-evidence.yml",
+    "Tests/UI/test_console_video_picker_cancel.py"
+  ],
+  "non_python_guards": [
+    {
+      "logical_path": "pyproject.toml",
+      "snapshot_path": "guards/pyproject.toml",
+      "sha256": "8b690bf220dbe4ef324363d7eb0beb0951f4513ff805673203c14a5e7ea64f26",
+      "bytes": 28633
+    },
+    {
+      "logical_path": "tldw_chatbook/Backup_Recovery/native_qualification.json",
+      "snapshot_path": "guards/tldw_chatbook/Backup_Recovery/native_qualification.json",
+      "sha256": "0aa458794127116a63dda7ccb61bcb26e41fe42534f83824b128a732d58c763d",
+      "bytes": 1724
+    },
+    {
+      "logical_path": "tldw_chatbook/css/core/_variables.tcss",
+      "snapshot_path": "guards/tldw_chatbook/css/core/_variables.tcss",
+      "sha256": "fd900d793c8f33e968c9377b5d9329f22ff0191b72c8dc585146624b5a90441f",
+      "bytes": 21906
+    },
+    {
+      "logical_path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "snapshot_path": "guards/tldw_chatbook/css/tldw_cli_modular.tcss",
+      "sha256": "d0a0d5ae11ef3cefcb9e0185e9d80dd34f44f0578a5f140477fa1e4bc6387a6d",
+      "bytes": 418457
+    },
+    {
+      "logical_path": "backlog/config.yml",
+      "snapshot_path": "guards/backlog/config.yml",
+      "sha256": "01c9ab0be616d12b20bdc799566da633bf56d7eeb6b130be42d4d9eae3b2611b",
+      "bytes": 336
+    },
+    {
+      "logical_path": "backlog/decisions/097-boot-budget-ratchets.md",
+      "snapshot_path": "guards/backlog/decisions/097-boot-budget-ratchets.md",
+      "sha256": "35c68db819ba632206f90120ef94474afa886603982e68c04993db0ef6f09c0f",
+      "bytes": 18222
+    },
+    {
+      "logical_path": "backlog/decisions/126-complete-local-backup-and-recovery.md",
+      "snapshot_path": "guards/backlog/decisions/126-complete-local-backup-and-recovery.md",
+      "sha256": "4f71ea73eddc9e012213b421021fdfc7a296083d622e5c93eb9ce5b92a4ab208",
+      "bytes": 130652
+    },
+    {
+      "logical_path": "backlog/decisions/220-console-human-decision-coordination-ownership.md",
+      "snapshot_path": "guards/backlog/decisions/220-console-human-decision-coordination-ownership.md",
+      "sha256": "d96409b8c85a32b14b615b4909e001bc82a4573f4149461a69c2fa1e3d81dbb5",
+      "bytes": 10299
+    },
+    {
+      "logical_path": "backlog/decisions/230-console-send-preparation-and-io-ownership.md",
+      "snapshot_path": "guards/backlog/decisions/230-console-send-preparation-and-io-ownership.md",
+      "sha256": "df370ebbfb9cdeabdc6e2bebe98404ab3d269514bf182649f77bf9b7298cae0d",
+      "bytes": 18424
+    },
+    {
+      "logical_path": "backlog/tasks/task-34563.32 - Load-remaining-optional-Console-dialogs-at-their-existing-actions.md",
+      "snapshot_path": "guards/backlog/tasks/task-34563.32 - Load-remaining-optional-Console-dialogs-at-their-existing-actions.md",
+      "sha256": "45be09320a48a97d6794a1cfa70ef78745744c629528585a3f019b8ea762f169",
+      "bytes": 15037
+    }
+  ],
+  "outer_sha256": "a940fa2655861b708739c11dac1de28bb56b9627b5376d03522ffafa052cf214",
+  "packet_zip_sha256": "772efa220dd0420bc189d0cbffd1347003c0d5531dc5ebe674ef9edda3a0396d",
+  "packet_manifest_sha256": "59578e7950e43f8b542be77cf6e6181bd796d03aa85b7ffa488cf7fe99f743bf",
+  "packet_asset_count": 71,
+  "command_plan_sha256": "1dee5aaece7c9acf774a9e2aa7cbc90d2600d1fd2148534048cf8cea28fced8b",
+  "reader_sha256": "e2a4cbf86b11af4db80bd3be94e691be752788f9fa39bdf904cd702998c8342b",
+  "plugin_sha256": "99f7cdf579257be7a42d6137beb2405bdd52d0f1d2df0393fb7be5420bb58a6c",
+  "workflow_template_sha256": "5e83ce2714a19d4b81df50d74a6328f6c548f0e5f86d60a1db20e31a4be8df29",
+  "source_map_status": "Root fresh actual full-current R8532/86de enumeration; only picker TEST overlay on33e/d707; future Windows invariance unrun",
+  "scope": "Original picker3 and controlled negative; real first unsupported branch required. No source stage/rollback or provider/paint/latency/whole-platform/TaskDone claim.",
+  "reader_test_review_sha256": "56d8dcba55480584526f061eba88b8150a949fc41eada1b7e299307f4a6593c4",
+  "operational_review_sha256": "5b4c9d8628a1d19fef945a380d418527410c9ca014266d36598453cd2f9aaa83",
+  "video_asset_inventory_review_sha256": "e5b571816a2a54454ed457f3194483a6cb2f6c8d0a5c9c3451ec8a804192cd65",
+  "source_snapshot_review_sha256": "a6439b4af24a535900f4e85a13e4659c069c728d47e77cd0cbc89f76907d87a1"
+}
