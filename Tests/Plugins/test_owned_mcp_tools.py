@@ -41,6 +41,8 @@ def reply(message):
             while not Path(args["hold"]).exists():
                 time.sleep(.01)
         result = {"content": [{"type": "text", "text": "ok"}]}
+        if args.get("hook_result"):
+            result = {"content": [{"type": "text", "text": json.dumps({"version": 2, "decision": "pass", "context": [{"text": "Owned native MCP context.", "lifetime": "turn"}]})}]}
     else:
         result = {}
     with output:
@@ -110,8 +112,48 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
             }
         )
     )
+    selection = ("skill:review", "mcp:shared")
+    if fixture_mode == "native_hook":
+        manifest = json.loads((package / "plugin.json").read_text())
+        manifest["extensions"]["io.github.rmusser01.chatbook"].update(
+            hooks="hooks.json", requires={"hook:prepare": ["mcp:shared"]}
+        )
+        (package / "plugin.json").write_text(json.dumps(manifest))
+        (package / "hooks.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "hooks": [
+                        {
+                            "id": "prepare",
+                            "type": "mcp_tool",
+                            "event": "UserPromptSubmit",
+                            "required": True,
+                            "server": "shared",
+                            "tool": "echo",
+                            "effects": ["context"],
+                            "input": {"hook_result": True},
+                        }
+                    ],
+                }
+            )
+        )
+        selection += ("hook:prepare",)
+    if fixture_mode in {"native_tools", "native_mixed"}:
+        manifest = json.loads((package / "plugin.json").read_text())
+        manifest["extensions"]["io.github.rmusser01.chatbook"].update(
+            agents=["agent.md"], requires={"agent:reader": ["mcp:shared"]}
+        )
+        (package / "plugin.json").write_text(json.dumps(manifest))
+        (package / "agent.md").write_text(
+            "---\nname: reader\ndescription: Read\ntools: [search]\n---\nRead carefully."
+        )
+        if fixture_mode == "native_mixed":
+            agent = package / "agent.md"
+            agent.write_text(agent.read_text().replace("tools: [search]", "tools: [search, arithmetic]"))
+        selection += ("agent:reader",)
     review = await service.review_install(
-        package, selection=("skill:review", "mcp:shared"), workspace_id="a"
+        package, selection=selection, workspace_id="a"
     )
     assert (await service.commit(review, review.operation_id)).committed
     trust = await service.review_trust(review.installation_id)

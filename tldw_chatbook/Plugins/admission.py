@@ -361,7 +361,8 @@ class PluginAdmission:
                     component.kind
                     not in {"skill", "mcp", "command", "rule", "agent", "hook"}
                     or component.support not in {"supported", "adapted"}
-                    or set(component.activation_blockers)
+                    or {code for code in component.activation_blockers
+                        if not code.startswith("dependency_blocked:")}
                     - {
                         "model_mapping_required",
                         "tool_mapping_required",

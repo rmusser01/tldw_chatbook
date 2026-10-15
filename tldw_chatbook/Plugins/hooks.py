@@ -8,7 +8,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .models import PackageInspection
 
@@ -325,6 +325,40 @@ class NativeHooks:
             values["PLUGIN_DATA"] = shared["path"]
         return values
 
+    def process_owner(
+        self,
+        handler: HookHandler,
+        event: HookEvent,
+        cancel: Callable[[], None],
+    ) -> _NativeHookProcessOwner | None:
+        """Capture one job's exact owner and cancellation callback."""
+        owner = self.owners.get(handler.id)
+        if owner is None:
+            return None
+        snapshot, component = owner
+        if (event.owner_installation_id, event.owner_component_id) != (
+            snapshot.installation_id, component
+        ):
+            raise PluginUnavailable("plugin_hook_owner_changed")
+        return _NativeHookProcessOwner(self, snapshot, component, cancel)
+
+    def render_context(self, event: HookEvent, handler_id: str, block) -> str:
+        from tldw_chatbook.Agents.agent_models import PluginContextOrigin, PluginContextText
+        from tldw_chatbook.Agents.hooks_v2.context import ContextLedger
+
+        text = ContextLedger.render(event, handler_id, block)
+        owner = self.owners.get(handler_id)
+        if owner is None:
+            return text
+        snapshot, component = owner
+        return PluginContextText(
+            text,
+            (PluginContextOrigin(
+                snapshot.installation_id, component, snapshot.revision_digest,
+                len(text.encode("utf-8")),
+            ),),
+        )
+
     def reserve_launch(self, event: HookEvent) -> str:
         if event.owner_installation_id is None:
             return "host:" + self.standalone.reserve_launch(event)
@@ -334,6 +368,10 @@ class NativeHooks:
             if s.installation_id == event.owner_installation_id
         )
         component = event.owner_component_id
+        return self._reserve_launch(snapshot, component, event, None)
+
+    def _reserve_launch(self, snapshot, component, event, cancel_job):
+        self.service.check_effect_actor(snapshot, component, run_id=event.run_id)
         roots = tuple(root_ref(row) for row in json.loads(snapshot.data_roots_json))
 
         def reserve():
@@ -351,6 +389,10 @@ class NativeHooks:
             )
 
             def cancel():
+                if cancel_job is not None:
+                    cancel_job()
+                    return
+
                 def stop():
                     for job in tuple(self.engine.processes.records.values()):
                         if job.token == "plugin:" + token:
@@ -404,7 +446,51 @@ class NativeHooks:
             self.service._coordinator.owner.settle_process(value, confirmed)
             if confirmed:
                 with self.service.fences.live_lock:
-                    record = self.service.fences.runs.pop("hook:" + value)
-                    record.completed.set()
+                    record = self.service.fences.runs.pop("hook:" + value, None)
+                    if record is not None:
+                        record.completed.set()
 
         self.service._call_from_agent(settle, terminal=True)
+
+
+class _NativeHookProcessOwner:
+    """One actual job's view of the existing native process/root owner."""
+
+    def __init__(
+        self,
+        facade: NativeHooks,
+        snapshot: RunPluginSnapshot,
+        component_id: str,
+        cancel: Callable[[], None],
+    ) -> None:
+        import asyncio
+
+        self.facade = facade
+        self.snapshot = snapshot
+        self.component_id = component_id
+        loop = asyncio.get_running_loop()
+        self.cancel = lambda: loop.call_soon_threadsafe(cancel)
+        self.event = None
+
+    def reserve_launch(self, event: HookEvent) -> str:
+        self.event = event
+        return self.facade._reserve_launch(
+            self.snapshot, self.component_id, event, self.cancel
+        )
+
+    def publish_process(self, token: str, provenance: dict) -> None:
+        service = self.facade.service
+        def publish():
+            service.check_effect_actor(
+                self.snapshot, self.component_id, run_id=self.event.run_id
+            )
+            service._admission.check(self.snapshot, self.component_id)
+            kind, value = token.split(":", 1)
+            if kind != "plugin":
+                raise PluginUnavailable("plugin_hook_owner_changed")
+            service._coordinator.owner.publish_process(value, provenance)
+
+        service._call_from_agent(publish)
+
+    def settle_process(self, token: str, confirmed: bool) -> None:
+        self.facade.settle_process(token, confirmed)

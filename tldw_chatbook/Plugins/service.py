@@ -52,12 +52,14 @@ class PluginService:
         marker_store_factory: Callable[[Path], Any] | None = None,
         accept_reduced_protection: bool = False,
         mcp_mapping_owner=None,
+        model_mapping_owner=None,
     ) -> None:
         self.profile_root = Path(profile_root)
         self.workspace_lookup = workspace_lookup
         self._marker_factory = marker_store_factory
         self._reduced = accept_reduced_protection
         self._mcp_mapping_owner = mcp_mapping_owner
+        self._model_mapping_owner = model_mapping_owner
         self.fences = LivePluginFences()
         from .revisions import RevisionDrain
 
@@ -142,6 +144,7 @@ class PluginService:
                 owner,
                 fences=self.fences,
                 mcp_mapping_owner=self._mcp_mapping_owner,
+                model_mapping_owner=self._model_mapping_owner,
             )
             self._coordinator.on_data_change = self._refresh
             self._admission = PluginAdmission(
@@ -396,8 +399,9 @@ class PluginService:
         tools=None,
         tool_references=None,
         models=None,
+        component_tools=None,
     ) -> PluginReview:
-        """Capture current MCP references on the existing plugin storage worker."""
+        """Capture current host references on the existing plugin storage worker."""
         return await self._call(
             lambda: self._coordinator.review_configuration(
                 installation_id,
@@ -405,6 +409,7 @@ class PluginService:
                 tools=tools,
                 tool_references=tool_references,
                 models=models,
+                component_tools=component_tools,
             )
         )
 
@@ -1026,7 +1031,8 @@ class PluginService:
         return await self._call(lambda: NativeHooks(self, snapshots))
 
     async def agent_presets(
-        self, entries, eligible: frozenset[str], *, parent_provider: str = ""
+        self, entries, eligible: frozenset[str], *, parent_provider: str = "",
+        registry: Any = None,
     ) -> tuple:
         """Project admitted ephemeral presets before ordinary child planning."""
 
@@ -1046,6 +1052,7 @@ class PluginService:
                                 component_id,
                                 eligible,
                                 parent_provider=parent_provider,
+                                registry=registry,
                             )
                         )
                     except PluginUnavailable as error:

@@ -159,6 +159,7 @@ class HookEngine:
         budget_owner: HookBudgetOwner,
         *,
         process_owner: HookProcessOwner | None = None,
+        process_owner_for: Callable | None = None,
         environment: Callable | None = None,
         host_environment: Callable | None = None,
         invalid_admissions: tuple = (),
@@ -186,6 +187,7 @@ class HookEngine:
         self.invalid_admissions = tuple(invalid_admissions)
         self._environment = environment
         self._host_environment = host_environment
+        self._process_owner_for = process_owner_for
         self._event_projector = event_projector
         self._dependency_required = dependency_required or (lambda *_: False)
         self._lock = RLock()
@@ -716,6 +718,9 @@ class HookEngine:
                 self.authority_check,
                 self._env,
                 deadline,
+                process_owner_factory=(
+                    lambda cancel: self._process_owner_for(handler, event, cancel)
+                ) if self._process_owner_for is not None else None,
             )
             result = await self.processes.wait(job, deadline)
             execution.active_seconds += result.duration

@@ -1408,3 +1408,18 @@ known optional observers remain visible but unavailable. Ordinary user messages
 remain possible without expanding blocked package material. No foreign allow result
 can reach or bypass the native permission store. This documents the deliberately
 unsupported runtime subset of TASK-32687, not original-host qualification.
+
+
+### Native component ownership and canonical restrictions (R74–R75)
+
+Ruling: R74 — native command hooks select their exact existing process-owner adapter from the qualified handler at dispatch and retain that adapter on the original CommandJob through reserve, publish and terminal settlement; the shared HookEvent stays unchanged — concurrent handlers can belong to different installations, so one event-wide owner cannot identify their root/revision custody — cost if wrong: revise the narrow per-job selection seam; owner lookup failure must refuse before launch, and cancellation, late cleanup or replacement must never settle another handler’s custody.
+
+Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations are immutable narrowing constraints resolved against the actual eligible parent registry at use, while noncanonical tokens require reviewed exact owner mappings — a declaration can restrict existing rights without creating a durable generic tool grant or another permission owner — cost if wrong: narrow supported declarations or revise the resolver; missing or changed identities refuse, explicit empty stays empty, recovery creates no grants, and display-name fallback never authorizes a tool.
+
+### I1 owned hook composition
+
+`register_hook_definitions(snapshot)` validates original local hook declarations, then qualifies IDs with installation identity and expands host variables once. `NativeHooks` supplies the existing `HookEngine` with exact graph requirements, currentness, per-job process owners and the existing ledger renderer. Unknown dependencies refuse the dependent component; unrelated components remain usable. Hook and plugin origins remain distinct while sharing the final provider-input budget; oversized required contributions refuse whole.
+
+`_NativeHookProcessOwner` binds the exact original `CommandJob` cancellation callback before launch. F8 reserves dirty/root/revision custody before process access, publishes actual process provenance before stdin, and settles only on positive terminal proof. A failed registration settles its unlaunched reservation. Workspace revocation cancels only matching job ownership; independent scopes retain their work. The original adapter remains attached for late cleanup.
+
+Worker admission/launch/result checks perform full owning-service recapture. Main-loop synchronous effect-currentness uses only the live fence and cannot replace those reads. Final provider dispatch waits for full recapture and checks the live fence again after worker completion; changed or unavailable authority refuses delivery. No synchronous main-loop wait on the plugin worker is introduced.
