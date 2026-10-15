@@ -3766,7 +3766,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 .approval-compact .approval-row-controls, .approval-compact #approval-batch-actions {
   layout: vertical;
 }
-.approval-compact .approval-row-controls Button {
+.approval-compact .approval-row-controls ApprovalActionButton {
   width: $ds-width-fill;
   min-width: $ds-size-0;
 }
@@ -3775,7 +3775,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
   height: auto;
   width: $ds-width-fill;
 }
-#approval-single-actions Button {
+#approval-single-actions ApprovalActionButton {
   width: auto;
   min-width: $ds-size-0;
   padding: $ds-space-0;
@@ -3783,7 +3783,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 .approval-stacked #approval-single-actions {
   layout: vertical;
 }
-.approval-stacked #approval-single-actions Button {
+.approval-stacked #approval-single-actions ApprovalActionButton {
   width: $ds-width-fill;
 }
 
@@ -3808,7 +3808,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
   height: $ds-size-3;
   width: $ds-width-fill;
 }
-#approval-details-navigation Button, .approval-details-open {
+#approval-details-navigation ApprovalActionButton, .approval-details-open {
   width: auto;
   min-width: $ds-size-0;
   padding: $ds-space-0;
