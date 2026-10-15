@@ -1550,3 +1550,39 @@ Native agents populate the existing captured child-agent roster with stable host
 `TldwCli._build_plugin_service` lazily supplies the application's existing model/MCP owners. Console composes scoped `PluginMCPProvider` instances through the same `ConnectionOwnership`, normal catalog, permissions and connected-only hook adapter. Import/startup performs no plugin discovery, connection or profile I/O. Management UI remains the I7 handoff.
 
 Reference expansion retains original selector spans in the existing private, bounded `_PreparedSendContinuation` (hidden from repr), while `ConsoleTurnPreparation.executed_draft` remains a plain validated string. Paused/resumed sends reuse that captured expansion without rereading files. A resumed plugin attempt receives a fresh pending custody ID but keeps the original component/generation/dependency ceiling and must pass current owning-service admission. Disable or changed definitions during the pause cannot revive the old admission.
+
+### I2 qualified adapter subset (2026-10-15; TASK-32687)
+
+`chatbook-codex/1` and `chatbook-cursor/1` pin package interpretation to the official
+contracts researched on 2026-09-16; `documented-2026-09-16` is a documentation date,
+not an upstream package version. Root portable identity and fixed skill/MCP paths
+survive OpenAI overlays; an inline OpenAI object replaces the entire compatibility
+object, including when empty. Cursor manifest fields replace catalog fields and
+explicit paths replace discovery, including empty arrays. Invalid portable roots
+cannot fall through to a standalone vendor interpretation. Recognized malformed
+native constraints remain blocking in every selected vendor interpretation.
+
+The existing inventory owner validates normalized vendor records, counts,
+duplicates, variables and complete dependency closure. Supported instruction
+metadata maps to native manual-only/inline/fork semantics. File-glob Cursor rules
+are explicitly manual; no file activation is inferred. Agents require explicit
+tool declarations; empty stays empty, unavailable models/tools require the same
+native mappings. Unsupported declarations remain visible. Foreign app/OAuth
+metadata supplies neither grants nor connections. The inert Linear capture's
+`http` spelling normalizes to native `streamable-http`; this establishes parsing,
+not a live Linear or OAuth connection.
+
+Public catalog data uses the authenticated `catalog-v1:` carrier (R77), bounded to
+16384 UTF-8 bytes including prefix, with existing JSON depth/node bounds. Duplicate,
+malformed, unknown-version and noncanonical carriers refuse. Unknown top-level catalog fields (including host credential references) refuse;
+nested declarations use the existing structural validators. Public variable names
+and literal headers remain valid. The parser does not detect secret content:
+callers must supply public catalog metadata, never private host/vendor state. Review, materialized
+recapture and recovery replay the same carrier without reading a mutable catalog.
+Package bytes retain their original content digest. Vendor effective identity also
+binds those bytes, normalized definitions, constraints, and reviewed catalog data.
+
+Pinned selected captures and exact notice limits live in
+`Tests/Plugins/fixtures/interop/README.md` and `upstream/provenance.json`. Parser
+fixtures are never executed. Separately authored temporary packages qualify the
+native owners. No original Cursor/Codex host equivalence is claimed.

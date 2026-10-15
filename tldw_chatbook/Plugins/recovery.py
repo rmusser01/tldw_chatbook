@@ -36,7 +36,7 @@ def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspect
         sha256_hex,
     )
 
-    from .inspection import inspect_package
+    from .inspection import catalog_overlay_from, inspect_package
     from .package_files import parse_document
 
     result = {}
@@ -44,7 +44,11 @@ def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspect
         root = revision["materialized_identity"]
         if not root:
             raise ValueError("missing immutable package reference")
-        inspection = inspect_package(Path(root), dialect=revision["dialect"])
+        inspection = inspect_package(
+            Path(root),
+            dialect=revision["dialect"],
+            catalog_overlay=catalog_overlay_from(revision["overlay_identities"]),
+        )
         data = inspection.model_dump(mode="json")
         for key in (
             "dialect",

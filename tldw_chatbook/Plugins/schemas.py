@@ -333,6 +333,7 @@ def validate_hook(value: object, capture) -> dict:
         "require_context",
         "match",
         "timeout_seconds",
+        "vendor_protocol",
     }
     require(isinstance(value, dict))
     command = value.get("type") == "command"
@@ -350,6 +351,10 @@ def validate_hook(value: object, capture) -> dict:
         and len(set(effects)) == len(effects)
         and set(effects) <= EFFECTS[event]
     )
+    if "vendor_protocol" in value:
+        from .adapters.vendor_hooks import validate_protocol
+
+        validate_protocol(value["vendor_protocol"], event, value["type"], effects)
     for field in ("required", "require_context"):
         require(type(value.get(field, False)) is bool)
     require(not value.get("required") or event not in NON_REQUIRED_EVENTS)

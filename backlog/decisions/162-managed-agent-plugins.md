@@ -430,3 +430,8 @@ The existing configuration review may map a component's noncanonical declared to
 ### Native agent invocation owner (R76)
 
 Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.
+
+
+### I2 catalog-overlay reconstruction (R77)
+
+A selected execution-affecting catalog overlay is retained as one versioned, canonical public JSON carrier in `overlay_identities`. The complete carrier, including its prefix, is bounded to 16384 UTF-8 bytes and existing JSON depth/node limits. Duplicate, malformed, noncanonical and oversized carriers refuse. The existing authenticated revision projection covers the carrier; inspection identity and effective digest bind its execution-affecting interpretation. Original `content_digest` continues to identify captured package bytes. Review recapture, materialization and authenticated recovery reuse only the exact retained carrier; they never query a mutable catalog or reconstruct missing declarations by guess. Overlay bodies contain public package declarations, not host secrets or grants. This extends the existing R12 reference contract without a schema migration or another authority owner.

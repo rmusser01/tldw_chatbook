@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from .authority import PluginMarker
-from .inspection import inspect_package
+from .inspection import catalog_overlay_from, inspect_package
 from .models import PackageInspection
 from .package_files import canonical_json
 
@@ -70,7 +70,11 @@ def inspection_identity(inspection: PackageInspection) -> str:
 
 def reinspect(inspection: PackageInspection, root: Path) -> PackageInspection:
     """Verify materialized bytes while preserving authenticated source provenance."""
-    observed = inspect_package(root, dialect=inspection.dialect)
+    observed = inspect_package(
+        root,
+        dialect=inspection.dialect,
+        catalog_overlay=catalog_overlay_from(inspection.overlay_identities),
+    )
     observed = observed.model_copy(
         update={
             "source_identity": inspection.source_identity,

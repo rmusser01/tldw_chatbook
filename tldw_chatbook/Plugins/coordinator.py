@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from .authority import PluginMarker, snapshot_digest
 from .authority_store import PluginAuthorityStore
-from .inspection import inspect_package
+from .inspection import catalog_overlay_from, inspect_package
 from .models import PackageInspection
 from .package_files import canonical_json, capture_package, materialize_package
 from .registry import PluginRegistry
@@ -804,7 +804,9 @@ class PluginCoordinator:
             reinspect(inspection, Path(inspection.materialized_identity))
         else:
             current = inspect_package(
-                Path(inspection.source_identity), dialect=inspection.dialect
+                Path(inspection.source_identity),
+                dialect=inspection.dialect,
+                catalog_overlay=catalog_overlay_from(inspection.overlay_identities),
             )
             if inspection_identity(current) != inspection_identity(inspection):
                 raise ValueError("stale review package inputs")
