@@ -75,7 +75,12 @@ from ..Utils.optional_deps import (
     require_dependency,
 )
 from ..Utils.paths import get_user_data_dir
-from .mobile_api import MOBILE_MAX_BODY_BYTES, build_mobile_routes, mobile_surface_enabled
+from .mobile_api import (
+    MOBILE_MAX_BODY_BYTES,
+    MOBILE_STREAM_PATH,
+    build_mobile_routes,
+    mobile_surface_enabled,
+)
 from .session_store import WebSessionStore
 
 _TEXTUAL_SERVE_RESIZE_HOOK = "window.onresize=()=>{this.fit()}"
@@ -895,7 +900,13 @@ class ChatbookWebServerMixin:
 
         grant = None
         try:
-            websocket = request.path == "/ws"
+            # The mobile event stream upgrades with the same subprotocol
+            # challenge as the terminal WS (csrf.<token> + chatbook-v1),
+            # but only while its surface is registered — a gate-off
+            # stream path must 404 as a dead route, not auth-challenge.
+            websocket = request.path == "/ws" or (
+                request.path == MOBILE_STREAM_PATH and mobile_surface_enabled()
+            )
             mounted_canvas = request.path.startswith("/canvas/gateway-")
             session = self._web_auth.authenticate_request(
                 facts,
