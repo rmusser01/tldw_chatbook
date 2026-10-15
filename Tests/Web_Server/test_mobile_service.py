@@ -19,7 +19,7 @@ import pytest
 
 from Tests.console_provider_doubles import AgentModeGateway
 
-from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+from tldw_chatbook.Web_Server.mobile_service import MobileChatService, MobileSendRefused
 
 # The real engine's submit path reads the guarded config loader (turn
 # configuration, [tools] gates, hooks admission). Under pytest's per-test
@@ -100,6 +100,10 @@ async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
             timeout=30,
             what="approval_requested event",
         )
+        # Non-blocking send (live-check round 1): the send call must have
+        # returned already — the turn is parked on this approval, which
+        # only this test can resolve, so a blocking send would still hang.
+        assert send_task.done() and not send_task.exception()
         approvals = [e for e in got if e.type == "approval_requested"]
         payload = approvals[0].payload
         assert payload["calls"][0]["llm_name"] == "fs_list"
@@ -151,24 +155,43 @@ async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
 
 
 async def test_send_is_serialized_per_session(tmp_path: Path) -> None:
+    """Turns serialize per session; a concurrent send is refused (round 1).
+
+    The non-blocking contract: ``send`` schedules the turn and returns, so
+    a second send while the first turn is pending raises ``MobileSendRefused``
+    (the engine's own one-run-per-session admission rule, applied at the
+    service boundary instead of queueing on the lock). Once the first turn
+    completes, the next send is accepted and the transcript order is
+    preserved: each user row lands only after the previous turn's
+    assistant row.
+    """
     gateway = AgentModeGateway()
     service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
     got: list[Any] = []
     subscriber = asyncio.create_task(_subscribe(service, got))
     try:
         session = await service.create_session(title="serial")
-        await asyncio.gather(
-            service.send(session["id"], "first question"),
-            service.send(session["id"], "second question"),
+        await service.send(session["id"], "first question")
+        with pytest.raises(MobileSendRefused):
+            await service.send(session["id"], "second question too early")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
         )
+
+        await service.send(session["id"], "second question")
+        await _wait_for(
+            lambda: len([e for e in got if e.type == "run_completed"]) == 2,
+            timeout=15,
+            what="two run_completed events",
+        )
+
         messages = service.session_messages(session["id"])["messages"]
         user_texts = [m["content"] for m in messages if m["role"] == "user"]
         assert user_texts == ["first question", "second question"]
-        # Serialization evidence: both concurrent submits completed (the
-        # controller refuses a second in-flight send on the same session,
-        # so without the per-session lock one of the two would have raised
-        # MobileSendRefused), in submission order, with the second user row
-        # landing only after the first turn's assistant row.
+        # The second user row landed only after the first turn's assistant
+        # row — the turns really did serialize.
         roles = [m["role"] for m in messages]
         assert roles.count("user") == 2
         second_user_at = roles.index("user", 1)
@@ -178,12 +201,74 @@ async def test_send_is_serialized_per_session(tmp_path: Path) -> None:
         # the default workspace never advertises it, then the follow-up
         # call answers).
         assert len(gateway.stream_calls) >= 2
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
+    """The 202-shape contract: send schedules and returns (finding 1).
+
+    The gateway's first provider call parks on a gate only this test opens,
+    so a send that blocked on ``submit_draft`` (the old shape — the one the
+    live check caught) would hang until the timeout. Also proves the
+    unknown-session pre-validation still raises before anything is
+    scheduled, and that deltas + terminal events flow once the gate opens.
+    """
+
+    class _GatedAgentGateway(AgentModeGateway):
+        """AgentModeGateway whose provider calls park on ``gate``."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            await self.gate.wait()
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = _GatedAgentGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="pending turn")
+        with pytest.raises(KeyError):
+            await service.send("no-such-session", "gone")
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await asyncio.wait_for(
+            service.send(session["id"], "held turn"), timeout=5
+        )
+        assert loop.time() - started < 2.0, "send blocked on the turn"
+
+        with pytest.raises(MobileSendRefused):
+            await service.send(session["id"], "too soon")
+
+        gateway.gate.set()
         await _wait_for(
-            lambda: len([e for e in got if e.type == "run_completed"]) == 2,
-            timeout=15,
-            what="two run_completed events",
+            lambda: any(
+                e.type == "run_completed" and e.session_id == session["id"]
+                for e in got
+            ),
+            timeout=30,
+            what="run_completed after gate release",
+        )
+        deltas = [
+            e for e in got if e.type == "delta" and e.session_id == session["id"]
+        ]
+        assert deltas, "no streaming deltas observed during the run"
+        messages = service.session_messages(session["id"])["messages"]
+        assert any(
+            m["role"] == "user" and m["content"] == "held turn" for m in messages
+        )
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in messages
         )
     finally:
+        gateway.gate.set()  # never leave the parked turn holding shutdown
         await _shutdown(service, subscriber)
 
 

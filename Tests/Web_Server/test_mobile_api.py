@@ -77,13 +77,26 @@ class _FakeBaseServer:
 
 
 class FakeMobileService:
-    """Stub MobileChatService: records calls, returns canned dicts."""
+    """Stub MobileChatService: records calls, returns canned dicts.
+
+    Models the Task-3 non-blocking send contract (live-check round 1):
+    ``send`` pre-validates synchronously (unknown session ``KeyError``,
+    configured ``send_error``, one turn in flight → ``MobileSendRefused``),
+    appends the user row, then schedules the scripted event sequence on a
+    background task — so the REST 202 returns while the turn is pending,
+    exactly like the real service scheduling ``_run_turn``. Park the
+    scripted turn by setting ``turn_gate`` (an ``asyncio.Event`` the task
+    waits on) to observe the pending window deterministically.
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.shutdown_count = 0
         self.cancel_result = True
         self.send_error: Exception | None = None
+        self.turn_gate: asyncio.Event | None = None
+        self.turn_running = False
+        self._turn_task: asyncio.Task | None = None
         self._next_message_number = 3
         self._event_queues: set[asyncio.Queue] = set()
         self._event_seq = 0
@@ -159,12 +172,16 @@ class FakeMobileService:
         return {"messages": wire, "cursor": cursor}
 
     async def send(self, session_id: str, draft: str) -> None:
+        from tldw_chatbook.Web_Server.mobile_service import MobileSendRefused
+
         self.calls.append(("send", {"session_id": session_id, "draft": draft}))
         messages = self._messages.get(session_id)
         if messages is None:
             raise KeyError(session_id)
         if self.send_error is not None:
             raise self.send_error
+        if self.turn_running:
+            raise MobileSendRefused("a turn is already in flight")
         messages.append(
             {
                 "id": f"m{self._next_message_number}",
@@ -175,26 +192,36 @@ class FakeMobileService:
             }
         )
         self._next_message_number += 1
-        # Scripted plain-chat run (Task 3's wire contract) for the stream
-        # tests: the same sequence the real service fans out for one
-        # turn — run_started, deltas, message_done, run_completed, and the
-        # trailing session_updated.
-        self.emit("run_started", session_id, {"status": "generating"})
-        self.emit(
-            "delta", session_id, {"message_id": "m9", "offset": 0, "text": "Hel"}
-        )
-        self.emit(
-            "delta", session_id, {"message_id": "m9", "offset": 3, "text": "lo"}
-        )
-        self.emit(
-            "message_done", session_id, {"message_id": "m9", "status": "complete"}
-        )
-        self.emit("run_completed", session_id, {"status": "completed"})
-        self.emit(
-            "session_updated",
-            session_id,
-            {"session_id": session_id, "reason": "run_completed"},
-        )
+        self.turn_running = True
+        self._turn_task = asyncio.create_task(self._scripted_turn(session_id))
+
+    async def _scripted_turn(self, session_id: str) -> None:
+        """Background scripted run (Task 3's wire contract): the same event
+        sequence the real service fans out for one turn — run_started,
+        deltas, message_done, run_completed, and the trailing
+        session_updated — emitted from a task so ``send`` can return 202
+        while the turn is pending."""
+        try:
+            if self.turn_gate is not None:
+                await self.turn_gate.wait()
+            self.emit("run_started", session_id, {"status": "generating"})
+            self.emit(
+                "delta", session_id, {"message_id": "m9", "offset": 0, "text": "Hel"}
+            )
+            self.emit(
+                "delta", session_id, {"message_id": "m9", "offset": 3, "text": "lo"}
+            )
+            self.emit(
+                "message_done", session_id, {"message_id": "m9", "status": "complete"}
+            )
+            self.emit("run_completed", session_id, {"status": "completed"})
+            self.emit(
+                "session_updated",
+                session_id,
+                {"session_id": session_id, "reason": "run_completed"},
+            )
+        finally:
+            self.turn_running = False
 
     def emit(self, type_: str, session_id: str = "", payload: dict | None = None):
         """Fan one event out to every current subscriber (Task 3 shape)."""
@@ -710,6 +737,54 @@ async def test_send_refused_maps_to_409(tmp_path, mobile_surface_gate) -> None:
 
         assert response.status == 409
         assert (await response.json()) == {"error": "send_refused"}
+
+
+@pytest.mark.asyncio
+async def test_send_returns_202_while_the_turn_is_still_pending(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """Non-blocking send (spec 4.2 / live-check round 1, finding 1).
+
+    The scripted turn parks on ``turn_gate``; the POST must answer 202 in
+    bounded time with the turn observably still pending, a concurrent send
+    must be refused 409, and releasing the gate must let the scripted
+    events flow (the full frame sequence is proven by the stream tests,
+    which now run against the same async fake).
+    """
+    service = FakeMobileService()
+    service.turn_gate = asyncio.Event()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        response = await client.post(
+            "/api/v1/mobile/conversations/s-known/messages",
+            json={"text": "slow turn"},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+
+        assert response.status == 202
+        assert (await response.json()) == {"ok": True}
+        assert loop.time() - started < 1.0, "send blocked on the turn"
+        assert service.turn_running is True
+
+        second = await client.post(
+            "/api/v1/mobile/conversations/s-known/messages",
+            json={"text": "too soon"},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert second.status == 409
+        assert (await second.json()) == {"error": "send_refused"}
+
+        service.turn_gate.set()
+        for _ in range(100):
+            if not service.turn_running:
+                break
+            await asyncio.sleep(0.02)
+        assert service.turn_running is False
+
+    await _assert_subscribers_drained(service)
 
 
 @pytest.mark.asyncio
