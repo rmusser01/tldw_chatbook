@@ -3,17 +3,16 @@ id: TASK-34565
 title: Capture truthful Console approval scope and request presentation
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 06:41'
-updated_date: '2026-10-12 03:56'
+- '@codex'
+created_date: 2026-10-06 06:41
+updated_date: 2026-10-15 20:46
 labels: []
 dependencies:
-  - TASK-34564
+- TASK-34564
 documentation:
-  - >-
-    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-  - backlog/decisions/229-console-approval-interaction-and-feedback.md
-  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+- backlog/decisions/235-console-approval-interaction-and-feedback.md
+- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -40,7 +39,7 @@ Give approval cards accurate action, target, authority and supported scope infor
 <!-- SECTION:PLAN:BEGIN -->
 ### Task 2 Capture request presentation from the actual owners
 
-**Backlog:** TASK-34565. **ADR:** ADR-229/032/093. **Consumes:** Task 1's recorded baseline and defined boundaries.
+**Backlog:** TASK-34565. **ADR:** ADR-235/032/093. **Consumes:** Task 1's recorded baseline and defined boundaries.
 
 **Files:** Create `tldw_chatbook/Chat/approval_presentation.py`, `Tests/Chat/test_approval_presentation.py`. Modify `Agents/mcp_tool_provider.py:MCPPendingCall/pending_gate_for`, built-in pending construction in `Chat/console_chat_controller.py:build_tool_review_hook`, `Agents/local_tool_provider.py:pending_gate_for`, `Agents/virtual_cli_provider.py:pending_gate_for`, `Agents/raw_shell_tool_provider.py:pending_gate_for`, and `_build_approval_payload`. Extend `Tests/Chat/test_approval_payload_summary.py` and the affected provider tests.
 
@@ -55,18 +54,18 @@ Produce frozen `ApprovalRowView` with `verdict_key`, `call_count`, `action_label
 - [ ] **Step 5: Document and commit.** Record the existing repeated-tool limitation and provider-specific copy in task notes. Qualify all ACs before Done. This commit adds captured presentation and tests, not new permission policy.
 
 ADR required: yes
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
-Reason: Existing ADR-229 with ADR-032/093 governs captured permission-owner scope and ephemeral presentation without new policy, schema or stamp ownership.
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
+Reason: Existing ADR-235 with ADR-032/093 governs captured permission-owner scope and ephemeral presentation without new policy, schema or stamp ownership.
 
 Execution ordering: Task1 private control and recorder foundations passed independent review; unchanged transport baseline and final speed qualification remain open under the documented controller ruling.
 
 Final review correction: bound initial grouped target formatting; retain lossless captured targets/original arguments and explicit Details continuation; add mounted many-distinct-long-target regression.
 
-PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR229 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
+PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR235 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
 
-Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
@@ -78,13 +77,13 @@ Targeted initial checks: 88 passed. Canonical-input fix: 32 HEAD checks passed, 
 
 Full completion remains open. Actual virtual dispatch is unqualified on both BASE and HEAD: the existing Windows native/stat device identity mismatch causes root_pin_failed. No root-identity or recovery repair is part of this task. Full edited-file lint still reports two RemoteRoot F821 errors independently reproduced on BASE; scoped amended-code checks and formatting pass. Existing pytest warning noise is retained. Native/browser visible timing remains unqualified; no speed or full-green claim. Status remains In Progress.
 
-Existing ADR-229 with ADR-032/093 applies. Source changes are approval_presentation.py, pending/provider metadata, controller payload/capture composition and shared reason copy; targeted provider/payload/card tests, private launch support, plan and lessons document the verified behavior and limits. Reports and comparison receipts are preserved in this plan's private SDD directory.
+Existing ADR-235 with ADR-032/093 applies. Source changes are approval_presentation.py, pending/provider metadata, controller payload/capture composition and shared reason copy; targeted provider/payload/card tests, private launch support, plan and lessons document the verified behavior and limits. Reports and comparison receipts are preserved in this plan's private SDD directory.
 
-Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-229.
+Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-235.
 
-Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-229.
+Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-235.
 
-PR3036 remediation: shared recursive URL/URI query/userinfo redaction preserves original matching inputs and harmless spelling, handles malformed and whitespace-prefixed URIs. Direct MCP fallback now captures the exact gate profile/server owner. URL/capture/Details144, provider90, scope journeys14, trace26 targeted checks passed. Independent review found no remaining actionable issue after its whitespace finding was fixed with RED/GREEN. ADR-229/220; no new ADR. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/Windows dispatch/full qualification remain open; In Progress.
+PR3036 remediation: shared recursive URL/URI query/userinfo redaction preserves original matching inputs and harmless spelling, handles malformed and whitespace-prefixed URIs. Direct MCP fallback now captures the exact gate profile/server owner. URL/capture/Details144, provider90, scope journeys14, trace26 targeted checks passed. Independent review found no remaining actionable issue after its whitespace finding was fixed with RED/GREEN. ADR-235/220; no new ADR. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/Windows dispatch/full qualification remain open; In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

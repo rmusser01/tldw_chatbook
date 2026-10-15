@@ -3,18 +3,17 @@ id: TASK-34568
 title: Acknowledge Console decisions and grant outcomes honestly
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 06:42'
-updated_date: '2026-10-12 03:56'
+- '@codex'
+created_date: 2026-10-06 06:42
+updated_date: 2026-10-15 20:46
 labels: []
 dependencies:
-  - TASK-34565
-  - TASK-34566
+- TASK-34565
+- TASK-34566
 documentation:
-  - >-
-    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-  - backlog/decisions/229-console-approval-interaction-and-feedback.md
-  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+- backlog/decisions/235-console-approval-interaction-and-feedback.md
+- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -40,7 +39,7 @@ Show that an answer registered and distinguish it from grant application, final 
 <!-- SECTION:PLAN:BEGIN -->
 ### Task 5 Publish truthful receipt and grant observations
 
-**Backlog:** TASK-34568. **ADR:** ADR-229/067/195/210. **Consumes:** captured owner/round/revision/call identity, Task 3's Applying state and generation fence.
+**Backlog:** TASK-34568. **ADR:** ADR-235/067/195/210. **Consumes:** captured owner/round/revision/call identity, Task 3's Applying state and generation fence.
 
 **Files:** Create `tldw_chatbook/Agents/approval_observation.py`, `Chat/console_approval_feedback.py`, `UI/Console_Modules/approval_feedback.py`, `Tests/Agents/test_approval_observation.py`, `Tests/Chat/test_console_approval_feedback.py`, and `Tests/UI/test_approval_feedback.py`. Modify approval provenance's optional observational metadata, controller receipt/outcome callbacks, interrupt host settlement, provider grant wrappers, `MCP/unified_control_plane_service.py` actual grant writers, `Chat/console_raw_cli.py:grant_model_session`, `Chat/console_agent_bridge.py`, `Chat/console_tool_activity.py`, and `UI/Console_Modules/wiring.py`. Add an optional display-only feedback field to `ConsoleActivityPresentation` in `Chat/console_chat_models.py`, rendered by `Widgets/Console/console_transcript.py`; keep it outside durable/model serialization. Existing `Widgets/Console/console_status_chips.py:sync_run_chip` supplies the active run status.
 
@@ -59,16 +58,16 @@ Define `ApprovalFeedbackStore.bind_round(view: ApprovalBatchView) -> None`, `con
 - [ ] **Step 7: Close and commit.** Document the actual owner signal for each state, failure/no-op cases, serialization exclusions and exact qualification receipts. Do not mark this task Done on UI text tests alone.
 
 ADR required: yes
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
-Reason: Existing ADR229/067/195/210 governs optional noncontrolling observations and session-only feedback; no authority or persistence migration.
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
+Reason: Existing ADR235/067/195/210 governs optional noncontrolling observations and session-only feedback; no authority or persistence migration.
 
 Compatible observation clarification: publish_grant_application accepts optional actual_scope, supplied by the actual writer. This supports the required coalesced-grant scope evidence without inferring from the user selection; no authority/return contract changes.
 
-PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR229 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
+PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR235 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
 
-Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
@@ -76,11 +75,11 @@ Task5 adds optional owner observations, a monotonic session-only feedback store,
 
 Compatible display-only additions: publish_grant_application(actual_scope=...), ApprovalDecisions observational attributes outside dict entries, ApprovalFeedback.confirmed_backend_start=False, member projection lookup, and nested provider observation scopes. Confirmed start survives late/reordered failed results. Early dispatch remains Starting; actual tool/raw output is Running evidence. Full feedback wraps below the existing tool header using central tokens; CSS rebuilt.
 
-ADR229/067/195/210 applies. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-5/receipts.json. New ownership/store/UI checks:12/24/9 passed. Existing host29,activity12,raw revocation7,builtin74,MCP90,raw provider32,raw progress10,trace26,denial6,activity persistence157; CSS bundle5/token references1 and detachable hook checks pass. All46 local native-worker failing node IDs also fail with exact BASE owner source overlay; no native-worker success claim. Existing screen ratchet and pre-existing lint diagnostics remain documented. Native/browser frame timing, latency distributions, broader Inspect qualification and independent review remain open; retain In Progress and AC1 unchecked.
+ADR235/067/195/210 applies. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-5/receipts.json. New ownership/store/UI checks:12/24/9 passed. Existing host29,activity12,raw revocation7,builtin74,MCP90,raw provider32,raw progress10,trace26,denial6,activity persistence157; CSS bundle5/token references1 and detachable hook checks pass. All46 local native-worker failing node IDs also fail with exact BASE owner source overlay; no native-worker success claim. Existing screen ratchet and pre-existing lint diagnostics remain documented. Native/browser frame timing, latency distributions, broader Inspect qualification and independent review remain open; retain In Progress and AC1 unchecked.
 
-Independent Task5 fix1 review at d28deef7b91d9ddfd9fa0b1c4c9aa60d9ce794b8 verified all five findings addressed: hook audit writes, exact call attribution, conservative grouped starts, virtual grant writers, completed child retirement. No new Critical/Important issue in the fix range. Owners34/feedback29/MCP90/trace26/host29/UI9 and marker2 receipts verified. Native dispatch and presented-frame qualification remain open. ADR-229; explicit legacy fallback metadata is observational only.
+Independent Task5 fix1 review at d28deef7b91d9ddfd9fa0b1c4c9aa60d9ce794b8 verified all five findings addressed: hook audit writes, exact call attribution, conservative grouped starts, virtual grant writers, completed child retirement. No new Critical/Important issue in the fix range. Owners34/feedback29/MCP90/trace26/host29/UI9 and marker2 receipts verified. Native dispatch and presented-frame qualification remain open. ADR-235; explicit legacy fallback metadata is observational only.
 
-PR3036 remediation: later actual grouped grant success corrects failure and later failures cannot regress an applied fact. Terminal collapsed and expanded notices retain grants without shared Starting while pending siblings preserve it. Reducer31, UIfeedback15, scope14, host12, toolactivity12 and hook inventory selection1 passed; independent review found no remaining actionable issue. Existing ADR229/220. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native latency/full qualification remains open; In Progress.
+PR3036 remediation: later actual grouped grant success corrects failure and later failures cannot regress an applied fact. Terminal collapsed and expanded notices retain grants without shared Starting while pending siblings preserve it. Reducer31, UIfeedback15, scope14, host12, toolactivity12 and hook inventory selection1 passed; independent review found no remaining actionable issue. Existing ADR235/220. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native latency/full qualification remains open; In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

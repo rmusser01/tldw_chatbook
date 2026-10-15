@@ -12,9 +12,9 @@
 
 ADR required: yes
 
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
 
-Reason: The approved [ADR-229](../../../backlog/decisions/229-console-approval-interaction-and-feedback.md) defines lasting interaction and observational feedback changes while preserving existing security owners. ADR-032/067/090/093/150/161/195/210 continue to apply.
+Reason: The approved [ADR-235](../../../backlog/decisions/235-console-approval-interaction-and-feedback.md) defines lasting interaction and observational feedback changes while preserving existing security owners. ADR-032/067/090/093/150/161/195/210 continue to apply.
 
 ## Global Constraints
 
@@ -88,7 +88,7 @@ Production paths in this table are relative to tldw_chatbook/. New modules must 
 
 ### Task 1 Establish the baseline and measurement contract
 
-**Backlog:** TASK-34564. **ADR:** ADR-229; existing testing and live-verification lessons govern evidence.
+**Backlog:** TASK-34564. **ADR:** ADR-235; existing testing and live-verification lessons govern evidence.
 
 **Files:** Create `Tests/Benchmarks/console_approval_latency.py`, `Tests/Benchmarks/test_console_approval_latency_measurement.py`; record receipts under `Docs/superpowers/qa/2026-10-05-console-approval-ux/`. Reuse the isolation pattern in `Tests/private_profile.py`, production compositor observations in `Tests/Benchmarks/console_character_switcher_latency.py`, native approval journey in `Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py`, and the existing Windows terminal qualification tooling. Do not alter production behavior for the baseline.
 
@@ -118,7 +118,7 @@ assert report["actionable_budget_ms"] == 200.0
 
 ### Task 2 Capture request presentation from the actual owners
 
-**Backlog:** TASK-34565. **ADR:** ADR-229/032/093. **Consumes:** Task 1's passing private approval control and reviewed measurement boundaries; unchanged-source transport baseline qualification remains open if its observer is unavailable.
+**Backlog:** TASK-34565. **ADR:** ADR-235/032/093. **Consumes:** Task 1's passing private approval control and reviewed measurement boundaries; unchanged-source transport baseline qualification remains open if its observer is unavailable.
 
 **Files:** Create `tldw_chatbook/Chat/approval_presentation.py`, `Tests/Chat/test_approval_presentation.py`. Modify `Agents/mcp_tool_provider.py:MCPPendingCall/pending_gate_for`, built-in pending construction in `Chat/console_chat_controller.py:build_tool_review_hook`, `Agents/local_tool_provider.py:pending_gate_for`, `Agents/virtual_cli_provider.py:pending_gate_for`, `Agents/raw_shell_tool_provider.py:pending_gate_for`, and `_build_approval_payload`. Extend `Tests/Chat/test_approval_payload_summary.py` and the affected provider tests. The shared generic high-risk reason-copy helper in `Widgets/Chat_Widgets/chat_approval_card.py` also receives only the planned truthful copy correction; control redesign remains Task 3. Permission profiles expose IDs as their names: render the actual default key as Default and named profiles by their exact captured ID. Local/virtual provider owners may receive an optional display-only captured authority constructor input from the owning controller where their existing authorization closure provides no readable profile identity.
 
@@ -134,7 +134,7 @@ Produce frozen `ApprovalRowView` with `verdict_key`, `call_count`, `action_label
 
 ### Task 3 Replace overlapping controls with explicit decisions
 
-**Backlog:** TASK-34566. **ADR:** ADR-229/150/161/031. **Consumes:** ApprovalBatchView and owner metadata from Task 2.
+**Backlog:** TASK-34566. **ADR:** ADR-235/150/161/031. **Consumes:** ApprovalBatchView and owner metadata from Task 2.
 
 **Files:** Create `tldw_chatbook/UI/Console_Modules/approval_controls.py` and `Tests/UI/test_approval_interaction.py`. Modify `Widgets/Chat_Widgets/chat_approval_card.py`, `chat_task_cards.py`, `css/core/_variables.tcss`, `css/build_css.py`, and create `css/features/_console_approvals.tcss`. Move feature-local approval rules from `components/_agentic_terminal.tcss` at their existing cascade position; do not duplicate canonical ds-approval-card definitions. Update the existing action-ownership, compact-layout, batch-geometry and card tests.
 
@@ -149,7 +149,7 @@ Produce frozen `ApprovalRowView` with `verdict_key`, `call_count`, `action_label
 
 ### Task 4 Add complete arguments without eager UI work
 
-**Backlog:** TASK-34567. **ADR:** ADR-229/090/150. **Consumes:** ApprovalRowView and its semantic revision, Task 3's neutral focus target and disclosure lifecycle.
+**Backlog:** TASK-34567. **ADR:** ADR-235/090/150. **Consumes:** ApprovalRowView and its semantic revision, Task 3's neutral focus target and disclosure lifecycle.
 
 **Files:** Create `tldw_chatbook/UI/Console_Modules/approval_details.py`, `Tests/UI/test_approval_details.py`. Modify `Widgets/Chat_Widgets/chat_approval_card.py` and `css/features/_console_approvals.tcss`. Extend `Tests/UI/test_approval_argument_budget.py` and `test_approval_row_information_budget.py` where their old summary-only assumptions change.
 
@@ -165,7 +165,7 @@ Its keyword-only constructor takes `current_identity: Callable[[], DetailsIdenti
 
 ### Task 5 Publish truthful receipt and grant observations
 
-**Backlog:** TASK-34568. **ADR:** ADR-229/067/195/210. **Consumes:** captured owner/round/revision/call identity, Task 3's Applying state and generation fence.
+**Backlog:** TASK-34568. **ADR:** ADR-235/067/195/210. **Consumes:** captured owner/round/revision/call identity, Task 3's Applying state and generation fence.
 
 **Files:** Create `tldw_chatbook/Agents/approval_observation.py`, `Chat/console_approval_feedback.py`, `UI/Console_Modules/approval_feedback.py`, `Tests/Agents/test_approval_observation.py`, `Tests/Chat/test_console_approval_feedback.py`, and `Tests/UI/test_approval_feedback.py`. Modify approval provenance's optional observational metadata, controller receipt/outcome callbacks, interrupt host settlement, provider grant wrappers, `MCP/unified_control_plane_service.py` actual grant writers, `Chat/console_raw_cli.py:grant_model_session`, `Chat/console_agent_bridge.py`, `Chat/console_tool_activity.py`, and `UI/Console_Modules/wiring.py`. Add an optional display-only feedback field to `ConsoleActivityPresentation` in `Chat/console_chat_models.py`, rendered by `Widgets/Console/console_transcript.py`; keep it outside durable/model serialization. Existing `Widgets/Console/console_status_chips.py:sync_run_chip` supplies the active run status.
 
@@ -185,7 +185,7 @@ Define `ApprovalFeedbackStore.bind_round(view: ApprovalBatchView) -> None`, `con
 
 ### Task 6 Qualify the complete interaction and publish evidence
 
-**Backlog:** TASK-34569. **ADR:** ADR-229 with the existing UI and security decisions. **Consumes:** Tasks 1-5 and their passing targeted receipts; Task 1's comparable baseline.
+**Backlog:** TASK-34569. **ADR:** ADR-235 with the existing UI and security decisions. **Consumes:** Tasks 1-5 and their passing targeted receipts; Task 1's comparable baseline.
 
 **Files:** Create `Tests/UI/test_console_approval_ux_journeys.py` and `Tests/Chat/test_console_approval_scope_journeys.py`. Extend the Task 1 probe with new owner observations while retaining old boundary names. Update `Docs/User_Guide/console/agent-runs-and-tools.md`, `Docs/User_Guide/Console.md`, `Docs/User_Guide/mcp.md`, and the existing `scripts/regen_approval_card_svg.py` fixture only where its controls/copy changed. Regenerate `Docs/User_Guide/images/console/approval-card.svg`. Save actual evidence and qualification notes under the already declared QA directory.
 

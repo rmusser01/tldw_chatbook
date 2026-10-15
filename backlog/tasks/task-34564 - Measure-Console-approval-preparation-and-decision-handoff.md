@@ -3,16 +3,15 @@ id: TASK-34564
 title: Measure Console approval preparation and decision handoff
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 06:41'
-updated_date: '2026-10-13 18:41'
+- '@codex'
+created_date: 2026-10-06 06:41
+updated_date: 2026-10-15 20:46
 labels: []
 dependencies: []
 documentation:
-  - >-
-    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-  - backlog/decisions/229-console-approval-interaction-and-feedback.md
-  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+- backlog/decisions/235-console-approval-interaction-and-feedback.md
+- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -36,7 +35,7 @@ Identify which stages cause pauses before permission cards and after answers so 
 <!-- SECTION:PLAN:BEGIN -->
 ### Task 1 Establish the baseline and measurement contract
 
-**Backlog:** TASK-34564. **ADR:** ADR-229; existing testing and live-verification lessons govern evidence.
+**Backlog:** TASK-34564. **ADR:** ADR-235; existing testing and live-verification lessons govern evidence.
 
 **Files:** Create `Tests/Benchmarks/console_approval_latency.py`, `Tests/Benchmarks/test_console_approval_latency_measurement.py`; record receipts under `Docs/superpowers/qa/2026-10-05-console-approval-ux/`. Reuse the isolation pattern in `Tests/private_profile.py`, production compositor observations in `Tests/Benchmarks/console_character_switcher_latency.py`, native approval journey in `Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py`, and the existing Windows terminal qualification tooling. Do not alter production behavior for the baseline.
 
@@ -65,17 +64,17 @@ assert report["actionable_budget_ms"] == 200.0
 - [ ] **Step 6: Close only after qualification.** Update the task with receipt paths, actual conditions, limitations, ADR check and Implementation Notes; check only supported ACs and set Done through the CLI when its DoD holds. Commit only the probe, tests and evidence. Do not claim speed improvement at this stage.
 
 ADR required: yes
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
-Reason: Existing ADR-229 governs the approved Console approval interaction and observational measurement; this task changes no authority.
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
+Reason: Existing ADR-235 governs the approved Console approval interaction and observational measurement; this task changes no authority.
 
 Execution-order ruling:
 Ruling: Allow functional UX Tasks 2–5 after the supported private control and reviewed recorder, deferring unavailable native/browser presented-frame baseline qualification to the final gate — the binding spec requires evidence before choosing performance fixes and truthful final qualification, while the plan assumed an unavailable capture capability — cost if wrong: transport measurements may require later UX rework and final completion remains blocked; retain the unchanged source baseline and make no speed claim or speculative optimization.
 
-Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 
-2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR229/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
+2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR235/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
+2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
@@ -85,7 +84,7 @@ The supported private launcher installs the unchanged real-profile guard before 
 
 Partial delivery only: no native/browser timing capture, transparent production-stage observations, calibrated presentation timestamps or overall budget qualification has been completed. TASK-34564 remains In Progress, and its unverified acceptance outcomes stay open. The unchanged product baseline is b0ac6672231e29fb7efa2e9236d2f123c2e0a163. The controller's execution-order correction permits independently specified functional UX work after review, retaining final qualification and prohibiting speculative optimization or speed claims.
 
-Existing ADR-229 (backlog/decisions/229-console-approval-interaction-and-feedback.md) applies. Owned changes are the measurement probe/tests, reproducible QA evidence, testing lesson, execution-order plan and this task record. The delivered foundations passed independent review and a focused refusal-gate fix/re-review at a49161f80d; full qualification remains open.
+Existing ADR-235 (backlog/decisions/235-console-approval-interaction-and-feedback.md) applies. Owned changes are the measurement probe/tests, reproducible QA evidence, testing lesson, execution-order plan and this task record. The delivered foundations passed independent review and a focused refusal-gate fix/re-review at a49161f80d; full qualification remains open.
 
 The launcher now stops unsuccessfully before pytest import when startup admission is refused. A real owned invalid-recovery fixture reproduced RED (1 failed) and GREEN (1 passed); the 16 recorder and 25 approval controls still pass. Refusal-regression receipts and Tests/Benchmarks/test_console_approval_private_control.py cover that boundary.
 <!-- SECTION:NOTES:END -->
