@@ -2,7 +2,8 @@
 
 OPML import/export and delete confirmation, plus (task-895) the two prompts
 the watchlist tree's write verbs need: a name entry for create/rename, and a
-source picker for membership editing.
+source picker for membership editing. It also holds the text of the
+OPML import's summary toast.
 """
 
 from __future__ import annotations
@@ -18,6 +19,50 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static, TextArea
 
 from ...Utils.input_validation import sanitize_string, validate_text_input
+
+
+def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
+    """The post-import toast, saying the WHOLE of what happened (TASK-3604).
+
+    The pre-round-trip toast counted only created sources, so importing a
+    structured document read identically whether it filed twelve feeds into
+    three watchlists or did nothing at all on a re-import. The summary now
+    names new vs already-present sources, the watchlists created or
+    reused, and the Unassigned remainder.
+
+    Args:
+        result: The scope service's import summary dict.
+
+    Returns:
+        One sentence for the toast.
+    """
+    created = int(result.get("created", 0) or 0)
+    existing = int(result.get("existing", 0) or 0)
+    created_wl = list(result.get("watchlists_created") or [])
+    reused_wl = list(result.get("watchlists_reused") or [])
+    assignments = int(result.get("assignments", 0) or 0)
+    explicit_unassigned = result.get("unassigned")
+    unassigned = (
+        max(created + existing - assignments, 0)
+        if explicit_unassigned is None
+        else int(explicit_unassigned or 0)
+    )
+
+    sources_bit = (
+        f"{created} new"
+        if existing == 0
+        else f"{created} new + {existing} already present"
+    )
+    text = f"Imported {sources_bit} source(s) from OPML"
+    if assignments:
+        total_wl = len(created_wl) + len(reused_wl)
+        wl_word = "watchlist" if total_wl == 1 else "watchlists"
+        new_bit = f", {len(created_wl)} new" if created_wl else ""
+        text += f": {assignments} into {total_wl} {wl_word}{new_bit}"
+        if unassigned:
+            text += f", {unassigned} unassigned"
+    text += "."
+    return text
 
 
 class OpmlImportDialog(ModalScreen[str | None]):

@@ -180,6 +180,7 @@ from ..Watchlists_Modules.opml_dialogs import (
     WatchlistNameDialog,
     WatchlistPickerDialog,
     WatchlistSourcePickerDialog,
+    _opml_import_summary_text,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.region_layout import (
@@ -359,50 +360,6 @@ def _normalize_items_status_filter(value: Any) -> str:
     """
     text = str(value or "").strip().lower()
     return "unread" if text in {"unread", "new"} else "all"
-
-
-def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
-    """The post-import toast, saying the WHOLE of what happened (TASK-3604).
-
-    The pre-round-trip toast counted only created sources, so importing a
-    structured document read identically whether it filed twelve feeds into
-    three watchlists or did nothing at all on a re-import. The summary now
-    names new vs already-present sources, the watchlists created or
-    reused, and the Unassigned remainder.
-
-    Args:
-        result: The scope service's import summary dict.
-
-    Returns:
-        One sentence for the toast.
-    """
-    created = int(result.get("created", 0) or 0)
-    existing = int(result.get("existing", 0) or 0)
-    created_wl = list(result.get("watchlists_created") or [])
-    reused_wl = list(result.get("watchlists_reused") or [])
-    assignments = int(result.get("assignments", 0) or 0)
-    explicit_unassigned = result.get("unassigned")
-    unassigned = (
-        max(created + existing - assignments, 0)
-        if explicit_unassigned is None
-        else int(explicit_unassigned or 0)
-    )
-
-    sources_bit = (
-        f"{created} new"
-        if existing == 0
-        else f"{created} new + {existing} already present"
-    )
-    text = f"Imported {sources_bit} source(s) from OPML"
-    if assignments:
-        total_wl = len(created_wl) + len(reused_wl)
-        wl_word = "watchlist" if total_wl == 1 else "watchlists"
-        new_bit = f", {len(created_wl)} new" if created_wl else ""
-        text += f": {assignments} into {total_wl} {wl_word}{new_bit}"
-        if unassigned:
-            text += f", {unassigned} unassigned"
-    text += "."
-    return text
 
 
 @dataclass(frozen=True)
@@ -1733,16 +1690,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             classes="destination-filter-strip",
         )
         await self.mount(banner, before="#watchlists-header-bar")
-
-    def _rail_unread_suffix(self) -> str:
-        """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
-
-        Empty when there is nothing unread — a permanent "0 unread" is
-        chrome, not information, and an expanded rail already shows the
-        per-node numbers.
-        """
-        unread = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
-        return f"{unread} unread" if unread else ""
 
     def _apply_tree_data_to_live_surfaces(self) -> None:
         """Publish freshly loaded tree data without recomposing the screen.
@@ -3122,20 +3069,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # selection pushes the real value).
         pane.position = self._reader_position_text()
         return pane
-
-    def _watchlists_are_empty(self) -> bool:
-        """Whether this profile has nothing in Watchlists yet (TASK-998).
-
-        Delegates to `OverviewPane.profile_is_empty`, which is the one
-        definition of this question (Qodo #3 on PR #1017). It used to be
-        copied here, and two copies deciding what the Overview region and the
-        Inspector each say is a drift waiting to happen -- the two disagreeing
-        is precisely the confusing first-run state TASK-998 removed.
-
-        Returns:
-            True only once `overview_data` has loaded and reports nothing.
-        """
-        return OverviewPane.profile_is_empty(self.overview_data)
 
     def _watchlists_profile_state(self) -> str:
         """Loading, empty or populated (TASK-1020).
