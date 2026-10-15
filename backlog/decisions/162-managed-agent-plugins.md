@@ -600,3 +600,98 @@ Fresh `/2` foreign agents require an explicit supported tool contract. Omitted t
 ### Malformed vendor component identity (R82)
 
 An unrepresentable vendor name must not abort inspection, borrow a nested declaration name, clobber another entry, or prevent publication of a valid selected sibling. The adapter may assign a deterministic bounded internal placeholder only to an explicitly unsupported diagnostic record that is ineligible for admission/execution, retaining original source/declaration evidence. Its reserved form must be excluded by actual valid-source-ID validation; malformed names imitating that form receive their own collision-free normalization. Existing valid IDs and the closed authority schema stay unchanged. Qualify the valid subset through actual review, commit and authenticated reconstruction, since excluded inventory records also enter authority. These labels never authorize execution or a host capability. The existing review owner may persist an unsupported selection for inspectability; that metadata never establishes eligibility.
+
+### I3 preinstallation acquisition custody (R83)
+
+Acquisition runs under the existing PluginRuntimeOwner and persistent
+PluginService storage worker before installation authority exists. It never
+fabricates an installation ID or revision to borrow an installed-process lease.
+A bounded acquisition-only custody journal uses purpose-separated authentication
+from the existing PluginAuthorityStore, requiring initialized, unlocked current
+authority. Journal bytes are cleanup evidence, never trust, activation or a new
+marker transition. Reserve exact operation/nonce, original owner session, managed
+staging path and physical root/anchor/leaf identities before any producer spawn.
+The output destination remains within that owned staging; caller text cannot
+select an arbitrary cleanup target. Never reuse a nonce/physical staging incarnation. A retained operation label cannot be reused; eligible cleaned-label history follows R85 below.
+
+Only the retained producer can publish terminal status after its process tree,
+quota monitor and materialization worker have actually stopped. Cancellation of a
+waiter, a PID lookup, a new owner lock, timestamps and empty registry rows are not
+terminal evidence. Replayed receipts cannot qualify a replaced or reincarnated
+directory. On restart, authenticate exact custody and requalify physical
+identities before passing eligible terminal leaves to the existing 24-hour F7
+cleanup seam. Missing, invalid, lost-owner, nonterminal or recovery-referenced
+state stays protected and counted; bounded journal exhaustion refuses work.
+Any explicit host reconciliation must bind the exact retained state and its
+current physical target, and must not infer quiescence from age or process IDs.
+
+Service cancellation/shutdown retains original process and thread cleanup tasks;
+no second owner or worker may take over uncertain live work. Optional internal
+F1 materializer checkpoints may check cancellation/deadline/quota per entry and
+chunk, preserving default behavior and all existing boundary/error validation.
+Host authentication selection remains separately specified and qualified.
+
+
+### I3 explicit host authentication projection (R84)
+
+Network locators identify a user-selected HTTPS/SSH origin independently of
+ref/subdirectory. Remote catalog strings cannot grant host-file access; only an
+explicit local selection does. Acquire from owned non-repository working storage
+with fixed installed Git/SSH executables and argv. Strip dynamic Git command/config
+overrides and repository/package configuration. Capture supported system/global
+host credential configuration, including host Git includes, for the selected
+credential context into private operation state. Host-configured credential
+helpers are existing host authority; never take a helper from source/package text.
+Preserve ordered helpers, username and useHttpPath semantics, and qualify exact
+context selection against controlled fake endpoints. URL rewrites and transport
+redirects cannot retarget that selected origin. Never retain credentials in source
+models, provenance, receipts or diagnostics.
+
+SSH configuration qualification uses only explicit host files and an installed
+fixed executable from owned storage. A bounded static check refuses Match/Include
+forms before querying effective configuration, so inspection does not run Match
+exec. Preserve supported ordered IdentityFile/CertificateFile, identities-only,
+agent, public-key/preferred-authentication, known-hosts, strict-host-key-checking
+and host-key-algorithm settings in a private generated config. Refuse unexpected
+HostName/User/Port changes; a nondefault target/port must be explicit in the
+locator. Refuse proxy commands/jumps, canonicalization, forwarding, local/remote
+commands and nondefault executable key providers. Unsupported host configuration
+is an explicit metadata-only failure; do not silently substitute different auth.
+These conservative first-version refusals limit SSH compatibility and are not a
+claim to support arbitrary OpenSSH configuration.
+
+HTTPS retains supported host TLS/certificate authentication settings or refuses
+unsupported nondefault settings. Host proxy/extra-header/redirect/rewrite settings
+that the constrained context cannot faithfully retain must refuse explicitly; do
+not silently ignore a required host transport policy. Authentication remains
+noninteractive under the acquisition deadline; unavailable credentials fail
+without changing an installation. Tests use only isolated owned host profiles,
+controlled repositories/helpers/endpoints and private credential sentinels. No
+real host helper, SSH config, credential store or account is used for testing.
+
+
+### I3 eligible acquisition-custody retirement (R85)
+
+The fresh acquisition nonce and exact physical staging incarnation form permanent
+identity. A caller operation_id is a correlation label reserved while its receipt
+is retained. Acquisition does not advance a trust marker or perform installation
+mutation. Unlike those authenticated mutation IDs, an expired cleaned acquisition
+label may start new bounded acquisition with a fresh nonce/incarnation; it never
+replays an old snapshot or bypasses new inspection/review. Public callers should
+continue choosing fresh operation labels.
+
+Under the same owner and authenticated namespace, bound custody inventory at
+1,000 and apply the existing 30-day terminal retention target. To make room at
+the bound or age out old history, retire only oldest authenticated cleaned
+receipts after requalifying exact original root/anchor identities and confirmed
+staging absence, with recovery_referenced false. The 24-hour staging rule still
+applies before the original owned cleanup. Pending, uncertain, unknown, changed,
+tampered, extant, recovery-referenced or lost-owner states never qualify for
+retirement. Failure/overflow refuses work rather than deleting protections.
+Do not invent a new counter/marker/owner/schema to track expired labels forever.
+
+A stale old result must fail nonce/physical binding against a new acquisition
+using an expired label. The new candidate still requires ordinary fresh review.
+Installed operation idempotence, trust/activation generations and all execution
+permission rules are unchanged. This qualification replaces permanent arbitrary
+acquisition-label nonreuse, which cannot coexist with finite exact history.

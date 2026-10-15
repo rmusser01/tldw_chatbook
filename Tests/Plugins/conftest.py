@@ -130,7 +130,7 @@ async def native_console(tmp_path, native_package):
     service = PluginService(
         tmp_path / "console-profile",
         workspace_lookup=registry.get_workspace,
-        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "console-marker"),
+        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
         accept_reduced_protection=True,
     )
     await service.bootstrap("test passphrase")
