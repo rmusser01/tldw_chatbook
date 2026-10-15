@@ -185,10 +185,31 @@ def take_out_sent_draft(
         verb: "sent" or "queued", for the notice.
     """
     stash = as_typed(stash)
+    # Exact request ownership is captured before this synchronous prefix move.
+    claim_reader = getattr(store, "received_turn_for_session", None)
+    snapshot_reader = getattr(store, "session_input_snapshot", None)
+    claim = claim_reader(session_id) if callable(claim_reader) else None
+    captured_revision = (
+        snapshot_reader(session_id).draft_revision
+        if claim is not None and callable(snapshot_reader)
+        else None
+    )
+
+    def note_transfer() -> None:
+        if claim is None or captured_revision is None or stash is None:
+            return
+        snapshot = snapshot_reader(session_id)
+        if not snapshot.draft:
+            store.note_received_draft_transfer(
+                claim, captured_revision=captured_revision,
+                transferred_revision=snapshot.draft_revision,
+            )
+
     if composer is not None:
         composer.spend_captured_draft(stash)
     if composer is not None and visible_session_id == session_id:
-        if not commit_capture(composer, stash) and stash is not None:
+        committed = commit_capture(composer, stash)
+        if not committed and stash is not None:
             live = composer.capture_draft_snapshot()
             if stash.text in composer.draft_text():
                 # The user's edit stays; the text in it already went. Retire
@@ -199,6 +220,8 @@ def take_out_sent_draft(
                 # Edited in place: a later press on it is a new capture.
                 composer.retire_captured_drafts()
         _save_draft(store, session_id, composer.draft_text())
+        if committed:
+            note_transfer()
         return
     if stash is None:
         return
@@ -209,6 +232,7 @@ def take_out_sent_draft(
     if draft.startswith(stash.text):
         undo_histories.pop(session_id, None)
         _save_draft(store, session_id, draft[len(stash.text) :])
+        note_transfer()
     elif stash.text in draft:
         notify(SENT_DRAFT_KEPT_IN.format(verb=verb, chat=chat_label(store, session_id)))
 

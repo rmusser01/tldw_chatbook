@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.hooks_v2.models import HookResult
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
+    from tldw_chatbook.Chat.console_received_turn import ConsoleReceivedTurnClaim
     from tldw_chatbook.Chat.response_rules.corrections import (
         MachineFollowupReceipt,
         NativeCorrectionProposal,
@@ -157,6 +158,7 @@ class ConsolePromptQueueCoordinator:
             Callable[[ConsoleQueuedAcceptanceEvent], None] | None
         ) = None,
         on_activity_changed: Callable[[str], None] | None = None,
+        received_turn_for_session: Callable[[str], ConsoleReceivedTurnClaim | None] | None = None,
         on_chain_terminal: (
             Callable[[str, ConsoleRunStatus, str | None], None] | None
         ) = None,
@@ -170,6 +172,7 @@ class ConsolePromptQueueCoordinator:
         self._can_reacquire_slot = can_reacquire_slot or (lambda _session_id: True)
         self.on_queued_accepted = on_queued_accepted
         self.on_activity_changed = on_activity_changed
+        self._received_turn_for_session = received_turn_for_session
         self.on_chain_terminal = on_chain_terminal
         self._chains: dict[str, _PromptChain] = {}
         self._queue_snapshots: dict[str, PromptQueueSnapshot] = {}
@@ -1215,6 +1218,20 @@ class ConsolePromptQueueCoordinator:
             ConsoleRunStatus.CHECKING_CITATIONS,
             ConsoleRunStatus.RETRYING,
         }
+        received = (
+            self._received_turn_for_session(session_id)
+            if self._received_turn_for_session is not None
+            else None
+        )
+        if received is not None:
+            occupies_slot = True
+            preparing = preparing or (
+                not accepted_live
+                and received.origin in {
+                    ConsoleSubmissionOrigin.MANUAL,
+                    ConsoleSubmissionOrigin.QUEUED,
+                }
+            )
         return ConsoleControllerActivity(
             session_id=session_id,
             occupies_slot=occupies_slot,

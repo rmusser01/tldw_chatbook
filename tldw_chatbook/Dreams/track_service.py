@@ -2932,6 +2932,7 @@ async def _dispatch_changed(
     try:
         if file_backed:
             await asyncio.to_thread(
+                run_finite_local_worker,
                 discovery.guard_invocation(dispatcher.dispatch, lambda: bool(dreams_setting("enabled")) and dreams_execution_allowed(deps.dreams_db)),
                 **payload)
         else:

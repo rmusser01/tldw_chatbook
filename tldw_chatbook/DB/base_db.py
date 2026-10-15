@@ -48,10 +48,11 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     close = getattr(database, "close_connection", None)
     if local is None or registry is None or not callable(close):
         from .AgentRuns_DB import AgentRunsDB
+        from .Client_Media_DB_v2 import MediaDatabase
         from .Library_Collections_DB import LibraryCollectionsDB
         from .Workspace_DB import WorkspaceDB
 
-        owned_types = {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
+        owned_types = {AgentRunsDB, LibraryCollectionsDB, MediaDatabase, WorkspaceDB}
         if type(database).__module__ == "tldw_chatbook.DB.Dreams_DB":
             from .Dreams_DB import DreamsDB
 
@@ -71,7 +72,7 @@ def operation_owned_connection(database: object) -> Iterator[None]:
 
         # A raw close can leave a stale cache. Use the same native retirement
         # evidence as the getter; a still-live borrowed handle remains owned.
-        local = database._thread_local
+        local = database._local if type(database) is MediaDatabase else database._thread_local
         close = database.close
         previous = _core_cached_connection(database, getattr(local, "conn", None))
         borrowed = previous is not None
@@ -95,6 +96,8 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 ) -> _CallResult:
     """Run a finite callback and retire only its newly opened worker handle.
 
+    The complete callback owns one counted repository interval, which ends
+    before its newly opened handle retires.
     Cancellation of the awaiting task does not close a handle still in use by
     its executor callback. Existing connections and memory/custom owners retain
     their original lifetimes.
@@ -115,7 +118,9 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
             owned_types.add(GuardianDB)
         if type(database) not in owned_types or database.is_memory_db:
             return operation(*args, **kwargs)
-        with operation_owned_connection(database):
+        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
+        with operation_owned_connection(database), _core_operation(database):
             return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)
@@ -1085,3 +1090,29 @@ class BaseDB(ABC):
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
+
+
+# Defining callbacks consumed by the optional finite Character display only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        None,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in ("run_owned_db_call",)
+    for descriptor in (globals()[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)

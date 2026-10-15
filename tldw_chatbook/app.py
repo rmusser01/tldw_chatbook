@@ -1476,6 +1476,7 @@ class TldwCli(
         self._initial_screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
+        self._initial_screen_pushed = False
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
@@ -5822,3 +5823,13 @@ if __name__ == "__main__":
 #
 # End of app.py
 #######################################################################################################################
+
+
+# Defining callbacks for checked stock Console preparation; no IO.
+_CONSOLE_SKILL_APP_SOURCE = (
+    TldwCli,
+    globals(),
+    TldwCli._create_deferred_startup_task,
+    TldwCli._create_deferred_startup_task.__code__,
+    ConsoleRuntime,
+)

@@ -8,6 +8,7 @@ bypass. See the design spec §3.3, §7, §8, §9.2.
 
 from __future__ import annotations
 
+import inspect
 import os
 import threading
 from contextlib import nullcontext
@@ -605,11 +606,51 @@ class RunLogWriter:
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
         with acquire_storage(root):
-            from tldw_chatbook.Tools.file_operation_tools import is_within
+            from tldw_chatbook.Tools import file_operation_tools as path_tools
+            from tldw_chatbook.Tools.file_operation_tools import (
+                _IS_WITHIN_ORIGINAL,
+                is_within,
+            )
+            from tldw_chatbook.Utils import sensitive_paths
+            from tldw_chatbook.Utils.sensitive_paths import (
+                _IS_SENSITIVE_PATH_ORIGINAL,
+                _RESOLVE_SENSITIVE_CONTEXT_ORIGINAL,
+                resolve_sensitive_context,
+            )
 
+            writer_class, writer_methods = _RUN_LOG_PATH_WRITER_ORIGINAL
+            callback_records = (
+                (is_within, _IS_WITHIN_ORIGINAL),
+                (path_tools.is_sensitive_path, _IS_SENSITIVE_PATH_ORIGINAL),
+                (resolve_sensitive_context, _RESOLVE_SENSITIVE_CONTEXT_ORIGINAL),
+            )
+
+            def can_share_context():
+                return (
+                    type(self) is writer_class
+                    and writer_class.__getattribute__ is object.__getattribute__
+                    and all(
+                        inspect.getattr_static(self, name, None) is function
+                        and function.__code__ is code
+                        and function.__defaults__ is defaults
+                        for name, function, code, defaults in writer_methods
+                    )
+                    and path_tools.is_sensitive_path is callback_records[1][0]
+                    and sensitive_paths.resolve_sensitive_context is resolve_sensitive_context
+                    and all(
+                        callback is original
+                        and callback.__code__ is code
+                        and callback.__defaults__ is defaults
+                        for callback, (original, code, defaults) in callback_records
+                    )
+                )
+
+            context_kwargs = (
+                {"context": resolve_sensitive_context()} if can_share_context() else {}
+            )
             base = root / dir_name
             # Verify containment before creating any directories.
-            if not is_within(base, root):
+            if not is_within(base, root, **(context_kwargs if can_share_context() else {})):
                 logger.warning("run log: base directory escapes root; logging disabled")
                 self._active = False
                 return
@@ -625,7 +666,7 @@ class RunLogWriter:
                 gitignore.write_text("*\n", encoding="utf-8")
             run_dir = base / run_id
             # Verify containment of run_dir before creating it.
-            if not is_within(run_dir, root):
+            if not is_within(run_dir, root, **(context_kwargs if can_share_context() else {})):
                 logger.warning("run log: run directory escapes root; logging disabled")
                 self._active = False
                 return
@@ -977,7 +1018,83 @@ class RunLogWriter:
             )
 
 
+# Only the current writer callbacks consumed by this synchronous path bind.
+_RUN_LOG_PATH_WRITER_ORIGINAL = (
+    RunLogWriter,
+    tuple(
+        (name, function, function.__code__, function.__defaults__)
+        for name in ("bind", "_bind_under_scope", "_migrate_legacy_dir")
+        for function in (RunLogWriter.__dict__[name],)
+    ),
+)
+
+
 def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "resolve_existing_log_dir",
+                "resolve_log_root",
+                "_validate_run_id_path_component",
+                "_setting",
+                "_env_override",
+                "_coerce_dir_name",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "resolve_existing_log_dir",
+                    "resolve_log_root",
+                    "_validate_run_id_path_component",
+                    "_setting",
+                    "_env_override",
+                    "_coerce_dir_name",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

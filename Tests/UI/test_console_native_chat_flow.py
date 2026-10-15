@@ -2758,7 +2758,7 @@ class _ReadyResolutionGateway:
         return resolution
 
 
-class _PromptImprovementGateway:
+class _PromptImprovementGateway(_ReadyResolutionGateway):
     """Return one strict rewrite using the request's protected projection."""
 
     def __init__(self) -> None:
@@ -2779,7 +2779,8 @@ class _PromptImprovementGateway:
             )
         )
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
+        assert route is None
         self.auxiliary_calls += 1
         payload = json.loads(str(request.messages[-1]["content"]))
         rewritten = str(payload["source_prompt"]).replace("Draft", "Improved", 1)
@@ -2800,10 +2801,11 @@ class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
+        assert route is None
         self.started.set()
         await self.release.wait()
-        return await super().complete_auxiliary(request)
+        return await super().complete_auxiliary(request, route=route)
 
 
 class _MutableResolutionPromptGateway(_PromptImprovementGateway):

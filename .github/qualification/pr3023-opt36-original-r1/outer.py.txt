@@ -1,0 +1,457 @@
+"""UNRUN operational draft. Root must bind/review the concrete publication first.
+
+Only stdlib orchestration here. TESTs, gate, reader and product execute solely in
+the four literal children from the separately reviewed original command plan.
+"""
+
+import argparse
+import hashlib
+import importlib
+import importlib.metadata
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import traceback
+import zipfile
+from pathlib import Path, PurePosixPath, PureWindowsPath
+import xml.etree.ElementTree as ET
+
+
+PLAN_SHA = "1cf7f8bd02ba6a932f6a0030f9330e89d999eedcb4542f40d06f5f07bdcddece"
+MAP_SHA = "11c4741b7b544c89d30f2f2536558d3480f9fe968086d794fc6db2d0eb667b01"
+ASSET_COUNT = 44
+ARTIFACT_NAME = "pr3023-opt36-original-r1"
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def read(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+def digest(value):
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def relative(root, name):
+    assert isinstance(name, str) and "\\" not in name
+    parts = PurePosixPath(name)
+    assert name and not parts.is_absolute() and all(p not in ("", ".", "..") for p in parts.parts)
+    target = root.joinpath(*parts.parts).resolve()
+    assert target.is_relative_to(root.resolve()) and target != root.resolve()
+    return target
+
+
+def git(root, *args):
+    return subprocess.check_output(["git", "-c", "gc.auto=0", *args], cwd=root).decode().strip()
+
+
+def sources(root):
+    # Exact Root predicate, including declared untracked Python files. No rglob.
+    names = subprocess.check_output(["git", "-c", "gc.auto=0", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root)
+    return {name: sha(relative(root, name)) for name in sorted(set(names.decode().split("\0")) - {""})
+            if name.endswith(".py") and relative(root, name).is_file()}
+
+
+def non_python(root, binding):
+    rows = binding["non_python_guards"]
+    assert rows and len({r["logical_path"] for r in rows}) == len(rows)
+    for row in rows:
+        path = relative(root, row["logical_path"])
+        assert not row["logical_path"].endswith(".py")
+        assert path.is_file() and digest(row["sha256"]) and sha(path) == row["sha256"]
+    assert binding["native_asset_inventory_review_sha256"] and digest(binding["native_asset_inventory_review_sha256"])
+    for name in ("pytest.ini", "setup.cfg"):
+        assert not relative(root, name).exists()
+
+
+def identity(root, binding):
+    assert binding["status"] == "ROOT_BOUND_AND_INDEPENDENTLY_REVIEWED"
+    assert digest(binding["packet_manifest_sha256"]) and digest(binding["packet_zip_sha256"])
+    assert digest(binding["reader_test_review_sha256"]) and digest(binding["operational_review_sha256"])
+    assert all(isinstance(binding[name], str) and len(binding[name]) == 40 and all(c in "0123456789abcdef" for c in binding[name])
+               for name in ("publication_parent", "goal_snapshot_origin_commit"))
+    assert binding["goal_snapshot_origin_commit"] == binding["publication_parent"]
+    assert binding["workflow_path"] == ".github/workflows/console-pause-native-evidence.yml"
+    assert git(root, "rev-parse", "HEAD") == os.environ["GITHUB_SHA"]
+    assert git(root, "rev-parse", "HEAD^") == binding["publication_parent"]
+    changed = git(root, "diff", "--name-only", "HEAD^", "HEAD").splitlines()
+    assert changed == binding["changed_paths"] and changed == sorted(set(changed))
+    assert binding["workflow_path"] in changed and binding["packet_zip_path"] in changed
+    assert not git(root, "diff", "HEAD", "--name-only")
+    non_python(root, binding)
+    return {"head": os.environ["GITHUB_SHA"], "parent": binding["publication_parent"],
+            "goal_snapshot_origin_commit": binding["goal_snapshot_origin_commit"], "changed_paths": changed,
+            "runtime_mechanism_origin_only": "f6bb9fba4a707dfeb4491ffa9903a52086424f6a",
+            "scope": "Exact Root-supplied selected Goal snapshot; runtime acquisition head is not the product baseline."}
+
+
+def packet_check(packet, binding):
+    assert sha(packet / "manifest.json") == binding["packet_manifest_sha256"]
+    manifest = read(packet / "manifest.json")
+    rows = manifest["assets"]
+    assert len(rows) == manifest["asset_count"] == ASSET_COUNT
+    assert len({r["path"] for r in rows}) == ASSET_COUNT
+    expected = {r["path"] for r in rows} | {"manifest.json"}
+    actual = {p.relative_to(packet).as_posix() for p in packet.rglob("*") if p.is_file()}
+    assert actual == expected
+    for row in rows:
+        path = relative(packet, row["path"])
+        assert not path.is_symlink() and path.stat().st_size == row["bytes"] and sha(path) == row["sha256"]
+    assert sha(packet / "source-map-selected-r4.json") == MAP_SHA
+    assert sha(packet / "original-command-plan.json") == PLAN_SHA
+    return read(packet / "original-command-plan.json"), read(packet / "source-map-selected-r4.json")
+
+
+def initialize(root, archive, binding_path, expected_binding):
+    assert digest(expected_binding) and sha(binding_path) == expected_binding
+    binding = read(binding_path)
+    assert sha(Path(__file__).resolve()) == binding["outer_sha256"]
+    assert archive.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve()) and not archive.is_relative_to(root)
+    archive.mkdir(exist_ok=False)
+    provenance = archive / "provenance"
+    provenance.mkdir()
+    shutil.copyfile(binding_path, provenance / "binding.json")
+    shutil.copyfile(Path(__file__), archive / "outer.py")
+    try:
+        write(archive / "checkout.json", identity(root, binding))
+        for row in binding["non_python_guards"]:
+            target = relative(provenance / "source-anchors", row["logical_path"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(relative(root, row["logical_path"]), target)
+        zipped = relative(root, binding["packet_zip_path"])
+        assert sha(zipped) == binding["packet_zip_sha256"]
+        shutil.copyfile(zipped, provenance / "packet.zip")
+        packet = archive / "packet"
+        packet.mkdir()
+        with zipfile.ZipFile(zipped) as stream:
+            entries = stream.infolist()
+            assert len(entries) == ASSET_COUNT + 1 and len({e.filename for e in entries}) == len(entries)
+            assert all(not e.is_dir() and (e.external_attr >> 16) & 0o170000 != 0o120000 for e in entries)
+            assert sum(e.file_size for e in entries) < 8_000_000
+            for entry in entries:
+                target = relative(packet, entry.filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("xb") as output:
+                    output.write(stream.read(entry))
+        plan, selected = packet_check(packet, binding)
+        initial = sources(root)
+        write(archive / "sources-initial.json", initial)
+        assert len(selected) == 8479 and initial == selected
+        assert len(plan["stage"]) == 2 and not plan["products_staged"]
+        for row in plan["stage"]:
+            assert row["logical_path"] not in selected and not relative(root, row["logical_path"]).exists()
+        for row in read(packet / "expected-sources.json")["sources"]:
+            if row["logical_path"] not in {r["logical_path"] for r in plan["stage"]}:
+                assert sha(relative(root, row["logical_path"])) == row["sha256"]
+        write(archive / "initialized.json", {"ok": True, "binding_sha256": expected_binding,
+              "packet_asset_rows": ASSET_COUNT, "physical_packet_files": ASSET_COUNT + 1, "python_rows": 8479})
+    except BaseException:
+        write(archive / "initialization-error.json", {"traceback": traceback.format_exc()})
+        raise
+    finally:
+        artifacts(archive)
+
+
+def runtime(packet, archive):
+    assert os.name == "nt" and sys.platform == "win32" and sys.version_info[:3] == (3, 12, 10) and not sys.flags.optimize
+    wanted = read(packet / "runtime-binding.json")
+    assert importlib.metadata.version("pytest") == wanted["pytest"] == "8.4.2"
+    assert importlib.metadata.version("textual") == wanted["textual"] == "8.2.8"
+    rows = []
+    for row in wanted["sources"]:
+        module = importlib.import_module(row["module"])
+        path, spec = Path(module.__file__).resolve(), module.__spec__
+        loader = type(spec.loader).__module__ + "." + type(spec.loader).__qualname__
+        assert PureWindowsPath(path) == PureWindowsPath(spec.origin) == PureWindowsPath(row["runtime_path"])
+        assert loader == row["loader_type"] and sha(path) == row["sha256"] and path.stat().st_size == row["bytes"]
+        rows.append(dict(row, actual_path=str(path), spec_origin=spec.origin, actual_loader=loader))
+    assert len(rows) == 3
+    assert not any(name == "tldw_chatbook" or name.startswith("tldw_chatbook.") for name in sys.modules)
+    write(archive / "runtime-actual.json", {"python": sys.version, "executable": sys.executable,
+          "platform": platform.platform(), "pytest": wanted["pytest"], "textual": wanted["textual"], "sources": rows,
+          "scope": "Fresh file/path/spec/version check; callable/native qualification belongs to real child gates."})
+
+
+def cases(path, expected, plan):
+    document = ET.parse(path)
+    result = list(document.iter("testcase"))
+    assert [(c.get("classname"), c.get("name")) for c in result] == [
+        (plan["xml_expected"][n]["classname"], plan["xml_expected"][n]["name"]) for n in expected]
+    suites = list(document.iter("testsuite"))
+    assert len(suites) == 1 and int(suites[0].get("tests")) == len(result)
+    for attribute, tag in (("failures", "failure"), ("errors", "error"), ("skipped", "skipped")):
+        assert int(suites[0].get(attribute)) == sum(c.find(tag) is not None for c in result)
+    return result
+
+
+def passed(case):
+    return all(case.find(tag) is None for tag in ("failure", "error", "skipped"))
+
+
+def observer(document, expected_count):
+    assert document["observer_errors"] == []
+    observation = document["observation"]
+    assert isinstance(observation, dict) and observation["gate"]["original_fixture_callback_observed"] is True
+    observed = observation["native_observers"]
+    assert len(observed) == expected_count
+    for row in observed:
+        births = row["births"]
+        assert births and not row["errors"] and not row["excluded"] and row["pending_births"] == 0
+        assert row["actual_monitor_retired"] is True
+        assert sorted(row["close_birth_ordinals"]) == list(range(len(births)))
+        assert [birth["ordinal"] for birth in births] == list(range(len(births)))
+        assert all(b["status"] >= 0 and b["thread"] == observation["caller"] and b["closes"] == [[True, 0]] for b in births)
+        assert row["security"] and all(security[0] and security[1] for security in row["security"])
+    return observation
+
+
+def assess(command, directory, receipt, plan, archive):
+    nodes = command["expected_nodeids"]
+    gates = [read(path) for path in sorted((directory / "gates").glob("*.json"))]
+    assert len(gates) == command["expected_gates"]
+    if command["mode"] == "collection":
+        found = [line.strip() for line in (directory / "stdout.log").read_text(encoding="utf-8").splitlines()
+                 if line.strip().startswith("Tests/") and "::" in line]
+        assert found == nodes and receipt["returncode"] == 0
+        return {"classification": "EXACT_COLLECTION", "nodeids": found, "gates": 0}
+    parent_cases = cases(directory / "pytest.xml", nodes, plan)
+    parents = [g for g in gates if g["pid"] == receipt["pid"]]
+    assert [g["nodeid"] for g in sorted(parents, key=lambda g: nodes.index(g["nodeid"]))] == nodes
+    assert all(g["parent_pid"] == os.getpid() and g["private_profile_node_marker"] is None for g in parents)
+    children = [g for g in gates if g["pid"] != receipt["pid"]]
+    assert len(children) == command["expected_private_profile_child_cases"]
+    child_receipts = []
+    for document in parents:
+        index = nodes.index(document["nodeid"])
+        outcome = "passed" if passed(parent_cases[index]) else "failed"
+        assert document["reports_before_teardown_result"] == [{"when": "setup", "outcome": "passed"}, {"when": "call", "outcome": outcome}]
+        expected = (1 if index == 2 else 2 if index == 3 else 0) if command["group"] == "original7" else 1
+        observation = observer(document, expected)
+        assert observation["private_profile_child"] is False and observation["launcher"]["actual_main_stack_observed"] is True
+        for child in observation["private_profile_children"]:
+            assert type(child["pid"]) is int and child["pid"] > 0 and child["returncode"] == 0 and child["original_timeout"] == 180
+            xml, log, work, profile = (Path(child[key]).resolve() for key in ("xml", "log", "work", "profile"))
+            assert all(p.is_relative_to(archive) for p in (xml, log, work, profile))
+            assert xml.is_file() and log.is_file() and work.is_dir() and profile.is_dir()
+            assert passed(cases(xml, [document["nodeid"]], plan)[0])
+            matching = [g for g in children if g["pid"] == child["pid"] and g["nodeid"] == document["nodeid"]]
+            assert len(matching) == 1
+            inner = matching[0]
+            assert inner["nodeid"] == document["nodeid"] == inner["private_profile_node_marker"]
+            assert inner["parent_pid"] == receipt["pid"]
+            assert inner["reports_before_teardown_result"] == [{"when": "setup", "outcome": "passed"}, {"when": "call", "outcome": "passed"}]
+            actual = observer(inner, 0)
+            assert actual["private_profile_child"] is True and not actual["private_profile_children"] and actual["memo_resolver_callbacks"]
+            assert actual["launcher"]["spec_name"] == "pytest.__main__"
+            child_receipts.append(child)
+    assert len(child_receipts) == len(children)
+    if command["group"] == "original7":
+        assert receipt["returncode"] == 0 and all(passed(c) for c in parent_cases)
+        return {"classification": "ORIGINAL7_PASS", "parent_cases": 7, "child_cases": 3, "gates": 10, "children": child_receipts}
+    case = parent_cases[0]
+    assert len(parent_cases) == 1 and case.find("error") is None and case.find("skipped") is None
+    if passed(case):
+        assert receipt["returncode"] == 0
+        return {"classification": "CAUSAL_UNEXPECTED_PASS_REVIEW_REQUIRED", "gates": 1}
+    failure = case.find("failure")
+    assert receipt["returncode"] == 1 and failure is not None
+    properties = {p.get("name"): p.get("value") for p in case.findall("properties/property")}
+    positive = json.loads(properties["shipping_causal_before_schedule_assert"])
+    assert positive["five_field_values_equal"] is True and positive["same_order_duplicate"] is True
+    assert positive["observer_errors"] == [] and positive["births_retired_once"] > 0
+    native = parents[0]["observation"]["native_observers"][0]
+    assert positive["births_retired_once"] == len(native["births"]) and positive["counts"] == native["counts"]
+    assert positive["ancestry"] == native["ancestry"] and positive["caller"] == parents[0]["observation"]["caller"]
+    text = failure.text or ""
+    assert "assert dict(counts) == batch" in text and "test_user_data_directory_posture_adapter.py:63: AssertionError" in text
+    assert positive["counts"] != positive["expected_batch_counts"]
+    return {"classification": "QUALIFIED_ORIGINAL_HELPER_SCHEDULE_RED_REQUIRES_INDEPENDENT_ACTUAL_REVIEW",
+            "property": positive, "gates": 1, "reached_assertion": 63, "unreached_assertions": [64, 65]}
+
+
+def child(command, root, packet, archive, plan):
+    fields = {"python": sys.executable, "checkout_root": str(root), "packet_root": str(packet),
+              "archive": str(archive), "pathsep": os.pathsep}
+    directory = Path(command["archive"].format(**fields)).resolve()
+    assert directory.is_relative_to(archive)
+    directory.mkdir(parents=True, exist_ok=False)
+    (directory / "gates").mkdir()
+    argv = [part.format(**fields) for part in command["argv"]]
+    environment = dict(os.environ)
+    for name in plan["environment_remove"]:
+        environment.pop(name, None)
+    for source in (plan["environment"], command["environment"]):
+        environment.update({key: value.format(**fields) for key, value in source.items()})
+    receipt = {"argv": argv, "cwd": str(root), "parent_pid": os.getpid(), "started": False,
+               "environment_overrides": {key: environment[key] for key in plan["environment"]}, "waited": False}
+    process = None
+    try:
+        with (directory / "stdout.log").open("wb") as out, (directory / "stderr.log").open("wb") as err:
+            process = subprocess.Popen(argv, cwd=root, env=environment, stdout=out, stderr=err)
+            receipt.update(started=True, pid=process.pid)
+            # Start receipt stays inside the ownership/cleanup try.
+            write(directory / "process.json", receipt)
+            receipt["returncode"] = process.wait()
+            receipt["waited"] = True
+            receipt["poll"] = process.poll()
+    finally:
+        if process is not None:
+            try:
+                if not receipt["waited"]:
+                    if process.poll() is None:
+                        try:
+                            process.terminate()
+                            receipt["cleanup_terminated"] = True
+                        except BaseException:
+                            receipt["terminate_error"] = traceback.format_exc()
+                    receipt["cleanup_returncode"] = process.wait()
+                    receipt["waited"] = True
+                    receipt["waited_in_cleanup"] = True
+            finally:
+                receipt["final_poll"] = process.poll()
+                receipt["direct_child_handle_scope"] = "Actual Popen object/pid/wait/poll on Windows; no POSIX ECHILD claim. Inner original helper owns its three asyncio children."
+                write(directory / "process.json", receipt)
+        else:
+            write(directory / "process.json", receipt)
+    assert receipt["started"] and receipt["waited"] and receipt["poll"] == receipt["returncode"] == receipt["final_poll"]
+    result = assess(command, directory, receipt, plan, archive)
+    write(directory / "assessment.json", result)
+    return result
+
+
+def restore(root, archive, packet, binding):
+    errors = []
+    attempt = archive / ("restoration-attempt-" + str(len(list(archive.glob("restoration-attempt-*")))))
+    attempt.mkdir(exist_ok=False)
+    try:
+        write(attempt / "sources-before.json", sources(root))
+    except BaseException:
+        errors.append("pre-restoration map: " + traceback.format_exc())
+    owned = read(archive / "owned-tests.json") if (archive / "owned-tests.json").is_file() else []
+    # A shell fallback cannot recover a vanished Python Popen handle from a PID.
+    # Refuse removal while any start receipt lacks a completed native wait/poll.
+    for path in archive.glob("*/*/process.json"):
+        try:
+            receipt = read(path)
+            if receipt["started"] and (receipt.get("final_poll") is None or not receipt.get("waited")):
+                errors.append("unsettled direct-child receipt: " + str(path.relative_to(archive)))
+        except BaseException:
+            errors.append("unreadable direct-child receipt: " + str(path.relative_to(archive)))
+    if not errors:
+        for row in reversed(owned):
+            path = relative(root, row["logical_path"])
+            if path.exists():
+                if path.is_file() and sha(path) == row["sha256"]:
+                    path.unlink()
+                else:
+                    errors.append("retained changed TEST: " + row["logical_path"])
+    actual = None
+    try:
+        selected = read(packet / "source-map-selected-r4.json")
+        actual = sources(root)
+        write(archive / "sources-restored.json", actual)
+        if actual != selected or len(actual) != 8479:
+            errors.append("restored scoped source map differs from exact8479")
+        identity(root, binding)
+    except BaseException:
+        errors.append(traceback.format_exc())
+    result = {"ok": not errors, "errors": errors, "owned_created_tests": owned,
+              "restored_python_rows": len(actual) if actual is not None else None,
+              "scope": "Guarded removal of two owned TEST creations; zero product writes. No hard-cancellation/process-tree guarantee."}
+    write(archive / "restoration.json", result)
+    write(attempt / "restoration.json", result)
+    return result
+
+
+def artifacts(archive):
+    rows = [{"path": p.relative_to(archive).as_posix(), "sha256": sha(p), "bytes": p.stat().st_size}
+            for p in sorted(archive.rglob("*")) if p.is_file() and p != archive / "artifacts.json"]
+    write(archive / "artifacts.json", {"files": rows, "count": len(rows), "scope": "All extant files including hidden child work/profile files; manifest excludes itself."})
+
+
+def run(root, archive):
+    packet, binding = archive / "packet", read(archive / "provenance/binding.json")
+    results, errors, owned = [], [], []
+    write(archive / "outer-process.json", {"pid": os.getpid(), "parent_pid": os.getppid(), "argv": sys.argv,
+          "executable": sys.executable, "scope": "Self-reported foreground outer process; its four direct Popen child waits/polls are separate."})
+    try:
+        assert read(archive / "initialized.json")["ok"] is True
+        identity(root, binding)
+        plan, selected = packet_check(packet, binding)
+        before = sources(root)
+        write(archive / "sources-before.json", before)
+        assert before == selected and len(selected) == 8479
+        assert [(c["group"], c["mode"]) for c in plan["commands"]] == [("original7", "collection"), ("original7", "test"), ("causal1", "collection"), ("causal1", "test")]
+        assert not os.environ.get("TLDW_TEST_PRIVATE_PROFILE_NODE") and os.environ.get("TLDW_REQUIRE_ELEVATED_CUSTODY") != "1"
+        runtime(packet, archive)
+        for row in plan["stage"]:
+            target = relative(root, row["logical_path"])
+            assert not target.exists() and sha(relative(packet, row["source"])) == row["sha256"]
+            owned.append({"logical_path": row["logical_path"], "sha256": row["sha256"]})
+            write(archive / "owned-tests.json", owned)
+            with target.open("xb") as stream:
+                stream.write(relative(packet, row["source"]).read_bytes())
+        staged = dict(selected, **{r["logical_path"]: r["sha256"] for r in owned})
+        assert sources(root) == staged and len(staged) == 8481
+        write(archive / "sources-staged.json", sources(root))
+        for command in plan["commands"]:
+            assert sources(root) == staged
+            result = child(command, root, packet, archive, plan)
+            results.append(dict(group=command["group"], mode=command["mode"], **result))
+            after = sources(root)
+            write(archive / ("sources-after-" + command["group"] + "-" + command["mode"] + ".json"), after)
+            assert after == staged
+            non_python(root, binding)
+    except BaseException:
+        errors.append(traceback.format_exc())
+    finally:
+        try:
+            restoration = restore(root, archive, packet, binding)
+        except BaseException:
+            restoration = {"ok": False, "errors": [traceback.format_exc()]}
+            write(archive / "restoration.json", restoration)
+        write(archive / "result.json", {"ordered_results": results, "errors": errors, "restoration": restoration,
+              "status": "COMPLETE_PENDING_INDEPENDENT_ACTUAL_REVIEW" if not errors and restoration["ok"] else "INCOMPLETE_OR_UNQUALIFIED_RESULT_NO_CAUSAL_ACCEPTANCE",
+              "scope": "Initial original7+one count diagnostic only. No product/source/task acceptance or elapsed claim."})
+        artifacts(archive)
+    if errors or not restoration["ok"]:
+        return 1
+    return 0 if results[-1]["classification"] == "QUALIFIED_ORIGINAL_HELPER_SCHEDULE_RED_REQUIRES_INDEPENDENT_ACTUAL_REVIEW" else 2
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=("initialize", "run", "finalize"))
+    parser.add_argument("--checkout", type=Path, required=True)
+    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--binding", type=Path)
+    parser.add_argument("--binding-sha256")
+    args = parser.parse_args()
+    root, archive = args.checkout.resolve(), args.archive.resolve()
+    assert os.name == "nt" and sys.platform == "win32" and sys.version_info[:3] == (3, 12, 10) and not sys.flags.optimize
+    if args.mode == "initialize":
+        initialize(root, archive, args.binding.resolve(), args.binding_sha256)
+        return 0
+    assert archive.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve()) and not archive.is_relative_to(root)
+    if args.mode == "run":
+        return run(root, archive)
+    try:
+        restoration = restore(root, archive, archive / "packet", read(archive / "provenance/binding.json"))
+        return 0 if restoration["ok"] else 1
+    finally:
+        artifacts(archive)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

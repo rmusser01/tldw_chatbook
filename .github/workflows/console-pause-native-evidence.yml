@@ -1,0 +1,98 @@
+name: PR3023 OPT36 original shipping helper qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  original-shipping-helper:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      OPT36_BINDING_SHA256: 'bb52a87e6912991af0a328a49de9c8216867587a05f9141ecd8d6522b0611728'
+    steps:
+      - name: Set LF checkout policy before checkout and create failure archive
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'pr3023-opt36-original-r1'
+          New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
+          git config --global core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { throw 'Could not set checkout LF policy' }
+          git config --global core.eol lf
+          if ($LASTEXITCODE -ne 0) { throw 'Could not set checkout LF policy' }
+          @{ scope = 'Ordinary isolated hosted runner; LF is configured BEFORE checkout, never source normalization after a failed byte guard'; run = $env:GITHUB_RUN_ID; attempt = $env:GITHUB_RUN_ATTEMPT; sha = $env:GITHUB_SHA; shell_pid = $PID } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $output 'workflow-start.json')
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Verify concrete snapshot and extract exact packet outside checkout
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = Join-Path $env:RUNNER_TEMP 'pr3023-opt36-original-r1'
+          $archive = Join-Path $output 'run'
+          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-opt36-original-r1'
+          python (Join-Path $owned 'outer.py.txt') initialize --checkout $env:GITHUB_WORKSPACE --archive $archive --binding (Join-Path $owned 'binding.json') --binding-sha256 $env:OPT36_BINDING_SHA256 *> (Join-Path $output 'initialize.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Snapshot/packet initialization refused; inspect initialize.log' }
+      - name: Install existing dev dependencies and exact test versions
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = Join-Path $env:RUNNER_TEMP 'pr3023-opt36-original-r1'
+          python -m pip install -e ".[dev]" pytest==8.4.2 textual==8.2.8 *> (Join-Path $output 'install.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed; inspect install.log' }
+      - name: Select ordinary current-profile fixture temporary root
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:USERPROFILE ('.config/pr3023-opt36-original-r1-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          New-Item -ItemType Directory -Path $fixture -ErrorAction Stop | Out-Null
+          "TEMP=$fixture" >> $env:GITHUB_ENV
+          "TMP=$fixture" >> $env:GITHUB_ENV
+      - name: Run original seven then one causal diagnostic with guarded finally
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = Join-Path $env:RUNNER_TEMP 'pr3023-opt36-original-r1'
+          $archive = Join-Path $output 'run'
+          $outer = Join-Path $archive 'outer.py'
+          $executionCode = 1
+          $restorationCode = 1
+          try {
+            python $outer run --checkout $env:GITHUB_WORKSPACE --archive $archive *> (Join-Path $output 'outer.log')
+            $executionCode = $LASTEXITCODE
+          } finally {
+            python $outer finalize --checkout $env:GITHUB_WORKSPACE --archive $archive *> (Join-Path $output 'shell-finalize.log')
+            $restorationCode = $LASTEXITCODE
+            @{ shell_pid = $PID; foreground_outer_exit = $executionCode; finalizer_exit = $restorationCode; scope = 'Foreground wait plus Python-owned direct-child Popen wait/poll receipts; no POSIX ECHILD or hard-cancellation guarantee' } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $output 'shell-finally.json')
+          }
+          if ($executionCode -ne 0 -or $restorationCode -ne 0) { throw "Diagnostic or restoration requires review: outer=$executionCode restore=$restorationCode" }
+      - name: Final invariance and archive manifest, including early failure
+        if: always()
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = Join-Path $env:RUNNER_TEMP 'pr3023-opt36-original-r1'
+          $archive = Join-Path $output 'run'
+          $outer = Join-Path $archive 'outer.py'
+          $finalCode = 1
+          if (Test-Path (Join-Path $archive 'initialized.json')) {
+            python $outer finalize --checkout $env:GITHUB_WORKSPACE --archive $archive *> (Join-Path $output 'always-finalize.log')
+            $finalCode = $LASTEXITCODE
+          }
+          python -c "import hashlib,json,os; from pathlib import Path; p=Path(os.environ['RUNNER_TEMP'])/'pr3023-opt36-original-r1'; rows=[{'path':f.relative_to(p).as_posix(),'bytes':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()} for f in sorted(p.rglob('*')) if f.is_file() and f!=p/'workflow-artifacts.json']; (p/'workflow-artifacts.json').write_text(json.dumps({'files':rows,'scope':'All extant output files including hidden files; manifest excludes itself'},indent=2)+'\n',encoding='utf-8')"
+          if ($LASTEXITCODE -ne 0 -or $finalCode -ne 0) { throw 'Final audit incomplete or refused; preserve all available artifacts' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr3023-opt36-original-r1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pr3023-opt36-original-r1/
+          include-hidden-files: true
+          if-no-files-found: error

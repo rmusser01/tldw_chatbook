@@ -16,6 +16,7 @@ from textual.worker import WorkerCancelled
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.console_controller_stubs import context_spend_for_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (  # noqa: F401
     _ConsoleFlowHarness,
     _drain_settings_tasks,
@@ -313,7 +314,7 @@ async def test_a_blank_top_p_applies_summarises_and_sends(
         applied = store.session_settings(session_id)
         assert (applied.top_p, applied.temperature) == (None, pytest.approx(0.3))
         word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
-        summary = console._build_console_settings_summary_state()
+        summary = context_spend_for_test(console)._build_console_settings_summary_state()
         assert f"P {word}" in summary.sampling_row, summary.sampling_row
 
         await pilot.press("ctrl+o")  # Chat settings reopens on the blank

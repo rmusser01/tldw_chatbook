@@ -1328,3 +1328,19 @@ to one and re-verify against the intended base version. Treat a clean
 auto-merge of a heavily edited class-body file as *unverified*, not verified,
 and trust the pinned census/ratchet tests over the shape of the diff: they are
 the one instrument that can see a silently shadowed method.
+
+
+## A successful append-plan can reformat the task outside its plan (PR3023, 2026-10-14)
+
+`backlog-py task edit34563.28 --append-plan` returned0 and appended the approved
+plan exactly once, but also normalized YAML indentation/date quoting and removed
+one blank separator. A postcheck that allowed only updated_date drift refused
+that output after the successful write. The preserved raw file, parsed metadata
+and exact PLAN comparison showed no other semantic changes. Root retained the
+CLI-owned date, restored the original representation/separator and completed
+the checks without another CLI call.
+
+Archive the actual output before postchecking. Treat a successful or uncertain
+mutation as already attempted: inspect the task before retrying, compare the
+exact plan append and metadata values, and preserve any formatting recovery as
+a separate snapshot. A failed postcheck is not authorization to append twice.

@@ -88,6 +88,7 @@ handlers.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -109,22 +110,108 @@ class ConsoleChangeReviewProjection:
         *,
         runtime_accessor: Callable[[], Any],
         conversation_id_accessor: Callable[[], str | None],
+        screen: Any | None = None,
     ) -> None:
+        self._screen = screen
         self._runtime_accessor = runtime_accessor
         self._conversation_id_accessor = conversation_id_accessor
         self._key: tuple[str | None, int] | None = None
         self._marker_blocks: list[Any] = []
+        self._owner = None
+        self._preparation_reads = set()
+        self._prepared_stock = False
+        self._prepare_lock = asyncio.Lock()
+
+    def _closed(self) -> bool:
+        if self._screen is None:
+            return False
+        from ..Screens.chat_screen import _console_screen_is_torn_down
+
+        return _console_screen_is_torn_down(self._screen)
+
+    def _selection(self):
+        runtime = self._runtime_accessor()
+        coordinator = runtime.change_review_coordinator
+        bridge = getattr(runtime, "agent_bridge", None)
+        database = getattr(bridge, "_db", None)
+        conversation_id = self._conversation_id_accessor()
+        revision = (
+            coordinator.publication_signal.snapshot().revision
+            if coordinator is not None
+            else None
+        )
+        return (runtime, coordinator, bridge, database, conversation_id, revision)
+
+    @staticmethod
+    def _same_selection(before, after):
+        return (
+            all(left is right for left, right in zip(before[:4], after[:4]))
+            and before[4:] == after[4:]
+        )
+
+    async def prepare(self) -> bool:
+        """Await one stock read before the caller captures current UI messages."""
+        if self._closed():
+            return False
+        async with self._prepare_lock:
+            if self._closed():
+                return False
+            return await self._prepare_current()
+
+    async def _prepare_current(self) -> bool:
+        from ...Chat.console_change_review_read import (
+            MarkerReadObsolete,
+            capture_marker_read,
+        )
+
+        selected = self._selection()
+        runtime, coordinator, bridge, _unused_database, conversation_id, _unused_revision = selected
+        read = capture_marker_read(runtime, coordinator, bridge, conversation_id)
+        if read is None:
+            self._prepared_stock = False
+            return True
+        self._prepared_stock = True
+        if runtime._disposed:
+            return False
+        if self._owner is not None and self._same_selection(
+            (*self._owner, *self._key), selected
+        ):
+            return True
+        self._marker_blocks = []
+        self._key = self._owner = None
+        try:
+            blocks = await read.run(self)
+        except MarkerReadObsolete:
+            return False
+        if (
+            self._closed()
+            or not self._same_selection(selected, self._selection())
+            or runtime._disposed
+        ):
+            return False
+        self._marker_blocks = [block for block in blocks if block[0] is not None]
+        self._owner, self._key = selected[:4], selected[4:]
+        return True
 
     def project(self, messages: list[Any]) -> list[Any]:
         """Return messages with the current durable review markers injected."""
+        if self._closed():
+            return messages
         runtime = self._runtime_accessor()
         coordinator = runtime.change_review_coordinator
         if coordinator is None:
             return messages
         conversation_id = self._conversation_id_accessor()
         key = (conversation_id, coordinator.publication_signal.snapshot().revision)
-        if key != self._key:
-            bridge = runtime.agent_bridge
+        bridge = runtime.agent_bridge
+        owner = (runtime, coordinator, bridge, getattr(bridge, "_db", None))
+        if (
+            key != self._key
+            or self._owner is None
+            or any(left is not right for left, right in zip(owner, self._owner))
+        ):
+            if self._prepared_stock:
+                return messages
             self._marker_blocks = (
                 [
                     block
@@ -135,6 +222,7 @@ class ConsoleChangeReviewProjection:
                 else []
             )
             self._key = key
+            self._owner = owner
         from ...Chat.console_agent_bridge import inject_resume_agent_markers
 
         return inject_resume_agent_markers(messages, self._marker_blocks)

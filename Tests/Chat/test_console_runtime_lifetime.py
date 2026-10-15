@@ -571,7 +571,8 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
 
     with monkeypatch.context() as scheduling:
         scheduling.setattr(
-            "tldw_chatbook.Chat.console_runtime.asyncio.create_task",
+            runtime,
+            "_create_custody_task",
             fail_create_task,
         )
         with pytest.raises(RuntimeError, match="scheduler unavailable"):
