@@ -21,6 +21,7 @@ import ssl
 import sys
 import time
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import quote, urlparse, urlunparse
@@ -140,6 +141,7 @@ _SERVED_SHELL_HTML = _SERVED_STATIC_ROOT.joinpath("served_shell.html").read_text
 _SERVED_SHELL_ASSETS = {
     "served-shell.css": ("text/css", "served_shell.css"),
     "served-shell.js": ("application/javascript", "served_shell.js"),
+    "devices.js": ("application/javascript", "devices.js"),
 }
 
 
@@ -579,6 +581,62 @@ def patch_textual_serve_viewport_js(source: str) -> str:
     )
 
 
+#: First-match platform markers for the served device-manager labels; the
+#: given order is a precedence chain (Android before Linux, etc.).
+_DEVICE_PLATFORM_MARKERS = (
+    "iPhone",
+    "iPad",
+    "Android",
+    "Macintosh",
+    "Windows",
+    "Linux",
+)
+#: First-match browser markers; "Edg/" must win over the Chrome/Safari tokens
+#: every Edge user agent also carries.
+_DEVICE_BROWSER_MARKERS = (
+    ("Edg/", "Edge"),
+    ("Firefox", "Firefox"),
+    ("Chrome", "Chrome"),
+    ("Safari", "Safari"),
+)
+_DEVICE_LABEL_MAX_LENGTH = 64
+
+
+def _device_label_from_user_agent(ua: str) -> str:
+    """Derive a short, non-identifying device label from a User-Agent string.
+
+    Only the first platform and first browser marker win, joined with a
+    middle dot; anything unmatched falls back to ``"Unknown device"``.  The
+    result is bounded to 64 characters (the same cap ``rename_device``
+    applies) and carries no version or detail tokens from the source string.
+    """
+
+    platform_label = next(
+        (name for name in _DEVICE_PLATFORM_MARKERS if name in ua), ""
+    )
+    browser_label = next(
+        (label for marker, label in _DEVICE_BROWSER_MARKERS if marker in ua), ""
+    )
+    label = " · ".join(part for part in (platform_label, browser_label) if part)
+    return (label or "Unknown device")[:_DEVICE_LABEL_MAX_LENGTH]
+
+
+async def _read_device_json(request) -> dict:
+    """Read one bounded JSON object body for the device-manager endpoints."""
+
+    from aiohttp import web
+
+    if request.content_length is not None and request.content_length > 4096:
+        raise web.HTTPRequestEntityTooLarge(
+            max_size=4096, actual_size=request.content_length
+        )
+    try:
+        payload = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 class ChatbookWebServerMixin:
     """Textual web server with Chatbook-specific viewport resize hardening."""
 
@@ -682,6 +740,18 @@ class ChatbookWebServerMixin:
             web.post("/auth/login", self.handle_login, name="login_submit"),
             web.get(
                 "/auth/bootstrap", self.handle_login_bootstrap, name="login_bootstrap"
+            ),
+            web.get("/auth/devices", self.handle_devices_page, name="devices"),
+            web.post("/auth/logout", self.handle_logout, name="logout"),
+            web.post(
+                "/auth/devices/revoke",
+                self.handle_devices_revoke,
+                name="devices_revoke",
+            ),
+            web.post(
+                "/auth/devices/rename",
+                self.handle_devices_rename,
+                name="devices_rename",
             ),
             web.get("/", self.handle_index, name="index"),
             web.get("/ws", self.handle_websocket, name="websocket"),
@@ -814,7 +884,12 @@ class ChatbookWebServerMixin:
                     self._web_auth.validate_public_request(
                         facts, require_origin=facts.origin is not None
                     )
-                    grant = self._web_auth.authenticate_local(client_ip=facts.peer_ip)
+                    grant = self._web_auth.authenticate_local(
+                        client_ip=facts.peer_ip,
+                        device_label=_device_label_from_user_agent(
+                            request.headers.get("User-Agent", "")
+                        ),
+                    )
                 except AuthenticationError:
                     raise web.HTTPUnauthorized(text="Authentication denied") from None
                 request["chatbook_csrf"] = grant.csrf_token
@@ -876,8 +951,16 @@ class ChatbookWebServerMixin:
             client_ip, _scheme, _host = self._web_auth.validate_public_request(
                 facts, require_origin=True
             )
+            # The "remember me" checkbox opts the session out of disk
+            # persistence (ADR-233); the device label comes from the UA only.
+            remember = data.get("remember") == "1"
             grant = self._web_auth.login_with_access_token(
-                str(data.get("access_token", "")), client_ip=client_ip
+                str(data.get("access_token", "")),
+                client_ip=client_ip,
+                device_label=_device_label_from_user_agent(
+                    request.headers.get("User-Agent", "")
+                ),
+                persist=remember,
             )
         except AuthenticationError:
             raise web.HTTPUnauthorized(text="Authentication denied") from None
@@ -896,7 +979,11 @@ class ChatbookWebServerMixin:
                 facts, require_origin=False
             )
             grant = self._web_auth.exchange_bootstrap(
-                request.query.get("nonce", ""), client_ip=client_ip
+                request.query.get("nonce", ""),
+                client_ip=client_ip,
+                device_label=_device_label_from_user_agent(
+                    request.headers.get("User-Agent", "")
+                ),
             )
         except AuthenticationError:
             raise web.HTTPUnauthorized(text="Authentication denied") from None
@@ -905,6 +992,113 @@ class ChatbookWebServerMixin:
             response, grant, secure=self._web_auth.policy.secure_cookies
         )
         return response
+
+    async def handle_devices_page(self, request):
+        """List every live device session and its manager controls.
+
+        The section contract consumed by ``devices.js`` and the integration
+        tests: one ``<section class="device">`` per session carrying
+        ``data-session-id`` and a ``data-current-device`` flag for the
+        requesting device, with all dynamic values HTML-escaped and the
+        per-session CSRF token in the ``chatbook-csrf`` meta tag.
+        """
+
+        from aiohttp import web
+
+        current = request["chatbook_browser_session"]
+        csrf = html.escape(str(request["chatbook_csrf"]), quote=True)
+        sections = []
+        for session in self._web_auth.sessions_snapshot():
+            label = html.escape(
+                session.device_label or "Unknown device", quote=True
+            )
+            session_id = html.escape(session.session_id, quote=True)
+            created = datetime.fromtimestamp(session.created_at, UTC).isoformat()
+            last_seen = datetime.fromtimestamp(session.last_seen_at, UTC).isoformat()
+            is_current = session.session_id == current.session_id
+            marker = (
+                '<p class="device-current">This device</p>' if is_current else ""
+            )
+            action = (
+                (
+                    '<button type="button" class="device-signout">'
+                    "Sign out this device</button>"
+                )
+                if is_current
+                else (
+                    '<button type="button" class="device-revoke">'
+                    "Sign out device</button>"
+                )
+            )
+            sections.append(
+                f'<section class="device" data-session-id="{session_id}" '
+                f'data-current-device="{str(is_current).lower()}">'
+                f"<h2>{label}</h2>{marker}"
+                f'<p class="device-times">Added {created} · Last active '
+                f"{last_seen}</p>"
+                f'<input type="text" maxlength="64" name="label" '
+                f'aria-label="Device name" value="{label}"> '
+                '<button type="button" class="device-rename">Rename</button> '
+                f"{action}</section>"
+            )
+        body = (
+            '<!doctype html><html><head><meta charset="utf-8">'
+            f'<meta name="chatbook-csrf" content="{csrf}">'
+            "<title>Chatbook devices</title></head><body>"
+            "<main><h1>Your devices</h1>"
+            + "".join(sections)
+            + "</main>"
+            '<script src="/static/chatbook/devices.js" defer></script>'
+            "</body></html>"
+        )
+        return web.Response(
+            text=body,
+            content_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def handle_logout(self, request):
+        """Revoke the requesting browser's session and delete its cookie."""
+
+        from aiohttp import web
+
+        self._web_auth.revoke(request.cookies.get(SESSION_COOKIE_NAME, ""))
+        response = web.HTTPSeeOther(location="/auth/login")
+        response.del_cookie(SESSION_COOKIE_NAME, path="/")
+        return response
+
+    async def handle_devices_revoke(self, request):
+        """Revoke one listed device session by its public identifier."""
+
+        from aiohttp import web
+
+        payload = await _read_device_json(request)
+        session_id = payload.get("session_id")
+        revoked = (
+            self._web_auth.revoke_by_session_id(session_id)
+            if isinstance(session_id, str)
+            else False
+        )
+        return web.json_response(
+            {"ok": revoked}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_devices_rename(self, request):
+        """Rename one listed device session (bounded, trimmed, persisted)."""
+
+        from aiohttp import web
+
+        payload = await _read_device_json(request)
+        session_id = payload.get("session_id")
+        label = payload.get("label")
+        renamed = (
+            self._web_auth.rename_device(session_id, label)
+            if isinstance(session_id, str) and isinstance(label, str)
+            else False
+        )
+        return web.json_response(
+            {"ok": renamed}, headers={"Cache-Control": "no-store"}
+        )
 
     def issue_browser_bootstrap_url(self) -> str:
         """Return a one-time bootstrap URL without exposing the configured token."""
@@ -1292,7 +1486,7 @@ class ChatbookWebServerMixin:
         )
 
     async def handle_served_shell_asset(self, request):
-        """Serve only the two immutable, state-free owned shell assets."""
+        """Serve only the immutable, state-free owned shell assets."""
 
         from aiohttp import web
 
