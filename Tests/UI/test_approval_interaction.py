@@ -219,8 +219,12 @@ async def test_captured_replacement_revision_rejects_queued_decision():
             view=replace(first, revision=2),
             presentation_revision=2,
         )
-        await pilot.pause()
+        for _ in range(10):
+            await pilot.pause()
+            if card._information_ready:
+                break
         assert app.decided == []
+        assert card._information_ready
         assert not card.query_one("#approval-submit", Button).disabled
 
 

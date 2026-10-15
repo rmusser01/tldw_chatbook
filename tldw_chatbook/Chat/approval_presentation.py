@@ -7,9 +7,10 @@ import json
 import shlex
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
+from unicodedata import category
 
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 
@@ -82,6 +83,16 @@ _ACTIONS = {
 }
 
 
+def display_literal(value: str) -> str:
+    """Expose line, terminal and Unicode formatting controls in display facts."""
+    return "".join(
+        char.encode("unicode_escape").decode("ascii")
+        if category(char) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+        else char
+        for char in value
+    )
+
+
 def profile_authority(
     provider_kind: Literal["mcp", "builtin", "local", "virtual_cli"],
     profile_id: str | None,
@@ -106,7 +117,7 @@ def profile_authority(
         location_label,
         "profile",
         stamp_domain,
-        "Settings: tool permissions",
+        "MCP Permissions",
         profile_id == "default",
     )
 
@@ -123,7 +134,7 @@ def _display_target(arguments: Mapping[str, object], provider_kind: str) -> str:
     for key in ("path", "command", "url", "uri", "target", "destination", "filename"):
         if key in safe:
             return str(safe[key])
-    text = json.dumps(safe, ensure_ascii=False, default=str)
+    text = display_literal(json.dumps(safe, ensure_ascii=False, default=str))
     encoded = text.encode("utf-8")
     if len(encoded) > _PARAMETER_PREVIEW_BYTES:
         text = (
@@ -195,6 +206,12 @@ def capture_approval_view(
                 "Remember these inputs is unavailable: independent calls to this tool "
                 "share a permission stamp. Allow once remains available."
             )
+        owner = replace(
+            owner,
+            profile_label=display_literal(owner.profile_label),
+            location_label=display_literal(owner.location_label),
+            revocation_label=display_literal(owner.revocation_label),
+        )
         action = first.tool_name
         if owner.provider_kind in ("local", "builtin"):
             action = _ACTIONS.get(first.tool_name, first.tool_name)
@@ -216,13 +233,14 @@ def capture_approval_view(
         )
         # Display redaction must precede target derivation. Matching keeps originals above.
         targets = tuple(
-            _display_target(call.arguments, owner.provider_kind) for call in calls
+            display_literal(_display_target(call.arguments, owner.provider_kind))
+            for call in calls
         )
         rows.append(
             ApprovalRowView(
                 key,
                 len(calls),
-                action,
+                display_literal(action),
                 targets,
                 owner,
                 tuple(decision for decision in _DECISIONS if decision in choices),
@@ -268,14 +286,19 @@ def scope_copy(row: ApprovalRowView, decision: str) -> str:
             )
         return (
             f"Until Chatbook exits: every call to this tool in profile {owner.profile_label}, "
-            f"across chats using that exact profile. Revoke under {owner.revocation_label}."
+            "across chats using that exact profile. Revoke in MCP Tools: selected tool → Revoke."
         )
     scope = (
         f"Remember exactly the inputs of {calls}"
         if decision == "allow_matching"
         else "Remember this tool"
     )
-    copy_text = f"{scope} in profile {owner.profile_label}. Revoke under {owner.revocation_label}."
+    route = (
+        "MCP Tools: selected tool → Remove the matching input rule"
+        if decision == "allow_matching"
+        else "MCP Permissions: change this tool’s policy"
+    )
+    copy_text = f"{scope} in profile {owner.profile_label}. Revoke in {route}."
     if owner.inherits_default:
         copy_text += " Named profiles inherit Default wherever they leave policy unset."
     return copy_text
@@ -311,6 +334,7 @@ def _build_approval_payload(
     )
     return {
         "view": view,
+        "presentation_state": {},
         "presentation_revision": revision,
         "round_id": round_id,
         "session_id": session_id,

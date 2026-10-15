@@ -41,6 +41,10 @@ def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_firs
     toolbar = [SimpleNamespace(disabled=False) for _ in range(3)]
     card = SimpleNamespace(
         _draft=None,
+        _information_ready=True,
+        _view_retired=False,
+        _presentation_state=None,
+        is_attached=True,
         _close_details=Mock(),
         _details_buttons=[],
         _batch_is_raw_shell=[False],
