@@ -1988,6 +1988,7 @@ class AgentService:
             Callable[[str], tuple[str, ...] | None] | None
         ) = None,
         hooks_v2_render_context: Callable | None = None,
+        hooks_v2_tool_requirements: Callable | None = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
@@ -2134,6 +2135,7 @@ class AgentService:
         self._hooks_v2_turn_id = hooks_v2_turn_id
         self._hooks_v2_required_handler_ids = hooks_v2_required_handler_ids
         self._hooks_v2_render_context = hooks_v2_render_context
+        self._hooks_v2_tool_requirements = hooks_v2_tool_requirements
         #: TASK-26010: observational post-completion seam -- (call, result,
         #: duration_seconds, run_id) after EVERY tool call completes, whatever
         #: the outcome. Strictly observational: a raising hook costs nothing
@@ -5692,6 +5694,7 @@ class AgentService:
             spawn_task: str,
             *,
             allowed_tools: tuple[str, ...] | None = None,
+            model: str | None = None,
             agent: str | None = None,
             inline: bool = False,
             spawn_step_index: int | None = None,
@@ -5877,7 +5880,7 @@ class AgentService:
                     if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
                 )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
-            child_model = config.model
+            child_model = model or config.model
             if resolved is not None:
                 # IDENTITY CONTRACT: console_agent_bridge._is_subagent
                 # prefix-matches the base prompt -- instructions APPEND,
@@ -5887,7 +5890,7 @@ class AgentService:
                 )
                 if resolved.model:
                     child_model = resolved.model
-                if resolved.tool_allowlist:
+                if resolved.tool_allowlist or not resolved.inherit_tools:
                     # Intersection, never union (spec §3 invariant 1): the
                     # definition narrows the inherited set; unknown names
                     # drop out here and can never grant.
@@ -5941,7 +5944,12 @@ class AgentService:
             # as belt-and-braces for the inline path.
             child_kwargs = dict(
                 conversation_id=conversation_id,
-                messages=[{"role": "user", "content": spawn_task}],
+                messages=(
+                    [{"role": "user", "content": resolved.plugin_context}]
+                    if resolved is not None and resolved.plugin_context is not None
+                    else []
+                )
+                + [{"role": "user", "content": spawn_task}],
                 config=child_config,
                 api_endpoint=api_endpoint,
                 agent_kind=AGENT_KIND_SUBAGENT,
@@ -6627,7 +6635,7 @@ class AgentService:
                 )
                 if resolved.model:
                     child_model = resolved.model
-                if resolved.tool_allowlist:
+                if resolved.tool_allowlist or not resolved.inherit_tools:
                     wanted = set(resolved.tool_allowlist)
                     child_allowed_tools = tuple(
                         n for n in child_allowed_tools if n in wanted
@@ -6650,6 +6658,17 @@ class AgentService:
                 response_reserve_tokens=config.response_reserve_tokens,
             )
             seed = [dict(m) for m in retained.messages]
+            if resolved is not None and resolved.plugin_context is not None:
+                seed = [
+                    row
+                    for row in seed
+                    if not (
+                        isinstance(row.get("content"), PluginContextText)
+                        and row["content"].checked_origins()
+                        == resolved.plugin_context.checked_origins()
+                    )
+                ]
+                seed.insert(0, {"role": "user", "content": resolved.plugin_context})
             retained_steering = retained.steering_with_causes or tuple(
                 (source, text, None) for source, text in retained.steering
             )
@@ -7953,7 +7972,15 @@ class AgentService:
                     or call.name not in disclosed_names
                 ):
                     raise ValueError("tool not permitted or disclosed")
-                return self.registry.snapshot_for_hook(call.name)
+                definition = self.registry.snapshot_for_hook(call.name)
+                if self._hooks_v2_tool_requirements is not None:
+                    self._hooks_v2_lifecycle.checkpoints.assert_continuation_dependencies(
+                        run_id,
+                        required_handler_ids=self._hooks_v2_tool_requirements(
+                            definition
+                        ),
+                    )
+                return definition
 
             hook_run = ToolHookRun(
                 self._hooks_v2_engine,
@@ -7989,10 +8016,14 @@ class AgentService:
                         session_id=self._hooks_v2_session_id,
                         allowed_names=frozenset(config.allowed_tools),
                         current=lambda: not should_cancel(),
-                        required_handler_ids=lambda _definition: (
-                            self._hooks_v2_required_handler_ids(run_id)
-                            if self._hooks_v2_required_handler_ids is not None
-                            else ()
+                        required_handler_ids=lambda definition: (
+                            self._hooks_v2_tool_requirements(definition)
+                            if self._hooks_v2_tool_requirements is not None
+                            else (
+                                self._hooks_v2_required_handler_ids(run_id)
+                                if self._hooks_v2_required_handler_ids is not None
+                                else ()
+                            )
                         ),
                         turn_id=self._hooks_v2_turn_id,
                         parent_run_id=parent_run_id,

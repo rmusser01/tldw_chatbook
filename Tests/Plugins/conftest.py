@@ -128,9 +128,11 @@ async def native_console(tmp_path, native_package):
     registry.create_workspace(workspace_id="workspace-a", name="A")
     registry.create_workspace(workspace_id="workspace-b", name="B")
     service = PluginService(
-        tmp_path / "profile",
+        tmp_path / "console-profile",
         workspace_lookup=registry.get_workspace,
-        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        marker_store_factory=lambda _: FilePluginMarkerStore(
+            tmp_path / "console-marker"
+        ),
         accept_reduced_protection=True,
     )
     await service.bootstrap("test passphrase")

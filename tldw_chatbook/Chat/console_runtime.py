@@ -2900,12 +2900,50 @@ class ConsoleRuntime:
 
         self._raise_if_disposed_or_session_fenced(session_id)
         configured = load_hooks_config(getattr(self._app, "app_config", None) or {})
+        native = None
+        maximum = (
+            configuration.skill_context_maximum if configuration is not None else {}
+        )
+        if maximum.get("native_components"):
+            from tldw_chatbook.Plugins.components import NativeHookSet
+
+            local = getattr(
+                self._chat_controller._skills_service, "local_service", None
+            )
+            service = getattr(local, "plugin_service", None)
+            admitted = await service.admit(maximum, maximum["plugin_run_id"])
+            snapshots = await asyncio.to_thread(
+                service.native_snapshots, admitted["native_components"]
+            )
+            native = NativeHookSet(service, snapshots)
+        native_identity = (
+            tuple(
+                (
+                    row.installation_id,
+                    row.revision_digest,
+                    row.generations,
+                    row.selection,
+                    row.mappings_json,
+                )
+                for row in native.snapshots
+            )
+            if native
+            else ()
+        )
         engine = self.get_hooks_v2(session_id)
         previous = self._hooks_v2_configured.get(session_id)
         context_key = self._hooks_v2_context_key(session_id)
         owner = self._hooks_v2_lifecycles.get(session_id)
         context_changed = owner is not None and owner.context_key != context_key
-        if (previous is not None and previous != configured) or context_changed:
+        native_changed = (
+            engine is not None
+            and getattr(engine, "native_identity", ()) != native_identity
+        )
+        if (
+            (previous is not None and previous != configured)
+            or context_changed
+            or native_changed
+        ):
             # The controller owns a reversible validation slot at this point.
             owner = self._hooks_v2_lifecycles.get(session_id)
             if owner is not None and getattr(owner, "turn_scope", None) is not None:
@@ -2925,15 +2963,36 @@ class ConsoleRuntime:
                 engine = None
             reason = "configuration_changed"
         if engine is None:
-            if not configured.v2_handlers and not configured.v2_invalid_admissions:
+            if (
+                not configured.v2_handlers
+                and not configured.v2_invalid_admissions
+                and not (native and native.definitions)
+            ):
                 return None
             engine = self.ensure_hooks_v2(
                 session_id,
-                configured.v2_handlers,
-                lambda *_: not self._disposed,
-                enabled=configured.enabled,
+                (
+                    (
+                        (configured.v2_handlers if configured.enabled else ())
+                        + native.definitions
+                    )
+                    if native
+                    else configured.v2_handlers
+                ),
+                lambda *args: not self._disposed
+                and (native.current(*args) if native else True),
+                enabled=configured.enabled or bool(native and native.definitions),
                 invalid_admissions=configured.v2_invalid_admissions,
+                process_owner_for=native.process_owner if native else None,
+                dependency_required=(
+                    (lambda handler, event: handler.id in native.requirements)
+                    if native
+                    else None
+                ),
+                host_environment=native.host_environment if native else None,
             )
+            engine.native_hooks = native
+            engine.native_identity = native_identity
             self._hooks_v2_configured[session_id] = configured
         lifecycle = self._hooks_v2_lifecycles.get(session_id)
         if lifecycle is None:
@@ -2955,7 +3014,12 @@ class ConsoleRuntime:
                 except Exception:  # noqa: BLE001 -- hook boundary
                     return False
 
-            lifecycle = HookSessionLifecycle(engine, session_id, current=current)
+            lifecycle = HookSessionLifecycle(
+                engine,
+                session_id,
+                current=current,
+                render_context=native.render_context if native else None,
+            )
             lifecycle.context_key = context_key
             self._hooks_v2_lifecycles[session_id] = lifecycle
             engine.lifecycle_owner = lifecycle

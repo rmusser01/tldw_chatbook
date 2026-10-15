@@ -990,10 +990,11 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
             release.set()
             await asyncio.wait_for(pending, 5)
             for _ in range(400):
-                if not engine.budget_owner.snapshot()["tickets"]:
+                if not engine.cleanup_pending:
                     break
                 await asyncio.sleep(0.01)
             assert time.monotonic() - stamp < (2.5 if mode == "slow_guard" else 2)
+            assert not engine.cleanup_pending
             assert engine.budget_owner.snapshot()["tickets"] == 0
             counter = await client.call_tool_result(
                 "fixture", "fixture", {"counter": True}

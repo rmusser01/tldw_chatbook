@@ -102,6 +102,7 @@ class HookSessionLifecycle:
         session_id: str,
         *,
         current: Callable[[], bool] = lambda: True,
+        render_context: Callable | None = None,
     ) -> None:
         self.engine = engine
         self.session_id = session_id
@@ -111,6 +112,7 @@ class HookSessionLifecycle:
         self.checkpoints.bind_owner(self.scope_id)
         self.context = ContextLedger(
             owners=self.checkpoints.owners,
+            render_context=render_context,
             effects_current=engine.effects_current,
             lock=self.checkpoints._condition,
         )

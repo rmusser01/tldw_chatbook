@@ -1664,8 +1664,6 @@ def run_agent_loop(
             return _exhausted("token")
         if deps.await_hook_checkpoints is not None:
             hook_rows = deps.await_hook_checkpoints()
-            from .agent_models import PluginContextText
-
             existing_hook_blocks = {
                 (str(row.get("content")), row["content"].checked_hook_origins())
                 for row in messages

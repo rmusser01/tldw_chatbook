@@ -361,7 +361,10 @@ def constrain_maximum(service, maximum: dict, constraint) -> dict:
         raise PermissionError("managed resume constraint unavailable")
     if allowed is not None:
         rows = []
-        for row in maximum.get("available_skills", ()):
+        for row in (
+            *maximum.get("available_skills", ()),
+            *maximum.get("native_components", ()),
+        ):
             if row.get("plugin_owned"):
                 snapshot = service._snapshots.get(row.get("plugin_ceiling"))
                 if snapshot is None or row.get(
@@ -371,7 +374,8 @@ def constrain_maximum(service, maximum: dict, constraint) -> dict:
                 ):
                     continue
             rows.append(row)
-        result["available_skills"] = rows
+        result["available_skills"] = [row for row in rows if not row.get("plugin_kind")]
+        result["native_components"] = [row for row in rows if row.get("plugin_kind")]
         result["context_text"] = "\n".join(str(row.get("name", "")) for row in rows)
         result["plugin_resume_constraint"] = constraint
     return result

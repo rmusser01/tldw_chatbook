@@ -8664,6 +8664,8 @@ class TldwCli(
             service = PluginService(
                 get_user_data_dir(),
                 workspace_lookup=self.workspace_registry_service.get_workspace,
+                mcp_mapping_owner=self.local_mcp_control_service,
+                model_mapping_owner=self.local_llm_provider_catalog_service,
             )
             self._plugin_service = service
         return service

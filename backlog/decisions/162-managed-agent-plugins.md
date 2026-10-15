@@ -420,3 +420,13 @@ M4 implementation note: owned configuration is local MCP profile schema 4, while
 
 
 H6 integration note: native MCP hook effects consume original typed wire evidence through request-local capture inside the ordinary provider, with final object identity binding. No separate raw invoker or hook permission is added. M4 owned request/root records remain the resource owners; bridge cancellation alone cannot release hook lifetime counters. Private prospective Console integration currently composes independently eligible standalone MCP. I1 must publish native managed graph requirements and compose the existing owned provider in the application; unknown declarations remain unavailable, and this handoff does not claim that later integration.
+
+
+### Native reviewed component tool restrictions (R24/R75)
+
+The existing configuration review may map a component's noncanonical declared token to an exact same-installation/revision MCP tool mapping in that same reviewed complete set. Existing configuration rows bind the component definition and target mapping digests. The normal MCP owner revalidates those references at publication, admission, recovery and use; unavailable or changed references refuse. This declaration narrows the actual eligible parent registry and cannot recreate a permission. Canonical builtin/local IDs remain immutable runtime narrowing constraints with no additional durable tool grant.
+
+
+### Native agent invocation owner (R76)
+
+Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.

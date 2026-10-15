@@ -51,12 +51,14 @@ class PluginService:
         marker_store_factory: Callable[[Path], Any] | None = None,
         accept_reduced_protection: bool = False,
         mcp_mapping_owner=None,
+        model_mapping_owner=None,
     ) -> None:
         self.profile_root = Path(profile_root)
         self.workspace_lookup = workspace_lookup
         self._marker_factory = marker_store_factory
         self._reduced = accept_reduced_protection
         self._mcp_mapping_owner = mcp_mapping_owner
+        self._model_mapping_owner = model_mapping_owner
         self.fences = LivePluginFences()
         from .revisions import RevisionDrain
 
@@ -127,6 +129,7 @@ class PluginService:
                 owner,
                 fences=self.fences,
                 mcp_mapping_owner=self._mcp_mapping_owner,
+                model_mapping_owner=self._model_mapping_owner,
             )
             self._coordinator.on_data_change = self._refresh
             self._admission = PluginAdmission(
@@ -369,12 +372,22 @@ class PluginService:
         return await self._call(lambda: self._coordinator.review_trust(installation_id))
 
     async def review_configuration(
-        self, installation_id: str, *, connections, tools=None
+        self,
+        installation_id: str,
+        *,
+        connections=None,
+        tools=None,
+        models=None,
+        component_tools=None,
     ) -> PluginReview:
         """Capture current MCP references on the existing plugin storage worker."""
         return await self._call(
             lambda: self._coordinator.review_configuration(
-                installation_id, connections=connections, tools=tools
+                installation_id,
+                connections=connections,
+                tools=tools,
+                models=models,
+                component_tools=component_tools,
             )
         )
 
@@ -431,8 +444,8 @@ class PluginService:
 
     def _refresh(self):
         """Publish metadata eligibility, never package bodies or a runtime grant."""
+        from .components import component_summary as skill_summary
         from .recovery import retained_inspections
-        from .skill_provider import skill_summary
 
         catalog, details = {}, []
         try:
@@ -465,8 +478,6 @@ class PluginService:
                         token = uuid4().hex
                         self._snapshots[token] = snapshot
                         for component_id in snapshot.selection:
-                            if inspection.inventory[component_id].kind != "skill":
-                                continue
                             row = skill_summary(
                                 identity, inspection, component_id, snapshot.alias
                             )
@@ -512,7 +523,8 @@ class PluginService:
                     rows.append(dict(deepcopy(row), plugin_workspace_id=workspace_id))
         return {
             "backend": "local",
-            "available_skills": rows,
+            "available_skills": [row for row in rows if not row.get("plugin_kind")],
+            "native_components": [row for row in rows if row.get("plugin_kind")],
             "blocked_skills": [],
             "context_text": "",
         }
@@ -596,6 +608,13 @@ class PluginService:
             return admit_narrowed(narrowed)
 
         def admit_narrowed(maximum):
+            maximum = dict(
+                maximum,
+                available_skills=[
+                    *maximum.get("available_skills", ()),
+                    *maximum.get("native_components", ()),
+                ],
+            )
             if run_id in self._retired:
                 raise PluginUnavailable("plugin_turn_retired")
             turn_id = maximum.get("plugin_turn_id")
@@ -676,7 +695,7 @@ class PluginService:
                             token = uuid4().hex
                             self._admission_keys[key] = token
                             self._admitted[token] = snapshot
-                    from .skill_provider import skill_summary
+                    from .components import component_summary as skill_summary
 
                     row = dict(
                         skill_summary(
@@ -706,13 +725,18 @@ class PluginService:
                             snapshot.installation_id, snapshot.revision_digest
                         )
                 self._pending_custody.setdefault(run_id, (turn_id, ceiling))
-                result["available_skills"] = rows
+                result["available_skills"] = [
+                    row for row in rows if not row.get("plugin_kind")
+                ]
+                result["native_components"] = [
+                    row for row in rows if row.get("plugin_kind")
+                ]
                 return result
 
         return await self._call(operation)
 
     def _checked(self, name: str, token: str, *, binding: bool = False):
-        from .skill_provider import skill_summary
+        from .components import component_summary as skill_summary
 
         snapshot = self._admitted.get(token)
         if snapshot is None:
@@ -750,9 +774,9 @@ class PluginService:
         """Explicit detail reads remain owned and never imply standalone trust."""
 
         def operation():
+            from .components import component_summary as skill_summary
             from .package_files import capture_package
             from .recovery import retained_inspections
-            from .skill_provider import skill_summary
 
             authority = self._coordinator.published_snapshot()
             inspections = retained_inspections(authority)
@@ -796,6 +820,57 @@ class PluginService:
             return result
 
         return await self._call(operation)
+
+    async def render_native(self, entry, *, arguments=None):
+        """Render admitted manual/always material through the current authority owner."""
+
+        def operation():
+            from .commands import render_command
+            from .components import PluginComponents, component_body
+            from .context import instruction_block
+
+            snapshot, component_id, _row = self._checked(
+                entry.get("record_id", entry["name"]), entry["plugin_admission"]
+            )
+            component = next(
+                row
+                for row in PluginComponents.project(snapshot)
+                if row.component_id == component_id
+            )
+            if component.kind == "command":
+                blocks = render_command(component, arguments or {})
+            elif component.kind in {"rule", "agent"}:
+                blocks = (
+                    {
+                        "role": "user",
+                        "content": instruction_block(
+                            snapshot.installation_id,
+                            component_id,
+                            snapshot.revision_digest,
+                            component_body(component),
+                        ),
+                    },
+                )
+            else:
+                raise PluginUnavailable("plugin_instruction_kind_invalid")
+            self._admission.check(snapshot, component_id)
+            return blocks
+
+        return await self._call(operation)
+
+    def native_snapshots(self, entries):
+        """Return host-issued snapshots only after ordinary current entry validation."""
+
+        def operation():
+            snapshots = {}
+            for entry in entries:
+                snapshot, _key, _row = self._checked(
+                    entry.get("record_id", entry["name"]), entry["plugin_admission"]
+                )
+                snapshots[snapshot.installation_id] = snapshot
+            return tuple(snapshots[key] for key in sorted(snapshots))
+
+        return self._call_from_agent(operation)
 
     async def read_skill_file(
         self, name: str, path: str, *, admission_token: str
@@ -842,21 +917,27 @@ class PluginService:
         self.check_entries_live(entries)
         await self._call(
             lambda: [
-                self._checked(row["name"], row["plugin_admission"])
+                self._checked(
+                    row.get("record_id", row["name"]), row["plugin_admission"]
+                )
                 for row in entries
                 if row.get("plugin_owned")
             ]
         )
+        self.check_entries_live(entries)
 
     def check_entries_from_agent(self, entries: Sequence[Mapping[str, Any]]) -> None:
         self.check_entries_live(entries)
         self._call_from_agent(
             lambda: [
-                self._checked(row["name"], row["plugin_admission"])
+                self._checked(
+                    row.get("record_id", row["name"]), row["plugin_admission"]
+                )
                 for row in entries
                 if row.get("plugin_owned")
             ]
         )
+        self.check_entries_live(entries)
 
     def check_entries_live(self, entries: Sequence[Mapping[str, Any]]) -> None:
         """Immediate refusal for callbacks; passing is not durable authorization."""
@@ -979,7 +1060,9 @@ class PluginService:
                 if not row.get("plugin_owned"):
                     continue
                 snapshot, _, _ = self._checked(
-                    row["name"], row["plugin_admission"], binding=True
+                    row.get("record_id", row["name"]),
+                    row["plugin_admission"],
+                    binding=True,
                 )
                 key = (snapshot.installation_id, run_id)
                 with self._lock:

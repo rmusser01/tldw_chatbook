@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Self, TypeAlias
+from typing import TYPE_CHECKING, ClassVar, Literal, Self, TypeAlias
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -808,6 +808,10 @@ class AgentDefinition:
     tool_allowlist: tuple[str, ...] = ()
     model: str = ""
     enabled: bool = True
+    # Runtime-only native subclasses may override these without changing the
+    # persisted standalone definition's fields or constructor.
+    plugin_context: ClassVar[PluginContextText | None] = None
+    inherit_tools: ClassVar[bool] = True
 
 
 def validate_agent_definition(defn: AgentDefinition) -> list[str]:
@@ -829,7 +833,7 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
         # roster line (Agents/tool_catalog.py); an embedded newline could
         # forge extra roster lines the supervisor reads as real entries.
         errors.append("description must be a single line")
-    if not defn.instructions.strip():
+    if not defn.instructions.strip() and defn.plugin_context is None:
         errors.append("instructions must not be empty")
     if len(defn.instructions) > AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS:
         errors.append(
@@ -849,6 +853,14 @@ def definition_fingerprint(defn: AgentDefinition) -> str:
             "instructions": defn.instructions,
             "tool_allowlist": sorted(defn.tool_allowlist),
             "model": defn.model,
+            **(
+                {
+                    "plugin_context": str(defn.plugin_context),
+                    "inherit_tools": defn.inherit_tools,
+                }
+                if defn.plugin_context is not None or not defn.inherit_tools
+                else {}
+            ),
         },
         sort_keys=True,
     )

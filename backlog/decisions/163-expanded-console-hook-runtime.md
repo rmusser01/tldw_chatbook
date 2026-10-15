@@ -488,3 +488,10 @@ Cancellation is not settlement. A hook ticket retires only after the local worke
 
 
 H6 Fix1 binds a private read-only currentness callback to the exact captured result and original call identity. The existing normal owner revalidates profile, definition, permission and owned mapping/scope/credential authority after required post-event settlement and after the final asynchronous hook-authority check, before native effects are accepted. The original one-time approval remains specific to that invocation; validation does not prompt, invoke, connect or recreate grants. Blocking owner validation remains off-loop under the same job/ticket and original deadline. A completed MCP request or cancelled waiter cannot settle a still-running validator.
+
+
+### Native component ownership and canonical restrictions (R74–R75)
+
+Ruling: R74 — native command hooks select their exact existing process-owner adapter from the qualified handler at dispatch and retain that adapter on the original CommandJob through reserve, publish and terminal settlement; the shared HookEvent stays unchanged — concurrent handlers can belong to different installations, so one event-wide owner cannot identify their root/revision custody — cost if wrong: revise the narrow per-job selection seam; owner lookup failure must refuse before launch, and cancellation, late cleanup or replacement must never settle another handler’s custody.
+
+Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations are immutable narrowing constraints resolved against the actual eligible parent registry at use, while noncanonical tokens require reviewed exact owner mappings — a declaration can restrict existing rights without creating a durable generic tool grant or another permission owner — cost if wrong: narrow supported declarations or revise the resolver; missing or changed identities refuse, explicit empty stays empty, recovery creates no grants, and display-name fallback never authorizes a tool.

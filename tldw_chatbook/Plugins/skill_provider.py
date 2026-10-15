@@ -64,10 +64,11 @@ def skill_summary(
         "disable_model_invocation": manual == "true",
         "argument_hint": metadata.get("argument_hint"),
         "allowed_tools": (
-            []
-            if "allowed-tools" in definition and not definition["allowed-tools"]
+            definition["allowed-tools"].split()
+            if "allowed-tools" in definition
             else None
         ),
+        "model_declared": metadata.get("model"),
         "definition_digest": inspection.effective_digest,
         "trust_blocked": True,
         "trust_status": "plugin_managed",
@@ -112,6 +113,13 @@ def render_skill(
         ),
         "allowed_tools": summary["allowed_tools"],
         "execution_mode": summary["context"],
-        "model_override": None,
+        "model_override": next(
+            (
+                row["target_reference"]
+                for row in json.loads(snapshot.mappings_json)
+                if row["kind"] == "model" and row["component_id"] == component_id
+            ),
+            None,
+        ),
         "fork_output": None,
     }

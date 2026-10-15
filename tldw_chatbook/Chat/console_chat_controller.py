@@ -1217,6 +1217,7 @@ def capture_skill_context_maximum(
                 )
             (blocked if summary.get("trust_blocked") else available).append(summary)
         plugin_service = getattr(local, "plugin_service", None)
+        plugin_context = {}
         if plugin_service is not None:
             plugin_context = plugin_service.capture_maximum(workspace_id)
             names = {item.get("name") for item in available + blocked}
@@ -1227,6 +1228,7 @@ def capture_skill_context_maximum(
             )
         return {
             "plugin_run_id": "pending:" + str(uuid4()),
+            "native_components": plugin_context.get("native_components", ()),
             "available_skills": available,
             "blocked_skills": blocked,
             "context_text": "\n".join(
@@ -3042,6 +3044,8 @@ class _PreparedSendContinuation:
     staged_evidence_frozen: bool
     staged_evidence: _PreparedEvidenceLease | None = field(repr=False)
     preserve_composer: bool = False
+    invocation_source: str | None = field(default=None, repr=False)
+    reference_offsets: tuple[tuple[int, int], ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -8850,14 +8854,59 @@ class ConsoleChatController:
             )
         if validation_error is not None:
             return self._block(session.id, validation_error)
+        resumed_reference = (
+            prepared_continuation
+            if resumed_preparation is not None
+            and prepared_continuation is not None
+            and prepared_continuation.invocation_source is not None
+            else None
+        )
+        if resumed_reference is not None:
+            clean_draft = resumed_reference.invocation_source
         # TASK-27021: expand @-references (files/folders/diff) into the text
         # the PROVIDER sees, before the one preparation construction below.
         # The user echo keeps the RAW draft; a compact system row records what
         # expanded/refused (26020 AC#6). Expansion failures never block the
         # send -- the raw draft goes through with a note. AGENT_WAKE drafts
         # are machine-composed and never expanded.
-        executed_draft_text = clean_draft
+        configuration = (
+            resumed_preparation.execution_context.configuration
+            if resumed_preparation is not None
+            else configuration
+            if configuration is not None
+            else self.resolve_turn_configuration_snapshot(session.id)
+        )
+        first_word = (
+            clean_draft.lstrip().split(maxsplit=1)[0] if clean_draft.strip() else ""
+        )
+        native_literal_arguments = any(
+            first_word == "/" + row["name"] and row.get("plugin_kind") == "command"
+            for row in configuration.skill_context_maximum.get("native_components", ())
+        ) or any(
+            first_word == "$" + row["name"] and row.get("plugin_owned")
+            for row in configuration.skill_context_maximum.get("available_skills", ())
+        )
+        if first_word.startswith(MENTION_SIGIL):
+            resolution = resolve_skill_command(
+                first_word[len(MENTION_SIGIL) :],
+                "",
+                self._skill_candidates_from_context(configuration.skill_context_maximum)
+                + self._skill_blocked_candidates_from_context(
+                    configuration.skill_context_maximum
+                ),
+            )
+            native_literal_arguments = (
+                native_literal_arguments or resolution.kind == "resolved"
+            )
+        executed_draft_text = (
+            resumed_preparation.executed_draft
+            if resumed_reference is not None
+            else clean_draft
+        )
         reference_records: tuple = ()
+        reference_offsets = (
+            resumed_reference.reference_offsets if resumed_reference is not None else ()
+        )
         # Qodo #6 (PR #2313): a RESUMED preparation re-enters this seam with
         # the already-expanded executed_draft; expansion is not idempotent
         # (each raw @token survives ahead of its inserted block), so re-running
@@ -8867,24 +8916,49 @@ class ConsoleChatController:
             origin is not ConsoleSubmissionOrigin.AGENT_WAKE
             and machine_input is None
             and resumed_preparation is None
+            and not native_literal_arguments
         ):
             try:
                 from tldw_chatbook.Chat.console_references import (
+                    ReferenceExpansion,
                     build_console_reference_resolver,
                     expand_references,
                     find_reference_candidates,
                     run_git_reference,
                 )
 
-                if find_reference_candidates(clean_draft):
-                    def _expand() -> object:
-                        return expand_references(
-                            clean_draft,
-                            resolve=build_console_reference_resolver(),
-                            git_runner=run_git_reference,
+                candidates = find_reference_candidates(clean_draft)
+                if candidates:
+                    def _expand():
+                        resolver = build_console_reference_resolver()
+                        chunks, records, offsets = [], [], []
+                        previous = 0
+                        for candidate in candidates:
+                            expansion = expand_references(
+                                candidate.raw,
+                                resolve=resolver,
+                                git_runner=run_git_reference,
+                            )
+                            chunks.extend(
+                                (
+                                    clean_draft[previous : candidate.start],
+                                    expansion.expanded_text,
+                                )
+                            )
+                            records.extend(expansion.records)
+                            offsets.append(
+                                (
+                                    candidate.end,
+                                    len(expansion.expanded_text) - len(candidate.raw),
+                                )
+                            )
+                            previous = candidate.end
+                        chunks.append(clean_draft[previous:])
+                        return ReferenceExpansion("".join(chunks), records), tuple(
+                            offsets
                         )
 
-                    expansion = await asyncio.to_thread(_expand)
+                    expansion, reference_offsets = await asyncio.to_thread(_expand)
                     executed_draft_text = expansion.expanded_text
                     reference_records = tuple(expansion.records)
             except Exception:  # noqa: BLE001 - references must never block a send
@@ -8893,21 +8967,13 @@ class ConsoleChatController:
                 )
                 executed_draft_text = clean_draft
                 reference_records = ()
-        configuration = (
-            resumed_preparation.execution_context.configuration
-            if resumed_preparation is not None
-            else configuration
-            if configuration is not None
-            else self.resolve_turn_configuration_snapshot(session.id)
-        )
         if any(
             row.get("plugin_owned")
             for row in configuration.skill_context_maximum.get("available_skills", ())
-        ):
+        ) or configuration.skill_context_maximum.get("native_components"):
             maximum = dict(configuration.skill_context_maximum)
-            if resumed_preparation is None:
-                maximum["plugin_run_id"] = "pending:" + str(uuid4())
-                configuration = replace(configuration, skill_context_maximum=maximum)
+            maximum["plugin_run_id"] = "pending:" + str(uuid4())
+            configuration = replace(configuration, skill_context_maximum=maximum)
             local = getattr(self._skills_service, "local_service", None)
             service = getattr(local, "plugin_service", None)
             pending = getattr(self, "_plugin_pending_submissions", None)
@@ -8915,6 +8981,15 @@ class ConsoleChatController:
                 pending = self._plugin_pending_submissions = {}
             pending.setdefault(asyncio.current_task(), []).append(
                 (service, maximum["plugin_run_id"])
+            )
+        try:
+            configuration = await self._native_skill_configuration(
+                configuration, clean_draft
+            )
+        except (ValueError, PermissionError):
+            return self._block(
+                session.id,
+                "Plugin model or tool constraints are unavailable; review the component.",
             )
         turn_selection = configuration.provider_selection
         if has_pending_attachment:
@@ -9227,7 +9302,9 @@ class ConsoleChatController:
             return thinking_block
 
         if resumed_preparation is not None:
-            turn_context = resumed_preparation.execution_context
+            turn_context = replace(
+                resumed_preparation.execution_context, configuration=configuration
+            )
         else:
             try:
                 turn_context = self._finalize_turn_execution_context(
@@ -9474,6 +9551,8 @@ class ConsoleChatController:
             self._prepared_send_continuations[preparation.preparation_id] = (
                 _PreparedSendContinuation(
                     preparation_id=preparation.preparation_id,
+                    invocation_source=clean_draft if reference_offsets else None,
+                    reference_offsets=reference_offsets,
                     preserve_composer=preserve_composer,
                     attachments=tuple(pendings),
                     prefill=frozen_prefill,
@@ -9580,6 +9659,17 @@ class ConsoleChatController:
                         break
                 else:
                     raise ValueError("hook_continuation_input_missing")
+            if reference_offsets and executed_draft_text != clean_draft:
+                # Reference expansion precedes native substitution; an expanded
+                # reference must not overwrite an attributed instruction block.
+                for _i in range(len(provider_messages) - 1, -1, -1):
+                    if provider_messages[_i].get("role") == "user":
+                        provider_messages = (
+                            provider_messages[:_i]
+                            + [{**provider_messages[_i], "content": executed_draft_text}]
+                            + provider_messages[_i + 1 :]
+                        )
+                        break
             trace_source_messages = tuple(dict(row) for row in provider_messages)
             (
                 provider_messages,
@@ -9587,7 +9677,18 @@ class ConsoleChatController:
                 skill_notes,
                 skill_bindings,
                 skill_bundle_block,
-            ) = await self._apply_skill_substitution(provider_messages, turn_context)
+            ) = await self._apply_skill_substitution(
+                provider_messages,
+                turn_context,
+                **(
+                    {
+                        "invocation_source": clean_draft,
+                        "reference_offsets": reference_offsets,
+                    }
+                    if reference_offsets
+                    else {}
+                ),
+            )
             if refuse is not None:
                 # A substitution refusal is a block outcome like any other
                 # (provider not ready, probe raise): fail the echoed row so the
@@ -9650,21 +9751,6 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
-            if reference_records and executed_draft_text != clean_draft:
-                # TASK-27021: the store echo keeps the RAW draft; the payload
-                # carries the @-reference expansion. Swap the just-echoed last
-                # user message. Runs BEFORE dictionaries/world-info -- the
-                # expanded text is the user's composed message; note the
-                # accepted hazard that dictionary keywords inside included
-                # file content will also match.
-                for _i in range(len(provider_messages) - 1, -1, -1):
-                    if provider_messages[_i].get("role") == "user":
-                        provider_messages = (
-                            provider_messages[:_i]
-                            + [{**provider_messages[_i], "content": executed_draft_text}]
-                            + provider_messages[_i + 1 :]
-                        )
-                        break
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session.id, turn_context
             )
@@ -9805,7 +9891,15 @@ class ConsoleChatController:
                         ),
                         scope,
                     )
-                await lifecycle.wait(scope)
+                native = getattr(lifecycle.engine, "native_hooks", None)
+                await lifecycle.wait(
+                    scope,
+                    required_handler_ids=(
+                        native.requirements_for_messages(provider_messages)
+                        if native
+                        else ()
+                    ),
+                )
                 provider_messages = [
                     *provider_messages,
                     *lifecycle.context.blocks(scope, "model"),
@@ -9816,6 +9910,8 @@ class ConsoleChatController:
             except Exception:  # noqa: BLE001 -- hook boundary
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
                 return self._block(session.id, "Required hook input failed.")
         # This await remains before acceptance. A refusal or cancellation must
         # release the exact optimistic echo and preparation, preserving custody.
@@ -15146,6 +15242,16 @@ class ConsoleChatController:
             maximum_tool_ids=configuration.mcp_tool_maximum,
             maximum_definition_hashes=configuration.mcp_definition_maximum,
         )
+        if configuration.skill_context_maximum.get("native_components"):
+            provider = await self._compose_native_mcp_providers(
+                provider,
+                configuration.skill_context_maximum,
+                session_id=session_id,
+                profile_id_provider=lambda: configuration.tool_policy_profile_id,
+                persona_policy_provider=lambda: policy,
+                maximum_tool_ids=configuration.mcp_tool_maximum,
+                maximum_definition_hashes=configuration.mcp_definition_maximum,
+            )
         if not current():
             raise PermissionError("hook admission changed")
         return _compose_prospective_hook_context(
@@ -15278,6 +15384,55 @@ class ConsoleChatController:
         publish(len(catalog), provider.not_connected_count)
         return provider
 
+    async def _compose_native_mcp_providers(
+        self, provider, maximum, **provider_options
+    ):
+        entries = maximum.get("native_components", ())
+        if not any(row.get("plugin_kind") == "mcp" for row in entries):
+            return provider
+        from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
+        from tldw_chatbook.Plugins.components import NativeMCPProviders
+        from tldw_chatbook.Plugins.mcp_provider import PluginMCPProvider
+
+        service = self._skills_service.local_service.plugin_service
+        local = service._mcp_mapping_owner
+        if local is None:
+            raise PermissionError("plugin_mapping_owner_unavailable")
+        ownership = getattr(local, "connection_ownership", None)
+        if ownership is None:
+            ownership = ConnectionOwnership(
+                plugin_service=service,
+                local_service=local,
+                loop=asyncio.get_running_loop(),
+            )
+        if (
+            ownership.plugins is not service
+            or ownership.loop is not asyncio.get_running_loop()
+        ):
+            raise PermissionError("plugin_connection_owner_changed")
+        admitted = await service.admit(maximum, maximum["plugin_run_id"])
+        snapshots = await asyncio.to_thread(
+            service.native_snapshots, admitted["native_components"]
+        )
+        providers = [provider] if provider is not None else []
+        session_id = provider_options.pop("session_id", None)
+        for snapshot in snapshots:
+            owned = PluginMCPProvider(
+                plugin_service=service,
+                ownership=ownership,
+                snapshot=snapshot,
+                service=self.app.unified_mcp_service,
+                main_loop=asyncio.get_running_loop(),
+                approval_callback=functools.partial(
+                    self.request_mcp_approvals, session_id=session_id
+                ),
+                builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                **provider_options,
+            )
+            await owned.compose_catalog()
+            providers.append(owned)
+        return NativeMCPProviders(providers)
+
     async def _compose_agent_request_providers(
         self,
         *,
@@ -15344,6 +15499,17 @@ class ConsoleChatController:
                 else None
             ),
         )
+        if turn_context is not None and turn_context.skill_context_maximum.get(
+            "native_components"
+        ):
+            mcp_provider = await self._compose_native_mcp_providers(
+                mcp_provider,
+                turn_context.skill_context_maximum,
+                session_id=session_id,
+                maximum_tool_ids=turn_context.mcp_tool_maximum,
+                maximum_definition_hashes=turn_context.mcp_definition_maximum,
+                **mcp_profile_kwargs,
+            )
         builtin_gate = build_builtin_gate(
             getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
         )
@@ -21624,10 +21790,207 @@ class ConsoleChatController:
             return
         self.store.consume_session_one_shot_prefill(session_id, used_revision)
 
+    async def _native_skill_configuration(self, configuration, draft):
+        """Resolve explicit native model selection before normal gateway admission."""
+        maximum = configuration.skill_context_maximum
+        local = getattr(self._skills_service, "local_service", None)
+        service = getattr(local, "plugin_service", None)
+        entries = [
+            row
+            for row in maximum.get("available_skills", ())
+            if row.get("plugin_owned")
+        ]
+        if not entries:
+            return configuration
+        admitted = await service.admit(maximum, maximum["plugin_run_id"])
+        entries = [
+            row
+            for row in admitted["available_skills"]
+            if row.get("plugin_owned") and row.get("user_invocable")
+        ]
+        leading, rest = _split_skill_command_word(draft.lstrip())
+        resolution = (
+            resolve_skill_command(
+                leading[len(MENTION_SIGIL) :],
+                rest,
+                self._skill_candidates_from_context(admitted)
+                + self._skill_blocked_candidates_from_context(admitted),
+            )
+            if leading.startswith(MENTION_SIGIL)
+            else None
+        )
+        exact = [
+            row
+            for row in entries
+            if resolution is not None
+            and resolution.kind == "resolved"
+            and row["name"] == resolution.name
+        ]
+        if exact:
+            selected = exact
+        else:
+            selected = [
+                row
+                for row in entries
+                if any(
+                    mention.name == row["name"]
+                    for mention in find_embedded_mentions(
+                        draft, frozenset(row["name"] for row in entries)
+                    )
+                )
+                and row.get("context") == "inline"
+            ]
+        if not selected:
+            return configuration
+        from tldw_chatbook.Plugins.agent_presets import resolve_component_model
+        from tldw_chatbook.Plugins.components import PluginComponents
+        snapshots = await asyncio.to_thread(service.native_snapshots, selected)
+        keys = {row["record_id"] for row in selected}
+        models = {
+            resolve_component_model(
+                component, configuration.provider_selection.provider
+            )
+            for snapshot in snapshots
+            for component in PluginComponents.project(snapshot)
+            if f"plugin:{snapshot.installation_id}:{component.component_id}" in keys
+        }
+        models.discard("")
+        if len(models) > 1:
+            raise PermissionError("plugin_model_conflict")
+        if models:
+            configuration = replace(
+                configuration,
+                provider_selection=replace(
+                    configuration.provider_selection, explicit_model=models.pop()
+                ),
+            )
+        return configuration
+
     async def _apply_skill_substitution(
+        self,
+        provider_messages,
+        turn_context=None,
+        *,
+        invocation_source=None,
+        reference_offsets=(),
+    ):
+        """Assemble native material once, before the existing final-send checks."""
+        maximum = turn_context.skill_context_maximum if turn_context is not None else {}
+        entries = maximum.get("native_components", ())
+        if not entries:
+            return await self._apply_skill_mentions(
+                provider_messages,
+                turn_context,
+                invocation_source=invocation_source,
+                reference_offsets=reference_offsets,
+            )
+        service = getattr(
+            getattr(self._skills_service, "local_service", None), "plugin_service", None
+        )
+        original = provider_messages
+        try:
+            admitted = await service.admit(maximum, maximum["plugin_run_id"])
+            entries = admitted["native_components"]
+            final = next(
+                (
+                    i
+                    for i in range(len(provider_messages) - 1, -1, -1)
+                    if provider_messages[i].get("role") == "user"
+                ),
+                None,
+            )
+            content = (
+                provider_messages[final].get("content") if final is not None else None
+            )
+            if not isinstance(content, str):
+                raise PermissionError("plugin_context_destination_unavailable")
+            word, rest = _split_skill_command_word(
+                (
+                    invocation_source if invocation_source is not None else content
+                ).lstrip()
+            )
+            selected = [
+                row
+                for row in entries
+                if (row["plugin_kind"] == "command" and word == "/" + row["name"])
+                or (row["plugin_kind"] == "rule" and word == "@" + row["name"])
+            ]
+            if any(
+                row["plugin_kind"] == "agent" and word == "@" + row["name"]
+                for row in entries
+            ):
+                raise PermissionError("plugin_agent_requires_child_spawn")
+            if len(selected) > 1:
+                raise PermissionError("plugin_alias_collision")
+            automatic = [
+                row
+                for row in entries
+                if row["plugin_kind"] == "rule" and row.get("mode") == "always"
+            ]
+            blocks = []
+            for row in sorted(automatic, key=lambda row: row["record_id"]):
+                blocks.extend(await service.render_native(row))
+            if selected:
+                row = selected[0]
+                names = row.get("arguments", ())
+                arguments = (
+                    ({names[0]: rest} if len(names) == 1 else json.loads(rest or "{}"))
+                    if row["plugin_kind"] == "command"
+                    else {}
+                )
+                if row not in automatic:
+                    blocks.extend(await service.render_native(row, arguments=arguments))
+                if row["plugin_kind"] == "rule" and rest:
+                    blocks.append({"role": "user", "content": rest})
+                rendered = list(provider_messages)
+                rendered[final : final + 1] = blocks
+                result = rendered, None, (), (), ""
+            else:
+                result = await self._apply_skill_mentions(
+                    provider_messages,
+                    turn_context,
+                    invocation_source=invocation_source,
+                    reference_offsets=reference_offsets,
+                )
+                rendered, refusal, notes, bindings, bundle = result
+                if refusal:
+                    return result
+                insert_at = next(
+                    (
+                        i
+                        for i in range(len(rendered) - 1, -1, -1)
+                        if rendered[i].get("role") == "user"
+                    ),
+                    len(rendered),
+                )
+                result = (
+                    rendered[:insert_at] + blocks + rendered[insert_at:],
+                    None,
+                    notes,
+                    bindings,
+                    bundle,
+                )
+            await service.check_entries(entries)
+            from tldw_chatbook.Agents.agent_models import check_host_context
+
+            check_host_context(result[0], strip=False)
+            return result
+        except (PermissionError, ValueError, KeyError):
+            return (
+                original,
+                "Plugin context is unavailable or too large; review selected components.",
+                (),
+                (),
+                "",
+            )
+
+    async def _apply_skill_mentions(
         self,
         provider_messages: list[dict[str, Any]],
         turn_context: ConsoleTurnExecutionContext | None = None,
+        *,
+        invocation_source: str | None = None,
+        reference_offsets: tuple[tuple[int, int], ...] = (),
     ) -> tuple[list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str]:
         """Render-fresh the triggering turn's skill mention(s) at payload build time.
 
@@ -21738,7 +22101,8 @@ class ConsoleChatController:
         content = provider_messages[final_index].get("content")
         if not isinstance(content, str):
             return provider_messages, None, (), (), ""
-        if MENTION_SIGIL not in content:
+        source_content = content if invocation_source is None else invocation_source
+        if MENTION_SIGIL not in source_content:
             # Fast path: no sigil anywhere means neither form can possibly
             # apply -- plain-text sends never touch the skills service.
             return provider_messages, None, (), (), ""
@@ -21804,6 +22168,7 @@ class ConsoleChatController:
                     reason_code="skill_definition_changed",
                     trust_status="quarantined_modified",
                 )
+
         context = (
             frozen_context
             if frozen_context.get("backend") == "local"
@@ -21830,14 +22195,18 @@ class ConsoleChatController:
         # `lstrip()` assumption in the preview -- a resolved leading mention
         # replaces the ENTIRE message on both the inline-replace and fork
         # paths, so the leading whitespace simply disappears either way.
-        stripped_content = content.lstrip()
+        stripped_content = source_content.lstrip()
         if stripped_content.startswith(MENTION_SIGIL):
             word, rest = _split_skill_command_word(stripped_content)
             name = word[len(MENTION_SIGIL) :]
             if name:
                 resolution = resolve_skill_command(name, rest, detection_candidates)
                 if resolution.kind == "resolved":
-                    args = cap_skill_args(rest)
+                    args = (
+                        rest
+                        if resolution.name in plugin_entries
+                        else cap_skill_args(rest)
+                    )
                     try:
                         ensure_frozen_definition(resolution.name)
                         result = await self._skills_service.execute_skill(
@@ -21901,7 +22270,7 @@ class ConsoleChatController:
         # routed through the trust-blocked-note path below instead of
         # staying invisible.
         names = frozenset(candidate.name for candidate in detection_candidates)
-        mentions = find_embedded_mentions(content, names)
+        mentions = find_embedded_mentions(source_content, names)
         if not mentions:
             return provider_messages, None, (), (), ""
 
@@ -21968,9 +22337,14 @@ class ConsoleChatController:
             body = rendered_by_name.get(mention.name)
             if body is None:
                 continue
-            new_content = (
-                new_content[: mention.start] + body + new_content[mention.end :]
+            # Only original user spans are executable; reference bodies are opaque.
+            start = mention.start + sum(
+                size for end, size in reference_offsets if end <= mention.start
             )
+            end = mention.end + sum(
+                size for offset, size in reference_offsets if offset <= mention.end
+            )
+            new_content = new_content[:start] + body + new_content[end:]
         if new_content == content:
             return provider_messages, None, tuple(notes), (), ""
         if plugin_entries:
@@ -25948,11 +26322,14 @@ class ConsoleChatController:
         async def enter_provider_dispatch() -> None:
             nonlocal plugin_service, admitted_plugin_entries
             maximum = plugin_context or {}
-            if maximum.get("available_skills"):
+            if maximum.get("available_skills") or maximum.get("native_components"):
                 local = getattr(self._skills_service, "local_service", None)
                 plugin_service = local.plugin_service
                 admitted = await plugin_service.admit(maximum, maximum["plugin_run_id"])
-                admitted_plugin_entries = tuple(admitted["available_skills"])
+                admitted_plugin_entries = (
+                    *admitted["available_skills"],
+                    *admitted.get("native_components", ()),
+                )
                 await asyncio.to_thread(
                     plugin_service.bind_run,
                     admitted_plugin_entries,
@@ -25975,7 +26352,9 @@ class ConsoleChatController:
             if plugin_service is not None:
                 await plugin_service.check_entries(admitted_plugin_entries)
 
-        if (plugin_context or {}).get("available_skills"):
+        if (plugin_context or {}).get("available_skills") or (plugin_context or {}).get(
+            "native_components"
+        ):
             stream_signals.provider_work_callback = retain_plugin_provider_work
         try:
             if self._teardown_refuses_turn(owner_id):

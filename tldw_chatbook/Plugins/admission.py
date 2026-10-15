@@ -332,18 +332,60 @@ class PluginAdmission:
             unavailable = set()
             if owned_mappings:
                 from tldw_chatbook.MCP.credential_bindings import CredentialError
-                from tldw_chatbook.MCP.local_control_service import (
-                    LocalMCPControlService,
-                )
 
-                owner = self.coordinator.mcp_mapping_owner
-                if not isinstance(owner, LocalMCPControlService):
-                    raise PluginUnavailable("plugin_mapping_owner_unavailable")
+                from .components import validate_mapping
+
                 for mapping in owned_mappings:
                     try:
-                        owner.validate_connection_mapping(mapping, inspection)
+                        validate_mapping(
+                            self.coordinator, mapping, inspection, owned_mappings
+                        )
                     except (ValueError, PermissionError, CredentialError):
                         unavailable.add(mapping["component_id"])
+
+            def unresolved_blockers(component):
+                import json
+
+                blockers = set(component.activation_blockers)
+                # Dependency availability is recomputed below from this captured graph.
+                blockers = {
+                    code
+                    for code in blockers
+                    if not code.startswith("dependency_blocked:")
+                }
+                definition = json.loads(component.definition_json)
+                if any(
+                    row["kind"] == "model"
+                    and row["component_id"] == component.component_id
+                    for row in owned_mappings
+                ):
+                    blockers.discard("model_mapping_required")
+                tools = definition.get(
+                    "tools", definition.get("allowed-tools", "inherit")
+                )
+                if isinstance(tools, str) and tools != "inherit":
+                    tools = tools.split()
+                from .agent_presets import tool_constraint_id
+
+                if tools == "inherit" or all(
+                    item.startswith(("builtin:", "local:"))
+                    or any(
+                        row["kind"] == "configuration"
+                        and row["mapping_id"]
+                        == tool_constraint_id(component.component_id, item)
+                        for row in owned_mappings
+                    )
+                    for item in tools
+                ):
+                    blockers.discard("tool_mapping_required")
+                    blockers.discard("skill_tools_mapping_required")
+                if definition.get("metadata", {}).get("model") and not any(
+                    row["kind"] == "model"
+                    and row["component_id"] == component.component_id
+                    for row in owned_mappings
+                ):
+                    blockers.add("model_mapping_required")
+                return blockers
 
             def ready(component_id: str, visiting: frozenset[str]) -> bool:
                 component = inspection.inventory.get(component_id)
@@ -354,11 +396,10 @@ class PluginAdmission:
                     or component is None
                 ):
                     return False
-                if (
-                    component.kind not in {"skill", "mcp"}
-                    or component.support not in {"supported", "adapted"}
-                    or component.activation_blockers
-                ):
+                if component.support not in {
+                    "supported",
+                    "adapted",
+                } or unresolved_blockers(component):
                     return False
                 if component.kind == "mcp":
                     if (
@@ -370,7 +411,7 @@ class PluginAdmission:
                         != 1
                     ):
                         return False
-                else:
+                elif component.kind == "skill":
                     from .skill_provider import skill_summary
 
                     if skill_summary(installation_id, inspection, component_id, alias)[

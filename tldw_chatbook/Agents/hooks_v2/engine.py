@@ -158,6 +158,7 @@ class HookEngine:
         budget_owner: HookBudgetOwner,
         *,
         process_owner: HookProcessOwner | None = None,
+        process_owner_for: Callable | None = None,
         environment: Callable | None = None,
         host_environment: Callable | None = None,
         invalid_admissions: tuple = (),
@@ -176,6 +177,7 @@ class HookEngine:
         self.budget_owner = budget_owner
         self.loop = budget_owner.loop
         self.processes = CommandExecutor(process_owner or HostProcessOwner())
+        self._process_owner_for = process_owner_for
         self.invalid_admissions = tuple(invalid_admissions)
         self._environment = environment
         self._host_environment = host_environment
@@ -676,6 +678,11 @@ class HookEngine:
                 self.authority_check,
                 self._env,
                 deadline,
+                process_owner_factory=(
+                    (lambda cancel: self._process_owner_for(handler, event, cancel))
+                    if self._process_owner_for
+                    else None
+                ),
             )
             result = await self.processes.wait(job, deadline)
             execution.active_seconds += result.duration

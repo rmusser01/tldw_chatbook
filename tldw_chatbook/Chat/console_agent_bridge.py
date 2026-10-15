@@ -3914,7 +3914,6 @@ def _compose_prospective_hook_context(
 ):
     """Use normal catalog composition privately inside one validated admission."""
     from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
-    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 
     registry, allowed, _builtins, _locals = _compose_run_registry_and_allowed(
         configuration.skill_context_maximum,
@@ -3925,10 +3924,8 @@ def _compose_prospective_hook_context(
     )
 
     def requirements(definition):
-        owner = registry.resolve_owner_for_name(definition.name)
-        provider = getattr(owner[1], "_provider", owner[1]) if owner else None
-        # Managed graph declarations are owned by I1; absence is unknown.
-        return () if type(provider) is MCPToolProvider else None
+        from tldw_chatbook.Plugins.components import tool_hook_requirements
+        return tool_hook_requirements(registry, definition)
 
     return MCPHookContext(
         registry=registry,
@@ -4150,7 +4147,11 @@ def _compose_run_registry_and_allowed(
         + profile_names
         + skill_names
     )
-    if mcp_provider is not None and not ephemeral:
+    for provider in (
+        getattr(mcp_provider, "providers", (mcp_provider,))
+        if mcp_provider is not None and not ephemeral
+        else ()
+    ):
         collision_names = (
             set(builtin_names)
             | set(local_names)
@@ -4163,18 +4164,18 @@ def _compose_run_registry_and_allowed(
         # Single partition call (finding 8, substrate review): the two
         # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
         # each independently call `_partition_mcp_catalog_by_collision`,
-        # which walks `mcp_provider.list_catalog()` -- so calling BOTH
+        # which walks `provider.list_catalog()` -- so calling BOTH
         # wrappers here walked the catalog twice per run. Calling the
         # partition directly gets both sides from the one walk it already
         # does internally.
         mcp_names, shadowed_names = _partition_mcp_catalog_by_collision(
-            mcp_provider, collision_names
+            provider, collision_names
         )
         for shadowed in shadowed_names:
             _warn_shadowed_mcp_name_once(shadowed)
         if mcp_names:
             registry.register_provider(
-                _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
+                _CollisionFilteredMCPProvider(provider, frozenset(mcp_names))
             )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
@@ -4467,6 +4468,32 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    if context.get("native_projection"):
+        from tldw_chatbook.Plugins.agent_presets import (
+            project_agent,
+            resolve_component_tools,
+        )
+
+        for component in context["native_projection"]:
+            if (
+                component.kind == "skill"
+                and f"{component.snapshot.alias}:{component.local_id}"
+                in turn_skill_bindings
+            ):
+                allowed_tools = tuple(
+                    name
+                    for name in allowed_tools
+                    if name
+                    in resolve_component_tools(
+                        component, registry, frozenset(allowed_tools)
+                    )
+                )
+        config = dataclass_replace(config, allowed_tools=allowed_tools)
+        agent_definitions += tuple(
+            project_agent(component, registry, frozenset(allowed_tools), api_endpoint)
+            for component in context["native_projection"]
+            if component.kind == "agent"
+        )
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -4613,7 +4640,17 @@ class _BridgeSkillRunner:
         skill_file_bindings: SkillFileBindings | None = None,
         definition_digests: Mapping[str, str] | None = None,
         plugin_entries: Sequence[Mapping[str, Any]] = (),
+        plugin_registry=None,
+        plugin_eligible=None,
+        plugin_provider="",
     ) -> None:
+        self._plugin_registry = plugin_registry
+        self._plugin_eligible = (
+            tuple(builtin_names) + tuple(local_names)
+            if plugin_eligible is None
+            else plugin_eligible
+        )
+        self._plugin_provider = plugin_provider
         self._plugin_entries = {str(row["tool_name"]): row for row in plugin_entries}
         self._skills_service = skills_service
         self._skill_names = skill_names
@@ -4692,6 +4729,39 @@ class _BridgeSkillRunner:
         allowed_tools = intersect_skill_tools(
             declared_allowed_tools, self._builtin_names + self._local_names
         )
+        model = None
+        if name in self._plugin_entries:
+            from tldw_chatbook.Plugins.agent_presets import (
+                resolve_component_model,
+                resolve_component_tools,
+            )
+            from tldw_chatbook.Plugins.components import PluginComponents
+
+            entry = self._plugin_entries[name]
+            service = self._skills_service.local_service.plugin_service
+            try:
+                component = next(
+                    component
+                    for snapshot in service.native_snapshots((entry,))
+                    for component in PluginComponents.project(snapshot)
+                    if component.component_id == entry["plugin_component_id"]
+                )
+                allowed_tools = tuple(
+                    sorted(
+                        resolve_component_tools(
+                            component,
+                            self._plugin_registry,
+                            frozenset(self._plugin_eligible),
+                        )
+                    )
+                )
+                model = (
+                    resolve_component_model(component, self._plugin_provider) or None
+                )
+            except (PermissionError, ValueError):
+                return ToolResult(
+                    ok=False, error="Plugin skill constraints unavailable."
+                )
         # task-4 (skills-fork-reachability): grant the spawned skill's own
         # name skill_file authorization BEFORE spawn -- so the child's very
         # first turn can already read its own bundled reference files (see
@@ -4716,7 +4786,9 @@ class _BridgeSkillRunner:
                 f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
                 rendered,
             )
-        return spawn(rendered, allowed_tools=allowed_tools)
+        return spawn(
+            rendered, allowed_tools=allowed_tools, **({"model": model} if model else {})
+        )
 
 
 @dataclass(slots=True)
@@ -5516,6 +5588,7 @@ class ConsoleAgentBridge:
                 )
         if plugin_service is not None and (
             context.get("plugin_resume_constraint") is not None
+            or context.get("native_components")
             or any(
                 item.get("plugin_owned") for item in context.get("available_skills", ())
             )
@@ -5527,7 +5600,10 @@ class ConsoleAgentBridge:
             )
         plugin_entries = tuple(
             row
-            for row in context.get("available_skills", ())
+            for row in (
+                *context.get("available_skills", ()),
+                *context.get("native_components", ()),
+            )
             if row.get("plugin_owned")
         )
         run_workspace_id = workspace_id
@@ -5565,6 +5641,17 @@ class ConsoleAgentBridge:
             if run_budget is not None
             else console_run_budget()
         )
+        if plugin_entries:
+            from tldw_chatbook.Plugins.components import PluginComponents
+
+            context = dict(
+                context,
+                native_projection=tuple(
+                    component
+                    for snapshot in plugin_service.native_snapshots(plugin_entries)
+                    for component in PluginComponents.project(snapshot)
+                ),
+            )
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
@@ -5788,6 +5875,9 @@ class ConsoleAgentBridge:
             skill_runner = _BridgeSkillRunner(
                 skills_service=self._skills_service,
                 plugin_entries=plugin_entries,
+                plugin_registry=registry,
+                plugin_eligible=first_request_plan.allowed_tools,
+                plugin_provider=first_request_plan.api_endpoint,
                 skill_names=first_request_plan.skill_names,
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
@@ -6852,6 +6942,18 @@ class ConsoleAgentBridge:
                 plugin_service.check_entries_from_agent(active_plugin_entries)
                 from tldw_chatbook.Plugins.context import check_send_context
 
+                engine = self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
+                native = getattr(engine, "native_hooks", None)
+                if native is not None:
+                    from tldw_chatbook.Agents.run_context import current_run_id
+
+                    engine.lifecycle_owner.checkpoints.assert_continuation_dependencies(
+                        current_run_id(),
+                        required_handler_ids=native.requirements_for_messages(
+                            kwargs["messages_payload"]
+                        ),
+                    )
+
                 kwargs["messages_payload"] = check_send_context(
                     kwargs["messages_payload"]
                 )
@@ -6896,6 +6998,8 @@ class ConsoleAgentBridge:
                 ),
             )
 
+        from tldw_chatbook.Plugins.components import tool_hook_requirements
+
         service = AgentService(
             self._db,
             registry,
@@ -6919,10 +7023,18 @@ class ConsoleAgentBridge:
             ),
             hooks_v2_session_id=session_id,
             hooks_v2_turn_id=assistant_message_id,
-            # I1 supplies graph-to-handler mapping. Missing plugin composition
-            # is unknown, never a ready empty requirement set.
-            hooks_v2_required_handler_ids=(
-                (lambda _run_id: None) if plugin_entries else (lambda _run_id: ())
+            hooks_v2_required_handler_ids=lambda _run_id: (),
+            hooks_v2_tool_requirements=lambda definition: tool_hook_requirements(
+                registry, definition
+            ),
+            hooks_v2_render_context=(
+                getattr(
+                    getattr(self._get_hooks_v2(session_id), "native_hooks", None),
+                    "render_context",
+                    None,
+                )
+                if self._get_hooks_v2
+                else None
             ),
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
@@ -7771,6 +7883,7 @@ class ConsoleAgentBridge:
                     retained.remove(waiter)
                 if not retained:
                     self._fleet_terminal_waiters.pop(conversation_id, None)
+
     def on_fleet_child_settled(
         self, name: str, consumer: Callable[[FleetChildSettled], None]
     ) -> None:

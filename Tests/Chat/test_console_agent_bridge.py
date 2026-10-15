@@ -9346,6 +9346,9 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     # rather than by the turn ending.
     live_handle.status = "done"
     assert bridge.fleet_snapshot("conv-resend") == []
+    assert bridge._fleet_survivor_services.get("conv-resend") == [service_b]
+    # Observation preserves custody; the existing lifecycle cleanup releases it.
+    bridge.live_snapshot("conv-resend")
     assert bridge._fleet_survivor_services.get("conv-resend") is None
 
 

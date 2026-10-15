@@ -50,6 +50,7 @@ class PluginCoordinator:
         *,
         fences=None,
         mcp_mapping_owner=None,
+        model_mapping_owner=None,
     ) -> None:
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin coordinator requires a dedicated worker")
@@ -58,6 +59,7 @@ class PluginCoordinator:
         _ = registry.schema_version
         self.registry, self.authority, self.owner = registry, authority, owner
         self.mcp_mapping_owner = mcp_mapping_owner
+        self.model_mapping_owner = model_mapping_owner
         self._thread = threading.get_ident()
         self._loop = asyncio.get_event_loop()
         from .admission import LivePluginFences
@@ -462,8 +464,10 @@ class PluginCoordinator:
         self,
         installation_id: str,
         *,
-        connections: dict[str, str],
+        connections: dict[str, str] | None = None,
         tools: dict[str, tuple[str, ...]] | None = None,
+        models: dict[str, str] | None = None,
+        component_tools: dict[str, dict[str, str]] | None = None,
     ) -> PluginReview:
         """Review complete current owner references; never accept caller-made grants."""
         from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -472,7 +476,8 @@ class PluginCoordinator:
 
         self._require_worker()
         owner = self.mcp_mapping_owner
-        if not isinstance(owner, LocalMCPControlService):
+        connections = connections or {}
+        if connections and not isinstance(owner, LocalMCPControlService):
             raise PermissionError("plugin_mapping_owner_unavailable")
         snapshot = self.published_snapshot()
         installed = next(
@@ -491,8 +496,8 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not connections
-            or len(connections) > 512
+            not (connections or models)
+            or len(connections) + len(models or {}) > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -510,6 +515,50 @@ class PluginCoordinator:
             mappings.append(mapping)
             for name in sorted(set((tools or {}).get(component_id, ()))):
                 mappings.append(owner.capture_tool_mapping(mapping, inspection, name))
+        from .components import capture_model_mapping
+
+        for component_id, target in sorted((models or {}).items()):
+            if component_id not in selection:
+                raise PermissionError("plugin_component_not_selected")
+            mappings.append(
+                capture_model_mapping(
+                    self.model_mapping_owner,
+                    installation_id,
+                    inspection,
+                    component_id,
+                    target,
+                )
+            )
+        from .components import capture_tool_constraint
+
+        for component_id, constraints in sorted((component_tools or {}).items()):
+            if component_id not in selection:
+                raise PermissionError("plugin_component_not_selected")
+            for declared, target_reference in sorted(constraints.items()):
+                target_component, separator, raw_name = target_reference.partition("::")
+                targets = [
+                    row
+                    for row in mappings
+                    if row["kind"] == "tool"
+                    and row["component_id"] == target_component
+                    and row["target_reference"].partition("::")[2] == raw_name
+                ]
+                if (
+                    not separator
+                    or len(targets) != 1
+                    or target_component not in selection
+                ):
+                    raise ValueError("plugin_tool_mapping_invalid")
+                mappings.append(
+                    capture_tool_constraint(
+                        self,
+                        installation_id,
+                        inspection,
+                        component_id,
+                        declared,
+                        targets[0],
+                    )
+                )
         return self._review_existing(
             installation_id, kind="configure", mappings_json=canonical_json(mappings)
         )
@@ -607,7 +656,9 @@ class PluginCoordinator:
         if review.kind == "configure":
             mappings = json.loads(review.mappings_json)
             for mapping in mappings:
-                self.mcp_mapping_owner.validate_connection_mapping(mapping, retained)
+                from .components import validate_mapping
+
+                validate_mapping(self, mapping, retained, mappings)
             cursor.execute(
                 "DELETE FROM mappings WHERE installation_id=?",
                 (review.installation_id,),
