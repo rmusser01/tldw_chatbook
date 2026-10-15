@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 20:46
+updated_date: 2026-10-15 21:37
 labels: []
 dependencies: []
 documentation:
@@ -77,7 +77,7 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented the bounded content-free timing recorder and warm nearest-rank summary contract. The contract retains the 100/200 ms budgets, 40-warm-sample minimum, separate first-use cases, and explicit refusal of missing-paint, uncalibrated-clock, mixed-transport and compositor-as-native claims.
 
 The supported private launcher installs the unchanged real-profile guard before redirecting the Windows home. Existing approval controls: 25 passed. Recorder tests: 16 passed. Each targeted run reports one pre-existing Pydantic warning. The failed selection trace and reproducible launcher are retained under Docs/superpowers/qa/2026-10-05-console-approval-ux/; the incident is documented in backlog/docs/lessons-testing-evidence.md.
@@ -87,8 +87,8 @@ Partial delivery only: no native/browser timing capture, transparent production-
 Existing ADR-235 (backlog/decisions/235-console-approval-interaction-and-feedback.md) applies. Owned changes are the measurement probe/tests, reproducible QA evidence, testing lesson, execution-order plan and this task record. The delivered foundations passed independent review and a focused refusal-gate fix/re-review at a49161f80d; full qualification remains open.
 
 The launcher now stops unsuccessfully before pytest import when startup admission is refused. A real owned invalid-recovery fixture reproduced RED (1 failed) and GREEN (1 passed); the 16 recorder and 25 approval controls still pass. Refusal-regression receipts and Tests/Benchmarks/test_console_approval_private_control.py cover that boundary.
-<!-- SECTION:NOTES:END -->
-
+Current1c72 integration: supported private control/recorder release accepted by Root. Three overwritten original JSON/XML receipts remain a documented retention gap; fresh unchanged25-case control independently verified in E/pr3036-control-recovery-r1, never reconstructed original timing. Current recorder contract assertions pass; actual native/browser samples0/0 and100/200ms/40warm qualification remain open. See owned Task1 report and E/pr3036-current-preedit-r1; ADR235, In Progress.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 Originally TASK-34411 in the reviewed approval checkout. Renumbered to TASK-34564 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.

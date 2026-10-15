@@ -2618,3 +2618,8 @@ Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_workb
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_character_handoff_uses_user_without_profile_override
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_profile_rename_does_not_follow_legacy_pointer
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_profile_delete_does_not_clear_legacy_pointer
+
+# TASK-34569: bounded approval privacy/currentness, appended without moving existing shards.
+Tests/UI/test_approval_details_privacy.py
+Tests/UI/test_approval_details.py::test_page_from_old_revision_is_ignored
+Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement

@@ -279,6 +279,8 @@ jobs:
             Tests/test_smoke.py \
             Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection \
             Tests/MCP/test_approval_timeout_policy.py \
+            Tests/Chat/test_console_approval_scope_journeys.py \
+            Tests/Chat/test_console_approval_feedback.py::test_host_final_arbitration_wins_after_controller_receipt \
             Tests/MCP/test_control_plane_bridge.py \
             Tests/MCP/test_live_server_request_wiring.py \
             Tests/MCP/test_mcp_import_shapes.py \

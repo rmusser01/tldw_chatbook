@@ -2668,6 +2668,8 @@ def _build_approval_payload(
     pending: "list[MCPPendingCall]",
     timeout_seconds: float,
     deadline: float | None,
+    *,
+    revision: int = 1,
 ) -> dict[str, Any]:
     """Forward to the documented console_interrupt_rounds implementation."""
     from tldw_chatbook.Chat.console_interrupt_rounds import (
@@ -2682,6 +2684,7 @@ def _build_approval_payload(
         timeout_seconds,
         deadline,
         read_global_ToolExecutionPolicy=lambda: ToolExecutionPolicy,
+        revision=revision,
     )
 
 
@@ -3992,6 +3995,12 @@ class ConsoleChatController:
 
         from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
+        from .console_approval_feedback import ApprovalFeedbackStore
+
+        self.approval_feedback = ApprovalFeedbackStore()
+        self.approval_feedback_changed = None
+        if self._agent_bridge is not None:
+            self._agent_bridge.approval_feedback_store = self.approval_feedback
         self._interrupt_host = InterruptRoundHost(
             read_controller__active_assistant_message_ids=lambda: (
                 self._active_assistant_message_ids
@@ -4012,6 +4021,11 @@ class ConsoleChatController:
             read_controller__answerable_decision_by_session=lambda: (
                 self._answerable_decision_by_session
             ),
+            read_controller_approval_feedback=lambda: self.approval_feedback,
+            read_controller__publish_approval_observation=lambda: (
+                self._publish_approval_observation
+            ),
+            read_controller__notify_approval_feedback=lambda: self._notify_approval_feedback,
             read_controller__approval_view_is_detached=lambda: (
                 self._approval_view_is_detached
             ),
@@ -14440,6 +14454,8 @@ class ConsoleChatController:
         """
         self._agent_runtime_enabled = enabled
         self._agent_bridge = bridge
+        if bridge is not None:
+            bridge.approval_feedback_store = self.approval_feedback
         # PR3a-2 Task 3: a refreshed bridge is a fresh fan-out registry --
         # re-register the usage fold on it (replace-by-name makes calling
         # this with the SAME bridge a safe no-op).
@@ -16266,7 +16282,12 @@ class ConsoleChatController:
                 state = service.gate_tool_test_for_profile(hub, profile_id)
             return persona_floor_state(state, persona_policy, hub.name)
 
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
+
         provider = LocalToolProvider(
+            presentation_authority=profile_authority(
+                "local", profile_id, str(root), "call"
+            ),
             workspace_root=root,
             allow_write=allow_write,
             authority_scope=authority_scope,
@@ -16416,8 +16437,12 @@ class ConsoleChatController:
             return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
 
         from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
 
         provider = VirtualCliProvider(
+            presentation_authority=profile_authority(
+                "virtual_cli", profile_id, str(root), "call"
+            ),
             workspace_root=root,
             resolve_state=resolve_state,
             local_tools_enabled=lambda: coerce_bool_setting(
@@ -16694,6 +16719,26 @@ class ConsoleChatController:
             assistant_access=library_authority.policy.assistant_access,
         )
         return provider, authority
+
+    def _notify_approval_feedback(self, session_id: str, run_id: str) -> None:
+        callback = getattr(self, "approval_feedback_changed", None)
+        if callable(callback):
+            try:
+                callback(session_id, run_id)
+            except Exception:  # noqa: BLE001, S110 - optional display notification
+                pass
+
+    def _publish_approval_observation(self, observation) -> None:
+        from tldw_chatbook.UI.Console_Modules.approval_feedback import (
+            publish_approval_observation,
+        )
+
+        publish_approval_observation(
+            observation,
+            feedback=self.approval_feedback,
+            project=getattr(getattr(self, "_agent_bridge", None), "project_approval_feedback", None),
+            notify=self._notify_approval_feedback,
+        )
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None

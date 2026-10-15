@@ -885,6 +885,8 @@ MINIMUM_FILES = 1814
 # and its whole-file entry Tests/UI/test_media_viewer_prompt_search_15477.py are
 # deleted, so the census drops one entry: 1814 - 1 = 1813.
 MINIMUM_FILES = 1813
+# PR3036 resync: retain all 1813 current entries and append 3 approval contracts.
+MINIMUM_FILES = 1816
 
 
 def read_census(path: Path) -> list[str]:
