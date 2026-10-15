@@ -223,3 +223,149 @@ def test_fresh_agent_requires_explicit_tools_and_preserves_empty(tmp_path, tools
         assert "agent_tools_unspecified" in row.activation_blockers
     else:
         assert not row.activation_blockers and json.loads(row.definition_json)["tools"] == []
+
+
+def _owned_source_inspection(stack, root, temporary, *, recipe, kind):
+    """Use real producer custody while selecting the explicit historical recipe."""
+    import shutil
+
+    from tldw_chatbook.Plugins.acquisition import acquire_snapshot, verify_snapshot
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.inspection import catalog_overlay_from
+    from tldw_chatbook.Plugins.models import CatalogBinding
+    from tldw_chatbook.Plugins.source_service import (
+        _read_snapshot,
+        _update_locator,
+        bind_source_inspection,
+    )
+
+    def acquire(path, operation, purpose):
+        result = stack.call(lambda: acquire_snapshot(
+            select_local_source(path), operation,
+            stack.owner.acquisition_destination(operation), owner=stack.owner,
+            authority=stack.authority, _purpose=purpose,
+        ))
+        reference = stack.call(lambda: verify_snapshot(stack.owner, stack.authority, result))
+        return result, reference
+
+    catalog = entry = None
+    if kind != "direct":
+        market = temporary / "retained-source"
+        shutil.copytree(root, market / "plugins/review")
+        declaration = {"name": "review", "source": "./plugins/review"}
+        if kind == "catalog-overlay":
+            package = market / "plugins/review"
+            (package / "plugin.json").unlink()
+            write_json(package, ".codex-plugin/plugin.json", {"name": "review"})
+            write_skill(package, "alternate/example/SKILL.md")
+            declaration["skills"] = "./alternate"
+        write_json(market, ".agents/plugins/marketplace.json", {"plugins": [declaration]})
+        _, catalog = acquire(market, "retained-catalog", "catalog-cache")
+        path, snapshot = _read_snapshot(catalog, "retained-source", None)
+        entry = snapshot.entries[0]
+        root = Path(catalog.materialized_identity) / entry.local_path
+    _, package = acquire(root, "retained-package", "package-candidate")
+    captured = capture_package(Path(package.materialized_identity))
+    raw = _inspect_capture(
+        captured, recipe=recipe,
+        dialect="openai" if kind == "catalog-overlay" else None,
+        catalog_overlay=catalog_overlay_from(entry.overlays) if kind == "catalog-overlay" else None,
+    ).model_copy(update={"materialized_identity": package.materialized_identity})
+    if kind == "direct":
+        return bind_source_inspection(raw, acquisition_reference=package)
+    binding = CatalogBinding(
+        source_id="retained-source", catalog=catalog, package=package,
+        catalog_path=path, catalog_digest=snapshot.digest,
+        entry_identity=entry.identity, entry_digest=entry.digest,
+        update_locator_json=_update_locator(catalog, entry).model_dump_json(),
+    )
+    return bind_source_inspection(raw, catalog_binding=binding)
+
+
+@pytest.mark.parametrize("recipe,kind", [
+    (recipe, kind)
+    for recipe in ("dev_20261001", "branch_7b4d5c", "integrated_2")
+    for kind in ("direct", "catalog")
+] + [("branch_7b4d5c", "catalog-overlay"), ("integrated_2", "catalog-overlay")])
+def test_source_bound_retained_recipe_requires_owner_and_survives_registry_loss(
+    plugin_stack, native_package, tmp_path, recipe, kind
+):
+    inspection = _owned_source_inspection(
+        plugin_stack, native_package(), tmp_path, recipe=recipe, kind=kind
+    )
+    if kind == "catalog-overlay":
+        assert set(inspection.inventory) == {"skill:example"}
+    review, before = installed(plugin_stack, inspection)
+    with pytest.raises(ValueError, match="owner required"):
+        retained_inspections(before)
+    restored = plugin_stack.call(lambda: retained_inspections(
+        before, coordinator=plugin_stack.coordinator
+    ))[(review.installation_id, inspection.effective_digest)]
+    assert _interpretation_key(restored) == _interpretation_key(inspection)
+    assert restored.adapter_version == inspection.adapter_version
+    assert restored.catalog_binding == inspection.catalog_binding
+    assert restored.acquisition_reference == inspection.acquisition_reference
+    assert reinspect(restored, Path(restored.materialized_identity)).effective_digest == inspection.effective_digest
+    lose_registry(plugin_stack)
+    assert plugin_stack.call(plugin_stack.coordinator.recover)[0].committed
+    after = plugin_stack.call(plugin_stack.coordinator.published_snapshot)
+    assert after["revisions"] == before["revisions"]
+    assert after["components"] == before["components"]
+
+
+@pytest.mark.parametrize("damage", [
+    "nonce", "bytes", "physical", "update_origin", "overlay", "revision_digest",
+    "component", "unknown_adapter",
+])
+def test_source_bound_retained_tampering_cannot_supply_authority(
+    plugin_stack, native_package, tmp_path, damage
+):
+    import shutil
+
+    inspection = _owned_source_inspection(
+        plugin_stack, native_package(), tmp_path,
+        recipe="branch_7b4d5c", kind="catalog-overlay",
+    )
+    _, state = installed(plugin_stack, inspection)
+    bad = copy.deepcopy(state)
+    revision = bad["revisions"][0]
+    reference = revision["catalog_binding"]["package"]
+    if damage == "nonce":
+        reference["acquisition_nonce"] = "0" * 32
+    elif damage == "bytes":
+        member = Path(reference["materialized_identity"]) / "alternate/example/SKILL.md"
+        member.chmod(0o600)
+        member.write_text("changed retained source bytes")
+    elif damage == "physical":
+        leaf = Path(reference["materialized_identity"]).parent
+        hidden = leaf.with_name(leaf.name + "-retained-original")
+        leaf.rename(hidden)
+        shutil.copytree(hidden, leaf)
+    elif damage == "update_origin":
+        locator = json.loads(revision["catalog_binding"]["update_locator_json"])
+        locator["repository"] = str(tmp_path / "unselected")
+        revision["catalog_binding"]["update_locator_json"] = json.dumps(locator)
+    elif damage == "overlay":
+        revision["overlay_identities"] = []
+    elif damage == "revision_digest":
+        revision["revision_digest"] = "0" * 64
+    elif damage == "component":
+        bad["components"][0]["dependencies"] = ["skill:unreviewed"]
+    else:
+        revision["adapter_version"] = "chatbook-codex/999"
+    with pytest.raises(ValueError):
+        plugin_stack.call(lambda: retained_inspections(bad, coordinator=plugin_stack.coordinator))
+    assert plugin_stack.call(plugin_stack.authority.verify_current) == state
+
+
+def test_legacy_source_fields_remain_absent_in_authenticated_projection(
+    plugin_stack, native_package
+):
+    inspection = _inspect_capture(capture_package(native_package()), recipe="branch_7b4d5c")
+    assert "catalog_binding" not in inspection.model_dump(mode="json")
+    assert "acquisition_reference" not in inspection.model_dump(mode="json")
+    _, state = installed(plugin_stack, inspection)
+    for revision in state["revisions"]:
+        assert "catalog_binding" not in revision
+        assert "acquisition_reference" not in revision
+    assert retained_inspections(state)

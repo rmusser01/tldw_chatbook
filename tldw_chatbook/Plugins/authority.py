@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_valid
 
 from tldw_chatbook.Skills_Interop.skill_trust_crypto import canonical_json, sha256_hex
 
+from .models import AcquisitionReference, CatalogBinding
+
 PURPOSES = frozenset(
     {
         "snapshot",
@@ -16,6 +18,7 @@ PURPOSES = frozenset(
         "legacy_cutover",
         "archive-pin-v1",
         "acquisition-custody-v1",
+        "marketplace-source-v1",
     }
 )
 
@@ -116,6 +119,24 @@ class Installation(AuthorityModel):
 
 
 class Revision(AuthorityModel):
+    catalog_binding: CatalogBinding | None = None
+    acquisition_reference: AcquisitionReference | None = None
+
+    @model_validator(mode="after")
+    def exclusive_source_binding(self):
+        if self.catalog_binding is not None and self.acquisition_reference is not None:
+            raise ValueError("ambiguous_acquisition_binding")
+        return self
+
+    @model_serializer(mode="wrap")
+    def omit_absent_catalog(self, handler):
+        result = handler(self)
+        if self.catalog_binding is None:
+            result.pop("catalog_binding", None)
+        if self.acquisition_reference is None:
+            result.pop("acquisition_reference", None)
+        return result
+
     installation_id: Identifier
     revision_digest: Digest
     source_identity: Text

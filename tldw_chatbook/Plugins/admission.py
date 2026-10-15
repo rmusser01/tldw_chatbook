@@ -315,7 +315,8 @@ class PluginAdmission:
                         if row["installation_id"] == installation_id
                         and row["revision_digest"] == revision
                     ],
-                }
+                },
+                coordinator=self.coordinator,
             )[(installation_id, revision)]
             if inspection.rejected or inspection.activation_blockers:
                 raise PluginUnavailable("plugin_constraints_blocked")

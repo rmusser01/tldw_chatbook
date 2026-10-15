@@ -15,6 +15,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
@@ -32,7 +33,11 @@ from . import package_files, retention
 from .authority_store import _directory, _write
 from .data_cleanup import boot_identity, physical_identity
 from .git_source import SourceLocator, parse_source_locator, select_local_source
-from .models import AcquiredSnapshot
+from .models import AcquiredSnapshot, AcquisitionReference
+
+if TYPE_CHECKING:
+    from .authority_store import PluginAuthorityStore
+    from .runtime_owner import PluginRuntimeOwner
 
 MAX_ACQUISITIONS = 2
 ACQUISITION_SECONDS = 120
@@ -73,6 +78,10 @@ def _save(owner, authority, record):
                 old[key] != value
                 for key, value in record.items()
                 if key not in {"phase", "recovery_referenced"}
+                and not (
+                    old["phase"] == "pending"
+                    and key in {"result_digest", "result_reference"}
+                )
             ):
                 raise AcquisitionError("acquisition_custody_changed")
             if (old["phase"], record["phase"]) not in {
@@ -118,9 +127,16 @@ def _inventory(owner, authority):
     return records
 
 
-def _qualify(owner, record, *, leaf=True):
+def _qualify(owner, record, *, leaf=True, artifact_only=False):
     owner.require_owner(owner.root)
-    if record["boot"] != boot_identity() or record["root"] != _physical(owner.root):
+    terminal_artifact = (
+        artifact_only
+        and record["phase"] == "terminal"
+        and record.get("result_reference") is not None
+    )
+    if (not terminal_artifact and record["boot"] != boot_identity()) or record[
+        "root"
+    ] != _physical(owner.root):
         raise AcquisitionError("acquisition_owner_changed")
     anchor = owner.root / "staging"
     if record["anchor"] != _physical(anchor):
@@ -168,7 +184,7 @@ def _retire_cleaned(owner, authority, records, now, *, make_room=False):
     return retained
 
 
-def _reserve(owner, authority, operation_id, destination):
+def _reserve(owner, authority, operation_id, destination, *, purpose=None):
     expected = owner.acquisition_destination(operation_id)
     if destination != expected:
         raise AcquisitionError("acquisition_destination_invalid")
@@ -188,7 +204,9 @@ def _reserve(owner, authority, operation_id, destination):
     _directory(anchor)
     # A replayed terminal receipt cannot hide a different live incarnation.
     for row in records:
-        destination_for_row = _qualify(owner, row, leaf=row["phase"] != "cleaned")
+        destination_for_row = _qualify(
+            owner, row, leaf=row["phase"] != "cleaned", artifact_only=True
+        )
         if row["phase"] == "cleaned" and os.path.lexists(destination_for_row.parent):
             raise AcquisitionError("acquisition_custody_changed")
     known = {row["name"] for row in records}
@@ -220,8 +238,83 @@ def _reserve(owner, authority, operation_id, destination):
         "phase": "pending",
         "recovery_referenced": False,
     }
+    if purpose is not None:
+        if purpose not in {
+            "catalog-cache",
+            "catalog-candidate",
+            "package-candidate",
+            "import-copy",
+        }:
+            raise ValueError("acquisition_purpose_invalid")
+        record["purpose"] = purpose
     _save(owner, authority, record)
     return record
+
+
+def snapshot_reference(snapshot: AcquiredSnapshot) -> AcquisitionReference:
+    values = {
+        name: getattr(snapshot, name)
+        for name in AcquisitionReference.model_fields
+        if name not in {"content_digest", "source_digest"}
+    }
+    return AcquisitionReference(
+        **values,
+        content_digest=snapshot.inspection.content_digest,
+        source_digest=snapshot.inspection.source_digest,
+    )
+
+
+def verify_reference(
+    owner: PluginRuntimeOwner,
+    authority: PluginAuthorityStore,
+    reference: AcquisitionReference,
+) -> None:
+    """Revalidate exact producer proof and retained bytes; never infer ownership."""
+    reference = AcquisitionReference.model_validate_json(reference.model_dump_json())
+    record = next(
+        (
+            row
+            for row in _inventory(owner, authority)
+            if row["operation_id"] == reference.operation_id
+        ),
+        None,
+    )
+    if (
+        record is None
+        or record.get("result_reference") != reference.model_dump(mode="json")
+        or record["phase"] != "terminal"
+        or not record["recovery_referenced"]
+    ):
+        raise AcquisitionError("acquisition_result_unavailable")
+    if (
+        str(_qualify(owner, record, artifact_only=True))
+        != reference.materialized_identity
+        or record["nonce"] != reference.acquisition_nonce
+    ):
+        raise AcquisitionError("acquisition_result_changed")
+    capture = package_files.capture_package(Path(reference.materialized_identity))
+    if capture.errors or capture.digest != reference.content_digest:
+        raise AcquisitionError("acquisition_result_bytes_changed")
+
+
+def verify_snapshot(
+    owner: PluginRuntimeOwner,
+    authority: PluginAuthorityStore,
+    snapshot: AcquiredSnapshot,
+) -> AcquisitionReference:
+    reference = snapshot_reference(snapshot)
+    verify_reference(owner, authority, reference)
+    record = next(
+        row
+        for row in _inventory(owner, authority)
+        if row["operation_id"] == snapshot.operation_id
+    )
+    digest = hashlib.sha256(
+        package_files.canonical_json(snapshot.model_dump(mode="json")).encode()
+    ).hexdigest()
+    if record.get("result_digest") != digest:
+        raise AcquisitionError("acquisition_result_changed")
+    return reference
 
 
 def release_snapshot(owner, authority, snapshot: AcquiredSnapshot) -> None:
@@ -336,18 +429,32 @@ class _Producer:
         if not force and now - self.last_quota < POLL_SECONDS:
             return
         self.last_quota = now
+        _qualify(self.owner, self.record)
         total = 0
         for directory, dirs, files in os.walk(self.staging, followlinks=False):
             self.checkpoint()
             for name in dirs + files:
-                info = (Path(directory) / name).lstat()
+                path = Path(directory) / name
+                try:
+                    info = path.lstat()
+                except FileNotFoundError:
+                    if (
+                        force
+                        or path == self.staging
+                        or not path.is_relative_to(self.staging)
+                    ):
+                        raise
+                    continue
                 if stat.S_ISREG(info.st_mode):
                     total += info.st_size
                 elif not stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
                     raise AcquisitionError("acquisition_staging_type")
                 if total > MAX_STAGING_BYTES:
                     raise AcquisitionError("acquisition_staging_limit")
-        retention.require_capacity(self.owner.root, 0)
+        retention.require_capacity(
+            self.owner.root, 0, transient_root=None if force else self.staging
+        )
+        _qualify(self.owner, self.record)
 
     async def command(
         self,
@@ -937,6 +1044,8 @@ class _Producer:
                 root,
                 destination,
                 checkpoint=self.quota,
+                allow_catalog=self.record.get("purpose")
+                in {"catalog-cache", "catalog-candidate", "import-copy"},
             )
             await self.worker(self.quota, force=True)
             self.checkpoint()
@@ -968,6 +1077,12 @@ class _Producer:
                 inspection=inspection,
                 diagnostics=inspection.diagnostics,
             )
+            self.record["result_digest"] = hashlib.sha256(
+                package_files.canonical_json(snapshot.model_dump(mode="json")).encode()
+            ).hexdigest()
+            self.record["result_reference"] = snapshot_reference(snapshot).model_dump(
+                mode="json"
+            )
             accepted = True
             return snapshot
         finally:
@@ -992,7 +1107,13 @@ class _Producer:
 
 
 async def acquire_snapshot(
-    source: SourceLocator, operation_id: str, destination: Path, *, owner, authority
+    source: SourceLocator,
+    operation_id: str,
+    destination: Path,
+    *,
+    owner,
+    authority,
+    _purpose=None,
 ) -> AcquiredSnapshot:
     """Acquire on the existing storage worker, retaining cleanup after cancellation."""
     started = time.monotonic()
@@ -1010,7 +1131,7 @@ async def acquire_snapshot(
     if source != validated:
         raise AcquisitionError("acquisition_source_invalid")
     owner.require_owner(owner.root)
-    record = _reserve(owner, authority, operation_id, destination)
+    record = _reserve(owner, authority, operation_id, destination, purpose=_purpose)
     cancelled = threading.Event()
     producer = _Producer(owner, authority, record, cancelled)
     producer.deadline = started + ACQUISITION_SECONDS

@@ -27,15 +27,20 @@ def recovery_action(
     return "review_required" if registry_new else "abort_prepared"
 
 
-def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspection]:
+def retained_inspections(
+    snapshot: dict, *, coordinator=None
+) -> dict[tuple[str, str], PackageInspection]:
     """Reinspect immutable references; never fetch, execute or invent overlays."""
     from pathlib import Path
 
     from .package_files import capture_package
-    from .retained_inspection import _retained_candidates, _select_retained
+    from .retained_inspection import (
+        _retained_candidates, _select_retained, _verify_retained_source,
+    )
 
     result = {}
     for revision in snapshot["revisions"]:
+        _verify_retained_source(revision, coordinator)
         root = revision["materialized_identity"]
         if not root:
             raise ValueError("missing immutable package reference")
@@ -45,9 +50,14 @@ def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspect
         identity = revision["installation_id"], revision["revision_digest"]
         components = [row for row in snapshot["components"]
                       if (row["installation_id"], row["revision_digest"]) == identity]
-        result[identity] = _select_retained(
+        inspection = _select_retained(
             revision, components, _retained_candidates(capture, revision)
         )
+        if inspection.catalog_binding is not None or inspection.acquisition_reference is not None:
+            from .source_service import validate_inspection_source
+
+            validate_inspection_source(coordinator, inspection)
+        result[identity] = inspection
     return result
 
 
@@ -190,7 +200,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
             if target["operation_result"]
             else "bootstrap"
         )
-        inspections = retained_inspections(target)
+        inspections = retained_inspections(target, coordinator=coordinator)
         projection = registry.authority_projection(
             operation_result=target["operation_result"]
         )
