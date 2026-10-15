@@ -176,6 +176,11 @@ class _EngineState:
     #: Mount order of currently-mounted rounds (the card slot is one deep —
     #: the None clear pops the newest, mirroring the TUI card lifecycle).
     mounted_rounds: list[str] = field(default_factory=list)
+    #: Sessions with a background send-turn task scheduled but not yet
+    #: finished (non-blocking send, live-check round 1). Drives the genuine
+    #: pre-submit refusal: the engine admits one run per session, so a
+    #: second send while a turn is pending is refused, not queued.
+    turns_in_flight: set[str] = field(default_factory=set)
     #: Sessions with a send-initiated run whose terminal event has not been
     #: emitted yet. ``send`` is the authoritative terminal emitter (it knows
     #: a run started AND ended — a sub-poll-cadence run can otherwise flip
@@ -190,9 +195,11 @@ class MobileChatService:
     """Parent-process Console engine binding for the mobile surface.
 
     One service instance owns one engine graph over ``data_dir`` SQLite
-    databases. Sends are serialized per session via an ``asyncio.Lock``;
-    streaming is observed by subscribing to :meth:`events`. Approval rounds
-    land in ``pending_approvals`` via the ``set_pending_approval`` capture
+    databases. Sends are non-blocking: :meth:`send` pre-validates, schedules
+    the turn on a background task, and returns; the turn is serialized per
+    session via an ``asyncio.Lock`` and its streaming/outcome is observed by
+    subscribing to :meth:`events`. Approval rounds land in
+    ``pending_approvals`` via the ``set_pending_approval`` capture
     (worker-thread deliveries are marshalled into the loop) and are decided
     through :meth:`decide_approval` → ``controller.resolve_pending_approval``.
     """
@@ -212,6 +219,7 @@ class MobileChatService:
         self._hook_permissions: Any | None = None
         self._state = _EngineState()
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
         self._subscribers: set[asyncio.Queue[MobileEvent]] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -429,20 +437,71 @@ class MobileChatService:
         return self._session_dict(session)
 
     async def send(self, session_id: str, draft: str) -> None:
-        """Submit one draft; the run's streaming is observed via events().
+        """Schedule one draft's turn and return once it is submitted.
 
-        Sends are serialized per session (``asyncio.Lock``): a second send
-        to the same session starts only after the first run completes.
-        The target session is made the store's active session first — the
-        approval rounds of the ACTIVE session mount immediately (a
-        background session's rounds park until activation), and the
-        controller's stop entrypoint targets the active session.
+        Non-blocking (live-check round 1, spec §4.2): the caller's 202 must
+        not wait on the turn, because ``controller.submit_draft`` spans the
+        whole run — including a tool-approval wait that only the phone can
+        resolve. After the synchronous pre-validation below, the turn runs
+        on a background task (:meth:`_run_turn`) that owns the lock, the
+        exactly-once terminal announcement, and error capture; the turn's
+        streaming and outcome are observed via :meth:`events`.
+
+        Pre-validation refusals (raised before anything is scheduled, so the
+        REST send route maps them to 404/409):
+        - unknown ``session_id`` (``KeyError`` — the engine has no such
+          session);
+        - a turn already pending or a run still active for the session
+          (``MobileSendRefused``) — the engine's own admission rule is one
+          run per session, so this mirrors a genuine pre-submit refusal.
 
         Raises:
             KeyError: Unknown ``session_id``.
-            MobileSendRefused: The engine refused the send (no run started).
+            MobileSendRefused: A turn is already in flight for the session.
         """
         engine = await self._ensure_started()
+        # Cheap existence probe: raises KeyError for an unknown session
+        # without materializing messages.
+        engine.store.message_count(session_id)
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        status = engine.controller.run_state_for(session_id).status
+        if (
+            session_id in self._state.turns_in_flight
+            or lock.locked()
+            or status not in _SEND_ALLOWED_STATUSES
+        ):
+            logger.info("mobile send refused session_id=%s", session_id)
+            raise MobileSendRefused("a turn is already in flight")
+        self._state.turns_in_flight.add(session_id)
+        task = asyncio.create_task(
+            self._run_turn(session_id, draft),
+            name=f"mobile-send-turn-{session_id[:8]}",
+        )
+        self._turn_tasks[session_id] = task
+        task.add_done_callback(
+            lambda finished, sid=session_id: self._turn_done(sid, finished)
+        )
+        logger.info("mobile send scheduled session_id=%s", session_id)
+
+    async def _run_turn(self, session_id: str, draft: str) -> None:
+        """Run one scheduled turn to its terminal event (background task).
+
+        The old blocking-``send`` body: activate the session (the approval
+        rounds of the ACTIVE session mount immediately, and the controller's
+        stop entrypoint targets the active session), submit the draft, then
+        flush this turn's not-yet-delivered content (delta + message_done)
+        BEFORE the terminal announce — a run whose whole life fits between
+        two pump ticks would otherwise be silently baselined and the phone
+        would never see its text as events.
+        """
+        # Head start for the caller's 202: this task is queued the moment
+        # ``send`` schedules it, and the engine's submit pre-flight (tool
+        # loading, provider composition) runs synchronously for its first
+        # stretch. Yielding first lets the pending response write (and the
+        # REST middleware unwind) complete before that stretch monopolizes
+        # the loop — measured live at ~3 s of starvation without this.
+        await asyncio.sleep(0.05)
+        engine = self._require_engine()
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             self._activate_session(engine, session_id)
@@ -457,20 +516,45 @@ class MobileChatService:
                 self._state.pending_terminal.discard(session_id)
                 raise
             if not result.accepted:
+                # A refusal that only surfaced at submit time (e.g. hooks
+                # not reviewed): the caller already holds its 202, so the
+                # refusal must arrive as an event for the phone to resync
+                # and re-enable its composer. The distinguishable
+                # ``send_refused`` status lets the phone drop its
+                # optimistic user bubble (nothing was persisted).
                 self._state.pending_terminal.discard(session_id)
-                logger.info(
-                    "mobile send refused session_id=%s", session_id
+                logger.info("mobile send refused session_id=%s", session_id)
+                self._emit("run_failed", session_id, {"status": "send_refused"})
+                self._emit(
+                    "session_updated",
+                    session_id,
+                    {"session_id": session_id, "reason": "run_failed"},
                 )
-                raise MobileSendRefused(
-                    getattr(result, "visible_copy", None) or "send refused"
-                )
+                self._state.run_status[session_id] = ConsoleRunStatus.FAILED
+                return
             logger.info("mobile send accepted session_id=%s", session_id)
-            # Flush this turn's not-yet-delivered content (delta +
-            # message_done) BEFORE the terminal announce: a run whose whole
-            # life fits between two pump ticks would otherwise be silently
-            # baselined and the phone would never see its text as events.
             self._scan_stream(engine, session_id, active=False, flush=True)
             self._announce_run_terminal(engine, session_id)
+
+    def _turn_done(self, session_id: str, task: asyncio.Task[None]) -> None:
+        """Reap one finished turn task; convert its failure into events."""
+        self._state.turns_in_flight.discard(session_id)
+        if self._turn_tasks.get(session_id) is task:
+            self._turn_tasks.pop(session_id, None)
+        if task.cancelled():
+            return  # shutdown: no terminal event for a deliberately killed turn
+        error = task.exception()
+        if error is None:
+            return
+        # The turn died mid-run (engine-side failure). The phone already
+        # holds its 202: announce a terminal event so the composer
+        # re-enables and the resync shows the persisted reality.
+        logger.error(
+            "mobile turn failed session_id=%s type=%s",
+            session_id,
+            type(error).__name__,
+        )
+        self._emit_terminal_events(session_id, ConsoleRunStatus.FAILED)
 
     def cancel(self, session_id: str) -> bool:
         """Stop the session's active run at the next safe boundary.
@@ -793,6 +877,15 @@ class MobileChatService:
                 await pump
             except asyncio.CancelledError:
                 pass
+        # Outstanding send-turn tasks are deliberately killed; the engine
+        # teardown below stops their runs.
+        turn_tasks = list(self._turn_tasks.values())
+        self._turn_tasks.clear()
+        self._state.turns_in_flight.clear()
+        for task in turn_tasks:
+            task.cancel()
+        if turn_tasks:
+            await asyncio.gather(*turn_tasks, return_exceptions=True)
         engine = self._engine
         if engine is None:
             return

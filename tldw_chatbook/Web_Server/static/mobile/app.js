@@ -49,6 +49,7 @@
     messageIds: new Set(),
     cursor: null,
     rowsById: new Map(), // message id -> rendered <li>
+    pendingUserTexts: [], // optimistic drafts awaiting their real wire row
     activeRuns: new Set(), // session ids with a run in flight
     approvals: [],
     ws: null,
@@ -204,6 +205,13 @@
 
   function appendMessage(msg) {
     if (state.messageIds.has(msg.id)) return;
+    // Reconcile an optimistic user bubble with its real wire row (the
+    // non-blocking send persists the row a tick after its 202).
+    if (msg.role === "user" && state.pendingUserTexts[0] === msg.content) {
+      state.pendingUserTexts.shift();
+      const optimistic = els.transcript.querySelector("li[data-optimistic]");
+      if (optimistic) optimistic.remove();
+    }
     state.messageIds.add(msg.id);
     state.messages.push(msg);
     els.transcript.append(renderMessage(msg));
@@ -211,8 +219,27 @@
     scrollTranscript();
   }
 
+  function appendOptimisticUser(text) {
+    const li = document.createElement("li");
+    li.className = "role-user";
+    li.dataset.optimistic = "1";
+    li.textContent = text;
+    state.pendingUserTexts.push(text);
+    els.transcript.append(li);
+    els.chatEmpty.hidden = true;
+    scrollTranscript();
+  }
+
+  function dropOptimisticUsers() {
+    state.pendingUserTexts = [];
+    for (const row of els.transcript.querySelectorAll("li[data-optimistic]")) {
+      row.remove();
+    }
+  }
+
   function scrollTranscript() {
-    window.scrollTo(0, document.body.scrollHeight);
+    const region = els.transcript; // the transcript is the scroll container
+    region.scrollTop = region.scrollHeight;
   }
 
   function mergeMessages(incoming) {
@@ -233,6 +260,7 @@
     state.messages = [];
     state.messageIds = new Set();
     state.rowsById = new Map();
+    state.pendingUserTexts = [];
     els.transcript.replaceChildren();
     mergeMessages(Array.isArray(data.messages) ? data.messages : []);
     state.cursor = data.cursor || state.cursor;
@@ -314,6 +342,9 @@
     els.composerInput.value = "";
     sessionStorage.removeItem(draftKey(sessionId));
     autoGrow();
+    // The 202 returns before the turn runs (non-blocking send): show the
+    // user bubble now; the real row reconciles it on the next sync.
+    appendOptimisticUser(text);
     await syncOpenSession();
   }
 
@@ -526,6 +557,16 @@
       case "run_failed":
         state.activeRuns.delete(sessionId);
         if (sessionId === state.openSessionId) updateComposerState();
+        if (
+          event.type === "run_failed" &&
+          payload.status === "send_refused" &&
+          sessionId === state.openSessionId
+        ) {
+          // The engine refused the turn after its 202 (nothing persisted):
+          // drop the optimistic bubble and surface the refusal.
+          dropOptimisticUsers();
+          showError("send_refused");
+        }
         syncOpenSession(); // cross-surface completions land via this resync
         break;
       case "approval_requested":

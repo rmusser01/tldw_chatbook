@@ -225,11 +225,16 @@ async def handle_messages(server: Any, request) -> Any:
 
 
 async def handle_send(server: Any, request) -> Any:
-    """Submit one draft; answers ``202 {"ok": true}`` once the turn is in.
+    """Submit one draft; answers ``202 {"ok": true}`` once it is scheduled.
 
-    The phone learns the turn's streaming and outcome by polling the
-    messages route (the service's event stream feeds the Phase-1b WS
-    surface, not this REST table).
+    Non-blocking (spec §4.2 / live-check round 1): ``service.send``
+    pre-validates synchronously — unknown session ``404``, a turn already
+    in flight ``409 send_refused`` — then schedules the turn on a
+    background task and returns, because the engine's ``submit_draft``
+    spans the whole run including any tool-approval wait. The phone
+    observes streaming and the outcome via the WS stream (or the messages
+    resync), including a submit-time refusal, which arrives as a
+    ``run_failed {"status": "send_refused"}`` event.
     """
     from aiohttp import web
     from .mobile_service import MobileSendRefused
