@@ -3,21 +3,20 @@ id: TASK-34569
 title: Qualify Console approval clarity and responsiveness
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 06:42'
-updated_date: '2026-10-13 18:41'
+- '@codex'
+created_date: 2026-10-06 06:42
+updated_date: 2026-10-15 20:46
 labels: []
 dependencies:
-  - TASK-34564
-  - TASK-34565
-  - TASK-34566
-  - TASK-34567
-  - TASK-34568
+- TASK-34564
+- TASK-34565
+- TASK-34566
+- TASK-34567
+- TASK-34568
 documentation:
-  - >-
-    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-  - backlog/decisions/229-console-approval-interaction-and-feedback.md
-  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+- backlog/decisions/235-console-approval-interaction-and-feedback.md
+- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -42,7 +41,7 @@ Verify the reviewed permission interaction and measure the resulting native and 
 <!-- SECTION:PLAN:BEGIN -->
 ### Task 6 Qualify the complete interaction and publish evidence
 
-**Backlog:** TASK-34569. **ADR:** ADR-229 with the existing UI and security decisions. **Consumes:** Tasks 1-5 and their passing targeted receipts; Task 1's comparable baseline.
+**Backlog:** TASK-34569. **ADR:** ADR-235 with the existing UI and security decisions. **Consumes:** Tasks 1-5 and their passing targeted receipts; Task 1's comparable baseline.
 
 **Files:** Create `Tests/UI/test_console_approval_ux_journeys.py` and `Tests/Chat/test_console_approval_scope_journeys.py`. Extend the Task 1 probe with new owner observations while retaining old boundary names. Update `Docs/User_Guide/console/agent-runs-and-tools.md`, `Docs/User_Guide/Console.md`, `Docs/User_Guide/mcp.md`, and the existing `scripts/regen_approval_card_svg.py` fixture only where its controls/copy changed. Regenerate `Docs/User_Guide/images/console/approval-card.svg`. Save actual evidence and qualification notes under the already declared QA directory.
 
@@ -56,25 +55,25 @@ Verify the reviewed permission interaction and measure the resulting native and 
 - [ ] **Step 6: Review and close out.** Self-review the complete diff, then use the requesting-code-review skill for one independent final review. Resolve material findings and rerun only affected checks. Update ACs, Implementation Notes, relevant docs, ADR links and real evidence; add a lesson only if a specific incident generalizes. Use the Backlog CLI to mark each verified task Done. Commit owned files only. PR creation, publishing or merging follows any later user instruction; this plan does not require a full sweep or imply an unrequested release.
 
 ADR required: yes
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
-Reason: Existing ADR229 with ADR150/161/195/210 governs verification/documentation of the implemented interaction; no new runtime interface or permission policy.
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
+Reason: Existing ADR235 with ADR150/161/195/210 governs verification/documentation of the implemented interaction; no new runtime interface or permission policy.
 
 Execution clarification: author independent user-guide/artwork and integration tests while Task5 final commit/review completes; run final integration/qualification only against its reviewed commit. Native/browser presented-frame gate remains open under the recorded capability limitation.
 
-Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 
 Scoped dispatch-plan preflight correction: Ruling: preserve approved pre-edit launch/control/measurement prerequisites and finalize artifacts before final guards/paint timing — product changes cannot follow purported final qualification — costs baseline setup and only affected requalification after later repairs; unavailable actual paint stays open.
 Ruling: require bounded executable approval safety coverage in qualification-task acceptance and refreshed required lanes — local passes cannot protect omitted privacy/currentness/invocation contracts — costs recurring bounded CI within unchanged limits. Follow the revised current integration Task1 before product edits; preserve source-approved scopes and every historical receipt/acceptance record. No new ADR/ID or product boundary.
 
-2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR229/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
+2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR235/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
+2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented captured-card guides and reproducible artwork with production theme fallback, destination-validation/bare-theme regressions, finite targeted launcher additions and final content-free receipts under Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/. New journeys connect painted consent/controller arbitration to real permission/cache owners and private SQLite using harmless external transport doubles (scope9/UI4). Existing stale-generation, disclosure, Details, FIFO/deadline and Alt+A composer cases are credited separately. Final targeted presentation18/feedback29/Details18/interaction21/artwork5/recorder16/bundle5 pass. Tokens7pass1existingfail, component13pass5existingfails with matching BASE messages; startup lazy imports2pass, optional-work wait fails identically on BASE. Owned root Ruff/format pass. Native/browser presented-frame observers unavailable, zero qualified samples, actual Windows local/virtual dispatch root-pin failures and complete transport visual matrix remain open. No freeze/speed claim or full sweep. ADR-229; all13 rulings/costs preserved; final independent review pending; In Progress, not Done.
+Implemented captured-card guides and reproducible artwork with production theme fallback, destination-validation/bare-theme regressions, finite targeted launcher additions and final content-free receipts under Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/. New journeys connect painted consent/controller arbitration to real permission/cache owners and private SQLite using harmless external transport doubles (scope9/UI4). Existing stale-generation, disclosure, Details, FIFO/deadline and Alt+A composer cases are credited separately. Final targeted presentation18/feedback29/Details18/interaction21/artwork5/recorder16/bundle5 pass. Tokens7pass1existingfail, component13pass5existingfails with matching BASE messages; startup lazy imports2pass, optional-work wait fails identically on BASE. Owned root Ruff/format pass. Native/browser presented-frame observers unavailable, zero qualified samples, actual Windows local/virtual dispatch root-pin failures and complete transport visual matrix remain open. No freeze/speed claim or full sweep. ADR-235; all13 rulings/costs preserved; final independent review pending; In Progress, not Done.
 
-Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-229.
+Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-235.
 
 Independent bounded plan preflight preserves original scope but found missing recurring required-CI acceptance/verification argument. Current plan and this acceptance now make final executable critical coverage explicit. Applicable original measurement/prerequisite/consumer obligations are clarified without relaxing limits or claiming implementation/UAT.
 <!-- SECTION:NOTES:END -->

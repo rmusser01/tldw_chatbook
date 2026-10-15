@@ -4,7 +4,7 @@ Date: 2026-10-05
 
 Status: Approved for implementation planning after owner review and source review corrections. Implementation has not started.
 
-ADR: [ADR-229](../../../backlog/decisions/229-console-approval-interaction-and-feedback.md) (Accepted).
+ADR: [ADR-235](../../../backlog/decisions/235-console-approval-interaction-and-feedback.md) (Accepted).
 
 ## Purpose
 
@@ -178,9 +178,9 @@ As an optional usability check, use representative rendered cards to ask users t
 
 ADR required: yes
 
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
 
-Reason: This changes the lasting approval interaction and defines a runtime-to-UI acknowledgment contract. ADR-229 records those choices without replacing existing enforcement. Relevant decisions are [ADR-032](../../../backlog/decisions/032-local-agent-tool-permission-boundary.md), [ADR-067](../../../backlog/decisions/067-indefinite-human-approval-waits.md), [ADR-090](../../../backlog/decisions/090-permission-request-context-summaries.md), [ADR-093](../../../backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md), [ADR-150](../../../backlog/decisions/150-design-token-system-and-design-language.md), [ADR-161](../../../backlog/decisions/161-component-pattern-library.md), [ADR-195](../../../backlog/decisions/195-console-live-tool-call-presentation.md), and [ADR-210](../../../backlog/decisions/210-console-region-ownership.md).
+Reason: This changes the lasting approval interaction and defines a runtime-to-UI acknowledgment contract. ADR-235 records those choices without replacing existing enforcement. Relevant decisions are [ADR-032](../../../backlog/decisions/032-local-agent-tool-permission-boundary.md), [ADR-067](../../../backlog/decisions/067-indefinite-human-approval-waits.md), [ADR-090](../../../backlog/decisions/090-permission-request-context-summaries.md), [ADR-093](../../../backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md), [ADR-150](../../../backlog/decisions/150-design-token-system-and-design-language.md), [ADR-161](../../../backlog/decisions/161-component-pattern-library.md), [ADR-195](../../../backlog/decisions/195-console-live-tool-call-presentation.md), and [ADR-210](../../../backlog/decisions/210-console-region-ownership.md).
 
 The [implementation plan](../plans/2026-10-05-console-approval-ux-and-responsiveness.md) records existing TASK-34564 through TASK-34569 in dependency order. They remain To Do until execution starts, when each task receives its Implementation Plan and ADR check. Exact additional performance fixes require baseline attribution before code. Product implementation and latency qualification are subsequent work.
 

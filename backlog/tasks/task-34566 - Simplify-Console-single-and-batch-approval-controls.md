@@ -3,17 +3,16 @@ id: TASK-34566
 title: Simplify Console single and batch approval controls
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 06:41'
-updated_date: '2026-10-12 03:56'
+- '@codex'
+created_date: 2026-10-06 06:41
+updated_date: 2026-10-15 20:46
 labels: []
 dependencies:
-  - TASK-34565
+- TASK-34565
 documentation:
-  - >-
-    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-  - backlog/decisions/229-console-approval-interaction-and-feedback.md
-  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+- backlog/decisions/235-console-approval-interaction-and-feedback.md
+- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -39,7 +38,7 @@ Make the common permission decision immediate and make batch decisions explicit 
 <!-- SECTION:PLAN:BEGIN -->
 ### Task 3 Replace overlapping controls with explicit decisions
 
-**Backlog:** TASK-34566. **ADR:** ADR-229/150/161/031. **Consumes:** ApprovalBatchView and owner metadata from Task 2.
+**Backlog:** TASK-34566. **ADR:** ADR-235/150/161/031. **Consumes:** ApprovalBatchView and owner metadata from Task 2.
 
 **Files:** Create `tldw_chatbook/UI/Console_Modules/approval_controls.py` and `Tests/UI/test_approval_interaction.py`. Modify `Widgets/Chat_Widgets/chat_approval_card.py`, `chat_task_cards.py`, `css/core/_variables.tcss`, `css/build_css.py`, and create `css/features/_console_approvals.tcss`. Move feature-local approval rules from `components/_agentic_terminal.tcss` at their existing cascade position; do not duplicate canonical ds-approval-card definitions. Update the existing action-ownership, compact-layout, batch-geometry and card tests.
 
@@ -53,28 +52,28 @@ Make the common permission decision immediate and make batch decisions explicit 
 - [ ] **Step 6: Close and commit.** Update task notes and evidence with exact tested outcomes. Keep existing set_batch pre-mount all-or-nothing behavior and construction-time hiding; do not reintroduce deferred mount hides or zero-delay timers.
 
 ADR required: yes
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
-Reason: Existing ADR-229/150/161/031 defines explicit approval interactions, token-backed layout and neutral focus without new permission policy or schema.
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
+Reason: Existing ADR-235/150/161/031 defines explicit approval interactions, token-backed layout and neutral focus without new permission policy or schema.
 
 Execution: consume the reviewed owner capture foundation while documented Windows dispatch and transport qualifications remain open; no scope/lifetime changes or speculative speed repair.
 
 Final review correction: implement batch scope disclosure with gesture-generation/focus protection and neutral Review individually route; cover actual batch gestures and scope/count preservation.
 
-PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR229 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
+PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR235 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
 
-Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented explicit single and counted bulk controls, deliberate raw review and exact complete maps, neutral Alt+A focus with Enter consumed, captured action/target/profile/location/scope, and token-governed responsive action layout. Independent review round1 fixes display redaction while preserving canonical originals, captured/reused path-precheck warnings, named broader Apply and complete mixed count/tool/scope summaries, complete distinguishing path/URL/command targets versus explicitly marked parameter excerpts, distinct narrow bulk actions, UTF8 and fenced Escape opener focus. Preserved all stale/replacement/clear/finishing/duplicate and denial/round assertions. Task3-added private artifacts removed from index only; local files retained. Durable QA/report: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-3/task-3-report.md. Targeted interaction20/presentation18/card32/ownership25 and focused captured painted checks pass; bundle/token and owned static checks pass. Exact BASE worker/first-open/governance failures, native timing and actual Windows virtual dispatch remain open. Subsequent reused metadata is inspected via an explicit Home gesture; no production scroll reset or initial-reused visibility claim. ADR-229 with150/161/031 applies. Status remains In Progress pending independent re-review and existing DoD limits.
+Implemented explicit single and counted bulk controls, deliberate raw review and exact complete maps, neutral Alt+A focus with Enter consumed, captured action/target/profile/location/scope, and token-governed responsive action layout. Independent review round1 fixes display redaction while preserving canonical originals, captured/reused path-precheck warnings, named broader Apply and complete mixed count/tool/scope summaries, complete distinguishing path/URL/command targets versus explicitly marked parameter excerpts, distinct narrow bulk actions, UTF8 and fenced Escape opener focus. Preserved all stale/replacement/clear/finishing/duplicate and denial/round assertions. Task3-added private artifacts removed from index only; local files retained. Durable QA/report: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-3/task-3-report.md. Targeted interaction20/presentation18/card32/ownership25 and focused captured painted checks pass; bundle/token and owned static checks pass. Exact BASE worker/first-open/governance failures, native timing and actual Windows virtual dispatch remain open. Subsequent reused metadata is inspected via an explicit Home gesture; no production scroll reset or initial-reused visibility claim. ADR-235 with150/161/031 applies. Status remains In Progress pending independent re-review and existing DoD limits.
 
-Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-229.
+Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-235.
 
-Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-229.
+Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-235.
 
-PR3036 remediation: captured withheld_scope_copy renders literally beneath affected choices under More options and refreshes/clears on reuse. Existing geometry regression now exercises both closed/disclosed states via real click with overlap, containment, token width28, hit-testing, focus and staged Escape assertions. Interaction28, geometry1, action ownership25, compact3 passed. Independent review found no remaining actionable issue. ADR-229/150/161. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/full matrix and full DoD remain open; In Progress.
+PR3036 remediation: captured withheld_scope_copy renders literally beneath affected choices under More options and refreshes/clears on reuse. Existing geometry regression now exercises both closed/disclosed states via real click with overlap, containment, token width28, hit-testing, focus and staged Escape assertions. Interaction28, geometry1, action ownership25, compact3 passed. Independent review found no remaining actionable issue. ADR-235/150/161. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/full matrix and full DoD remain open; In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
