@@ -1747,3 +1747,79 @@ from this amendment, and no new schema of authenticated authority is introduced.
 Fresh `/2` inspections use the captured regular-file `.chatbook-plugin/catalog.json` when no explicit external overlay is supplied. An explicitly reviewed external overlay uses the bounded canonical `catalog-v1:` carrier. Conflicting simultaneous captured and external catalog inputs refuse before review; no carrier silently wins. Manifest fields replace catalog fields wholesale. Historical dev and published-branch recipes retain their original carrier and replacement rules.
 
 Fresh `/2` foreign agents require an explicit supported tool contract. Omitted tools leave that agent unavailable with a visible blocker while independently valid siblings remain inspectable. An explicit empty tool list stays EMPTY; omission never means inheritance or a wider authority ceiling. Unsupported source constraints remain visible and fence the affected scope. Historical dev inheritance and published-branch explicit-tool semantics remain exact under their closed retained recipes. Existing actual-parent, mapping and permission-store gates still apply.
+
+### I3 acquisition operation contract (R83/R84)
+
+`PluginService.acquisition_destination(operation_id)` selects the only permitted
+output, `staging/<sha256(operation_id)>/snapshot`, under the existing profile
+owner. `await service.acquire_snapshot(source, operation_id, destination)` runs
+on the original storage worker. Authority must already be initialized and
+unlocked. The frozen `AcquiredSnapshot` carries the operation/nonce, selected
+transport/origin/repository/ref/subdirectory, pinned Git commit and selected tree
+(or no Git IDs for a plain directory), materialized path, F1 inspection/digests
+and metadata-only diagnostics. It grants neither trust nor activation.
+
+Use `parse_source_locator` for `https://host/repository`,
+`ssh://user@host[:port]/repository`, or `github:owner/repository`, with optional
+`#ref=refs/heads/main&subdir=relative/package`. Use `select_local_source(Path)`
+only after explicit local selection. Remote declarations cannot select local
+paths. The initial parser deliberately refuses scp syntax, HTTP/file/ext, URL
+passwords, HTTPS usernames, queries, encoded/whitespace repository paths and
+IPv6 literals. Local regular directories use F1; ordinary or bare SHA-1 Git
+repositories are copied through bounded descriptor-backed storage reads into an
+owned bare repository. Source Git config, hooks, filters and upload-pack commands
+are never read or invoked. Linked worktrees, commondir, alternates, linked/special
+object storage, required submodules and LFS pointers refuse explicitly. Packed
+refs are supported. No checkout, submodule update, LFS client, build or install
+runs. Selected commit, every ancestor/descendant tree and each materialized blob
+are checked against their object ID before returning provenance.
+
+Limits remain two unsettled acquisitions, 120 seconds, 500 MiB staging per
+operation, 100 MiB expanded package, 10 MiB per file, 10,000 files and depth 32,
+plus F7's 2 GiB managed usage and 100 MiB minimum free space. Streaming process
+output, file writes, local storage copying and F1 revalidation have bounded
+checkpoints. Disk use is polled during external Git execution; this is not an OS
+filesystem quota and can overshoot between polls. A deadline starts cancellation;
+it never authorizes releasing an unproved producer.
+
+The result keeps an authenticated recovery reference until the caller has
+finished consuming or explicitly discarded it and calls
+`release_acquired_snapshot(result)`. I4 must bind its separate origin/commit/tree
+and selected catalog/update origin into authenticated review/recovery. Passing
+only `materialized_identity` to the existing `review_install(Path)` does not
+persist this provenance. Release is not cleanup: `cleanup_acquisitions()` reuses
+F7 only after exact authenticated terminal custody, physical identity checks,
+release and 24-hour age. The bounded 1,000-record inventory retires only oldest authenticated, released,
+already-cleaned receipts at capacity or after 30 days (R85), after exact original
+root/anchor qualification and confirmed staging absence. A retained operation
+label cannot be reused. After eligible retirement, the label may start fresh
+bounded acquisition with a new nonce and physical incarnation requiring new
+review; an old result/receipt cannot release or hide the new leaf. Protected
+inventory exhaustion refuses work rather than dropping protections. Unknown, lost, tampered, replaced, nonterminal or recovery-referenced
+staging is never inferred abandoned. A restart can reconcile an exact released
+terminal receipt on the same native boot/filesystem incarnation. There is no
+automatic reconciliation of a pending receipt after process/host loss.
+
+Host authentication uses explicitly supported host authority, under R84. Ordered
+Git helpers/username/useHttpPath, including host Git includes and credential URL
+contexts, are projected into private operation config. HTTPS preserves sslVerify,
+sslCAInfo/sslCAPath, sslCert/sslKey/sslCertPasswordProtected, sslVersion,
+sslCipherList and pinnedPubkey; unsupported HTTP policy, proxy/extra-header,
+rewrites, redirects and command overrides refuse visibly. SSH statically refuses
+Match/Include and unknown configured fields before fixed installed `ssh -G`.
+Supported identities/certificates/agent, public-key/preferred authentication,
+known-host/strict checking, host-key algorithms and exact user/host/port are
+frozen into private config. Proxy/jump, forwarding, commands, canonicalization,
+retargeting and nondefault key-provider forms refuse. The installed SSH default
+`$SSH_SK_PROVIDER` is accepted only with that environment override absent, then
+pinned to the internal provider. Authentication is noninteractive. Private
+operation config can contain host helper/configuration values; credentials never
+enter result models, custody receipts or diagnostic output. These forms are a
+conservative subset of Git/OpenSSH configuration, not arbitrary config support.
+
+Qualified evidence uses installed Apple Git 2.39.5 on macOS/APFS, controlled
+local repositories, a local TLS Git endpoint with fake ordered credential
+helpers, and controlled SSH transport with actual installed `ssh -G` projection.
+The SSH transport fixture proves generated configuration/argv and immutable Git
+fetch, not a real remote account login or every TLS/client-certificate option.
+Other platforms and SHA-256 repositories are not qualified by this evidence.

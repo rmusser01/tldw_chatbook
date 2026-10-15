@@ -85,3 +85,20 @@ class PackageInspection(FrozenModel):
     @field_serializer("inventory", "dependency_edges", "link_targets")
     def serialize_mapping(self, value):
         return dict(value)
+
+
+class AcquiredSnapshot(FrozenModel):
+    """Frozen acquired bytes/provenance; inspection is never activation."""
+
+    operation_id: str
+    acquisition_nonce: str
+    transport: Literal["https", "ssh", "local"]
+    origin: str
+    repository: str
+    ref: str
+    subdirectory: str | None = None
+    commit: str | None = None
+    tree: str | None = None
+    materialized_identity: str
+    inspection: PackageInspection
+    diagnostics: tuple[Diagnostic, ...] = ()

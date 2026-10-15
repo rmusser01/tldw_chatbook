@@ -20,6 +20,8 @@ from .revocation import RevocationRequest, RevocationTarget
 
 if TYPE_CHECKING:
     from .data_cleanup import DataRootRef, RootReview
+    from .git_source import SourceLocator
+    from .models import AcquiredSnapshot
 
 
 @dataclass(frozen=True)
@@ -225,6 +227,50 @@ class PluginService:
             )
 
         return await self._call(operation)
+
+    async def acquire_snapshot(
+        self, source: SourceLocator, operation_id: str, destination: Path
+    ) -> AcquiredSnapshot:
+        """Acquire a disabled candidate on the existing owner and worker."""
+        from .acquisition import acquire_snapshot
+
+        return await self._call(
+            lambda: acquire_snapshot(
+                source,
+                operation_id,
+                destination,
+                owner=self._coordinator.owner,
+                authority=self._coordinator.authority,
+            )
+        )
+
+    async def acquisition_destination(self, operation_id: str) -> Path:
+        return await self._call(
+            lambda: self._coordinator.owner.acquisition_destination(operation_id)
+        )
+
+    async def release_acquired_snapshot(self, snapshot: AcquiredSnapshot) -> None:
+        """Release the result reference after consumption or explicit discard."""
+        from .acquisition import release_snapshot
+
+        await self._call(
+            lambda: release_snapshot(
+                self._coordinator.owner,
+                self._coordinator.authority,
+                snapshot,
+            )
+        )
+
+    async def cleanup_acquisitions(self) -> tuple[str, ...]:
+        """Reclaim only released, exact terminal acquisitions older than 24 hours."""
+        from .acquisition import cleanup_acquisitions
+
+        return await self._call(
+            lambda: cleanup_acquisitions(
+                self._coordinator.owner,
+                self._coordinator.authority,
+            )
+        )
 
     async def review_data_creation(
         self, installation_id: str, *, workspace_id: str | None = None
@@ -1417,6 +1463,11 @@ class PluginService:
             async def finalize():
                 if self._ordinary_calls:
                     raise PluginUnavailable("plugin_calls_not_drained")
+                if any(
+                    not task.done()
+                    for task in self._coordinator.owner.acquisition_tasks
+                ):
+                    raise PluginUnavailable("plugin_acquisition_cleanup_not_drained")
                 usage = self._coordinator.root_usage
                 if any(
                     operation.task is not None and not operation.task.done()

@@ -394,6 +394,24 @@ class PluginAuthorityStore:
         if not hmac.compare_digest(self.sign_archive_pin(payload), mac):
             raise ValueError("managed pin authentication failed")
 
+    def sign_acquisition_custody(self, payload: dict) -> str:
+        """Authenticate bounded cleanup evidence, without granting package trust."""
+        if (
+            payload.get("namespace_id") != self.namespace_id()
+            or len(canonical_json(payload)) > 65536
+        ):
+            raise ValueError("acquisition custody invalid")
+        self.verify_current()
+        return hmac.new(
+            self._require_keys().committed_key,
+            authority_message("acquisition-custody-v1", payload),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def verify_acquisition_custody(self, payload: dict, mac: str) -> None:
+        if not hmac.compare_digest(self.sign_acquisition_custody(payload), mac):
+            raise ValueError("acquisition custody authentication failed")
+
     def metadata(self) -> dict:
         """Read versioned trust metadata without reinterpreting historical bytes."""
         value = _read(self.store_dir / "metadata.json")
