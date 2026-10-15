@@ -928,8 +928,7 @@ class _RealStores:
 
     def _open(self):
         from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-        from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
-            ScheduledTasksDB)
+        from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
         from tldw_chatbook.Subscriptions import LocalWatchlistsService
 
         self.subs_db = SubscriptionsDB(self.paths["subs"], "restore-test")

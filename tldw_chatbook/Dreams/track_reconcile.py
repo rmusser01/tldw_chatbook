@@ -362,7 +362,7 @@ def _read_drift(
                  if row.get("subscription_id")],
                 () if enabled else [row["alert_rule_id"] for row in rows
                                     if row.get("alert_rule_id")])
-        except Exception as exc:  # noqa: BLE001 - re-raised, named
+        except Exception as exc:  # re-raised, named
             raise _StoreReadRefused("subscriptions", exc) from exc
         finally:
             # Its connections are per thread: this worker's goes now, as
@@ -375,7 +375,7 @@ def _read_drift(
         try:
             reminders = scheduling_db.list_reminder_tasks_by_link(
                 _REMINDER_LINK_TYPE, [row["id"] for row in rows + gone_listing])
-        except Exception as exc:  # noqa: BLE001 - re-raised, named
+        except Exception as exc:  # re-raised, named
             raise _StoreReadRefused("scheduled tasks", exc) from exc
     return _restore_drift(
         rows, gone, run_states, rule_states, reminders, enabled=enabled)
