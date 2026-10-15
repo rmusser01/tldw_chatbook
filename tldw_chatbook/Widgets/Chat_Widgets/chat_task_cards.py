@@ -242,6 +242,7 @@ class ChatTaskCards(Container):
             summary=approval.get("summary"),
             view=approval.get("view"),
             presentation_revision=approval.get("presentation_revision"),
+            presentation_state=approval.get("presentation_state"),
         )
 
     @staticmethod

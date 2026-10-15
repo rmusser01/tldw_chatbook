@@ -59,3 +59,10 @@ The owner accepted the reviewed spec and requested continuation into planning. T
 Original approval ADR221 at source4bc8a00e01b2 preserves the owner-approved 2026-10-05 design and six source tasks. The older current-dev ADR221 prompt-injection cache decision keeps its identity; this younger approved interaction becomes ADR235 after an all-ref/worktree census. Existing34564-34569 identities and historical34411-34416 remapping remain.
 
 Current integration preserves ADR220 human-decision authority, all prior Goal/Personal Context/response-rule/received-preparation owners, original captured matching inputs and actual grant writers. Display-only complete Details must apply current shared CLI-token masking to captured argv and shared URL query-shaped fragment masking, preserving nonsecret anchors/parameters and original invocation arguments. Physical native/browser paint and calibrated timing are separate from mounted/scripted correctness; the proposed100/200ms targets and40-sample distributions cannot be declared achieved from a server frame or Pilot pause. No permission, stamp, provider, storage or timeout boundary changes.
+
+
+## Review completion on current dev
+
+Committing controls wait for the exact card generation's request rows and action controls to mount and complete a layout refresh. This is a local information-readiness fence, not a physical browser or native paint measurement. Teardown closes the existing Details preparation controller cooperatively and rejects late delivery without querying retiring DOM or restoring focus.
+
+The existing retained pending-round payload owns a scalar-only presentation record for its exact session/run/round/revision. Navigation saves choices, deliberate review, disclosures and page/scroll positions; a recreated card restores them behind fresh gesture and readiness fences. Settlement or replacement retires the record through the existing interrupt host. Captured arguments, prepared pages, widgets, callbacks and workers never enter this record; it neither grants access nor survives the pending round.
