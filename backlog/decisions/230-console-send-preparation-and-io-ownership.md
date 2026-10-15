@@ -71,3 +71,65 @@ Keep the minimum canonical acceptance/checkpoint and required consent/trace/cont
 ## Renumbering and current integration
 
 Original source decision at c504ff3b1bda is preserved above with its original approval/Proposed status. The older current-dev ADR222 HTTP-session and ADR223 embedding-cache decisions keep their identities; younger Send-preparation222 and polling223 become230 and231 after the all-ref/worktree census. Existing34406/34563 child task IDs and historical qualification remain. The general polling proposal stays Proposed; only its explicitly accepted sole-stock-manual-Preparing amendment is selected. Current integration composes resident acknowledgement/captured-draft/custody/human-decision/Goal/Personal Context/response-rule owners, not a parallel ledger, cache or scheduler. Actual current native, original callback, final saved-source and rendered-input/transport evidence must qualify the original bounds before completion; old source counts or server-frame emission do not establish that proof.
+
+
+## Current-owner integration amendment (2026-10-13)
+
+Current integration retains Console automatic-submission, Goal/Personal Context, Rules helper pool and machine-followup custody owners. Received manual intent grants no new automatic allowance. Keep shared history/native-hook budget and deadline accounting, exact origin/capability, generation checks across awaits, immediate destructive Rule revocation before writer waits, and physical preparation/transport retirement before creator close. Settled Goal automatic repair remains refused.
+
+### Current mounted authority reconciliation — 2026-10-13
+
+The current mounted adapter already owns a checked `turn_admission` pre-capture. Preserve that owner and its matching/fallback decision. The shared snapshot producer may receive its already captured change-review roots, character authority, prompt transforms and skill maximum as explicit data inputs; it must not repeat those native reads or retain the UI owner. All other selected/session fields continue through the same producer. These inputs add no permission or durable acceptance: current live invocation/dispatch checks remain authoritative. Unknown/custom callback affinity and current cache compatibility remain with their original adapters. ADR required: this amends existing230, no new ADR. Native parity and no-repeat controls precede mounted adoption; standalone result parity is not full Send acceptance.
+
+
+The complete legacy UI custody route may attach its original synchronous draft revision to the existing request/claim. Its successful same-stack captured-prefix commit may record one exact resulting revision on that claim, only while the original captured revision and session slot still match. Promotion retains this explicit owned-transfer witness for cancellation restoration; it never snapshots a later draft. Later authored empty or identical text has a distinct revision and survives. Default detached/custom requests keep no witness and their existing preparation identity/API; explicit recovery-shelf restoration retains its existing user-action contract.
+
+
+Current shared-tool preparation retains TASK33620.15.1 catalog reuse through its existing owner. The qualified detached result carries the exact server/connection observations from its catalog records (or an explicit incomplete-inventory None), never inferred after adoption. Existing fresh fingerprint, manifest/governance, file-stamp/settlement, admission-epoch, composition-key and connection checks remain required before retention/reuse. A single permission payload decode may serve MCP/local composition, while fingerprint native reads remain separate real work. No new cache, execution authority or public custom-provider arguments.
+
+### 2026-10-14 — Connected Skill defining ownership in current integration
+
+Place the existing connected Skill construction and finite trust-preparation
+bodies in a real SkillServiceWiringMixin and actual app_skill_wiring functions.
+ServiceWiringMixin inherits the descriptors normally; its existing public
+properties and original importing/patch slots remain. Captured bound callbacks,
+live Python defaults, original coroutine bodies and App/Service/instance custom
+shadows keep their existing dispatch contract. No forwarding alias, additional
+service or general provenance/custody framework is introduced.
+
+Moved bodies continue reading the live original app_service_wiring collaborator
+slots. The existing consumed source records address the actual defining class
+and module. At finite capture, retain the original module and validate its
+already recorded helper pointer before retained proof/loop/thread reads; keep
+that original module through the issued worker's existing await/error/drain
+path. This is ordering of existing source refusal, not a new blanket body or
+default policy. Separate published-plugin/builtin checks and unconsumed custom
+construction routes stay separate. Physical retirement and original permissions
+remain required before publication/creator teardown.
+
+Exact scoped proposal4be7147c and independent reviewf17aa6ea bind the connected
+35-owner relocation and six explicit retained-pointer corrections. Causal stock
+Skill/Collections native-held negatives precede the3 passing prospective
+controls. This releases only the reviewed current-owner integration and its
+affected qualification; native optimization, whole-Send timing, final-base
+count pins and full acceptance remain open.
+
+### Current run-log path preparation
+
+TASK34563.6 shares one sensitive-path context only within the exact current ordinary RunLogWriter bind operation. Preserve its two independent containment checks, original migration and effect ordering, and the original captured containment callback. Qualify the already consumed writer, predicate and resolver records before each check. A changed or customized callback, method body or default uses the existing two-argument path and fresh resolution; sharing grants no authority and is not an atomic snapshot. Context preparation intentionally precedes a possible path refusal, matching the selected original task. No cross-bind cache, source capsule or new storage policy is introduced.
+
+The reviewed three-file proposal and original ordered 116-case regression are recorded in the PR3023 evidence directory. Six held-source controls additionally exercise the actual writer's native lease and hold, original denial/error boundary, custom migration arguments and physical retirement. Saved real-path qualification remains required after integration.
+
+### Checked standalone cost derivation — 2026-10-14
+
+TASK34406 AC5/51 routes the existing zero-argument cost builder through the existing checked synchronous presentation owner. Select the current session and store once in the original order; ownerless state clears before configuration/pricing work. The original derivation body and optional error boundary remain. A before-body or post-body refusal retains the last accepted display, cache classification and two outer pricing memo references, so refused work cannot change the real TTL timer or seed a later memo hit. The existing coalesced refresh selects a fresh pair on retry. Custom zero-argument builders and the original ten-second timer keep their dispatch contract.
+
+Original direct-entry and actual armed-TTL controls reproduced blocked loop progress under held configuration locks. Candidate d0d88f61 and independently reviewed original/new controls require genuine installed-path qualification with original bounds, real post-check refusal, ownerless Timer.stop/task join and fresh-owner/source replay. This extends the existing checked display contract; it adds no authority, general rollback or scheduler. Full branch/current-base/native/latency acceptance remains open.
+
+### Exact owned descriptor retirement — current Task17 integration
+
+Known descriptor cleanup uses only the existing exact issued raw operation, active process/thread/task ownership and registered FD membership. It does not re-admit new work through source/parent checks after revocation. Voice/visual precedence and the preceding checked fallback for unrelated, copied, foreign or inactive ownership remain. Uncertain known custody still reaches the original close owner, which refuses native retry and retains resources/leases. Subsequent open/read/write/publication gates remain fresh. The current source review and original ownership/count/uncertainty plus affected lock/posture controls qualify this bounded seam; no general native retirement, platform or whole-Send timing claim follows.
+
+### Current draft-cost settings freshness
+
+Current cost R3 correction before qualification: independently reviewed source77069a2f/a3fc4cd2 fixes two reached draft-estimate regressions in R2 while preserving checked warm behavior, original getter/error/ownerless/zero-arg ABI and three-reference refusal rollback. Only an existing same complete stock owner/source/current-Runtime projection with settings-revision-only drift selects the existing fresh nonblocking native config owner. No fallback follows presentationFalse; actual native post-body full-key/closing/Runtime/disposed checks retain prior display and request existing fresh retry. Qualify exact original two draft regressions, original four causal/ownerless/checked refusal cases and seven real held-settings/native postbody/lifecycle controls; all original bounds/native/Timer/error/source gates retained. Root source and TEST reviews precede guarded temporary installation only of a3fc, freshfa612 baseline and explicit current Task-governance rebind with all79AC unchanged. No task/source/nativeall/platform/base/latency/wholebranch completion. ADR required:no new ADR; existing126/230 clarified for this same-owner native selection. Original active-edit Mock failure reproduces on baseline and remains separate.

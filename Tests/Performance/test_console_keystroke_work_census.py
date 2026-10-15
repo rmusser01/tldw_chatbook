@@ -41,6 +41,7 @@ from typing import Any
 import pytest
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_controller_stubs import context_spend_for_test
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -675,8 +676,8 @@ async def _census(
         # projection rebuild before the measured unchanged typing burst; a
         # real restored conversation also paints context and cost before input.
         screen = pilot.app.screen
-        screen._active_console_settings_context_estimate()
-        screen._build_console_cost_state()
+        context_spend_for_test(screen)._active_console_settings_context_estimate()
+        context_spend_for_test(screen)._build_console_cost_state()
         if known_evidence:
             _settle_known_connection_evidence(pilot.app, screen)
             await _settle(pilot, passes=10)  # Its one refresh is not typing.

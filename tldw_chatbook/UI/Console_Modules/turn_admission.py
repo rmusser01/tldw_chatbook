@@ -121,7 +121,9 @@ def authority_inputs(controller: Any, session_id: str) -> AuthorityInputs:
     store = controller._ensure_console_chat_store()
     session = next(item for item in store.sessions() if item.id == session_id)
     include_bindings = bool(
-        coerce_bool_setting(console_config.get("agent_runtime", True), True)
+        console_live_runtime_enabled(
+            getattr(controller.app_instance, "app_config", None), console_config
+        )
         and not store.session_one_shot_prefill(session_id)
         and session.assistant_kind != "character"
     )
@@ -224,3 +226,158 @@ def applied(authority: TurnAuthority | None) -> Iterator[None]:
         yield
     finally:
         _PRECAPTURED.reset(reset)
+
+
+# Bind the current authority producers where they are defined/imported, before
+# a custom callback can be mistaken for the standard worker-safe producer.
+_CONSOLE_POLICY_PRODUCERS = tuple(
+    (name, callback, callback.__code__, callback.__defaults__, callback.__kwdefaults__)
+    for name, callback in (
+        ("resolve_turn_tool_policy_profile_id", resolve_turn_tool_policy_profile_id),
+        ("resolve_turn_persona_policy_rules", resolve_turn_persona_policy_rules),
+    )
+)
+
+
+def policy_producers_current() -> bool:
+    """Custom authority producers retain the preceding caller-affinity route."""
+    return all(
+        globals().get(name) is callback
+        and callback.__code__ is code
+        and callback.__defaults__ is defaults
+        and callback.__kwdefaults__ is kwdefaults
+        for name, callback, code, defaults, kwdefaults in _CONSOLE_POLICY_PRODUCERS
+    )
+
+
+def console_live_runtime_enabled(
+    resident_config: object, fallback_console: Mapping[str, Any]
+) -> bool:
+    """Honor the live runtime switch without replacing other captured settings."""
+    resident_console = (
+        resident_config.get("console", {})
+        if isinstance(resident_config, Mapping)
+        else {}
+    )
+    flag = (
+        resident_console["agent_runtime"]
+        if isinstance(resident_console, Mapping) and "agent_runtime" in resident_console
+        else fallback_console.get("agent_runtime", True)
+    )
+    return coerce_bool_setting(flag, True)
+
+
+def select_configuration_values(self, session_id: str, *, scratch_owner):
+    """Select detached view values only for the qualified stock capture route."""
+    from functools import partial
+
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        ConsoleTurnCaptureSelection,
+    )
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        load_direct_library_tools,
+    )
+
+    from .session import (
+        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        _console_global_user_display_name,
+        coerce_int_setting,
+    )
+    from .wiring import _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+
+    scratch = self._scratch_snapshot_provider
+    scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+    if (
+        type(scratch) is not partial
+        or scratch.func is not scratch_function
+        or scratch_function.__code__ is not scratch_code
+        or len(scratch.args) != 1
+        or scratch.keywords
+    ):
+        return None
+    if not policy_producers_current():
+        return None
+    screen = scratch.args[0]
+    if (
+        getattr(screen, "_session", None) is not self
+        or screen.app_instance is not self.app_instance
+    ):
+        return None
+    runtime = screen._console_runtime()
+    if runtime._scratch_spaces is not scratch_owner:
+        return None
+    app_config = self._provider_readiness_app_config()
+    selection = self._build_provider_selection_fn(session_id)
+    console_config = (
+        app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+    )
+    if not isinstance(console_config, Mapping):
+        console_config = {}
+    store = self._ensure_console_chat_store()
+    session = next((row for row in store.sessions() if row.id == session_id), None)
+    if session is None:
+        raise KeyError(session_id)
+    agent_runtime_enabled = console_live_runtime_enabled(
+        getattr(self.app_instance, "app_config", None), console_config
+    )
+    return ConsoleTurnCaptureSelection(
+        provider_selection=selection,
+        presentation_context=store.presentation_context(
+            session_id, _console_global_user_display_name(app_config)
+        ),
+        rag_defaults={
+            "source_types": tuple(self._rag_source_types_accessor()),
+            "top_k": self._rag_top_k_accessor(),
+        },
+        tool_configuration={
+            "session_ephemeral": bool(session.ephemeral),
+            "agent_runtime_enabled": agent_runtime_enabled,
+            "native_tool_calls_enabled": coerce_bool_setting(
+                console_config.get("native_tool_calls", True), True
+            ),
+            "local_tools_enabled": coerce_bool_setting(
+                console_config.get("local_tools_enabled", False), False
+            ),
+            "direct_library_tools": load_direct_library_tools(app_config),
+            "project_instructions_startup_max_bytes": coerce_int_setting(
+                console_config.get(
+                    "project_instructions_startup_max_bytes",
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            ),
+            "project_instructions_nested_max_bytes": coerce_int_setting(
+                console_config.get(
+                    "project_instructions_nested_max_bytes",
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            ),
+            "exchange_capture_enabled": coerce_bool_setting(
+                console_config.get("exchange_capture", True), True
+            ),
+        },
+        skill_workspace_id=None,
+        project_bindings_eligible=bool(
+            agent_runtime_enabled
+            and not store.session_one_shot_prefill(session_id)
+            and session.assistant_kind != "character"
+        ),
+        agent_runtime_enabled=agent_runtime_enabled,
+    )
+
+
+_CONSOLE_SELECTION_SOURCES = tuple(
+    (name, callback, callback.__code__, callback.__defaults__, callback.__kwdefaults__)
+    for name, callback in (
+        ("select_configuration_values", select_configuration_values),
+        ("console_live_runtime_enabled", console_live_runtime_enabled),
+        ("policy_producers_current", policy_producers_current),
+    )
+)

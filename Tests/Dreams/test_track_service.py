@@ -1897,6 +1897,14 @@ async def test_track_check_delivers_through_the_real_file_backed_inbox(
         result = await run_track_check(deps, item_id)
 
         assert result == {"status": "changed", "notified": True}
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        with storage._lock:
+            assert not [
+                lease for lease in storage._live_leases
+                if lease.resource_path == store.db_path
+                and lease.resource_thread is not threading.current_thread()
+            ], "the completed dispatch must retire its own native inbox handle"
         (row,) = store.list_notifications()
         assert row["category"] == "dreams_track"
         assert row["source_entity_id"] == str(item_id)

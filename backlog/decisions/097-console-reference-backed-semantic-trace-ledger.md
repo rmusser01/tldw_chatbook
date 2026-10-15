@@ -655,3 +655,8 @@ AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change
 An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
 or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.
+
+
+## Current-owner integration amendment (2026-10-13)
+
+Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.

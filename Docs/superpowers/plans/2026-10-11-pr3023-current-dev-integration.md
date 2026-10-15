@@ -65,3 +65,242 @@ All task status/ACs remain open. Historical76 prose stays in historical source r
 ### Start-gate clarification after independent review
 
 Ruling: permit private implementation only after independent start/plan SPEC+QUALITY passes on the exact current reviewed predecessor and root explicitly releases the worker. This supersedes the earlier actual-merged-base-before-code wording, now corrected in the Source paragraph and Task1 step1. It does not move publication/merge ahead of predecessors: before publishing3023,3010 and3020 must have actually merged, root must reconcile onto their actual current dev result, and genuinely changed boundaries must be requalified. Cost if wrong: extra feature-only reconciliation and affected verification if a reviewed predecessor changes. User-authorized continued work alongside other merges supports this reversible isolated work; no public side effect, unknown authority, cap or acceptance is waived. Independent review found code/evidence binding PASS atf4d3 but implementation-release SPEC/QUALITYFAIL only for this gate ambiguity; that negative report remains preserved. This clarification does not itself release product work.
+
+
+### Current live-model instruction — 2026-10-13
+
+The human explicitly selected `deepseek-flash` for the eventual matched #3023 latency qualification after the historical `deepseek-chat` target was unavailable. Preserve the historical negative and original whole-Send, physical-input, trace/checkpoint, cleanup and native-platform requirements. Root performs those external checks only after frozen current-source review and actual-base reconciliation; this instruction does not establish any result or delegate provider/key/native execution to the private implementation worker.
+
+
+### Current shared-tool cache ruling — 2026-10-13
+
+Root confirms TASK33620.15.1 accepted stock warm catalog reuse remains required. Reconcile TASK34563.3's checked detached observation/adoption through `console_run_start_tools`, preserving exact fresh content/governance/manifest/connection/key validation, settlement/epoch retention and one shared kill-switch decision. Custom/plugin/subclass APIs and fresh invocation gates remain unchanged. Source's bypass of this current owner is superseded, not an approved optimization. Run unchanged current UI reuse controls and original shared-consumer controls before integration, then qualify actual stock warm/cold/invalidation and physical lifetime. No second generic cache or weaker source validation. Cost: additional current-owner reconciliation; acceptance stays open.
+
+### Current tab/attachment order reconciliation — 2026-10-13
+
+Root confirmed AC10/49: after causal current controls, publish current tabs through the same serialized owner before cold readiness. This is the sole bounded exception to blanket helper-order wording; preserve all other current helper relative order and the accepted TASK33628.5.1 rails-to-transcript two-turn yield, fresh post-await rail derivation, no duplicate unqualified publication, and full visit/replay/maintenance/cancellation completion. Qualify original long-chat/yield and actual new/coalesced/cold/retarget callers before manual-Preparing narrowing. General polling remains closed.
+
+Root warm-tab evidence ruling precedes fixture adaptation: accepted TASK33265 zero warm storage admissions/opens supersedes source nonempty raw scopes only on warm route. Actual729/current load/cache/guarded AST identical; original file-posture lstat work remains. Preserve all three original behavior/currentness/replay assertions and5/10/15s limits. Observe original load/cache warm-return identity and zero registered raw/admission callbacks, with separate posture counts; link actual cold/held-native tab controls for positive resource calibration/retirement. Preserve3attributionF28.82s and single all-thread empty-census diagnostic separately. Artifact E/pr3023-root-warm-tab-native-evidence-ruling.md SHA2560541afd1901dfae34f44f62e561b80cc3c4b1101e8e4ac15fd4dc7b260b97bd9. No product/polling change or forced native work.
+
+### Root-scoped literal argv prerequisite, 2026-10-13
+
+After actual current private writer RED (literal x64 failure, ordinary positive),
+reconcile only frozen source TASK34404 AC13/7f0b51a172 under TASK34406's added
+outcome AC and existing ADR126 amendment. Root ruling artifact
+`pr3023-root-windows-argv-codec-scope-ruling.md` SHA256
+`5d72a761155951e2eb2c0d9a3b3f175fa463677d612b590a52fe9a95128f1ed7`
+records source-only task provenance. Keep all three current serialization
+consumers, ordinary byte/error/one-argument behavior, parse-back, atomic source
+and cache publication owners; lazily load the exceptional codec only for
+literal backslash-x values. No whole TASK34404 import, argv normalization,
+new dependency or Windows-native qualification is implied.
+
+#### Root metadata-only release after supported-native capability run
+
+Current metadata prerequisite implementation release follows supported Windows stage2 run38515921962: original73PASS and12 capability failures only, no metadata behavior exercised. ADR required: existing ADR126 bounded amendment. Extend the reviewed four native uncertain-close birth/attempt/protected-HANDLE controls to scalar explicitly before product edits. Add only fresh scalar/batch metadata APIs, same current TokenUser projection and exact descriptor bytes, full ancestor validation and checked physical retirement of every acquired incarnation including opener validation failures. Preserve original stat/fstat and ordinary/custom call shapes, fail closed on uncertain close without retry, retain exact failed birth records. No TokenOwner policy, acquisition reuse, OPT09/36/74/task22 selection, startup or durability change. Freeze this bounded source/test delta for independent review and supported Windows behavior/refusal/retirement qualification before any optimization selection.
+
+
+### Current AC51 structural reconciliation, 2026-10-14
+
+Current AC51 structural reconciliation (2026-10-14): ADR required:no new. ADR path:N/A; existing DESIGN.md section7 and Docs/superpowers/specs/2026-08-02-screen-decomposition-design.md own this mechanical display-controller extraction; ADR126/230 checked source and physical lifetime contracts remain unchanged. Root explicitly permits planned private defining-owner migration while preserving public/action and actual late-bound/custom producer contracts.
+1. Characterize current Context/spend cache, pricing, inspector, context-read owner, wiring and mounted behavior before changing ownership. Record immutable START and accepted2716 floors independently; unchanged25204/756 caps remain required and five existing class bindings remain in semantic accounting.
+2. Reconcile the original planned18-body cluster from current implementations into UI/Console_Modules/context_spend.py:16 private definitions relocate and two Screen sync presentation entry points remain callable. Transfer13 display cache/timer fields to the controller, update actual current private callers and private tests mechanically while retaining behavior assertions. Keep current inspector_data delegation and no-memory/no-lineage rails.
+3. Construct through existing wiring.py with named late-bound callables. Framework queries/timers/notify read current Screen attributes. Keep the actual Screen for context capacity, context snapshot and pricing proof checks; retain live Screen get_pricing_catalog/build_cost_snapshot aliases, current response_rule_usage/runtime/gateway and query_one_optional behavior. Do not use a controller as the proof owner, capture mutable aliases at construction, create compatibility aliases to evade counts, or import obsolete source bodies.
+4. Preserve public action/settings/inspector/lifecycle routes, ordinary/custom source fallback and captured-source refusal, cache invalidation and original TTLs. Add only missing characterization for moved current dependencies; verify import residency and actual geometry with existing mounted controls. Keep strict successful FULL/Rules Stop and incoming credential/transcript owners intact.
+5. Separately remove only the two independently confirmed overridden dead Screen definitions after final immutable review binding; verify no decorators/defaults/registration/class captures or annotation effects are lost. Report2 fewer direct definitions, not2 eliminated semantic responsibilities.
+6. Run the affected source/custom/owner/cache/timer/inspector controls and unchanged screen ceiling, with separate negative/setup/geometry/latency reporting. No full lane/suite, deadline raise, cap waiver or completion before all scopes/DoD are met.
+
+### Current governed wiring connected relocation, 2026-10-14
+
+ADR required: yes, bounded amendments to existing ADR230 and ADR126. Reason:
+actual defining-class/module interfaces and existing consumed source-reader
+ownership move, with original service/permission/physical lifetime policy.
+
+1. Preserve exact app_service_wiring before SHAee9acfea and current
+configuration preparation before SHAaedf5abb. Independent coherent R2
+reviewf17aa6ea accepts exact proposal4be7147c after the causal stock held-pointer
+RED2F and prospective3P7.123s; frozen R1/R9 negatives remain evidence.
+2. After these ADR/CLI plan amendments, verify all four before hashes and apply
+only the four frozen R2 sources: genuine Skill/Collections mixins, actual module
+functions at original importing slots, existing source records using real
+defining owners and six explicit pointer-ordering corrections. No unrelated
+Watchlists body extraction, successor value copies or blanket callable/default
+policy. Keep original public properties, MRO/custom shadows, retained callbacks
+and actual live original module globals.
+3. Re-run affected original Skill/cold trust and Collections source/native/
+cancellation/borrowed/first-use/shutdown/custom/import controls, then the causal
+held-pointer controls against actual saved source. Preserve original assertions,
+deadlines, source/default negatives and physical creator/borrower retirement.
+4. Complete affected differential static/import/voice and source disposition
+streams. Governed wiring3509 is prospective measurement only; original cap3601
+remains until final current-base source pins. Retain all664/971/77/14 rows and
+89docs/40tasks; no whole task/status/AC/native/latency completion from this slice.
+
+### Current original AC53/54 remaining lifetime correction
+
+ADR required: no new ADR; amend existing backlog/decisions/126-complete-local-backup-and-recovery.md as above. Original TASK34406 AC53/54 and current ADR230 finite-owner design authorize this bounded correction. Preserve original7 RED68bfb and prospectiveR1 reviewer98f7/custom-owner negatives. Independently reviewed R2 source635cf95/coherent8bf756 plus prospective11 actual3693c4 (11P19.044) binds exact current owners and same original callback/default/borrowed/custom contracts.
+
+1. Verify exact three before hashes and copy only the frozen R2 Runtime/Fleet/Controller files; no generic DB helper change.
+2. Runtime captures/fences the exact installed stock recovery before the first await, carries that same finite owner through pre-creator-close join and final backstop; supported custom facades/getter errors retain original behavior.
+3. Run saved-source original7+requested4, then affected Runtime/controller/fleet/source/custom/memory/borrowed/shutdown controls with unchanged deadlines. Preserve all native/callback retirement evidence and unsupported slots negative separately.
+4. Reconcile all664/971/77/14 dispositions and final structural/source pins after actual base; no wholebranch/nativepaint/performance/Done claim from these eleven controls.
+
+### Original AC55 actual citation worker correction
+
+ADR required: no new ADR; existing ADR126 finite native retirement amended before apply. Root independently accepted original32assert fixture adaptation, actual source-current native-barrier REDbaecdb and prospective stock shield sourcee519c/custom cleanupd1272. Actual originalcontrol PASS1/1 XML5.929 total (5.18 call); correctedfive route/error/borrower controls pass on the exact prospective pair. Verify current Screen beforehash/newhelper absence then copy only Screen and exactsource helper; run savedoriginal32control+five and connected originalcitation/finite/view-worker/runtime shutdown cohort with original limits. Generic DB helper, custom/memory cancellation, query/tuple arguments and current publication fences remain unchanged. OriginalImportError and cancellation RED remain evidence; no wholebranch/nativepaint/latency/Done claim.
+
+### Reviewed original finite static and AC56 test qualification
+
+ADR required: no new ADR; existing ADR126 finite view/native retirement applies. Root scoped reviews e7f1a0e/58d84edf authorize exact eight hygiene after snapshots (only contiguous import sorting and explanatory comments, all other AST/default/closure/Assert nodes preserved), saved HF11/citation6/Lifecycle6 then differential. Install full original nine-case AC56 test and retain setup negatives; exact two missing unused monitor pins may be removed, all50 Assert nodes/defaults/keywords remain. Run actual stock3 and preserve custom6 missing-option setup negatives. No AC56 product edit until a minimal current-owner default-off display proposal is reviewed; generic DB cancellation and shared prompt/default/custom routes stay unchanged.
+
+### Selected original parent-walk and lock-preparation baseline
+
+2026-10-14 current-source TESTONLY causal qualification: freeze exact c504 original helper/test bytes and current fixture/source bindings before only original parent-walk two-boundary control plus four original cold/warm config/hook application-parent count controls. ADR required: no new ADR, existing ADR230/126 apply; no product edit/selection. Preserve full original assertions, source/lease/native/physical-close/payload/deadlines. Missing prepared-walk observer dependencies stop before native assertions and remain setup negatives; any current-body fixture adaptation requires separate source-bound review. Current close already rechecks custody after final-component fstat; no missing-fence RED inference. No full sweep or repeated Windows baseline.
+
+### Dictionary-switch original assertion settlement
+
+2026-10-14 TESTONLY dictionary-switch fixture: Root scoped f8cd718a accepts exact d878 proposal, existing unchanged4s successfulFULL helper import and two awaits after original publicactive-session waits. Preserve31wholefile assertions, exactone summaryperscope andnoDBonrecompose, samepresses/rows/sessionIDs/default40x.05 helper. Passiveoriginal1F trace proves summarizeafterfirstprematureassert. ADR required: no new ADR; existing ADR126/230 applies, no product/timer/cache/callback/deadline change. Before-hash guard exact2fe840 to377cc79 then onlysinglecase SAME frozenAC56R3 overlay; retain314/22 negatives, nofullsuiteaggregate/Goalproductapply.
+
+### Run-log prospective adjacent worker and admitted test profiles
+
+2026-10-14 TESTONLY Task6 prospective prerequisite: Root0e42667d accepts exactb33 snapshot. AddONLYthree service test bootstrap_profile markers,95assertASTs/allotherAST exact; install exact currentgrepworker fe360bdd adjacent original frozen module in E, targetabsent/owned. No __file__/workerconstant/sourcepredicate/root/authority/recordprivacy/spawn guard change. ADR required:no newADR; existing230/126 applies. Beforehash guard099cdd tob5c1dc, SAME narrow9/complete3ea7overlay/fresh actualhelper-worker-source seals/passive actualworker finalreturn/retirement. Preserve current6P3F vsprospective1P8F andfull116107P9F; ninthcounteddecoderunmarked andoldchronologyunclosed. No Goalproductapply/fullsuite.
+
+### Original AC56 saved current-owner correction
+
+2026-10-14 original AC56 reviewed saved correction: Root accepts original314 explicitpercase ade2ad2 reconciliation (292parentrecordedPASS/21prerequisitePASS/singlecorrectedPASS, not one314green), dictionarycab9 andexact3 R3c287sources. ADRrequired:no newADR; amend existingADR126 for originaldefault-off optionaldisplay finite lifetime beforeproductcopy. Retain actual original coroutine/nativecallback through repeatcancel onlyexactstockfile-backed supportedread; custom/memory/default/currentfactory/source/error/borrowed/currentIDs/publication keepcurrentroute. Fresh beforehash guard thenexact3copy; savedREALpath original9 first with actualimportedhelper/support paths+copies sealed and contemporaneous rawprivate-child XML/logarchive; proportionate currentcontroller/worldbook/dictionary/sharedprompt/default/finite/borrowed/factory cohort. Preserve allnativebarriers/assertions/deadlines/negativehistory. Task6/parent/lock/OPT36/74 productgates separate; nofullsweep/Done/latency/wholebranchclaim.
+
+### Original lock baseline current defining-close observer
+
+2026-10-14 TESTONLY originalfour .27baseline: Root75343199 accepts exactf246 helper overlay, only absent optional prepared-parent observer code lookup; actualraw/privateNativeClose/physicalfstat/source/assertions remainexact. ADRrequired:none new, existing230/126 applies. Plan/CLI thenfreshguards/copybindingactualGparticipant_lifetimes/config_test_support/private_profile/conftest livepathsANDfrozencopies. RunONLYoriginalfour cold/warm config/hook control with unchanged assertions/deadlines, preserveoriginalfive negatives and .22 count19vs2; no .22 rerun orproductchange/selection.
+
+### Eval override-only draft regression
+
+Reproduce the independently confirmed Eval participant false-ready result using the installed default EvalConfigLoader and its public update method with a shipped default value. Preserve equal effective configuration and an unsaved explicit profile override, then require drain refusal until public save or reload. This is a targeted test-only reproduction; no product edit or backup-loss claim. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: the existing complete participant safe-point contract governs this regression. Any source repair will receive a separate frozen proposal and review before application.
+
+### Saved run-log context integration
+
+Integrate the exact reviewed three-file run-log context proposal after fresh before-byte guards. Preserve original two-argument custom, migration, predicate and resolver routes, fresh denial checks and native scope retirement. The original ordered 116-case prospective regression and six held-source controls are independently accepted; their prior negatives remain. Qualify the saved real paths with the same original 116 cases and six bounded controls, using the genuine adjacent Goal worker and actual live helper/native source seals. ADR required: no new ADR. ADR paths: backlog/decisions/230-console-send-preparation-and-io-ownership.md and backlog/decisions/126-complete-local-backup-and-recovery.md, amended before application. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-run-log-finite-prospective-r2-prerequisites-original116-final-binding.json and /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-run-log-held-scope-controls-r1-qualified6-final-binding.json. Full integration and final acceptance remain open.
+
+### Context memory database affinity regression
+
+Reproduce the confirmed Context display affinity regression on a real stock controller with an actual CharactersRAGDB memory database, persisted conversation/messages and active memory selection. Compare public async presentation with the original synchronous result on the same owning thread. Observe actual defining repository queries and returned connection/thread identities without replacing production callbacks. Join the issued finite task, then close the exact fixture worker cache on its own single-worker executor before executor and creator cleanup. Preserve default and supplied global policy semantics in the eventual minimal eligibility proposal; file-backed cancellation/retirement controls remain required. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: targeted reproduction of an existing supported memory-affinity contract; no DB thread model or source change.
+
+### Saved Context affinity correction
+
+Apply only the independently reviewed Context affinity module after a fresh before-byte guard. Keep memory and custom collaborators on their original issuing thread while preserving supplied global policy and the existing finite file-backed worker, currentness, cancellation and native retirement boundaries. The exact prospective source passes the original two regressions, nine policy/memory/custom/borrowed controls and 23 existing cases. Qualify the same 11 and 23 cases on saved real paths with actual module/spec/code identity and source/helper seals. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md, amended before application. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-context-affinity-r1-prospective-final-binding.json. Full scope and final acceptance remain open.
+
+### Character ambient cancellation causal controls
+
+Run the independently reviewed three Character ambient cancellation causal controls on unchanged current source. Preserve the exact supported accessor cancellation object and cause, issuer thread and accessor counts, original ten-second Future timeout and native connection/lease/preparation-read retirement before creator cleanup. The current baseline may retain original loop errors, timeout conversion, recovery and short-circuited assertions as failures; no source correction is applied. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: targeted reproduction of the existing finite callback outcome contract. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-character-ambient-cancellation-r1-proposal.json.
+
+### Character ambient cancellation causal controls
+
+Run only the original current custom Character cancellation comparator after the reviewed fixture correction captures its actual initial error string. Preserve the exact supported accessor cancellation object and cause, issuer thread and accessor counts, original ten-second Future timeout and native connection/lease/preparation-read retirement before creator cleanup. The current baseline may retain original loop errors, timeout conversion, recovery and short-circuited assertions as failures; no source correction is applied. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: targeted reproduction of the existing finite callback outcome contract. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-character-ambient-cancellation-r1-proposal.json.
+
+### Eval selector test attribution
+
+Apply only the reviewed original Eval selector test adaptation after its fresh before-byte guard. Preserve the real installed default loader/participant, retarget and public failed-save/no-file assertions. Verify exact raw_source_selection_changed at actual scope entry while closed and resumed, unentered bodies, original bytes and real custody sets, then restore selector and resume unconditionally. Run the same planned existing seven controls against the exact prospective complete-safe-point module. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: test outcome attribution at existing source-use boundary; gate closure is not capture authority. Original two assertions remain; total twelve assertions includes ten added. No independent no-transient-native trace or product edit is claimed. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-eval-selector-fixture-r1-proposal.json.
+
+### AC75 current stock hold causal controls
+
+Run the six original current AC75 stock hold, custom replacement/body, plain instance mapping, mid-call replacement and maintenance controls. Install only the reviewed test observer prerequisite removing the obsolete unconsumed evidence pin and diagnostic branch. Preserve every assertion, actual acquisition and lease, native close, source identity, maintenance child and deadline. Bind genuine imported test helper paths and frozen copies. This run precedes any Eval or stock hold product update. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: causal qualification of the existing selected hold-count outcome without changing product policy. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-selected-raw-ac75-evidence-observer-r1-proposal.json.
+
+### Saved complete Eval safe point
+
+Apply only the reviewed complete Eval persistence safe-point expression after the original AC75 current baseline and a fresh source guard. Keep the callback outside the coordinator lock and retain all original source, admission, pending, hold, error and post-callback checks. Separate prospective seven new controls and seven existing controls passed. Qualify the same two selections on saved real paths without a finder, with actual Raw/Eval/settings code identities and live helper plus copy seals. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md, amended before apply. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-eval-complete-safe-point-r4-existing-final-binding.json. Full selected scope remains open.
+
+### Saved Character ambient handoff correction
+
+Apply only the reviewed Character ambient handoff module after a fresh before-byte guard. Preserve exact cancellation identity and cause, existing concurrent Future transport, ReaderChanged handling, custom and memory routes, callback/native retirement, publication checks and unchanged ten-second timeout. Qualify the same corrected three and original thirteen cases on saved real paths without a finder and with actual module/spec/code and live helper/copy seals. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md, amended before application. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-character-ambient-prospective-r2-final-binding.json. Full integration remains open.
+
+### AC75 optional stock query prospective qualification
+
+Qualify only the reviewed two-owner optional stock pause-query consolidation against the original six and three default/class-lookup controls. Install both candidate modules before bootstrap so storage, Raw and the captured defining-owner witness share the same actual Admission class. Bind the witness tuple and each callback, code, globals, defaults, closure, lookup and dictionary slot independently, plus compiled helper/scope/pause/storage identities. Retain every actual lease and all original custom, mapping, mid-call, maintenance, source and retirement assertions. No product copy or new refusal policy is authorized by this run. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-selected-raw-ac75-current-source-r1-proposal.json.
+
+### Saved AC75 repeated stock hold query
+
+Apply only the reviewed two-owner AC75 stock pause-query consolidation after fresh Raw and Admission byte guards. Preserve the accepted complete Eval safe point, two actual leases for one stock hold, original custom/default/class lookup/mapping/body/mid-call routes and maintenance refusal. Qualify the same original six and added three on saved real product paths without a product finder, binding the own-definition witness and each actual source/helper slot independently. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md, amended before copy. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-selected-raw-ac75-prospective-r1-final-binding.json. No whole branch, full physical close, Windows or latency acceptance follows.
+
+### Historical task-factory causal qualification
+
+Run only the reviewed two current historical factory causal cases with the genuine real App/WorkerManager/view drain and original stock file-backed AgentRuns callback. Keep enqueue-then-raise and unissued-coroutine cases separate, preserve exact factory error identity, native lease/core callback hold, original ten-second hold and 45-second child bounds, meaningful bounded actual drain progression and reset only after known work joins. Restore the factory before drain and join the exact native inner Task without cancellation before creator cleanup. Freeze current Raw/Admission dependencies after accepted Eval/AC75 integration and actual helper plus copy bindings; no product repair follows from setup or partial outcomes. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-historical-factory-current-r3-proposal.json.
+
+### Historical creation-failure prospective qualification
+
+Qualify only the reviewed historical creation-failure source against the same actual factory two and original repeated cancellation/borrowed/success five cases. Install only the exact Agent candidate before the private child imports producers, retaining truthful candidate and genuine Goal source paths, compiled code/spec/globals/closure/type-parameter gates. Keep the original native callback and exact issued Task physically retained through creation error, no inner cancellation, exact error propagation and reset only after retirement. Original worker-shield AST selector keeps two assigned-worker points and all assertions/deadlines. No source copy or broader factory guarantee follows. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-historical-factory-current-source-r1-proposal.json.
+
+### Saved historical creation failure retention
+
+Apply only the reviewed historical loader source and original five-case assigned-worker shield selector after fresh before-byte guards. Preserve original factory error propagation, exact coroutine/native callback custody, no inner cancellation, unissued coroutine closure and pending reset after retirement. All original five child assertions/deadlines and new factory two controls remain. Qualify separate saved two and five on genuine Goal paths without a product finder, with actual parent/child source/closure/type-parameter gates and seven contemporaneous child logs/receipts. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md, amended before apply. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-historical-factory-prospective-r1-final-binding.json. No universal factory/all_tasks or whole-core acceptance.
+
+### Current standalone cost causal qualification
+
+Reproduce only the two reviewed current standalone cost controls on actual Screen and source gates: direct public entry and original armed ten-second TTL, genuine configured pricing gap, original cold cache invalidation and REBUILD then FILE mutex hold. Preserve actual selected frame/Timer ancestry, all raw calls with held-phase classification, native release returns, joined worker, original deadlines and unconditional cache/profile restoration with primary errors. Archive fresh source/helper/copy seals, command/spec/compiled-code records, XML/log/observations; setup or missed-entry errors are separate from causal behavior. No product changes. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: targeted test-only reproduction of existing AC5/AC51; separate AC58 ownerless outcome remains. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-cost-standalone-current-r4-causal-proposal.json.
+
+### Current standalone cost causal qualification
+
+After the frozen collection-only setup negatives, use the reviewed complete recursive code/default/closure gate and pre-body identity checks, retaining unchanged original two TEST bodies and all raw failure history. Reproduce only the two reviewed current standalone cost controls on actual Screen and source gates: direct public entry and original armed ten-second TTL, genuine configured pricing gap, original cold cache invalidation and REBUILD then FILE mutex hold. Preserve actual selected frame/Timer ancestry, all raw calls with held-phase classification, native release returns, joined worker, original deadlines and unconditional cache/profile restoration with primary errors. Archive fresh source/helper/copy seals, command/spec/compiled-code records, XML/log/observations; setup or missed-entry errors are separate from causal behavior. No product changes. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: targeted test-only reproduction of existing AC5/AC51; separate AC58 ownerless outcome remains. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-cost-standalone-current-r5-gate-correction-proposal.json.
+
+### Standalone cost warm setup diagnostic
+
+Diagnose the standalone cost warm-setup prerequisite with two separate original selections: unknown-model entry, then the original known-model manual TTL baseline. Use the reviewed passive defining-code observer and exact current source/spec/compiled/default/closure gates. Archive each observation before the next invocation. Preserve the memory database, original four-second warm wait, all original assertions and error history; gate/setup failures are not producer results. No product edit, model chronology change or timer replacement. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: bounded TEST-only diagnosis of the existing AC5/AC51 prerequisite. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-cost-warm-primer-diagnostic-r6-proposal.json.
+
+### Warm diagnostic TEST compiler prerequisite
+
+Use the reviewed actual pytest assertion compiler and same loader configuration only for genuine TEST expected code; production compilation and all code/default/closure checks remain strict. Preserve the recorded collection-only mismatch. Execute the same two separate warm-prerequisite diagnostic selections with unchanged bodies, memory DB, model setup and four-second waits, archiving R7 output before reuse. No product or fixture body edit. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: exact TEST compiler prerequisite correction. Evidence: /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr3023-cost-warm-primer-diagnostic-r7-proposal.json.
+
+### ROOT current raw-pin qualification
+
+2026-10-14 ROOT-owned current .37 qualification: execute only original config/hook ineligible-evidence, selected POSIX native-custody and custom/portable controls. Exact41 sources/157 declared slots/13 aliases/3 runtime definers bind the accepted R3 gate plus reviewed single E-module assertion-compiler correction R4 (independent review00b4e3e). Temporarily add only the exact reviewed child source gate, retain all original assertions and30s deadline, archive three real child outcomes before profile cleanup, and restore original TEST bytes in finally. Fresh source checks, separate ordered collection/commands/XML/actual gate receipts and paired Python-source seals are required. No full sweep/provider/platform or whole-task acceptance. ADR required:no new ADR; existing126/230 apply. Evidence: root_task37_run_r4.py SHA7ce9b01108b592569b5a4ef54befaa1d544db08ffb1f3ecc1504814153a6fa6f.
+
+Current .37 R4 observer setup stopped before bodies:2 selectors/4 setup and secondary teardown errors, invalid local PY_UNWIND; original TEST restored,8479 Python seals unchanged. Stdlib-only Python3.12 probe5ece4550 and independent source review2edb453b approve finite R5 observer correction: local PY_RETURN, owned global PY_UNWIND filtered to original codes, disable owned global events before cleanup. Same original controls/assertions/source/30s child deadlines and guaranteed TEST restoration. Run R5 exactscript9fd6d7c2; command/XML/gate/child receipts, not runner exit alone, decide outcome. No new ADR; existing126/230 apply.
+
+Current .37 observer fixture binding: actual R6 confirms Gate.pin170 cannot index the unchanged original local_root lambda; original body passed but gate did not qualify. Preserve R4/R5/R6 negatives. R8 reviewed ff2b8f1a binds only the real frozen fixture body PY_YIELD, validates its actual captured callback immediately against original source/code/defaults/exact yielded-root cell, and retains stock bootstrap slot proof after original fixture teardown. Same original config/hook/POSIX/custom tests,11child assertions/30s deadline and R3 plain-import child. Exact runnerabc2a101 restores TEST and pairs source maps; command/XML/gate/native child records determine actual outcome. No product behavior/authority change. ADR required:no new ADR; existing126/230 apply.
+
+### Actual trace/capture prerequisite diagnostic
+
+Current AC5/51 warm prerequisite diagnosis: reviewed ROOT observer10d3060d over exact8 actual store/controller/native/provenance owners and retained9R7 gates, proposal8fc0a84d. Execute original unknown entry then known manual-TTL baseline separately with same memory DB/model/capture/four-second waits/assertions. Only passive fixed-code state/pause/exception-TYPE/thread/identity-relation fields; no error text,args,SQL,payload,secret reads,producer wrappers or alternate fixture. Exact41 live/copy prerequisites, commands/XML/17gate receipts/observer ownership and independent8479-source before/after seals; archive each invocation separately. Runnera1aeb3b8; preserve all R7 negatives and no producer/held-lock/TTL/native-retirement/latency conclusion until actual records establish it. ADR required:no new ADR; existing126/230 apply.
+
+### Bounded current raw-pin outcome
+
+2026-10-14 current Darwin/POSIX qualification accepted07a75c73; independent actual review69db41c5. Separate config1P1WindowsSkip4.698s,originalHook1P1WindowsSkip5.845s,POSIX7P28.308s,custom5P15.401s (14P+2actualWindows-only skips). All8ordered collection/test commands0,16parent gates empty errors,10actual original fixture lambda proofs with stock-slot restoration,3actual uncertainty children with original argv/30s deadline/log/source archives and return0. All8479Python source entries unchanged and temporary TEST restored. Counts/uncertainty retention are scoped original assertions; no all-handles-retired, Windows, latency, wholeSend or latest-base claim. Prior R4/R5/R6 setup/observer negatives and unrun R7 remain separate. Existing126/230 apply. Task remains In Progress pending current Windows/base/final integration qualification.
+
+### Original text-wait diagnostic
+
+Continue the same original AC5/51 prerequisite diagnostic with R3 original text-wait/text-return observations, proposal7a6fe182. Root source review accepts2extra helper gates(19total), genuine pytest raw/rewrite/live equality, original4.0deadline and actual poll/failure-format numeric chronology plus warm-literal presence booleans. No helper/body/model/memoryDB/timeout change or extra helper calls. Preserve R2 actual unknown1F/known1P and R1preflightnegative. Actual captured state was capture_off→settled; generic helper text is not paint or pause proof. Existing34406 task plan and126/230 apply; no task acceptance or source fix.
+
+### Actual callback-bound cost causal routes
+
+Run only original entry and true armed ten-second TTL cases using reviewed TEST adaptation31274dc0 and ROOT review3dc79039. R3 actual review2aba344e establishes original warm waits completed before4s and unknown stopped at stale TEST bound-method assumption. R5 TEST proves the actual source-bound wiring lambda and Screen closure, retaining bound Screen entry, all original causal assertions/deadlines/locks/worker cleanup. R6 definer checker adds only the genuine constructor. Archive separate exact commands/XML/12gate receipts/causal observations and8479Python source before/after maps. No producer/fixture/timer/source change or fresh known-green rerun. Existing34406/126/230 apply; no task completion or product/latency/native-all claim.
+
+### Current lock-stream caller qualification
+
+ROOT source review63536198 and finite-control reviewa0db8141 accept temporary guarded installation of only R8 private/config/hook candidates. Run original22, initial/custom/held54 and original ownership/maintenance7 in six sequential groups. Preserve actual compiler/definer/default/closure/source and positive native close gates, original assertions/deadlines, payload, exact error and worker join before restoration. Exact48source/runtime prerequisites and8479Python maps plus literal collection/commands/XML/logs/gates are archived. Restore exact original3source bytes after returned commands; no product loader or cost-run overlap. Uncertain-close actual child binding, currentWindows/latestbase/timing/wholeTask acceptance remain open. Task34563.27 stays In Progress. ADR required:no new ADR; existing126/230 apply.
+
+### Checked standalone cost qualification
+
+Temporarily stage only reviewed context_spend d0d88f61 after fresh fa612 guard. Execute original direct-entry and actual armed-TTL controls separately, then original getter/custom ABI/public ownerless clear and genuine post-body refusal/current retry controls. Preserve original4s/10s/0.5s bounds, actual timer/task/native holder cleanup, source bindings and exact restoration. Rebind only Task34406 governance after the CLI plan append with all79AC lines unchanged; no other Python source rows change. Root full R2 TEST review accepts the public ownerless delta and unchanged original causal/new post-check controls for this bounded run. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/230-console-send-preparation-and-io-ownership.md, amended before staging. Evidence: root_cost_checked_run_r3.py and R2 source/control packets. No task completion or whole-branch acceptance follows.
+
+### Current Task17 owned cleanup qualification
+
+2026-10-14 Task17 current integration correction: .27 R3 original seven reproduced three owned cleanup failures (participant/selector revocation and repeated full checks after gate close), with two separate absent-helper setup cases; independent reviewf24b90ff. Source proposal80071d34 adds only exact current issued actor/lifetime/registered FD lookup and private close dispatch after voice/visual, preserving ordinary checked fallback and unchanged uncertain no-retry retention. Root source review6ab9fa90 and finite control review root-task17-controls-r1-root-review.md precede temporary genuine-path staging of four combined candidates plus owned absent TEST alias. Qualify original7, originalcount1, relevantconfig/hook4 anddurability/posture18, then unchanged genuine private-profile uncertainty child1. Preserve all original assertions/limits/native observers, real child argv/exit/log/XML/source receipts, fresh before/staged/restored maps and exact restoration after processes join. ADR required:no new ADR; existing126/230 clarified before copy. No task Done, source selection, Windows/currentbase or overall latency acceptance follows.
+
+### Current draft-cost settings freshness
+
+Current cost R3 correction before qualification: independently reviewed source77069a2f/a3fc4cd2 fixes two reached draft-estimate regressions in R2 while preserving checked warm behavior, original getter/error/ownerless/zero-arg ABI and three-reference refusal rollback. Only an existing same complete stock owner/source/current-Runtime projection with settings-revision-only drift selects the existing fresh nonblocking native config owner. No fallback follows presentationFalse; actual native post-body full-key/closing/Runtime/disposed checks retain prior display and request existing fresh retry. Qualify exact original two draft regressions, original four causal/ownerless/checked refusal cases and seven real held-settings/native postbody/lifecycle controls; all original bounds/native/Timer/error/source gates retained. Root source and TEST reviews precede guarded temporary installation only of a3fc, freshfa612 baseline and explicit current Task-governance rebind with all79AC unchanged. No task/source/nativeall/platform/base/latency/wholebranch completion. ADR required:no new ADR; existing126/230 clarified for this same-owner native selection. Original active-edit Mock failure reproduces on baseline and remains separate.
+
+
+Current reviewed selection (2026-10-14): .27 R8 plus Task34563.17 owned-handle cleanup installed after31 bounded native cases and independent result review. Hook import-only sort has scoped Ruff0; exact current bytes/source-selection receipt retained. Cost R3 remains unselected after9P4F and two further passive failures. Original AC77 Linux6 on57067817 reproduces3P3F, with one optimization RED and two reference mismatches; independent receipt review pending. Tasks remain In Progress; existing ADR126/230; no final base/platform/latency/full-branch acceptance.
+
+AC77 source correction eligibility: original actual Linux baseline and independent reportc3e2ac9e reviewed. Existing ADR126 now clarifies successful settled absence and fixed-marker-only missing stamps before implementation. Minimal current-native source proposal and honest reference-control repairs next; original failures retained. All79AC unchanged, no task Done.
+
+Task34563.22 current native baseline: original final count10vs2 with9components/1leafgate/11positivecloses, prior assertions and original state/lease retirement reached. After independent actual review, minimum selected raw/private source proposal authorized by currentTask22 plan under existingADR126/230. No missing-fence claim, no product selection or performance/Windows/fullbranch completion.
+
+
+### Local integration checkpoint and current-dev reconciliation
+
+ADR required: no
+ADR path: N/A
+Reason: local Git checkpoint/rebase sequencing under the existing integration and preservation plan; no runtime or application contract changes.
+
+Preserve the reviewed isolated source as a normal local WIP commit before rebasing onto fresh origin/dev. This enables the requested current-dev reconciliation while Windows publication approval and final acceptance remain open. Retain original refs, immutable negative/positive receipts, pending candidate source choices and all unchecked task criteria. Use normal hooks, no public push/auto-merge, and no whole-PR acceptance claim. Resolve actual incoming-owner conflicts from current implementations, inspect the combined diff and qualify only affected relationships before final source review, provider/native acceptance and protected sequential merge. Nine whitespace-only EOF findings are recorded for minimal final cleanup; they are not functional failures.

@@ -350,3 +350,19 @@ def test_session_fingerprint_unknown_session_raises():
     store = ConsoleChatStore()
     with pytest.raises(KeyError):
         store.session_fingerprint("missing-session")
+
+
+async def test_unavailable_then_same_target_restores_transcript():
+    app = ModalShellApp([_message("assistant", "Retained reply")])
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal = app.screen
+        await pilot.pause()
+        transcript = modal.query_one("#buddy-transcript", Static)
+        assert str(transcript.renderable) == "Assistant: Retained reply"
+        session = app.coordinator.session
+        app.coordinator.session = None
+        modal._on_poll_tick()
+        assert str(transcript.renderable) == ""
+        app.coordinator.session = session
+        modal._on_poll_tick()
+        assert str(transcript.renderable) == "Assistant: Retained reply"

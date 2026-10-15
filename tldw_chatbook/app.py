@@ -1459,6 +1459,7 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._actor_pack_recovery_reads: set = set()
         # Portable Tool Packs are unavailable until first Tool Profiles use
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
@@ -1476,6 +1477,7 @@ class TldwCli(
         self._initial_screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
+        self._initial_screen_pushed = False
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
@@ -4768,17 +4770,55 @@ class TldwCli(
         """
 
         def start_actor_pack_recovery() -> Worker:
-            # task-21106: Actor Pack crash recovery, moved out of __init__ --
-            # synchronous SQLite has no place on the construction path. A
-            # thread worker (not a coroutine) because recovery does blocking
-            # DB I/O; the coordinator's own once-guard makes every later
-            # surface-side call (Personas mount, create_persona) a cached
-            # no-op -- which is also why this may be staggered at all.
+            # Keep this staggered callback off-loop, but retain its physical
+            # outcome before App shutdown retires its database creators.
+            callback = self.ensure_actor_pack_recovery
+
+            async def recover() -> Any:
+                from contextvars import Context
+
+                from textual.worker import active_worker, get_current_worker
+
+                from .Chat.console_preparation_reads import run_preparation_read
+
+                gate = getattr(self, "_boot_worker_gate", None)
+                if (
+                    self._exit
+                    or getattr(self, "_shutting_down", False)
+                    or (gate is not None and gate.is_closed)
+                ):
+                    return None
+                worker = get_current_worker()
+
+                def invoke() -> Any:
+                    def call() -> Any:
+                        token = active_worker.set(worker)
+                        try:
+                            return callback()
+                        finally:
+                            active_worker.reset(token)
+
+                    # Match FreshContextExecutor + Textual's old run_callable:
+                    # no loop ambient context, only the actual active Worker.
+                    return Context().run(call)
+
+                def issued_current() -> None:
+                    # The boot fence applies before issue, not to completion
+                    # of an already issued original/custom synchronous call.
+                    return None
+
+                return await run_preparation_read(
+                    invoke,
+                    creator=self,
+                    session_id=None,
+                    reads=self._actor_pack_recovery_reads,
+                    require_current=issued_current,
+                )
+
             return self.run_worker(
-                self.ensure_actor_pack_recovery,
+                recover,
                 name="deferred_actor_pack_recovery",
                 group="actor_pack_recovery",
-                thread=True,
                 exclusive=True,
                 exit_on_error=False,
             )
@@ -5822,3 +5862,13 @@ if __name__ == "__main__":
 #
 # End of app.py
 #######################################################################################################################
+
+
+# Defining callbacks for checked stock Console preparation; no IO.
+_CONSOLE_SKILL_APP_SOURCE = (
+    TldwCli,
+    globals(),
+    TldwCli._create_deferred_startup_task,
+    TldwCli._create_deferred_startup_task.__code__,
+    ConsoleRuntime,
+)

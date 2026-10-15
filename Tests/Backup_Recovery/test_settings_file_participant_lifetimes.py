@@ -287,12 +287,44 @@ def test_installed_default_selector_changes_cannot_demote_to_custom(
     monkeypatch.setattr(Evals, "_override_config_path", lambda: selected)
     loader = EvalConfigLoader()
     participant = raw._raw_participant(loader)
-    loader.config_path = tmp_path / "other.yaml"
-    loader.save()
-    assert loader.persistence_error == "eval_save_failed"
-    assert not loader.config_path.exists()
-    with pytest.raises(bootstrap.RecoveryRequired, match="selection_changed"):
+    original_bytes = selected.read_bytes()
+    changed = tmp_path / "other.yaml"
+    operations = set(storage._raw_operations)
+    raw_states = set(raw._states)
+    leases = set(storage._live_leases)
+    pending = set(storage._pending_acquisitions)
+    retiring = set(storage._retiring_holds)
+    reached = []
+    try:
+        loader.config_path = changed
+        loader.save()
+        assert loader.persistence_error == "eval_save_failed"
+        assert not loader.config_path.exists()
         participant.close_admission()
+        assert raw._source_participants[loader] is participant
+        assert raw._participants[participant].closed
+        with pytest.raises(bootstrap.RecoveryRequired, match="^raw_source_selection_changed$"):
+            with raw._scope(
+                loader, "eval_config", writing=True, selected_read=loader.config_path
+            ):
+                reached.append("closed")
+        participant.resume()
+        with pytest.raises(bootstrap.RecoveryRequired, match="^raw_source_selection_changed$"):
+            with raw._scope(
+                loader, "eval_config", writing=True, selected_read=loader.config_path
+            ):
+                reached.append("resumed")
+        assert not reached
+        assert selected.read_bytes() == original_bytes
+        assert not changed.exists() and not changed.with_suffix(".yaml.tmp").exists()
+        assert set(storage._raw_operations) == operations
+        assert set(raw._states) == raw_states
+        assert set(storage._pending_acquisitions) == pending
+        assert set(storage._retiring_holds) == retiring
+        assert set(storage._live_leases) == leases
+    finally:
+        loader.config_path = selected
+        participant.resume()
 
 
 def test_pet_pruning_preserves_exact_backup_bytes_and_unknown_sibling(

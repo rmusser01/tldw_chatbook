@@ -34,6 +34,10 @@ from Tests.UI.test_personas_workbench import (
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import CCPCharacterHandler
 
 
+# Keep the guarded config source on its private collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def test_app_construction_defers_actor_pack_recovery():
     """__init__ wires the coordinator but never runs recovery itself.
 
@@ -140,6 +144,7 @@ async def test_deferred_startup_kicks_the_recovery_worker():
     app = _build_test_app()
     ran = threading.Event()
     app.ensure_actor_pack_recovery = ran.set  # instance attr shadows the method
+    app._cli_no_splash = True
     async with app.run_test() as pilot:
         for _ in range(80):
             if ran.is_set():

@@ -449,6 +449,8 @@ class ConsoleTurnCustodyRequest:
         default=None,
         repr=False,
     )
+    # Optional exact UI capture witness; detached/custom callers retain None.
+    draft_revision: int | None = field(default=None, repr=False)
 
 
 def _detached_configuration(
