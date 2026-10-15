@@ -39,3 +39,6 @@ Premise re-verified against origin/dev (2026-10-12): 25 `transaction()` definiti
 4. Migrate remaining held-connection copyists one store per PR (Workspace, AgentRuns, Prompts, Client_Media, Library_Collections, event-state, client-notifications, notes-device, receipts...), 25 transaction() definitions shrinking accordingly.
 5. Stores with genuinely different contracts (Chunking_Lab durability, Client_Media blob layer) may consume the kernel without its policy — documented per store.
 
+
+
+Migration 3 (2026-10-14): AgentRuns_DB onto the kernel (BaseDB provenance, busy_timeout-first policy, no transaction override — kernel immediate default matches). Same PR lands the tri-state _transaction_immediate_default decision from the workspace-PR review and simplifies Workspace to the class attribute. Direct battery 125/125.

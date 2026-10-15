@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Union
+from typing import Union
 
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
-
 
 
 class WorkspaceDB(SQLiteStoreKernel, BaseDB):
@@ -369,17 +367,11 @@ COMMIT;
         conn.isolation_level = None
         return conn
 
-    @contextmanager
-    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        """Workspace's contract keeps the deferred-BEGIN default.
-
-        The kernel's semantics (BaseException rollback, fail-loud nesting,
-        participants gating) apply unchanged; only the default lock mode
-        differs, preserved for read-then-write call sites that serialize
-        through ``immediate=True`` explicitly (ADR-228).
-        """
-        with super().transaction(immediate=immediate) as conn:
-            yield conn
+    #: Workspace's contract keeps the deferred-BEGIN default (registry
+    #: read-then-write sites defer the lock; explicit immediate=True sites
+    #: still win). A kernel class attribute instead of a method override
+    #: (ADR-228 tri-state).
+    _transaction_immediate_default = False
 
     def _initialize_schema(self) -> None:
         """Initialize the local workspace registry schema."""
