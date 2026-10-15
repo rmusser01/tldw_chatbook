@@ -146,20 +146,23 @@ def is_dreams_source(
 
 
 def _changed_before(changed: Any, at: Any) -> bool:
-    """Whether a row last changed no later than a record was written.
+    """Whether a row last changed before a record was written.
 
     Review of #3123, M2. Users can switch a reminder or a change rule back
     on themselves (Schedules, Watchlists) -- unlike a source -- and the
     start check must not undo that. Both rows carry ``updated_at``, and a
     record the switch-off or a retirement wrote carries ``at``: a row
-    changed after the record is the user's; one changed no later is as
-    Dreams left it, or as a restore put it back. Either time missing or
-    unreadable (a record an earlier build wrote) is "cannot tell" -- not
-    taken for a restore.
+    changed after the record is the user's; one changed before it is as a
+    restore put it back (the backup was taken before the switch-off).
+    Either time missing or unreadable (a record an earlier build wrote)
+    is "cannot tell" -- not taken for a restore -- and so is the record's
+    own millisecond (round 2, P1): a restored row cannot carry it, and
+    Dreams' own disarm in it leaves the row off, which the check does
+    not look at; an armed row there is the user's re-arm.
     """
     changed_at, written_at = _moment(changed), _moment(at)
     return changed_at is not None and written_at is not None and (
-        changed_at <= written_at)
+        changed_at < written_at)
 
 
 def changed_after(changed: Any, at: Any) -> bool:
@@ -179,7 +182,8 @@ def _moment(value: Any) -> datetime | None:
     A record's ``at`` is canonical (ADR-173: milliseconds, truncated) while
     a row's ``updated_at`` may carry microseconds: compared unrounded, a
     row Dreams changed in the same millisecond it wrote the record would
-    read as changed after it.
+    read as changed after it. That millisecond is neither before nor
+    after.
     """
     moment = as_utc(value)
     return None if moment is None else moment.replace(

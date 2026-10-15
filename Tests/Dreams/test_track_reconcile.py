@@ -1238,8 +1238,9 @@ async def test_the_switch_off_never_stops_a_users_source_on_a_reused_id(
 
 def test_record_and_row_times_compare_to_the_millisecond():
     """A record's ``at`` is canonical (milliseconds, ADR-173); a rule's
-    ``updated_at`` carries microseconds. A row Dreams changed in the same
-    millisecond it wrote the record is not the user's."""
+    ``updated_at`` carries microseconds. The same millisecond is neither
+    before nor after (round 2, P1): not taken for a restore, and not the
+    user's change either."""
     from tldw_chatbook.Dreams.track_reconcile import (
         _changed_before,
         changed_after,
@@ -1247,10 +1248,50 @@ def test_record_and_row_times_compare_to_the_millisecond():
 
     at = "2026-10-15T12:00:00.123Z"
     same_ms = "2026-10-15T12:00:00.123456+00:00"
-    assert _changed_before(same_ms, at)
+    assert not _changed_before(same_ms, at)
     assert not changed_after(same_ms, at)
+    assert _changed_before("2026-10-15T12:00:00.122999+00:00", at)
     assert changed_after("2026-10-15T12:00:00.124000+00:00", at)
     assert not _changed_before(None, at) and not changed_after(None, at)
+
+
+_AT = "2026-10-15T12:00:00.123Z"
+_SAME_MS = "2026-10-15T12:00:00.123900+00:00"
+_MS_EARLIER = "2026-10-15T12:00:00.122999+00:00"
+
+
+@pytest.mark.parametrize("kind", ["rule", "reminder", "retired-reminder"])
+def test_a_row_changed_in_the_records_millisecond_is_not_the_restores(kind):
+    """Review of #3123, round 2, P1. A restored row's time predates the
+    record (the backup was taken before the switch-off or the untrack);
+    Dreams' own disarm in the same millisecond leaves the row off, which
+    the check does not look at. So an armed row in that millisecond is
+    the user's re-arm: left armed. One millisecond earlier, it is the
+    restore's. Both edges, for each kind of row the check compares."""
+    record = {"subscription": False, "reminders": ["r1"], "rules": [5],
+              "settled": "retired" if kind == "retired-reminder" else "off",
+              "at": _AT}
+    row = {"id": 1, "subscription_id": 7, "created_by_dreams": 1,
+           "alert_rule_id": 5, "event_date": "2099-10-01",
+           "story_url": "https://example.com/page",
+           "suspension": json.dumps(record)}
+    states = {7: {"is_active": False, "is_paused": False,
+                  "source": "https://example.com/page",
+                  "processing_options": None}}
+
+    def drift(changed):
+        rules = {5: {"enabled": True, "updated_at": changed}} if kind == "rule" else {}
+        reminders = [] if kind == "rule" else [
+            {"id": "r1", "link_id": "1", "enabled": True, "last_run_at": None,
+             "updated_at": changed}]
+        if kind == "retired-reminder":
+            return track_reconcile._restore_drift(
+                [], [row], states, {}, reminders, enabled=False)
+        return track_reconcile._restore_drift(
+            [row], [], states, rules, reminders, enabled=False)
+
+    assert not drift(_SAME_MS), "the same millisecond: the user's"
+    assert drift(_MS_EARLIER), "a millisecond earlier: the restore's"
 
 
 @pytest.mark.asyncio
