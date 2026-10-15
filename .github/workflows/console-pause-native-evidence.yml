@@ -14,7 +14,7 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       # Intentionally unrunnable until the distinct reviews and binding seal.
-      VIDEO_FOUR_BINDING_SHA256: '27a1af1279ae3beb1476f4b9a7398468d88b2022595f2f40dc7c151e87987700'
+      VIDEO_FOUR_BINDING_SHA256: 'd6fa580dadcb2c0cb0effc9e821af154c7904e99857c3d3aa8ac99d6eae2c00d'
     steps:
       - name: Set LF checkout policy before checkout and create failure archive
         shell: pwsh

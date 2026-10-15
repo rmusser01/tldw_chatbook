@@ -1,6 +1,6 @@
 {
   "status": "ROOT_BOUND_AND_INDEPENDENTLY_REVIEWED",
-  "publication_parent": "5e7698beb7ff67c241d0ccb265770a74e573d9f2",
+  "publication_parent": "f795af281377171ce1ccc7f6b6237d78581f61f6",
   "goal_snapshot_origin_commit": "33e67b27248e2975e5ac747099623f53dffd3b0f",
   "goal_snapshot_source_map_sha256": "d707872012b23ee1a919c7173ff984ce297d920fc0b459f54599221120000485",
   "python_source_map_sha256": "86de6986af5f223a01280a76af5dc169417c6b26a7aeeb70038654838d53044d",
@@ -75,18 +75,18 @@
       "bytes": 15037
     }
   ],
-  "outer_sha256": "61d239bd498391a6ec4eb06cf3a507ea42bb44121200b9b63682d4b73379a79b",
-  "packet_zip_sha256": "d0c659ede18141c30750ad44c69fe928e52569ac3009f605a39d8a204173b7ec",
-  "packet_manifest_sha256": "f972ff977af9ae5cbe01177f33b45e34610d209e4466d04fe6fcfa8186037d93",
+  "outer_sha256": "3e088a9b1ecad2070bb9a4c6330ff8b5958c4ee4e7daf0dc788625e3ef4207b5",
+  "packet_zip_sha256": "01cb6c8d15721c36a7999dcb39ccdd70492b62078f5581f1b3a346c80a723cbd",
+  "packet_manifest_sha256": "55bf7db7258a45054bc64b94c13e0691d43d64d648536283d8b02a052f4a33f9",
   "packet_asset_count": 71,
   "command_plan_sha256": "37fe731b631af78f03f8429565cf5fab6870ecce6f819bc48afeabbd75fe3b16",
-  "reader_sha256": "e2a4cbf86b11af4db80bd3be94e691be752788f9fa39bdf904cd702998c8342b",
+  "reader_sha256": "df577649f55803187ee24061071f05ded08b063da5c2a78436e77137532d3f10",
   "plugin_sha256": "9414ec636fc367ae2eb076c08f01f51efdbcd3f2379a94bc3c3828961d6c4a58",
   "workflow_template_sha256": "b8edb94dd39247ac3cf4daad7db440982313a664e39e3d98032d77624861c7d6",
-  "source_map_status": "Exact8532/86de on actual R1 parent5e; only setup import added outside checkout source; retry unrun.",
+  "source_map_status": "Exact8532/86de on f795; only finite reader cancellation classification corrected outside checkout source; actual corrected quit control unrun.",
   "scope": "One unchanged original quit case only, diagnosing the retained unknown final-gate failure; original predicates/bounds remain; no other three replay or product change.",
-  "reader_test_review_sha256": "17c4ee3deaea4cf910813ee6e1c64c9335a3071e5b46f6a61ce7eec5ef5e8081",
-  "operational_review_sha256": "17c4ee3deaea4cf910813ee6e1c64c9335a3071e5b46f6a61ce7eec5ef5e8081",
+  "reader_test_review_sha256": "fc194a2303a8b23eb323f6d944e03017e7c27ad565e48d138a8a9d8ed0b5e519",
+  "operational_review_sha256": "fc194a2303a8b23eb323f6d944e03017e7c27ad565e48d138a8a9d8ed0b5e519",
   "video_asset_inventory_review_sha256": "df3841b50231083e8dd267b3de56d55b7c4cd7d797a025ce24cfad5c1122126e",
   "source_snapshot_review_sha256": "df3841b50231083e8dd267b3de56d55b7c4cd7d797a025ce24cfad5c1122126e"
 }
