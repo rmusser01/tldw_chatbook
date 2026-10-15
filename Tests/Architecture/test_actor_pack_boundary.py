@@ -276,6 +276,9 @@ def test_public_actor_pack_records_and_errors_are_path_free() -> None:
 
 
 def test_actor_pack_migration_diagnostics_are_fixed_and_path_free() -> None:
+    # TASK-34906: v44->v45 is now a registry-backed shim whose diagnostics
+    # live in _run_file_migration_step; pin the shim's shape and the
+    # runner's three diagnostic lines instead of the old in-method trio.
     migration = next(
         node
         for node in _tree(CHACHANOTES_DB).body
@@ -283,17 +286,37 @@ def test_actor_pack_migration_diagnostics_are_fixed_and_path_free() -> None:
         for node in node.body
         if isinstance(node, ast.FunctionDef) and node.name == "_migrate_from_v44_to_v45"
     )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_run_file_migration_step"
+        for node in ast.walk(migration)
+    ), "v44->v45 must delegate to the shared file-step runner"
+
+    runner = next(
+        node
+        for node in _tree(CHACHANOTES_DB).body
+        if isinstance(node, ast.ClassDef)
+        for node in node.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_file_migration_step"
+    )
     diagnostic_calls = [
         node
-        for node in ast.walk(migration)
+        for node in ast.walk(runner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in {"debug", "error", "info", "warning"}
     ]
 
-    assert len(diagnostic_calls) == 3
+    assert (
+        len(diagnostic_calls) == 4
+    )  # start info, executed debug, done info, failure error
     for call in diagnostic_calls:
         source = ast.unparse(call)
         assert "db_path_str" not in source
         assert "exception=True" not in source
-        assert "{exc}" not in source
+        # The runner's failure log carries {exc} deliberately (review round
+        # 1: the original steps embedded the failure detail; dropping it
+        # made poison-test messages unmatchable). The path-free rule is the
+        # load-bearing part: db_path_str must never appear.
+        assert "db_path_str" not in source

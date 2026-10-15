@@ -482,9 +482,19 @@ class TestEntryVersionGuards:
 
     def test_every_migration_step_has_an_entry_version_guard(self) -> None:
         """No step may run without first checking the version it expects."""
+        # TASK-34906: registry-backed shims delegate the guard to
+        # _run_file_migration_step, which calls _require_migration_entry_version.
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB as _RAG
+
+        registry_backed = set(_RAG._FILE_MIGRATION_STEPS)
         unguarded = []
         for name, method in _migration_steps():
             source = inspect.getsource(method)
+            m = re.match(r"_migrate_from_v(\d+)_to_v\d+$", name)
+            if m and int(m.group(1)) in registry_backed:
+                if "_run_file_migration_step" not in source:
+                    unguarded.append(name)
+                continue
             if (
                 "_require_migration_entry_version" not in source
                 and "_get_db_version(conn) != " not in source

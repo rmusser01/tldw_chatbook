@@ -1,13 +1,13 @@
 ---
 id: TASK-34906
 title: Declarative migration registry for ChaChaNotes
-status: In Progress
+status: Done
 created_date: 2026-10-12 17:54
 labels:
 - simplification
 assignee:
 - '@zcode'
-updated_date: 2026-10-15 19:33
+updated_date: 2026-10-15 21:00
 ---
 
 ## Description
@@ -20,7 +20,7 @@ Evidence (verified on dev df4985e): 76 _migrate_from_vX_to_vY methods span ChaCh
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Declarative version-to-filename map consumed by the shared runner replaces the pure file-backed step methods,ADR-208 honored: the on-disk .sql remains the executed source,Python-orchestrated steps remain callables,Media and Prompts twin registries merge,Tests/DB/test_migration_file_sources.py and packaging tests stay green
+- [x] #1 Declarative version-to-filename map consumed by the shared runner replaces the pure file-backed step methods,ADR-208 honored: the on-disk .sql remains the executed source,Python-orchestrated steps remain callables,Media and Prompts twin registries merge,Tests/DB/test_migration_file_sources.py and packaging tests stay green
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,7 +32,7 @@ Evidence (verified on dev df4985e): 76 _migrate_from_vX_to_vY methods span ChaCh
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-PRECISE CENSUS DONE (supersedes the task's '37 pure steps' estimate): 77 step methods total in ChaChaNotes_DB. 58 are file-backed (read DB/migrations/chachanotes_v*.sql via _migration_file_statements); within those, ~34 are STRICT-PURE (version check + file read + statement loop + version verify + error wrap, nothing else - e.g. v16..v25 run, v32_to_v33 style with inline version SELECT), ~24 are HYBRID (file + genuinely extra DML in the same transaction - e.g. v26_to_v27 seeds rag_identity_context rows, v41+ steps carry python backfills). The remaining 19: 13 driven by INLINE module-level _MIGRATE_Vn_TO_Vm_SQL string constants (v4..v15 - pre-file era) and 6 pure python logic. IMPLEMENTATION SHAPE for the next session: (1) declarative _FILE_MIGRATION_STEPS: Dict[int, str] mapping from_version -> filename for the ~34 strict-pure steps; (2) generic _run_file_migration_step(from_v, to_v, filename) owning the template (require entry version / read+split file / execute per statement / verify to_v / wrap SchemaError); (3) _initialize_schema dispatch consults the registry first then falls back to the method dict; (4) hybrids keep their methods (they can call the generic runner for their file portion); (5) ADR-208 compliance is inherent - the .sql files remain the executed source (test_migration_file_sources + Tests/Packaging pins). Baseline captured: Tests/DB -k 'migration or schema' = 98 failed/643 passed (98 = known env set; /tmp/base-34906.txt). Do NOT blanket-delete method names: the migration dict at _initialize_schema:8243+ and tests reference them; replace method entries with registry lookups incrementally.
+REVISED after review round 1 (which caught two REAL bugs): the registry covers 34 steps, not 36 - v27_to_v28 (authority backfill) and v47_to_v48 (seed-validated policy-row seeding) were hybrids MISCLASSIFIED as strict-pure by the AST census (their .sql files carry only DDL; the Python half does data work the schema-fingerprint probe could not see). Both restored to full methods incl dispatch entries. Registry mechanics verified exactly right by the reviewer: all (filename, stamps_in_file) flags match the .sql contents one-to-one (13 file-stamps / 23 runner-stamps pre-removal now 12/22 with 27+47 out... actually 34 entries: 12 file-stamp + 22 runner-stamp); the v15->v81 full-chain probe produced byte-identical sqlite_master fingerprints base-vs-head (685 objects). Runner fidelity fixes from the review: SchemaError wrap now embeds {exc} (poison-test messages matchable again), per-step debug + db_sha256 on the completion line restored, failure logger.error added. Guard updates honest: atomicity guard accepts shims only because the runner calls _require_migration_entry_version (behavioral probes still cover two shims); file-sources test reads the registry class attribute (the runtime source). Actor-pack diagnostics pin repinned to the runner shape (4 diagnostic lines; the load-bearing path-free db_path_str rule kept). VERIFICATION: combined ChaChaNotesDB + migration + actor-pack suites 133 failures vs 132 stashed baseline - the single delta (test_pure_contracts_do_not_cross_runtime_ui_network_or_provider_boundaries) verified failing on pristine dev. Census correction recorded: 34 strict-pure / 28 hybrid (was 36/26).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

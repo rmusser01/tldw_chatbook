@@ -59,6 +59,16 @@ def _runtime_read_paths() -> dict[str, set[str]]:
     for module_name in RUNTIME_READER_MODULES:
         source = (DB_PACKAGE_DIR / module_name).read_text(encoding="utf-8")
         readers[module_name] = set(RUNTIME_READ_RE.findall(source))
+    # TASK-34906: ChaChaNotes' registry-backed steps open their files via
+    # a variable (``"migrations" / filename`` in _run_file_migration_step),
+    # so the literal regex cannot see them; take the names from the registry
+    # itself -- the class attribute IS the runtime source of truth.
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB as _RAG
+
+    readers.setdefault("ChaChaNotes_DB.py", set()).update(
+        filename
+        for filename, _stamp in getattr(_RAG, "_FILE_MIGRATION_STEPS", {}).values()
+    )
     # Workflows_DB builds names dynamically:
     # ``f"workflows_v{source_version}_to_v{source_version + 1}.sql"`` for
     # every step below its schema version. Derive them exactly as the

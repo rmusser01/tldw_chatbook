@@ -4916,437 +4916,6 @@ DELETE FROM keywords
                 f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
-    def _migrate_from_v16_to_v17(self, conn: sqlite3.Connection):
-        """
-        Migrates the database schema from version 16 to version 17.
-
-        This migration adds durable local-only conversation marks without adding
-        sync triggers or changing normalized conversation metadata.
-        """
-        self._require_migration_entry_version(conn, 16, "V16→V17")
-        logger.info(
-            f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v16_to_v17_conversation_local_marks.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V16→V17",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V16→V17] Migration script executed.")
-
-            final_version = self._get_db_version(conn)
-            if final_version != 17:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V16→V17] Migration version check failed. Expected 17, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V16→V17] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V16→V17] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V16 to V17 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v17_to_v18(self, conn: sqlite3.Connection):
-        """
-        Migrates the database schema from version 17 to version 18.
-
-        This migration adds a nullable ``system_prompt`` column to
-        ``conversations`` for the native Console per-session system prompt
-        feature, and redefines the ``conversations_sync_*`` triggers so edits
-        to the new column are reflected in ``sync_log``.
-        """
-        self._require_migration_entry_version(conn, 17, "V17→V18")
-        logger.info(
-            f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v17_to_v18_conversation_system_prompt.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V17→V18",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
-
-            final_version = self._get_db_version(conn)
-            if final_version != 18:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V17→V18] Migration version check failed. Expected 18, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V17→V18] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V17→V18] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V17 to V18 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v19_to_v20(self, conn: sqlite3.Connection):
-        """
-        Migrates the database schema from version 19 to version 20.
-
-        This migration adds a nullable ``metadata`` column to
-        ``conversations`` for storing conversation-specific runtime metadata
-        (e.g., active_dictionaries), and redefines the ``conversations_sync_*``
-        triggers so edits to the new column are reflected in ``sync_log``.
-        """
-        self._require_migration_entry_version(conn, 19, "V19→V20")
-        logger.info(
-            f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v19_to_v20_conversation_metadata.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                # Idempotent replay: the file's plain ``ADD COLUMN`` (SQLite
-                # has no IF NOT EXISTS form) is skipped by
-                # ``_skip_already_applied_add_column`` inside
-                # ``_execute_migration_statements`` when a partially-applied
-                # run already left the column in place.
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V19→V20",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
-
-            final_version = self._get_db_version(conn)
-            if final_version != 20:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V19→V20] Migration version check failed. Expected 20, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V19→V20] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V19→V20] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V19 to V20 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v20_to_v21(self, conn: sqlite3.Connection):
-        """
-        Migrates the database schema from version 20 to version 21.
-
-        This migration adds a ``priority`` column to ``world_book_entries``
-        (entry injection priority / budget-survival weight), and redefines
-        the ``world_book_entries_sync_*`` triggers so edits to the new
-        column are reflected in ``sync_log``.
-        """
-        self._require_migration_entry_version(conn, 20, "V20→V21")
-        logger.info(
-            f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v20_to_v21_world_book_entry_priority.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                # Idempotent replay: the file's plain ``ADD COLUMN`` (SQLite
-                # has no IF NOT EXISTS form) is skipped by
-                # ``_skip_already_applied_add_column`` inside
-                # ``_execute_migration_statements`` when a partially-applied
-                # run already left the column in place.
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V20→V21",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
-
-            final_version = self._get_db_version(conn)
-            if final_version != 21:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V20→V21] Migration version check failed. Expected 21, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V20→V21] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V20→V21] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V20 to V21 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V20→V21] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V20 to V21 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v21_to_v22(self, conn: sqlite3.Connection):
-        """Migrate schema V21→V22: add ``regex`` to ``world_book_entries`` and
-        redefine the sync triggers so edits to it reach ``sync_log``."""
-        self._require_migration_entry_version(conn, 21, "V21→V22")
-        logger.info(
-            f"Migrating schema from V21 to V22 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v21_to_v22_world_book_entry_regex.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V21→V22",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V21→V22] Migration script executed.")
-            final_version = self._get_db_version(conn)
-            if final_version != 22:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V21→V22] Migration version check failed. Expected 22, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V21→V22] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V21→V22] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V21 to V22 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V21→V22] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V21 to V22 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v22_to_v23(self, conn: sqlite3.Connection):
-        """Migrate schema V22→V23: add the local ``character_expression_images``
-        BLOB table (per-state reaction avatars; idle reuses character_cards.image)."""
-        self._require_migration_entry_version(conn, 22, "V22→V23")
-        logger.info(
-            f"Migrating schema from V22 to V23 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v22_to_v23_character_expression_images.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V22→V23",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V22→V23] Migration script executed.")
-            final_version = self._get_db_version(conn)
-            if final_version != 23:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V22→V23] Migration version check failed. Expected 23, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V22→V23] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V22→V23] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V22 to V23 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V22→V23] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V22 to V23 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v23_to_v24(self, conn: sqlite3.Connection):
-        """Migrate schema V23→V24: add the local-only ``active_leaf_message_id``
-        pointer column to ``conversations``. No triggers change — the column is
-        never synced (see ``set_conversation_active_leaf``)."""
-        self._require_migration_entry_version(conn, 23, "V23→V24")
-        logger.info(
-            f"Migrating schema from V23 to V24 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v23_to_v24_conversation_active_leaf.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V23→V24",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V23→V24] Migration script executed.")
-            final_version = self._get_db_version(conn)
-            if final_version != 24:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V23→V24] Migration version check failed. Expected 24, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V23→V24] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V23→V24] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V23 to V24 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V23→V24] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V23 to V24 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v24_to_v25(self, conn: sqlite3.Connection):
-        """Migrate schema V24→V25: add the ``message_generation_metadata`` sidecar
-        table for storing image generation metadata (prompts, backend, model, etc.).
-        No sync triggers are added; this table is local-only (v19/v24 precedent)."""
-        self._require_migration_entry_version(conn, 24, "V24→V25")
-        logger.info(
-            f"Migrating schema from V24 to V25 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v24_to_v25_message_generation_metadata.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V24→V25",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V24→V25] Migration script executed.")
-            final_version = self._get_db_version(conn)
-            if final_version != 25:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V24→V25] Migration version check failed. Expected 25, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V24→V25] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V24→V25] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V24 to V25 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V24→V25] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V24 to V25 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v25_to_v26(self, conn: sqlite3.Connection):
-        """Migrate schema V25→V26: add the local-only ``context_summary`` /
-        ``summary_boundary_message_id`` columns to ``conversations`` (Console
-        `/rewind` "summarize up to here"). No triggers change -- the columns
-        are never synced (see ``set_conversation_context_summary``)."""
-        self._require_migration_entry_version(conn, 25, "V25→V26")
-        logger.info(
-            f"Migrating schema from V25 to V26 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v25_to_v26_conversation_context_summary.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V25→V26",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V25→V26] Migration script executed.")
-            final_version = self._get_db_version(conn)
-            if final_version != 26:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V25→V26] Migration version check failed. Expected 26, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V25→V26] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V25→V26] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V25 to V26 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V25→V26] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V25 to V26 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
     def _execute_citation_migration_statement(
         self,
         cursor: sqlite3.Cursor,
@@ -5469,235 +5038,6 @@ DELETE FROM keywords
             raise SchemaError(
                 "Character authority schema version update was not applied"
             )
-
-    def _migrate_from_v27_to_v28(self, conn: sqlite3.Connection) -> None:
-        """Add local conversation authority through one rollback-safe transaction."""
-
-        if self._get_db_version(conn) != 27:
-            raise SchemaError(
-                "Character authority migration requires schema version 27"
-            )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v27_to_v28_character_authority.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                local_authority_id = self.get_local_authority_id()
-                for statement in self._migration_file_statements(migration_path):
-                    self._execute_character_authority_migration_statement(
-                        cursor,
-                        statement,
-                    )
-                self._backfill_conversation_character_authority(
-                    cursor,
-                    local_authority_id,
-                )
-                self._update_character_authority_schema_version(cursor)
-                row = cursor.execute(
-                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
-                    (self._SCHEMA_NAME,),
-                ).fetchone()
-                if row is None or row["version"] != 28:
-                    raise SchemaError(
-                        "Character authority schema version verification failed"
-                    )
-        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(
-                f"Migration from V27 to V28 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v28_to_v29(self, conn: sqlite3.Connection) -> None:
-        """Migrate schema V28→V29: add ``kept_briefings``/``kept_scripts``
-        (task-1780) -- user-kept copies of Subscriptions_DB briefings/scripts
-        that must outlive watchlist deletion. Pure additive ``CREATE TABLE``;
-        no backfill needed since these tables have no prior rows. No sync
-        triggers are added; this is a deliberate, local-only divergence (see
-        the migration file's header comment)."""
-        self._require_migration_entry_version(conn, 28, "V28→V29")
-        logger.info(
-            f"Migrating schema from V28 to V29 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v28_to_v29_kept_briefings.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V28→V29",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V28→V29] Migration script executed.")
-
-            final_version = self._get_db_version(conn)
-            if final_version != 29:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V28→V29] Migration version check failed. Expected 29, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V28→V29] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V28→V29] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V28 to V29 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V28→V29] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V28 to V29 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v29_to_v30(self, conn: sqlite3.Connection) -> None:
-        """Migrate schema V29->V30: add the local-only ``usage_json`` column
-        to ``messages`` (Console cost ticker PR1). No sync triggers change --
-        the column is never synced (see v19/v24/v25/v26 local-only
-        precedent)."""
-        if self._get_db_version(conn) != 29:
-            raise SchemaError(
-                f"[{self._SCHEMA_NAME} V29→V30] Migration requires schema version 29"
-            )
-        logger.info(
-            f"Migrating schema from V29 to V30 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v29_to_v30_message_usage.sql"
-        )
-        try:
-            # The .sql file is the plain ALTER (see its header note); the
-            # idempotence guard lives in ``_execute_migration_statements``
-            # (``_skip_already_applied_add_column``): a database that already
-            # carries `usage_json` from a partially-applied run has just the
-            # ALTER skipped, and lands at v30 exactly like a clean one.
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V29→V30",
-                )
-                logger.debug(
-                    f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
-                )
-
-                cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 30
-                     WHERE schema_name = ?
-                       AND version = 29
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V29→V30] Migration version update was not applied"
-                    )
-
-            final_version = self._get_db_version(conn)
-            if final_version != 30:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V29→V30] Migration version check failed. Expected 30, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V29→V30] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V29→V30] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V29 to V30 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V29→V30] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V29 to V30 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
-    def _migrate_from_v30_to_v31(self, conn: sqlite3.Connection) -> None:
-        """Migrate schema V30->V31: add the local-only ``metadata_json``
-        column to ``messages`` (task-2364: engine provenance, interrupted
-        flag, transcript status). No sync triggers change -- the column is
-        never synced (see the v29->v30 usage_json precedent)."""
-        if self._get_db_version(conn) != 30:
-            raise SchemaError(
-                f"[{self._SCHEMA_NAME} V30→V31] Migration requires schema version 30"
-            )
-        logger.info(
-            f"Migrating schema from V30 to V31 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v30_to_v31_message_metadata.sql"
-        )
-        try:
-            # The .sql file is the plain ALTER (see its header note); the
-            # idempotence guard lives in ``_execute_migration_statements``
-            # (``_skip_already_applied_add_column``): a database that already
-            # carries `metadata_json` from a partially-applied run has just
-            # the ALTER skipped, and lands at v31 exactly like a clean one.
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V30→V31",
-                )
-                logger.debug(
-                    f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
-                )
-
-                cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 31
-                     WHERE schema_name = ?
-                       AND version = 30
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V30→V31] Migration version update was not applied"
-                    )
-
-            final_version = self._get_db_version(conn)
-            if final_version != 31:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V30→V31] Migration version check failed. Expected 31, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V30→V31] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V30→V31] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V30 to V31 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V30→V31] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V30 to V31 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
 
     def _migrate_from_v31_to_v32(self, conn: sqlite3.Connection) -> None:
         """Migrate schema V31->V32: enrich the seeded 'Default Assistant'
@@ -6324,76 +5664,6 @@ DELETE FROM keywords
                 f"Migration from V42 to V43 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
-    def _migrate_from_v43_to_v44(self, conn: sqlite3.Connection) -> None:
-        """Give ``sync_conflicts`` room for the side a resolution discards.
-
-        task-19554: the Notes sync engine overwrote the losing side of a
-        ``both_changed`` conflict wholesale while persisting only its SHA-256,
-        so the discarded text was unrecoverable. The three columns added here
-        (``losing_side``, ``losing_content``, ``preserved_file_path``) are the
-        durable second copy behind the on-disk sidecar; see the migration
-        file's header for why they are written only on actual destruction.
-
-        Args:
-            conn: The active connection, inside ``_initialize_schema``'s
-                transaction.
-
-        Raises:
-            SchemaError: If the database is not at v43, the file cannot be
-                read/split, or the version bump does not land.
-        """
-        self._require_migration_entry_version(conn, 43, "V43→V44")
-        logger.info(
-            f"Migrating schema from V43 to V44 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v43_to_v44_sync_conflict_preservation.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                # ``_execute_migration_statements`` rather than a bare
-                # per-statement loop: it carries task-19553's
-                # already-applied ``ADD COLUMN`` skip, so a database left
-                # half-migrated by an interrupted run re-enters cleanly
-                # instead of aborting on ``duplicate column name``.
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V43→V44",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 44
-                     WHERE schema_name = ?
-                       AND version = 43
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V43→V44] Migration version update was not applied"
-                    )
-
-            final_version = self._get_db_version(conn)
-            if final_version != 44:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V43→V44] Migration version check failed. "
-                    f"Expected 44, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V43→V44] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V43→V44] Migration failed exception_type={type(exc).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V43 to V44 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
     def _seed_console_library_policy_rows(
         self,
         cursor: sqlite3.Cursor,
@@ -6447,50 +5717,6 @@ DELETE FROM keywords
             raise SchemaError(
                 f"[{self._SCHEMA_NAME} V47→V48] Migration version update was not applied"
             )
-
-    def _migrate_from_v44_to_v45(self, conn: sqlite3.Connection) -> None:
-        """Install portable Actor Pack identity and bounded Persona intents."""
-
-        self._require_migration_entry_version(conn, 44, "V44→V45")
-        logger.info("Actor Pack schema migration started: chachanotes_v44_to_v45")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v44_to_v45_actor_packs.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V44→V45",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 45
-                     WHERE schema_name = ?
-                       AND version = 44
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V44→V45] Migration version update was not applied"
-                    )
-
-            final_version = self._get_db_version(conn)
-            if final_version != 45:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V44→V45] Migration version check failed. "
-                    f"Expected 45, got: {final_version}"
-                )
-            logger.info("Actor Pack schema migration completed: chachanotes_v44_to_v45")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            logger.error("Actor Pack schema migration failed: chachanotes_v44_to_v45")
-            raise SchemaError(
-                f"Migration from V44 to V45 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
 
     def _migrate_from_v45_to_v46(self, conn: sqlite3.Connection) -> None:
         """Bound ``sync_log`` to the frontier its readers can actually reach.
@@ -6586,423 +5812,6 @@ DELETE FROM keywords
             )
             raise SchemaError(
                 f"Migration from V45 to V46 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v46_to_v47(self, conn: sqlite3.Connection) -> None:
-        """Guard the ``messages`` FTS 'delete' halves on index membership.
-
-        task-21100 defers the v45->v46 ``messages_fts`` reinsert to a chunked
-        background backfill, which opens a window in which a live message row
-        is legitimately absent from the index. For an external-content FTS5
-        table, issuing the 'delete' command for an unindexed rowid corrupts
-        the index: it silently poisons the doclists (and can raise
-        ``database disk image is malformed`` depending on index state -- an
-        empty index raises on the statement itself, a partly-filled one
-        absorbs dangling delete-markers with no error and a green
-        integrity-check). This step recreates ``messages_au`` and
-        ``messages_ad`` with an ``EXISTS (... messages_fts_docsize ...)``
-        membership test on their delete halves (see the migration file header
-        for the full analysis, including why this is a separate step rather
-        than part of the edited v46: databases already stamped 46 by the
-        original full-rebuild v46 never replay that step, and every database
-        must converge on one trigger shape). DDL only -- no index content is
-        touched, so an already-complete index is left alone.
-
-        Args:
-            conn: The active connection, inside ``_initialize_schema``'s
-                transaction.
-
-        Raises:
-            SchemaError: If the database is not at v46, the file cannot be
-                read/split, or the version bump does not land.
-        """
-        self._require_migration_entry_version(conn, 46, "V46→V47")
-        logger.info(
-            f"Migrating schema from V46 to V47 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v46_to_v47_messages_fts_backfill_guards.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V46→V47",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 47
-                     WHERE schema_name = ?
-                       AND version = 46
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V46→V47] Migration version update was not applied"
-                    )
-
-            final_version = self._get_db_version(conn)
-            if final_version != 47:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V46→V47] Migration version check failed. "
-                    f"Expected 47, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V46→V47] Migration completed successfully for DB: "
-                f"db_sha256={self._db_diagnostic_ref}."
-            )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V46→V47] Migration failed exception_type={type(exc).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V46 to V47 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v47_to_v48(self, conn: sqlite3.Connection) -> None:
-        """Add device-local Console Library policy and dispatch recovery schema.
-
-        Existing LIVE conversations receive the one sanitized legacy
-        automatic-retrieval value supplied by the config layer and assistant
-        Library access Allowed.
-
-        As shipped this also seeded soft-deleted conversations, which cost one
-        insert per tombstone inside the boot transaction and stored policy
-        nothing could read (task-22225). The predicate was corrected here
-        rather than only forward because that edit can affect ONLY a database
-        that has not yet reached v48; ``_migrate_from_v49_to_v50`` removes the
-        rows an already-migrated database is carrying, so the two populations
-        converge within one open instead of diverging permanently.
-
-        The seed is OPTIONAL (task-21441). As shipped, this step raised unless
-        the constructor was handed a ``ConsoleLibraryMigrationSeed``, with a
-        fresh database exempted -- so it bit exactly the upgrade case and the
-        class could no longer migrate itself. Every production construction
-        site threads the seed, so the TUI was insulated; nothing else was, and
-        ``Tests/Packaging/test_installed_distribution.py``'s bare open of a v35
-        database inside an installed wheel is the canary that caught it. A
-        migration that requires caller-supplied data makes "open the database"
-        mean "only from inside one application".
-
-        The default is not invented here: the seed's whole content is one
-        boolean, and ``config.load_console_library_migration_seed`` already
-        yields ``False`` for a missing or non-boolean
-        ``chat_defaults.rag_auto_retrieve_on_send``, which is also what the
-        fresh-database path has always written. Defaulting is fail-safe in the
-        direction ``console_library_policy`` itself defines -- absent authority
-        is Never/Blocked, never permission -- so the worst case for an unseeded
-        upgrade is that a user who had automatic retrieval on re-enables it,
-        against a current worst case of the database refusing to open at all.
-        A seed of the WRONG TYPE is still a hard error: that is a caller
-        defect, not an absent value.
-
-        Args:
-            conn: The active connection, inside ``_initialize_schema``'s
-                outer immediate transaction.
-
-        Raises:
-            SchemaError: If the entry version is wrong, a supplied seed is not
-                a ``ConsoleLibraryMigrationSeed``, the migration file cannot be
-                applied, or the guarded version update fails.
-        """
-        self._require_migration_entry_version(conn, 47, "V47→V48")
-        from tldw_chatbook.Chat.console_library_policy import (
-            ConsoleLibraryMigrationSeed,
-        )
-
-        seed = self.console_library_migration_seed
-        if seed is not None and not isinstance(seed, ConsoleLibraryMigrationSeed):
-            raise SchemaError(
-                "Console library migration seed must be a "
-                "ConsoleLibraryMigrationSeed for the v47 upgrade."
-            )
-        if seed is None and getattr(self, "_schema_initial_version", None) != 0:
-            logger.warning(
-                f"[{self._SCHEMA_NAME} V47→V48] No Console Library migration seed "
-                "supplied for an existing database; seeding every conversation "
-                "with automatic retrieval OFF (the config-layer default)."
-            )
-        auto_retrieve_on_send = (
-            int(seed.auto_retrieve_on_send)
-            if isinstance(seed, ConsoleLibraryMigrationSeed)
-            else 0
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v47_to_v48_console_library_policy.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V47→V48",
-                )
-                self._seed_console_library_policy_rows(
-                    cursor,
-                    auto_retrieve_on_send,
-                )
-                self._update_console_library_policy_schema_version(cursor)
-
-            final_version = self._get_db_version(conn)
-            if final_version != 48:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V47→V48] Migration version check failed. "
-                    f"Expected 48, got: {final_version}"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V47 to V48 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v48_to_v49(self, conn: sqlite3.Connection) -> None:
-        """Scope ``messages_au`` to the columns the FTS index depends on.
-
-        ``messages_au`` shipped as a bare ``AFTER UPDATE ON messages``, so it
-        re-tokenized and rewrote the whole message body into ``messages_fts``
-        on EVERY update of the row -- including the three to four auxiliary
-        writes a single chat turn now issues against the assistant row
-        (``update_message_usage_local``, ``update_message_metadata_local``,
-        attachment/variant bookkeeping, ranking-only edits), none of which
-        touch an indexed column. Measured over one simulated streamed turn:
-        four index rewrites, ``messages_fts_data`` 55 -> 12,636 bytes; one
-        rewrite and 3,201 bytes after this step (task-21128).
-
-        The column list is ``content, deleted``, not ``content`` alone:
-        ``content`` is the only column ``messages_fts`` indexes, but
-        ``deleted`` decides whether the row belongs in the index at all, and
-        soft delete (``UPDATE messages SET deleted = 1 ...``) never names
-        ``content``. Under ``AFTER UPDATE OF content`` the tombstoned row would
-        stay in the index -- the task-19567 guarantee, measured broken on that
-        shape. Both v47 guards (``old.deleted = 0`` plus the
-        ``messages_fts_docsize`` membership test on the delete half,
-        ``new.deleted = 0`` on the insert half) are preserved verbatim; see
-        the migration file header for the full analysis, including why this is
-        a separate step rather than an edited v47.
-
-        DDL only, O(1), and it writes no index content, so a task-21100
-        backfill still in flight is unaffected.
-
-        Authored as v47->v48 and renumbered to v48->v49 when the Console
-        Library policy step (``chachanotes_v47_to_v48_console_library_policy
-        .sql``) merged first and took 48. That step adds
-        ``messages.assistant_generation_state`` and rewrites the four
-        ``messages_sync_*`` triggers; it leaves ``messages_au``/``_ai``/``_ad``
-        alone, so this step's baseline is unchanged -- and its three new
-        ``UPDATE messages SET assistant_generation_state = ...`` dispatch
-        writers are three more per-turn updates that the pre-fix trigger would
-        have turned into full index rewrites.
-
-        Args:
-            conn: The active connection, inside ``_initialize_schema``'s
-                transaction.
-
-        Raises:
-            SchemaError: If the database is not at v48, the file cannot be
-                read/split, or the version bump does not land.
-        """
-        self._require_migration_entry_version(conn, 48, "V48→V49")
-        logger.info(
-            f"Migrating schema from V48 to V49 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v48_to_v49_messages_fts_update_scope.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V48→V49",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 49
-                     WHERE schema_name = ?
-                       AND version = 48
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V48→V49] Migration version update was not applied"
-                    )
-
-            final_version = self._get_db_version(conn)
-            if final_version != 49:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V48→V49] Migration version check failed. "
-                    f"Expected 49, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V48→V49] Migration completed successfully for DB: "
-                f"db_sha256={self._db_diagnostic_ref}."
-            )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V48→V49] Migration failed exception_type={type(exc).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V48 to V49 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v49_to_v50(self, conn: sqlite3.Connection) -> None:
-        """Retire Console Library policy rows with no live conversation.
-
-        The v47->v48 seed wrote one policy row per conversation with no
-        ``deleted`` predicate, so a profile stored policy for every
-        conversation it had ever held and paid one insert per tombstone inside
-        the boot version-bump transaction (task-22225). The seed now excludes
-        soft-deleted conversations; this step is the other half, and the
-        reason editing the applied v48 SQL is honest rather than silent: a
-        database that has not reached v48 never writes the rows, a database
-        that already ran the shipped seed has them removed here, and both end
-        the same open in the same state.
-
-        What the removed rows did: nothing an application could observe.
-        ``ConsoleLibraryPolicyRepository`` joins ``conversations`` and
-        fail-closes to Never/Blocked unless ``deleted = 0``; ``insert`` and
-        ``compare_and_swap`` both refuse a missing or deleted conversation;
-        and ``commit_durable_turn`` raises before it reads policy. Missing
-        policy is likewise an ordinary state -- ``add_conversation`` has never
-        written a row, and the coordinator inserts revision one on demand --
-        so removal cannot strand a live conversation.
-
-        DML only: the file adds no table, index, or trigger, so it needs no
-        ``VALID_TABLES`` or index-census entry. It is idempotent, and it runs
-        inside the step's transaction, so a failure anywhere in the chain
-        rewinds the deletes with the version stamp.
-
-        Args:
-            conn: The active connection, inside ``_initialize_schema``'s
-                transaction.
-
-        Raises:
-            SchemaError: If the database is not at v49, the file cannot be
-                read/split, or the guarded version bump does not land.
-        """
-        self._require_migration_entry_version(conn, 49, "V49→V50")
-        logger.info(
-            f"Migrating schema from V49 to V50 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V49→V50",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 50
-                     WHERE schema_name = ?
-                       AND version = 49
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V49→V50] Migration version update was not applied"
-                    )
-            final_version = self._get_db_version(conn)
-            if final_version != 50:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V49→V50] Migration version check failed. "
-                    f"Expected 50, got: {final_version}"
-                )
-            logger.info(
-                f"[{self._SCHEMA_NAME} V49→V50] Migration completed successfully for DB: "
-                f"db_sha256={self._db_diagnostic_ref}."
-            )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V49→V50] Migration failed exception_type={type(exc).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V49 to V50 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v50_to_v51(self, conn: sqlite3.Connection) -> None:
-        """Add local Console capture provenance and per-conversation policy."""
-        self._require_migration_entry_version(conn, 50, "V50→V51")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v50_to_v51_console_full_capture.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, migration_path.read_text(encoding="utf-8"), "V50→V51"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 51 "
-                    "WHERE schema_name = ? AND version = 50",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V50→V51] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 51:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V50→V51] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V50 to V51 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v51_to_v52(self, conn: sqlite3.Connection) -> None:
-        """Add selected Console thinking evidence and replay policy fields."""
-        self._require_migration_entry_version(conn, 51, "V51→V52")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v51_to_v52_console_thinking.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V51→V52",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 52
-                     WHERE schema_name = ?
-                       AND version = 51
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V51→V52] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 52:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V51→V52] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V51 to V52 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     #: v52→v53 keyset-page size: bounds how many Safe capture blobs are
@@ -7201,74 +6010,6 @@ DELETE FROM keywords
                 f"Migration from V54 to V55 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
-    def _migrate_from_v55_to_v56(self, conn: sqlite3.Connection) -> None:
-        """Install the reference-backed Console semantic trace schema."""
-        self._require_migration_entry_version(conn, 55, "V55→V56")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v55_to_v56_console_semantic_trace.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V55→V56",
-                )
-                version_cursor = cursor.execute(
-                    "UPDATE db_schema_version SET version = 56 "
-                    "WHERE schema_name = ? AND version = 55",
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V55→V56] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 56:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V55→V56] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V55 to V56 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
-
-    def _migrate_from_v56_to_v57(self, conn: sqlite3.Connection) -> None:
-        """Install fail-closed guards around referenced semantic sources."""
-        self._require_migration_entry_version(conn, 56, "V56→V57")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v56_to_v57_semantic_mutation_guard.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V56→V57",
-                )
-                version_cursor = cursor.execute(
-                    "UPDATE db_schema_version SET version = 57 "
-                    "WHERE schema_name = ? AND version = 56",
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V56→V57] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 57:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V56→V57] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V56 to V57 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
-
     def _migrate_from_v57_to_v58(self, conn: sqlite3.Connection) -> None:
         """Add portable identities and durable Notes organization sync state."""
         self._require_migration_entry_version(conn, 57, "V57→V58")
@@ -7435,41 +6176,6 @@ DELETE FROM keywords
                 f"Migration from V60 to V61 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
-    def _migrate_from_v61_to_v62(self, conn: sqlite3.Connection) -> None:
-        """Separate future Capture and PII overrides from legacy detail."""
-
-        self._require_migration_entry_version(conn, 61, "V61→V62")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v61_to_v62_console_trace_privacy_policy.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V61→V62",
-                )
-                version_cursor = cursor.execute(
-                    "UPDATE db_schema_version SET version = 62 "
-                    "WHERE schema_name = ? AND version = 61",
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V61→V62] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 62:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V61→V62] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V61 to V62 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
-
     def _migrate_from_v62_to_v63(self, conn: sqlite3.Connection) -> None:
         """Install epoch-safe semantic trace GC metadata and delete guards."""
 
@@ -7507,78 +6213,6 @@ DELETE FROM keywords
             raise SchemaError(
                 f"Migration from V62 to V63 failed for '{self._SCHEMA_NAME}': "
                 f"{type(exc).__name__}"
-            ) from exc
-
-    def _migrate_from_v63_to_v64(self, conn: sqlite3.Connection) -> None:
-        """Widen the auxiliary-attempt status CHECK to accept 'timed_out'."""
-
-        self._require_migration_entry_version(conn, 63, "V63→V64")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v63_to_v64_auxiliary_timed_out_status.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V63→V64",
-                )
-                version_cursor = cursor.execute(
-                    "UPDATE db_schema_version SET version = 64 "
-                    "WHERE schema_name = ? AND version = 63",
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V63→V64] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 64:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V63→V64] Migration version check failed"
-                )
-        except SchemaError:
-            raise
-        except Exception as exc:
-            raise SchemaError(
-                f"Migration from V63 to V64 failed for '{self._SCHEMA_NAME}': {exc}"
-            ) from exc
-
-    def _migrate_from_v64_to_v65(self, conn: sqlite3.Connection) -> None:
-        """Add the content-free physical trace-compaction status singleton."""
-
-        self._require_migration_entry_version(conn, 64, "V64→V65")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v64_to_v65_console_trace_compaction.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V64→V65",
-                )
-                version_cursor = cursor.execute(
-                    "UPDATE db_schema_version SET version = 65 "
-                    "WHERE schema_name = ? AND version = 64",
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V64→V65] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 65:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V64→V65] Migration version check failed"
-                )
-        except SchemaError:
-            raise
-        except Exception as exc:
-            raise SchemaError(
-                f"Migration from V64 to V65 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     def _migrate_from_v65_to_v66(self, conn: sqlite3.Connection) -> None:
@@ -7827,45 +6461,6 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
-    def _migrate_from_v71_to_v72(self, conn: sqlite3.Connection) -> None:
-        """Add explicit provenance and guarded promoted terminal imports."""
-
-        self._require_migration_entry_version(conn, 71, "V71→V72")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v71_to_v72_voice_trace_provenance.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V71→V72",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 72
-                     WHERE schema_name = ?
-                       AND version = 71
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V71→V72] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 72:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V71→V72] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V71 to V72 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
-
     def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
         """Preserve checkpoint owners while adding native chat-start receipts."""
         self._require_migration_entry_version(conn, 76, "V76→V77")
@@ -7996,281 +6591,6 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
-    def _migrate_from_v73_to_v74(self, conn: sqlite3.Connection) -> None:
-        """Record the content-free reason a compaction attempt did not succeed."""
-
-        self._require_migration_entry_version(conn, 73, "V73→V74")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v73_to_v74_auxiliary_failure_reason.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V73→V74",
-                )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 74
-                     WHERE schema_name = ?
-                       AND version = 73
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V73→V74] Migration version update was not applied"
-                    )
-            if self._get_db_version(conn) != 74:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V73→V74] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V73 to V74 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
-
-    def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
-        """Retain machine continuation dedup independently of checkpoints."""
-        self._require_migration_entry_version(conn, 74, "V74→V75")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v74_to_v75_hook_continuation_receipts.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V74→V75"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 75 WHERE schema_name = ? AND version = 74",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V74→V75 version update failed")
-            if self._get_db_version(conn) != 75:
-                raise SchemaError("V74→V75 version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V74→V75 failed: {type(exc).__name__}"
-            ) from exc
-
-    def _migrate_from_v75_to_v76(self, conn: sqlite3.Connection) -> None:
-        """Ship the guarded ``notes_au`` FTS trigger body as a real migration.
-
-        The trigger originally shipped without its ``deleted = 0`` guards, and
-        because the v4 base script never re-runs on an existing database the
-        repair lived for years in a runtime self-heal that DROP/reCREATEd
-        ``notes_au`` on every open (task-19565 removed it). Every database
-        passes through v75->v76 exactly once, so the correct body lands once
-        and the startup fixup is gone. The recreated body is
-        whitespace-identical to the v4 base script's, so fresh and
-        chain-migrated databases converge on the same sqlite_master row.
-        """
-
-        self._require_migration_entry_version(conn, 75, "V75→V76")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v75_to_v76_notes_fts_undelete_guard.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V75→V76",
-                )
-            if self._get_db_version(conn) != 76:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V75→V76] Migration version check failed"
-                )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V75 to V76 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
-
-    def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
-        """Install native local rules without adding sync or metadata payloads."""
-        self._require_migration_entry_version(conn, 80, "V80→V81")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v80_to_v81_response_rules.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V80→V81"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 81 WHERE schema_name = ? AND version = 80",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V80→V81 version update failed")
-            if self._get_db_version(conn) != 81:
-                raise SchemaError("V80→V81 version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V80→V81 failed: {type(exc).__name__}"
-            ) from exc
-
-    def _migrate_from_v79_to_v80(self, conn: sqlite3.Connection) -> None:
-        """Add the conversations browse-order index (perf review B, B7).
-
-        Library browse pages order by ``last_modified DESC, id DESC`` and
-        take one page at a time; without this index every page sorted the
-        full filtered set in a TEMP B-TREE. Stacks on the ADR-224 v79
-        timestamp normalization, whose canonical UTC ``last_modified``
-        format is exactly what this index orders by.
-        """
-        self._require_migration_entry_version(conn, 79, "V79→V80")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V79→V80",
-                )
-                result = cursor.execute(
-                    "UPDATE db_schema_version SET version = 80 WHERE schema_name = ? AND version = 79",
-                    (self._SCHEMA_NAME,),
-                )
-                if result.rowcount != 1:
-                    raise SchemaError(
-                        "Migration V79 to V80 version update was not applied."
-                    )
-            if self._get_db_version(conn) != 80:
-                raise SchemaError("Migration V79 to V80 version check failed.")
-        except (OSError, sqlite3.Error) as exc:
-            raise SchemaError("Migration from V79 to V80 failed.") from exc
-
-    def _migrate_from_v77_to_v78(self, conn: sqlite3.Connection) -> None:
-        """Add chat-owned pending progress without restoring live authority."""
-        self._require_migration_entry_version(conn, 77, "V77→V78")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v77_to_v78_fleet_progress.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, migration_path.read_text(encoding="utf-8"), "V77→V78"
-                )
-                result = cursor.execute(
-                    "UPDATE db_schema_version SET version = 78 WHERE schema_name = ? AND version = 77",
-                    (self._SCHEMA_NAME,),
-                )
-                if result.rowcount != 1:
-                    raise SchemaError(
-                        "Migration V77 to V78 version update was not applied."
-                    )
-            if self._get_db_version(conn) != 78:
-                raise SchemaError("Migration V77 to V78 version check failed.")
-        except (OSError, sqlite3.Error) as exc:
-            raise SchemaError("Migration from V77 to V78 failed.") from exc
-
-    def _migrate_from_v78_to_v79(self, conn: sqlite3.Connection) -> None:
-        """Normalize the sargable trio's ordering columns (ADR-224).
-
-        Rewrites ``conversations.last_modified`` and
-        ``flashcards.next_review`` to the ADR-173 canonical UTC shape and
-        adds the indexes the raw (non-function-wrapped) comparisons need.
-        Idempotent: canonical rows are GLOB-guarded out and unparseable
-        values are left untouched (never NULLed). The conversations sync
-        trigger is dropped and recreated around the normalization UPDATE so
-        the format change does not enqueue spurious ``sync_log`` events.
-        """
-        self._require_migration_entry_version(conn, 78, "V78→V79")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, migration_path.read_text(encoding="utf-8"), "V78→V79"
-                )
-                result = cursor.execute(
-                    "UPDATE db_schema_version SET version = 79 WHERE schema_name = ? AND version = 78",
-                    (self._SCHEMA_NAME,),
-                )
-                if result.rowcount != 1:
-                    raise SchemaError(
-                        "Migration V78 to V79 version update was not applied."
-                    )
-            if self._get_db_version(conn) != 79:
-                raise SchemaError("Migration V78 to V79 version check failed.")
-        except (OSError, sqlite3.Error) as exc:
-            raise SchemaError("Migration from V78 to V79 failed.") from exc
-
-    def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
-        """
-        Migrates the database schema from version 18 to version 19.
-
-        This migration adds the ``message_attachments`` table for storing
-        extra Console message attachments (positions >= 1; position 0
-        remains in ``messages.image_data``/``image_mime_type``). No sync
-        triggers are added here; sync wiring is tracked separately
-        (TASK-220).
-        """
-        self._require_migration_entry_version(conn, 18, "V18→V19")
-        logger.info(
-            f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
-        )
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v18_to_v19_message_attachments.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor,
-                    migration_path.read_text(encoding="utf-8"),
-                    "V18→V19",
-                )
-            logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
-
-            final_version = self._get_db_version(conn)
-            if final_version != 19:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V18→V19] Migration version check failed. Expected 19, got: {final_version}"
-                )
-
-            logger.info(
-                f"[{self._SCHEMA_NAME} V18→V19] Migration completed successfully for DB: db_sha256={self._db_diagnostic_ref}."
-            )
-        except sqlite3.Error as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V18→V19] Migration failed exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Migration from V18 to V19 failed for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"[{self._SCHEMA_NAME} V18→V19] Unexpected error during migration exception_type={type(e).__name__}"
-            )
-            raise SchemaError(
-                f"Unexpected error migrating from V18 to V19 for '{self._SCHEMA_NAME}': {e}"
-            ) from e
-
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -8322,25 +6642,478 @@ DELETE FROM keywords
                 f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
-    def _migrate_from_v70_to_v71(self, conn: sqlite3.Connection) -> None:
-        """Apply the canonical local-archive artifact under the migration transaction."""
-        self._require_migration_entry_version(conn, 70, "V70→V71")
+    # --- TASK-34906: declarative file-backed migration registry ---
+    # Maps from_version -> DB/migrations filename for the strict-pure steps:
+    # version check + execute the .sql + stamp the version, nothing else.
+    # The generic runner below owns that template; the hybrids (steps with
+    # genuinely extra DML) and the pre-file-era inline-constant steps keep
+    # their methods and the method dispatch below. The on-disk .sql remains
+    # the executed source (ADR-208).
+    # Maps from_version -> (DB/migrations filename, whether the .sql itself
+    # stamps db_schema_version). ADR-208: the on-disk .sql is the executed
+    # source; for the stamp-in-file steps the runner only verifies, for the
+    # others it owns the version UPDATE with a rowcount check.
+    _FILE_MIGRATION_STEPS: Dict[int, tuple] = {
+        16: ("chachanotes_v16_to_v17_conversation_local_marks.sql", True),
+        17: ("chachanotes_v17_to_v18_conversation_system_prompt.sql", True),
+        18: ("chachanotes_v18_to_v19_message_attachments.sql", True),
+        19: ("chachanotes_v19_to_v20_conversation_metadata.sql", True),
+        20: ("chachanotes_v20_to_v21_world_book_entry_priority.sql", True),
+        21: ("chachanotes_v21_to_v22_world_book_entry_regex.sql", True),
+        22: ("chachanotes_v22_to_v23_character_expression_images.sql", True),
+        23: ("chachanotes_v23_to_v24_conversation_active_leaf.sql", True),
+        24: ("chachanotes_v24_to_v25_message_generation_metadata.sql", True),
+        25: ("chachanotes_v25_to_v26_conversation_context_summary.sql", True),
+        28: ("chachanotes_v28_to_v29_kept_briefings.sql", True),
+        29: ("chachanotes_v29_to_v30_message_usage.sql", False),
+        30: ("chachanotes_v30_to_v31_message_metadata.sql", False),
+        43: ("chachanotes_v43_to_v44_sync_conflict_preservation.sql", False),
+        44: ("chachanotes_v44_to_v45_actor_packs.sql", False),
+        46: ("chachanotes_v46_to_v47_messages_fts_backfill_guards.sql", False),
+        48: ("chachanotes_v48_to_v49_messages_fts_update_scope.sql", False),
+        49: ("chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql", False),
+        50: ("chachanotes_v50_to_v51_console_full_capture.sql", False),
+        51: ("chachanotes_v51_to_v52_console_thinking.sql", False),
+        55: ("chachanotes_v55_to_v56_console_semantic_trace.sql", False),
+        56: ("chachanotes_v56_to_v57_semantic_mutation_guard.sql", False),
+        61: ("chachanotes_v61_to_v62_console_trace_privacy_policy.sql", False),
+        63: ("chachanotes_v63_to_v64_auxiliary_timed_out_status.sql", False),
+        64: ("chachanotes_v64_to_v65_console_trace_compaction.sql", False),
+        70: ("chachanotes_v70_to_v71_conversation_archive.sql", True),
+        71: ("chachanotes_v71_to_v72_voice_trace_provenance.sql", False),
+        73: ("chachanotes_v73_to_v74_auxiliary_failure_reason.sql", False),
+        74: ("chachanotes_v74_to_v75_hook_continuation_receipts.sql", False),
+        75: ("chachanotes_v75_to_v76_notes_fts_undelete_guard.sql", True),
+        77: ("chachanotes_v77_to_v78_fleet_progress.sql", False),
+        78: ("chachanotes_v78_to_v79_sargable_timestamp_normalization.sql", False),
+        79: ("chachanotes_v79_to_v80_conversations_browse_order_index.sql", False),
+        80: ("chachanotes_v80_to_v81_response_rules.sql", False),
+    }
+
+    def _migrate_from_v16_to_v17(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 16, 17, "chachanotes_v16_to_v17_conversation_local_marks.sql", True
+        )
+
+    def _migrate_from_v17_to_v18(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 17, 18, "chachanotes_v17_to_v18_conversation_system_prompt.sql", True
+        )
+
+    def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 18, 19, "chachanotes_v18_to_v19_message_attachments.sql", True
+        )
+
+    def _migrate_from_v19_to_v20(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 19, 20, "chachanotes_v19_to_v20_conversation_metadata.sql", True
+        )
+
+    def _migrate_from_v20_to_v21(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 20, 21, "chachanotes_v20_to_v21_world_book_entry_priority.sql", True
+        )
+
+    def _migrate_from_v21_to_v22(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 21, 22, "chachanotes_v21_to_v22_world_book_entry_regex.sql", True
+        )
+
+    def _migrate_from_v22_to_v23(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 22, 23, "chachanotes_v22_to_v23_character_expression_images.sql", True
+        )
+
+    def _migrate_from_v23_to_v24(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 23, 24, "chachanotes_v23_to_v24_conversation_active_leaf.sql", True
+        )
+
+    def _migrate_from_v24_to_v25(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 24, 25, "chachanotes_v24_to_v25_message_generation_metadata.sql", True
+        )
+
+    def _migrate_from_v25_to_v26(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn,
+            25,
+            26,
+            "chachanotes_v25_to_v26_conversation_context_summary.sql",
+            True,
+        )
+
+    def _migrate_from_v27_to_v28(self, conn: sqlite3.Connection) -> None:
+        """Add local conversation authority through one rollback-safe transaction."""
+
+        if self._get_db_version(conn) != 27:
+            raise SchemaError(
+                "Character authority migration requires schema version 27"
+            )
         migration_path = (
             Path(__file__).parent
             / "migrations"
-            / "chachanotes_v70_to_v71_conversation_archive.sql"
+            / "chachanotes_v27_to_v28_character_authority.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                local_authority_id = self.get_local_authority_id()
+                for statement in self._migration_file_statements(migration_path):
+                    self._execute_character_authority_migration_statement(
+                        cursor,
+                        statement,
+                    )
+                self._backfill_conversation_character_authority(
+                    cursor,
+                    local_authority_id,
+                )
+                self._update_character_authority_schema_version(cursor)
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 28:
+                    raise SchemaError(
+                        "Character authority schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(
+                f"Migration from V27 to V28 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v28_to_v29(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 28, 29, "chachanotes_v28_to_v29_kept_briefings.sql", True
+        )
+
+    def _migrate_from_v29_to_v30(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 29, 30, "chachanotes_v29_to_v30_message_usage.sql", False
+        )
+
+    def _migrate_from_v30_to_v31(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 30, 31, "chachanotes_v30_to_v31_message_metadata.sql", False
+        )
+
+    def _migrate_from_v43_to_v44(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 43, 44, "chachanotes_v43_to_v44_sync_conflict_preservation.sql", False
+        )
+
+    def _migrate_from_v44_to_v45(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 44, 45, "chachanotes_v44_to_v45_actor_packs.sql", False
+        )
+
+    def _migrate_from_v46_to_v47(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn,
+            46,
+            47,
+            "chachanotes_v46_to_v47_messages_fts_backfill_guards.sql",
+            False,
+        )
+
+    def _migrate_from_v47_to_v48(self, conn: sqlite3.Connection) -> None:
+        """Add device-local Console Library policy and dispatch recovery schema.
+
+        Existing LIVE conversations receive the one sanitized legacy
+        automatic-retrieval value supplied by the config layer and assistant
+        Library access Allowed.
+
+        As shipped this also seeded soft-deleted conversations, which cost one
+        insert per tombstone inside the boot transaction and stored policy
+        nothing could read (task-22225). The predicate was corrected here
+        rather than only forward because that edit can affect ONLY a database
+        that has not yet reached v48; ``_migrate_from_v49_to_v50`` removes the
+        rows an already-migrated database is carrying, so the two populations
+        converge within one open instead of diverging permanently.
+
+        The seed is OPTIONAL (task-21441). As shipped, this step raised unless
+        the constructor was handed a ``ConsoleLibraryMigrationSeed``, with a
+        fresh database exempted -- so it bit exactly the upgrade case and the
+        class could no longer migrate itself. Every production construction
+        site threads the seed, so the TUI was insulated; nothing else was, and
+        ``Tests/Packaging/test_installed_distribution.py``'s bare open of a v35
+        database inside an installed wheel is the canary that caught it. A
+        migration that requires caller-supplied data makes "open the database"
+        mean "only from inside one application".
+
+        The default is not invented here: the seed's whole content is one
+        boolean, and ``config.load_console_library_migration_seed`` already
+        yields ``False`` for a missing or non-boolean
+        ``chat_defaults.rag_auto_retrieve_on_send``, which is also what the
+        fresh-database path has always written. Defaulting is fail-safe in the
+        direction ``console_library_policy`` itself defines -- absent authority
+        is Never/Blocked, never permission -- so the worst case for an unseeded
+        upgrade is that a user who had automatic retrieval on re-enables it,
+        against a current worst case of the database refusing to open at all.
+        A seed of the WRONG TYPE is still a hard error: that is a caller
+        defect, not an absent value.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                outer immediate transaction.
+
+        Raises:
+            SchemaError: If the entry version is wrong, a supplied seed is not
+                a ``ConsoleLibraryMigrationSeed``, the migration file cannot be
+                applied, or the guarded version update fails.
+        """
+        self._require_migration_entry_version(conn, 47, "V47→V48")
+        from tldw_chatbook.Chat.console_library_policy import (
+            ConsoleLibraryMigrationSeed,
+        )
+
+        seed = self.console_library_migration_seed
+        if seed is not None and not isinstance(seed, ConsoleLibraryMigrationSeed):
+            raise SchemaError(
+                "Console library migration seed must be a "
+                "ConsoleLibraryMigrationSeed for the v47 upgrade."
+            )
+        if seed is None and getattr(self, "_schema_initial_version", None) != 0:
+            logger.warning(
+                f"[{self._SCHEMA_NAME} V47→V48] No Console Library migration seed "
+                "supplied for an existing database; seeding every conversation "
+                "with automatic retrieval OFF (the config-layer default)."
+            )
+        auto_retrieve_on_send = (
+            int(seed.auto_retrieve_on_send)
+            if isinstance(seed, ConsoleLibraryMigrationSeed)
+            else 0
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v47_to_v48_console_library_policy.sql"
         )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, migration_path.read_text(encoding="utf-8"), "V70→V71"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V47→V48",
                 )
-                if self._get_db_version(conn) != 71:
-                    raise SchemaError(
-                        "Migration V70 to V71 version update was not applied."
+                self._seed_console_library_policy_rows(
+                    cursor,
+                    auto_retrieve_on_send,
+                )
+                self._update_console_library_policy_schema_version(cursor)
+
+            final_version = self._get_db_version(conn)
+            if final_version != 48:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V47→V48] Migration version check failed. "
+                    f"Expected 48, got: {final_version}"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V47 to V48 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v48_to_v49(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 48, 49, "chachanotes_v48_to_v49_messages_fts_update_scope.sql", False
+        )
+
+    def _migrate_from_v49_to_v50(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn,
+            49,
+            50,
+            "chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql",
+            False,
+        )
+
+    def _migrate_from_v50_to_v51(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 50, 51, "chachanotes_v50_to_v51_console_full_capture.sql", False
+        )
+
+    def _migrate_from_v51_to_v52(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 51, 52, "chachanotes_v51_to_v52_console_thinking.sql", False
+        )
+
+    def _migrate_from_v55_to_v56(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 55, 56, "chachanotes_v55_to_v56_console_semantic_trace.sql", False
+        )
+
+    def _migrate_from_v56_to_v57(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 56, 57, "chachanotes_v56_to_v57_semantic_mutation_guard.sql", False
+        )
+
+    def _migrate_from_v61_to_v62(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn,
+            61,
+            62,
+            "chachanotes_v61_to_v62_console_trace_privacy_policy.sql",
+            False,
+        )
+
+    def _migrate_from_v63_to_v64(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 63, 64, "chachanotes_v63_to_v64_auxiliary_timed_out_status.sql", False
+        )
+
+    def _migrate_from_v64_to_v65(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 64, 65, "chachanotes_v64_to_v65_console_trace_compaction.sql", False
+        )
+
+    def _migrate_from_v70_to_v71(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 70, 71, "chachanotes_v70_to_v71_conversation_archive.sql", True
+        )
+
+    def _migrate_from_v71_to_v72(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 71, 72, "chachanotes_v71_to_v72_voice_trace_provenance.sql", False
+        )
+
+    def _migrate_from_v73_to_v74(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 73, 74, "chachanotes_v73_to_v74_auxiliary_failure_reason.sql", False
+        )
+
+    def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 74, 75, "chachanotes_v74_to_v75_hook_continuation_receipts.sql", False
+        )
+
+    def _migrate_from_v75_to_v76(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 75, 76, "chachanotes_v75_to_v76_notes_fts_undelete_guard.sql", True
+        )
+
+    def _migrate_from_v77_to_v78(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 77, 78, "chachanotes_v77_to_v78_fleet_progress.sql", False
+        )
+
+    def _migrate_from_v78_to_v79(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn,
+            78,
+            79,
+            "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql",
+            False,
+        )
+
+    def _migrate_from_v79_to_v80(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn,
+            79,
+            80,
+            "chachanotes_v79_to_v80_conversations_browse_order_index.sql",
+            False,
+        )
+
+    def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
+        """Thin shim over the shared file-step runner (task-34906)."""
+        self._run_file_migration_step(
+            conn, 80, 81, "chachanotes_v80_to_v81_response_rules.sql", False
+        )
+
+    def _file_migration_step(self, from_version: int):
+        """Return a callable running the registry's file step, or None."""
+        step = self._FILE_MIGRATION_STEPS.get(from_version)
+        if step is None:
+            return None
+        filename, stamps_in_file = step
+        return lambda conn: self._run_file_migration_step(
+            conn, from_version, from_version + 1, filename, stamps_in_file
+        )
+
+    def _run_file_migration_step(
+        self,
+        conn: sqlite3.Connection,
+        from_version: int,
+        to_version: int,
+        filename: str,
+        stamps_in_file: bool,
+    ) -> None:
+        """Run one file-backed migration step (the shared template).
+
+        Require the entry version, execute the .sql file's statements
+        inside a transaction, stamp the version with a rowcount check,
+        verify the result, and wrap any failure in SchemaError -- the
+        template every strict-pure step carried by hand before TASK-34906.
+        """
+        label = f"V{from_version}→V{to_version}"
+        self._require_migration_entry_version(conn, from_version, label)
+        logger.info(
+            f"Migrating schema from V{from_version} to V{to_version} for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
+        )
+        migration_path = Path(__file__).parent / "migrations" / filename
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), label
+                )
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} {label}] Migration script executed."
+                )
+                if not stamps_in_file:
+                    updated = cursor.execute(
+                        "UPDATE db_schema_version SET version = ? "
+                        "WHERE schema_name = ? AND version = ?",
+                        (to_version, self._SCHEMA_NAME, from_version),
                     )
-        except (OSError, sqlite3.Error) as exc:
-            raise SchemaError("Migration from V70 to V71 failed.") from exc
+                    if updated.rowcount != 1:
+                        raise SchemaError(
+                            f"[{self._SCHEMA_NAME} {label}] version update was not applied."
+                        )
+            if self._get_db_version(conn) != to_version:
+                raise SchemaError(f"[{self._SCHEMA_NAME} {label}] version check failed")
+            logger.info(
+                f"[{self._SCHEMA_NAME} {label}] Migration completed successfully "
+                f"for DB: db_sha256={self._db_diagnostic_ref}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.error(f"[{self._SCHEMA_NAME} {label}] Migration failed: {exc}")
+            raise SchemaError(
+                f"Migration from V{from_version} to V{to_version} failed for "
+                f"'{self._SCHEMA_NAME}': {exc}"
+            ) from exc
 
     def _initialize_schema(self):
         """
@@ -8413,21 +7186,9 @@ DELETE FROM keywords
                     13: self._migrate_from_v13_to_v14,
                     14: self._migrate_from_v14_to_v15,
                     15: self._migrate_from_v15_to_v16,
-                    16: self._migrate_from_v16_to_v17,
-                    17: self._migrate_from_v17_to_v18,
-                    18: self._migrate_from_v18_to_v19,
-                    19: self._migrate_from_v19_to_v20,
-                    20: self._migrate_from_v20_to_v21,
-                    21: self._migrate_from_v21_to_v22,
-                    22: self._migrate_from_v22_to_v23,
-                    23: self._migrate_from_v23_to_v24,
-                    24: self._migrate_from_v24_to_v25,
-                    25: self._migrate_from_v25_to_v26,
                     26: self._migrate_from_v26_to_v27,
                     27: self._migrate_from_v27_to_v28,
-                    28: self._migrate_from_v28_to_v29,
-                    29: self._migrate_from_v29_to_v30,
-                    30: self._migrate_from_v30_to_v31,
+                    47: self._migrate_from_v47_to_v48,
                     31: self._migrate_from_v31_to_v32,
                     32: self._migrate_from_v32_to_v33,
                     33: self._migrate_from_v33_to_v34,
@@ -8440,44 +7201,22 @@ DELETE FROM keywords
                     40: self._migrate_from_v40_to_v41,
                     41: self._migrate_from_v41_to_v42,
                     42: self._migrate_from_v42_to_v43,
-                    43: self._migrate_from_v43_to_v44,
-                    44: self._migrate_from_v44_to_v45,
                     45: self._migrate_from_v45_to_v46,
-                    46: self._migrate_from_v46_to_v47,
-                    47: self._migrate_from_v47_to_v48,
-                    48: self._migrate_from_v48_to_v49,
-                    49: self._migrate_from_v49_to_v50,
-                    50: self._migrate_from_v50_to_v51,
-                    51: self._migrate_from_v51_to_v52,
                     52: self._migrate_from_v52_to_v53,
                     53: self._migrate_from_v53_to_v54,
                     54: self._migrate_from_v54_to_v55,
-                    55: self._migrate_from_v55_to_v56,
-                    56: self._migrate_from_v56_to_v57,
                     57: self._migrate_from_v57_to_v58,
                     58: self._migrate_from_v58_to_v59,
                     59: self._migrate_from_v59_to_v60,
                     60: self._migrate_from_v60_to_v61,
-                    61: self._migrate_from_v61_to_v62,
                     62: self._migrate_from_v62_to_v63,
-                    63: self._migrate_from_v63_to_v64,
-                    64: self._migrate_from_v64_to_v65,
                     65: self._migrate_from_v65_to_v66,
                     66: self._migrate_from_v66_to_v67,
                     67: self._migrate_from_v67_to_v68,
                     68: self._migrate_from_v68_to_v69,
                     69: self._migrate_from_v69_to_v70,
-                    70: self._migrate_from_v70_to_v71,
-                    71: self._migrate_from_v71_to_v72,
                     72: self._migrate_from_v72_to_v73,
-                    73: self._migrate_from_v73_to_v74,
-                    74: self._migrate_from_v74_to_v75,
-                    75: self._migrate_from_v75_to_v76,
                     76: self._migrate_from_v76_to_v77,
-                    77: self._migrate_from_v77_to_v78,
-                    78: self._migrate_from_v78_to_v79,
-                    79: self._migrate_from_v79_to_v80,
-                    80: self._migrate_from_v80_to_v81,
                 }
 
                 if current_db_version == 0:
@@ -8485,7 +7224,9 @@ DELETE FROM keywords
                     current_db_version = self._get_db_version(conn)
 
                 while current_db_version < target_version:
-                    migration = migration_steps.get(current_db_version)
+                    migration = migration_steps.get(current_db_version) or (
+                        self._file_migration_step(current_db_version)
+                    )
                     if migration is None:
                         raise SchemaError(
                             f"Migration path undefined for '{self._SCHEMA_NAME}' from version {current_initial_version} to {target_version}. "
