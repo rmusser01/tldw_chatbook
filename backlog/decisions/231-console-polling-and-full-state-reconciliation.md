@@ -52,3 +52,8 @@ The manual action independently performs checked capture and submits its complet
 ## Renumbering and current integration
 
 Original source decision at c504ff3b1bda is preserved above with its original approval/Proposed status. The older current-dev ADR222 HTTP-session and ADR223 embedding-cache decisions keep their identities; younger Send-preparation222 and polling223 become230 and231 after the all-ref/worktree census. Existing34406/34563 child task IDs and historical qualification remain. The general polling proposal stays Proposed; only its explicitly accepted sole-stock-manual-Preparing amendment is selected. Current integration composes resident acknowledgement/captured-draft/custody/human-decision/Goal/Personal Context/response-rule owners, not a parallel ledger, cache or scheduler. Actual current native, original callback, final saved-source and rendered-input/transport evidence must qualify the original bounds before completion; old source counts or server-frame emission do not establish that proof.
+
+
+## Current-owner integration amendment (2026-10-13)
+
+The accepted narrow route excludes Goal, automatic/machine/hook followups, Rules Checking/repair, pending helper cleanup, and all non-manual producers. Explicit False from FULL means deferred reconciliation: no timer stop or survivor handoff. Completed-current FULL, exact unpromoted manual receipt/task/claim/draft/attachments/visit/membership/gate/bridge, post-await checks and trailing FULL dominance remain required. This amendment selects no general polling cache.

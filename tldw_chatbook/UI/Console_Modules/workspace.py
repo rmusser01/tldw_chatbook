@@ -35,6 +35,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.css.query import NoMatches
 
 from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from ...Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
@@ -111,6 +112,7 @@ from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceConversationSectionState,
+    _recompute_filesystem_binding_status,
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
@@ -120,6 +122,7 @@ from ...Workspaces.models import (
     WorkspaceRuntimeBinding,
 )
 from ...Workspaces.registry_service import (
+    LocalWorkspaceRegistryService,
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
     binding_exclusion_entries,
@@ -580,6 +583,22 @@ class ConsoleTickWorkspaceBuilds:
         return state
 
 
+def _availability_methods_current(owner, originals):
+    """Select only the directly consumed original display callbacks."""
+    return all(
+        getattr(callback := getattr(owner, name, None), "__self__", None) is owner
+        and getattr(callback, "__func__", None) is function
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is keywords
+        for name, function, code, defaults, keywords in originals
+    )
+
+
+class _WorkspaceAvailabilityObsolete(RuntimeError):
+    """A finite display read lost its original publisher."""
+
+
 class ConsoleWorkspaceController:
     """Own Workspace lifecycle, resume, scope, and conversation browsing.
 
@@ -813,6 +832,8 @@ class ConsoleWorkspaceController:
         self._workspace_files_availability_generation = 0
         self._workspace_files_availability_refresh_in_flight = False
         self._workspace_files_availability_cached_at = 0.0
+        self._preparation_reads = set()
+        self._workspace_files_availability_task = None
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -3777,7 +3798,19 @@ class ConsoleWorkspaceController:
         )
         last_error = ""
         for service, include_mode in services:
-            list_conversations = getattr(service, "list_conversations", None)
+            stock_read = None
+            if (
+                not include_mode and scopes is None
+                and type(query) is str and type(offset) is int
+                and query_scopes == (("global", None), ("workspace", DEFAULT_WORKSPACE_ID))
+            ):
+                stock_read = _capture_stock_browser_read(
+                    self, service, local_service, scope_service
+                )
+            list_conversations = (
+                stock_read.reader if stock_read is not None
+                else getattr(service, "list_conversations", None)
+            )
             if not callable(list_conversations):
                 continue
             rows: list[ConsoleConversationBrowserInputRow] = []
@@ -3788,7 +3821,23 @@ class ConsoleWorkspaceController:
                 current_conversation_id or self._current_console_conversation_id()
             )
             starred_ids = self._starred_console_conversation_ids()
-            for scope_type, workspace_id in query_scopes:
+            stock_results = None
+            if stock_read is not None:
+                kwargs_pair = tuple(
+                    {
+                        "query": query, "scope_type": scope_type,
+                        "workspace_id": workspace_id,
+                        "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+                        "offset": max(0, int(offset)), "character_scope": "generic",
+                    }
+                    for scope_type, workspace_id in query_scopes
+                )
+                try:
+                    stock_results = await stock_read.run(kwargs_pair)
+                except Exception:
+                    logger.exception("Unable to read captured Console browser source")
+                    return [], None, "Conversation search is unavailable."
+            for scope_index, (scope_type, workspace_id) in enumerate(query_scopes):
                 list_kwargs: dict[str, Any] = {
                     "query": query,
                     "scope_type": scope_type,
@@ -3802,7 +3851,12 @@ class ConsoleWorkspaceController:
                 if include_mode:
                     list_kwargs["mode"] = "local"
                 try:
-                    if include_mode and not inspect.iscoroutinefunction(
+                    if stock_results is not None:
+                        stock_read.require_loop_current()
+                        result, read_error = stock_results[scope_index]
+                        if read_error is not None:
+                            raise read_error
+                    elif include_mode and not inspect.iscoroutinefunction(
                         list_conversations
                     ):
                         result = await asyncio.to_thread(
@@ -3839,6 +3893,8 @@ class ConsoleWorkspaceController:
                     if inspect.isawaitable(result):
                         result = await result
                 except Exception as exc:
+                    if stock_read is not None and stock_read.source_changed:
+                        return [], None, "Conversation search is unavailable."
                     if (
                         isinstance(exc, ValueError)
                         and "service is unavailable" in str(exc).lower()
@@ -3917,6 +3973,11 @@ class ConsoleWorkspaceController:
                         self._apply_console_browser_star_state(row, starred_ids)
                     )
             if saw_result:
+                if stock_read is not None:
+                    try:
+                        stock_read.require_loop_current()
+                    except Exception:  # noqa: BLE001 - preserve original optional browser or availability failure results.
+                        return [], None, "Conversation search is unavailable."
                 return rows, total_count if saw_total else None, last_error
         return [], None, last_error
 
@@ -6645,6 +6706,60 @@ class ConsoleWorkspaceController:
         finally:
             self._console_tick_builds = None
 
+    def _workspace_availability_runtime(self):
+        """Read only an existing owner; a display request never constructs one."""
+        from ...Chat.console_runtime import CONSOLE_RUNTIME_ATTR, ConsoleRuntime
+
+        app_values = getattr(self.app_instance, "__dict__", {})
+        value = app_values.get(CONSOLE_RUNTIME_ATTR)
+        if value is None:
+            value = getattr(self._screen, "__dict__", {}).get("_console_runtime_fallback")
+        return value if isinstance(value, ConsoleRuntime) else None
+
+
+    async def _read_owned_workspace_availability(self, registry, database, workspace_ids):
+        """Retain the original callback's exact finite DB scopes through cancel."""
+        from ...Backup_Recovery.participants import _core_operation
+        from ...Chat.console_preparation_reads import run_preparation_read
+        from ...DB.base_db import operation_owned_connection
+
+        app = self.app_instance
+        runtime = self._workspace_availability_runtime()
+        reader = self._read_workspace_files_availability
+        database_path = database.db_path
+
+        def current():
+            if (
+                self.app_instance is not app
+                or getattr(app, "workspace_registry_service", None) is not registry
+                or self._workspace_availability_runtime() is not runtime
+                or getattr(registry, "db", None) is not database
+                or database.db_path != database_path
+                or not _availability_methods_current(self, _WORKSPACE_AVAILABILITY_METHODS)
+                or not _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
+                or (runtime is not None and runtime._disposed)
+            ):
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_availability_source_changed"
+                )
+
+        def read_captured_availability():
+            # Same complete repository interval and newly-created-handle custody
+            # as run_owned_db_call; its global/custom API remains unchanged.
+            with operation_owned_connection(database), _core_operation(database):
+                current()
+                return reader(registry, database, workspace_ids)
+
+        return await run_preparation_read(
+            read_captured_availability,
+            creator=self,
+            session_id=None,
+            reads=self._preparation_reads,
+            observers=() if runtime is None else (runtime._preparation_reads,),
+            require_current=current,
+        )
+
+
     def _request_workspace_files_availability_refresh(
         self, workspace_ids: Sequence[str]
     ) -> None:
@@ -6655,6 +6770,9 @@ class ConsoleWorkspaceController:
         status and can stall every Console interaction, so renderers only
         enqueue this best-effort cache refresh and fail closed until it lands.
         """
+        runtime = self._workspace_availability_runtime()
+        if runtime is not None and runtime._disposed:
+            return
         requested_ids = tuple(
             sorted(
                 {
@@ -6689,20 +6807,60 @@ class ConsoleWorkspaceController:
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
         """Read runtime bindings and folder readiness off-loop into a snapshot."""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        with operation_owned_connection(getattr(registry, "db", None)):
-            availability: dict[str, bool] = {}
-            bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
-            for workspace_id in workspace_ids:
-                if registry is None:
-                    availability[workspace_id] = False
-                    bindings_by_id[workspace_id] = ()
-                    continue
-                try:
+        return self._capture_workspace_files_availability_for_registry(
+            registry, workspace_ids
+        )
+
+
+    def _capture_workspace_files_availability_for_registry(
+        self, registry: Any, workspace_ids: Sequence[str]
+    ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
+        """Retain the existing ownership route for direct and custom reads."""
+        database = getattr(registry, "db", None)
+        with operation_owned_connection(database):
+            return self._read_workspace_files_availability(
+                registry, database, workspace_ids
+            )
+
+
+    def _read_workspace_files_availability(
+        self, registry: Any, database: object, workspace_ids: Sequence[str]
+    ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
+        """Read the captured registry owner within its caller's finite lifetime."""
+        availability: dict[str, bool] = {}
+        bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
+        for workspace_id in workspace_ids:
+            if getattr(registry, "db", None) is not database:
+                return {}, {}
+            if registry is None:
+                availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
+                continue
+            try:
+                if (
+                    type(registry) is LocalWorkspaceRegistryService
+                    and _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
+                ):
+                    # Its folder lister reads the complete runtime set too.
+                    # Reuse one read and the display layer's same disk checks
+                    # within this finite operation, including Default cleanup.
+                    runtime_bindings = tuple(
+                        _recompute_filesystem_binding_status(binding)
+                        for binding in registry.list_runtime_bindings(workspace_id)
+                    )
+                    folder_bindings = tuple(
+                        binding
+                        for binding in runtime_bindings
+                        if binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                    )
+                else:
+                    # Custom adapters may implement their own folder status
+                    # contract. Keep their existing listers and merge behavior.
                     folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
                     list_runtime_bindings = getattr(
                         registry, "list_runtime_bindings", None
                     )
-                    runtime_bindings = (
+                    stored_bindings = (
                         tuple(list_runtime_bindings(workspace_id))
                         if callable(list_runtime_bindings)
                         else folder_bindings
@@ -6711,32 +6869,69 @@ class ConsoleWorkspaceController:
                         str(getattr(binding, "binding_id", "")): binding
                         for binding in folder_bindings
                     }
-                    bindings_by_id[workspace_id] = tuple(
+                    runtime_bindings = tuple(
                         refreshed_by_binding_id.get(
                             str(getattr(binding, "binding_id", "")), binding
                         )
-                        for binding in runtime_bindings
+                        for binding in stored_bindings
                     )
-                    availability[workspace_id] = any(
-                        binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
-                        and binding.status is RuntimeBindingStatus.READY
-                        for binding in folder_bindings
-                    )
-                except Exception:
-                    availability[workspace_id] = False
-                    bindings_by_id[workspace_id] = ()
-            return availability, bindings_by_id
+                bindings_by_id[workspace_id] = runtime_bindings
+                availability[workspace_id] = any(
+                    binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                    and binding.status is RuntimeBindingStatus.READY
+                    for binding in folder_bindings
+                )
+            except Exception:  # noqa: BLE001 - preserve original optional browser or availability failure results.
+                availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
+        return availability, bindings_by_id
+
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
+        owner_task = asyncio.current_task()
+        self._workspace_files_availability_task = owner_task
         try:
             while self._screen_running_accessor():
+                runtime = self._workspace_availability_runtime()
+                if runtime is not None and runtime._disposed:
+                    return
                 generation = self._workspace_files_availability_generation
                 workspace_ids = self._workspace_files_availability_requested_ids
-                availability_snapshot, bindings_snapshot = await asyncio.to_thread(
-                    self._capture_workspace_files_availability, workspace_ids
-                )
-                if generation == self._workspace_files_availability_generation:
+                registry = getattr(self.app_instance, "workspace_registry_service", None)
+                database = getattr(registry, "db", None)
+                if (
+                    type(database) is WorkspaceDB and not database.is_memory_db
+                    and type(registry) is LocalWorkspaceRegistryService
+                    and _availability_methods_current(self, _WORKSPACE_AVAILABILITY_METHODS)
+                    and _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
+                ):
+                    availability_snapshot, bindings_snapshot = (
+                        await self._read_owned_workspace_availability(
+                            registry, database, workspace_ids
+                        )
+                    )
+                else:
+                    # Preserve the original custom/in-memory read route and its
+                    # worker affinity while retaining physical completion.
+                    from ...Chat.console_preparation_reads import run_preparation_read
+
+                    availability_snapshot, bindings_snapshot = await run_preparation_read(
+                        partial(self._capture_workspace_files_availability, workspace_ids),
+                        creator=self, session_id=None, reads=self._preparation_reads,
+                        observers=() if runtime is None else (runtime._preparation_reads,),
+                        require_current=lambda: None,
+                    )
+                runtime = self._workspace_availability_runtime()
+                if not self._screen_running_accessor() or (
+                    runtime is not None and runtime._disposed
+                ):
+                    return
+                if (
+                    generation == self._workspace_files_availability_generation
+                    and registry is getattr(self.app_instance, "workspace_registry_service", None)
+                    and database is getattr(registry, "db", None)
+                ):
                     self._workspace_files_availability_by_id = MappingProxyType(
                         {
                             workspace_id: bool(
@@ -6755,13 +6950,17 @@ class ConsoleWorkspaceController:
                     self._workspace_files_availability_refresh_in_flight = False
                     self._sync_console_workspace_context()
                     return
+        except _WorkspaceAvailabilityObsolete:
+            return
         except asyncio.CancelledError:
             raise
         finally:
             # A screen-owned worker is cancelled during teardown.  Do not
             # retain an in-flight claim that would make a resumed screen think
             # a non-existent worker still owns its snapshot.
-            self._workspace_files_availability_refresh_in_flight = False
+            if self._workspace_files_availability_task is owner_task:
+                self._workspace_files_availability_refresh_in_flight = False
+                self._workspace_files_availability_task = None
 
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
         builds = getattr(self, "_console_tick_builds", None)
@@ -8178,3 +8377,75 @@ class ConsoleWorkspaceController:
                     "Unable to resolve Console workspace name for approval toast"
                 )
         return str(workspace_id)
+
+
+_WORKSPACE_AVAILABILITY_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in (
+        "_capture_workspace_files_availability",
+        "_capture_workspace_files_availability_for_registry",
+        "_read_workspace_files_availability",
+        "_read_owned_workspace_availability",
+    )
+    for function in (getattr(ConsoleWorkspaceController, name),)
+)
+_WORKSPACE_AVAILABILITY_REGISTRY_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in ("list_folder_bindings", "list_runtime_bindings")
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)
+
+
+# Definition-time owner of the optional stock pair.
+_CONSOLE_BROWSER_CONTROLLER_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (
+            ConsoleWorkspaceController,
+            name,
+            inspect.getattr_static(ConsoleWorkspaceController, name),
+        )
+        for name in ("__getattribute__", "__dict__", "_persisted_console_browser_rows", "_workspace_availability_runtime")
+    ),
+    (("ConsoleWorkspaceController", ConsoleWorkspaceController),),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in (ConsoleWorkspaceController._persisted_console_browser_rows,
+                         ConsoleWorkspaceController._workspace_availability_runtime)
+    ),
+)
+
+
+def _capture_stock_browser_read(controller, service, local_service, scope_service):
+    # Retain first-use import behavior: the stock source carries its own
+    # definition-time factory record, checked before invoking it.
+    from . import console_browser_read as source
+
+    factory, code, defaults, kwdefaults = source._CAPTURE_SOURCE
+    def current():
+        return (
+            source.capture_stock_browser_read is factory
+            and factory.__code__ is code
+            and factory.__defaults__ is defaults
+            and factory.__kwdefaults__ is kwdefaults
+        )
+    if not current():
+        return None
+    return factory(
+        controller, service, local_service, scope_service,
+        controller_source=_CONSOLE_BROWSER_CONTROLLER_SOURCE,
+        factory_is_current=current,
+    )

@@ -106,6 +106,10 @@ def is_within(
     return resolved == root_resolved or root_resolved in resolved.parents
 
 
+# Direct call-shape anchors for optional finite context sharing only.
+_IS_WITHIN_ORIGINAL = (is_within, is_within.__code__, is_within.__defaults__)
+
+
 def _tool_sandbox_root() -> Path:
     """Resolve + create the file-tool sandbox root.
 
@@ -1902,3 +1906,62 @@ class GrepFiles(Tool):
             # keep the run alive.
             logger.error(f"Error grepping pattern {raw_pattern!r}: {exc}")
             return {"error": f"Failed to grep files: {exc}"}
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_tool_sandbox_root",
+                "_resolve_sandbox_config",
+                "current_run_sandbox_root",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_tool_sandbox_root",
+                    "_resolve_sandbox_config",
+                    "current_run_sandbox_root",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

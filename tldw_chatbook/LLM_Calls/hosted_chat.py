@@ -183,8 +183,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         usage_optional: bool = False,
         event_check: Callable[[Mapping[str, Any]], None] | None = None,
         annotation_key: str | None = None,
+        wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     ) -> None:
         self._records = records
+        # The call-owned provider normalizer runs between bounded JSON loading
+        # and the unchanged strict wire/terminal checks (ADR-179).
+        self._wire_normalizer = wire_normalizer
         # A provider annotation frame (TASK-33505: Azure's
         # prompt_filter_results): no choices, no usage, this key present.
         self._annotation_key = annotation_key
@@ -262,6 +266,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         try:
             if self._event_check is not None:
                 self._event_check(cast(Mapping[str, Any], event))
+            if self._wire_normalizer is not None:
+                event = self._wire_normalizer(cast(Mapping[str, Any], event))
+                if not isinstance(event, Mapping) or not _json_shape_is_safe(event):
+                    raise HostedChatProtocolError(
+                        "Hosted Chat normalized event is malformed."
+                    )
             safe_event = self._consume_event(cast(Mapping[str, Any], event))
         except (HostedChatProtocolError, ChatProviderError):
             self.close()
@@ -564,6 +574,7 @@ def normalize_hosted_chat_response(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
     """Normalize one non-streaming OpenAI-shaped Chat response.
@@ -575,6 +586,7 @@ def normalize_hosted_chat_response(
         allowed_choice_keys: Tolerated extra choice-level keys (value rule).
         allowed_message_keys: Tolerated extra message-level keys (value rule).
         tolerant_top_level_extras: The long-tail tolerant profile switch.
+        wire_normalizer: Provider-owned normalization before strict shape checks.
         allowed_tool_call_keys: Tolerated extra keys on each tool-call object
             (value rule), validated then dropped (TASK-34364).
 
@@ -587,6 +599,12 @@ def normalize_hosted_chat_response(
     """
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
         raise HostedChatProtocolError("Hosted Chat response JSON is malformed.")
+    if wire_normalizer is not None:
+        response = wire_normalizer(response)
+        if not isinstance(response, Mapping) or not _json_shape_is_safe(response):
+            raise HostedChatProtocolError(
+                "Hosted Chat normalized response is malformed."
+            )
     _check_top_level_extras(
         response,
         allowed_extra_keys=allowed_extra_keys,
@@ -667,6 +685,7 @@ def hosted_chat_request(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
 ) -> HostedChatTurn | HostedChatStream:
     """Run one hosted Chat-Completions request through the shared boundary."""
     response = owned_json_post(
@@ -683,6 +702,7 @@ def hosted_chat_request(
             allowed_choice_keys=allowed_choice_keys,
             allowed_message_keys=allowed_message_keys,
             tolerant_top_level_extras=tolerant_top_level_extras,
+            wire_normalizer=wire_normalizer,
         )
     return normalize_hosted_chat_response(
         response,
@@ -691,6 +711,7 @@ def hosted_chat_request(
         allowed_choice_keys=allowed_choice_keys,
         allowed_message_keys=allowed_message_keys,
         tolerant_top_level_extras=tolerant_top_level_extras,
+        wire_normalizer=wire_normalizer,
     )
 
 

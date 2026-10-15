@@ -431,7 +431,7 @@ def _trusted_directory_postcondition_holds(
     )
 
 
-def _open_verified_parent(
+def _walk_verified_parent(
     selected: Path,
     *,
     missing_leaf_allowed: bool,
@@ -672,6 +672,10 @@ def _native_open(*args, _outcome: _NativeOpenOutcome | None = None, **kwargs):
             _outcome.descriptor = fd
         return fd
     operation = _runtime_operation()
+    return _allocate_native_descriptor(operation, args, kwargs, _outcome)
+
+
+def _allocate_native_descriptor(operation, args, kwargs, _outcome):
     open = os.open  # Pin the exact callable used at this native edge.
     try:
         fd = open(*args, **kwargs)
@@ -699,12 +703,236 @@ def _native_close(fd):
     visual, state = _visual_native_scope()
     if state is not None:
         return visual.native_close(fd)
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    state = raw._owned_descriptor_retirement_state(fd) if raw is not None else None
+    if state is not None:
+        return raw._close_descriptor(state, fd)
     operation = _runtime_operation()
     if operation is None:
         os.close(fd)
     else:
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
         raw._close_descriptor(raw._states[operation], fd)
+
+
+# Capture definitions once; optional module metadata cannot restamp this witness.
+_PARENT_WALK_SOURCE = tuple(
+    (
+        name, function, getattr(function, "__code__", None),
+        getattr(function, "__defaults__", None),
+        None if getattr(function, "__kwdefaults__", None) is None else tuple(function.__kwdefaults__.items()),
+        getattr(function, "__globals__", None),
+        None if getattr(function, "__closure__", None) is None else tuple(cell.cell_contents for cell in function.__closure__),
+    )
+    for name, function in (
+        ("_walk_verified_parent", _walk_verified_parent),
+        ("_open_directory_component", _open_directory_component),
+        ("_follow_trusted_symlink", _follow_trusted_symlink),
+        ("_native_open", _native_open),
+        ("_native_close", _native_close),
+        ("_allocate_native_descriptor", _allocate_native_descriptor),
+        ("_runtime_operation", _runtime_operation),
+        ("_visual_native_scope", _visual_native_scope),
+        ("_voice_operation", _voice_operation),
+        ("_posix_guards_available", _posix_guards_available),
+        ("os.open", _ORIGINAL_NATIVE_OPEN),
+    )
+)
+
+
+def _bind_parent_walk(definition):
+    namespace = globals()
+    native_os = os
+    directory_flags = _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+
+    def source_current():
+        if namespace.get("_PARENT_WALK_SOURCE") is not definition or namespace.get("os") is not native_os:
+            return False
+        if _DIRECTORY_OPEN_FLAGS | _NOFOLLOW != directory_flags:
+            return False
+        for name, function, code, defaults, keywords, defining_globals, closure in definition:
+            actual = native_os.open if name == "os.open" else namespace.get(name)
+            if (
+                actual is not function or getattr(function, "__code__", None) is not code
+                or getattr(function, "__defaults__", None) is not defaults
+                or getattr(function, "__globals__", None) is not defining_globals
+            ):
+                return False
+            current_keywords = getattr(function, "__kwdefaults__", None)
+            if keywords is None:
+                if current_keywords is not None:
+                    return False
+            elif type(current_keywords) is not dict or len(current_keywords) != len(keywords) or any(
+                key not in current_keywords or current_keywords[key] is not value
+                for key, value in keywords
+            ):
+                return False
+            cells = getattr(function, "__closure__", None)
+            if closure is None:
+                if cells is not None:
+                    return False
+            elif cells is None or len(cells) != len(closure) or any(
+                cell.cell_contents is not value for cell, value in zip(cells, closure, strict=True)
+            ):
+                return False
+        return True
+
+    @contextlib.contextmanager
+    def _prepared_parent_walk(selected, open, close):
+        raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+        selector = getattr(raw, "_parent_walk_operation", None)
+        allocation_check = getattr(raw, "_check_directory_allocation", None)
+        if (
+            open is not None or close is not None
+            or source_current.__code__ is not current_code
+            or source_current.__globals__ is not namespace
+            or source_current.__defaults__ is not None
+            or source_current.__kwdefaults__ is not None
+            or source_current.__closure__ is not current_cells
+            or any(cell.cell_contents is not value for cell, value in current_values)
+            or not source_current()
+            or not _posix_guards_available()
+            or _voice_operation() is not None
+            or _visual_native_scope()[1] is not None
+            or selector is None or allocation_check is None
+        ):
+            yield open, close, None
+            return
+        raw_callbacks = tuple(
+            (name, callback, callback.__code__, callback.__defaults__,
+             None if callback.__kwdefaults__ is None else tuple(callback.__kwdefaults__.items()),
+             callback.__globals__, callback.__closure__,
+             tuple((cell, cell.cell_contents) for cell in callback.__closure__ or ()))
+            for name, callback in (("_parent_walk_operation", selector), ("_check_directory_allocation", allocation_check))
+        )
+        owner = selector(selected)
+        if owner is None:
+            yield open, close, None
+            return
+        operation, state, source, participant, pin = owner
+        active, entered = True, False
+
+        def current():
+            if (
+                not active
+                or source_current.__code__ is not current_code
+                or source_current.__globals__ is not namespace
+                or source_current.__defaults__ is not None
+                or source_current.__kwdefaults__ is not None
+                or source_current.__closure__ is not current_cells
+                or any(cell.cell_contents is not value for cell, value in current_values)
+                or not source_current()
+                or sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants") is not raw
+                or _voice_operation() is not None
+                or _visual_native_scope()[1] is not None
+                or getattr(raw._local, "operation", None) is not operation
+            ):
+                raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            for name, callback, code, defaults, keywords, defining_globals, cells, values in raw_callbacks:
+                if (
+                    vars(raw).get(name) is not callback or callback.__code__ is not code
+                    or callback.__defaults__ is not defaults or callback.__globals__ is not defining_globals
+                    or callback.__closure__ is not cells
+                    or any(cell.cell_contents is not value for cell, value in values)
+                ):
+                    raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+                actual = callback.__kwdefaults__
+                if (keywords is None and actual is not None) or (
+                    keywords is not None and (
+                        type(actual) is not dict or len(actual) != len(keywords)
+                        or any(key not in actual or actual[key] is not value for key, value in keywords)
+                    )
+                ):
+                    raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+
+        def directory_open(path, flags, *, dir_fd=None):
+            nonlocal entered
+            current()
+            if type(flags) is not int or flags != directory_flags:
+                raise raw.bootstrap.RecoveryRequired("raw_path_outside_scope")
+            if not entered:
+                if _runtime_operation() is not operation:
+                    raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+                entered = True
+            allocation_check(operation, state, source, participant)
+            current()
+            kwargs = {} if dir_fd is None else {"dir_fd": dir_fd}
+            return _allocate_native_descriptor(operation, (path, flags), kwargs, None)
+
+        def owned_close(fd):
+            # Keep creator cleanup independent of revoked source metadata.
+            if not active or raw._owned_descriptor_retirement_state(fd) is not state:
+                raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            raw._close_descriptor(state, fd)
+
+        def finish(parent):
+            current()
+            checked = raw._check(operation, writing=True)
+            if checked is not state or state.source is not source or state.participant is not participant:
+                raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            if type(state.pins.get(selected.parent)) is not int or state.pins[selected.parent] != pin:
+                raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
+            if type(parent) is not int or parent not in state.descriptors:
+                raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            opened, pinned = os.fstat(parent), os.fstat(pin)
+            if (opened.st_dev, opened.st_ino) != (pinned.st_dev, pinned.st_ino):
+                raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
+            allocation_check(operation, state, source, participant)
+            current()
+            if type(state.pins.get(selected.parent)) is not int or state.pins[selected.parent] != pin:
+                raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
+            if type(parent) is not int or parent not in state.descriptors:
+                raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+
+        try:
+            current()
+            yield directory_open, owned_close, finish
+        finally:
+            active = False
+
+    def _open_verified_parent(
+        selected: Path,
+        *,
+        missing_leaf_allowed: bool,
+        _close: Callable[[int], None] | None = None,
+        _open: Callable[..., int] | None = None,
+    ) -> tuple[int, str]:
+        # Invalid input and changed preparation retain the original error route.
+        parts = selected.parts
+        if len(parts) < 2 or parts[0] != selected.anchor or any(
+            function.__code__ is not code or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords or function.__globals__ is not defining_globals
+            or function.__closure__ is not cells
+            or any(cell.cell_contents is not value for cell, value in values)
+            for function, code, defaults, keywords, defining_globals, cells, values in preparation
+        ) or namespace.get("_prepared_parent_walk") is not _prepared_parent_walk:
+            return _walk_verified_parent(selected, missing_leaf_allowed=missing_leaf_allowed, _close=_close, _open=_open)
+        with _prepared_parent_walk(selected, _open, _close) as (open, close, finish):
+            parent, leaf = _walk_verified_parent(
+                selected, missing_leaf_allowed=missing_leaf_allowed, _close=close, _open=open,
+            )
+            try:
+                if finish is not None:
+                    finish(parent)
+                return parent, leaf
+            except BaseException:
+                (close or _native_close)(parent)
+                raise
+
+    current_code = source_current.__code__
+    current_cells = source_current.__closure__
+    current_values = tuple((cell, cell.cell_contents) for cell in current_cells or ())
+    preparation = tuple(
+        (function, function.__code__, function.__defaults__, function.__kwdefaults__,
+         function.__globals__, function.__closure__,
+         tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
+        for function in (_prepared_parent_walk, _prepared_parent_walk.__wrapped__)
+    )
+    return _open_verified_parent, _prepared_parent_walk
+
+
+_open_verified_parent, _prepared_parent_walk = _bind_parent_walk(_PARENT_WALK_SOURCE)
+del _bind_parent_walk
 
 
 def _close_runtime_stream(operation, stream):
@@ -1558,6 +1786,364 @@ def open_private_text_append_stream(
         _native_close(parent_fd)
 
 
+@_admitted_stream
+def open_private_lock_stream(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+    errors: str | None = None,
+) -> TextIO:
+    """Create or open a checked lock; retain the same native FD through close."""
+
+    lock_create = True
+
+    if lock_create:
+        "".encode(encoding)
+    selected = lexical_path(path)
+    _prepare_application_owned_parent(selected, application_owned_directory)
+
+    if not _posix_guards_available():
+        if _WINDOWS_PLATFORM:
+            if lock_create:
+                try:
+                    create_private_text(
+                        selected,
+                        "",
+                        application_owned_directory=application_owned_directory,
+                        encoding=encoding,
+                    )
+                except FileExistsError:
+                    pass
+            selected.parent.mkdir(parents=True, exist_ok=True)
+            operation = _runtime_operation(selected)
+            if operation is None:
+                return selected.open(
+                    "a", encoding=encoding, errors=errors, newline="\n"
+                )
+            fd = _native_open(
+                selected, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _PRIVATE_FILE_MODE
+            )
+            try:
+                stream = os.fdopen(
+                    fd,
+                    "a",
+                    encoding=encoding,
+                    errors=errors,
+                    newline="\n",
+                    closefd=False,
+                )
+            except BaseException:
+                _native_close(fd)
+                raise
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            raw._check(operation).files.append(stream)
+            return stream
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="required_posix_guards_unavailable",
+            )
+        )
+
+    parent_fd, leaf = _open_verified_parent(
+        selected,
+        missing_leaf_allowed=True,
+    )
+    file_fd = -1
+    created = False
+    created_stat = None
+    try:
+        if lock_create:
+            outcome = _NativeOpenOutcome()
+            try:
+                file_fd = _native_open(
+                    leaf,
+                    os.O_WRONLY
+                    | os.O_APPEND
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | _NOFOLLOW
+                    | _NONBLOCK
+                    | _NOCTTY,
+                    _PRIVATE_FILE_MODE,
+                    dir_fd=parent_fd,
+                    _outcome=outcome,
+                )
+                created = True
+            except FileExistsError:
+                if not outcome.rejected or outcome.descriptor is not None:
+                    raise
+            if created:
+                created_stat = os.fstat(file_fd)
+                rejected = _classify_private_file_stat(
+                    created_stat,
+                    expected_uid=os.geteuid(),
+                )
+                if rejected is not None:
+                    raise PrivatePathError(PrivatePathResult(selected, rejected))
+                os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+                os.fsync(file_fd)
+            # Preserve the former append helper's fresh ancestor check after
+            # either actual creation/fsync or confirmed existing-file rejection.
+            reopened, reopened_leaf = _open_verified_parent(
+                selected,
+                missing_leaf_allowed=True,
+            )
+            try:
+                old_info, new_info = os.fstat(parent_fd), os.fstat(reopened)
+                if not _same_identity(old_info, new_info):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.OPERATION_FAILED,
+                            reason="target_parent_replaced",
+                        )
+                    )
+                if application_owned_directory is not None and (
+                    not stat.S_ISDIR(new_info.st_mode)
+                    or new_info.st_uid != os.geteuid()
+                    or stat.S_IMODE(new_info.st_mode) != _PRIVATE_DIRECTORY_MODE
+                ):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.UNSAFE_PARENT,
+                            reason="application_owned_parent_changed",
+                        )
+                    )
+            except BaseException:
+                _native_close(reopened)
+                raise
+            previous_parent, parent_fd = parent_fd, reopened
+            leaf = reopened_leaf
+            _native_close(previous_parent)
+        entry_stat = created_stat
+        if file_fd < 0:
+            try:
+                entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if lock_create:
+                    raise
+            else:
+                rejected = _classify_private_file_stat(
+                    entry_stat,
+                    expected_uid=os.geteuid(),
+                )
+                if rejected is not None:
+                    raise PrivatePathError(PrivatePathResult(selected, rejected))
+            file_fd = _native_open(
+                leaf,
+                os.O_WRONLY
+                | os.O_APPEND
+                | (0 if lock_create else os.O_CREAT)
+                | _NOFOLLOW
+                | _NONBLOCK
+                | _NOCTTY,
+                _PRIVATE_FILE_MODE,
+                dir_fd=parent_fd,
+            )
+        file_stat = os.fstat(file_fd)
+        rejected = _classify_private_file_stat(
+            file_stat,
+            expected_uid=os.geteuid(),
+        )
+        if rejected is not None:
+            raise PrivatePathError(PrivatePathResult(selected, rejected))
+        if entry_stat is not None and not _same_identity(file_stat, entry_stat):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="target_replaced",
+                )
+            )
+        if not created:
+            os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+        if not _private_file_postcondition_holds(
+            file_fd,
+            parent_fd,
+            leaf,
+            expected_identity=file_stat,
+        ):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="private_file_postcondition_failed",
+                )
+            )
+        operation = _runtime_operation(selected)
+        stream = os.fdopen(
+            file_fd,
+            "a",
+            encoding=encoding,
+            errors=errors,
+            # Same LF contract as the Windows branch above. A no-op on this
+            # platform (``os.linesep`` is already LF), stated so the two
+            # branches cannot drift apart on the one property callers of
+            # this helper reason about in bytes.
+            newline="\n",
+            closefd=operation is None,
+        )
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            raw._check(operation).files.append(stream)
+        file_fd = -1
+        return stream
+    except PrivatePathError:
+        raise
+    except OSError as exc:
+        raise _private_path_error_from_oserror(selected, exc) from None
+    finally:
+        if file_fd >= 0:
+            _native_close(file_fd)
+        _native_close(parent_fd)
+
+# These exact callable records select only the optional combined lock route.
+# They grant no native/source authority and never replace admission checks.
+_LOCK_STREAM_BINDING = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        None if function.__kwdefaults__ is None else tuple(function.__kwdefaults__.items()),
+        None if function.__closure__ is None else tuple(cell.cell_contents for cell in function.__closure__),
+        function.__globals__,
+    )
+    for name, function in (
+        ("create_private_text", create_private_text),
+        ("create_private_text.__wrapped__", create_private_text.__wrapped__),
+        ("open_private_text_append_stream", open_private_text_append_stream),
+        ("open_private_text_append_stream.__wrapped__", open_private_text_append_stream.__wrapped__),
+        ("open_private_lock_stream", open_private_lock_stream),
+        ("open_private_lock_stream.__wrapped__", open_private_lock_stream.__wrapped__),
+    )
+)
+def _make_lock_stream_selector(original):
+    """Capture only this optional lock schedule's original collaborators."""
+    namespace = globals()
+    admitted = _admitted_stream
+    admitted_code = admitted.__code__
+
+    def current(caller, caller_binding):
+        if namespace.get("_LOCK_STREAM_BINDING") is not original:
+            return False
+        if namespace.get("_lock_stream_for_callbacks") is not _lock_stream_for_callbacks:
+            return False
+        if _lock_stream_for_callbacks.__code__ is not select_code or _lock_stream_for_callbacks.__globals__ is not namespace:
+            return False
+        if namespace.get("_admitted_stream") is not admitted or admitted.__code__ is not admitted_code:
+            return False
+        if caller is not None and (
+            caller.get("_LOCK_STREAM_SELECTOR_BINDING") is not caller_binding
+            or caller.get("_lock_stream_for_callbacks") is not _lock_stream_for_callbacks
+            or caller.get("create_private_text") is not original[0][1]
+            or caller.get("open_private_text_append_stream") is not original[2][1]
+            or caller.get("open_private_lock_stream") is not original[4][1]
+        ):
+            return False
+        if caller is not None:
+            # The caller captured this exact record before selecting us. Recheck
+            # that selected function after admission, before any leaf effects.
+            if type(caller_binding) is not tuple or len(caller_binding) != 4:
+                return False
+            selector, code, defining_globals, closure = caller_binding
+            if (
+                selector is not _lock_stream_for_callbacks
+                or code is not select_code
+                or defining_globals is not namespace
+                or selector.__defaults__ is not None
+                or selector.__kwdefaults__ is not None
+                or type(closure) is not tuple
+                or selector.__closure__ is None
+                or len(selector.__closure__) != len(closure)
+                or any(
+                    cell.cell_contents is not value
+                    for cell, value in zip(selector.__closure__, closure, strict=True)
+                )
+            ):
+                return False
+        for name, function, code, defaults, kwdefaults, closure, defining_globals in original:
+            live = namespace.get(name.split(".")[0])
+            if "." in name:
+                live = getattr(live, "__wrapped__", None)
+            if live is not function or function.__code__ is not code or function.__globals__ is not defining_globals:
+                return False
+            if function.__defaults__ is not defaults:
+                return False
+            keywords = function.__kwdefaults__
+            if kwdefaults is None:
+                if keywords is not None:
+                    return False
+            elif type(keywords) is not dict or len(keywords) != len(kwdefaults) or any(
+                key not in keywords or keywords[key] is not value for key, value in kwdefaults
+            ):
+                return False
+            cells = function.__closure__
+            if closure is None:
+                if cells is not None:
+                    return False
+            elif cells is None or len(cells) != len(closure) or any(
+                cell.cell_contents is not value for cell, value in zip(cells, closure, strict=True)
+            ):
+                return False
+        return True
+
+    def _lock_stream_for_callbacks(create, append, lock, caller):
+        if type(caller) is not dict:
+            return None
+        if (
+            current.__code__ is not current_code
+            or current.__globals__ is not namespace
+            or current.__defaults__ is not current_defaults
+            or current.__kwdefaults__ is not current_keywords
+            or current.__closure__ is not current_cells
+            or any(cell.cell_contents is not value for cell, value in current_values)
+        ):
+            return None
+        caller_binding = caller.get("_LOCK_STREAM_SELECTOR_BINDING")
+        if (
+            create is not original[0][1]
+            or append is not original[2][1]
+            or lock is not original[4][1]
+            or not current(caller, caller_binding)
+        ):
+            return None
+        body = original[5][1]
+
+        def finish(path, *args, **kwargs):
+            # The unchanged admitted wrapper has completed its real checks.
+            # Stale selection cannot invoke a mutable body or bypass callbacks.
+            if (
+                current.__code__ is not current_code
+                or current.__globals__ is not namespace
+                or current.__defaults__ is not current_defaults
+                or current.__kwdefaults__ is not current_keywords
+                or current.__closure__ is not current_cells
+                or any(cell.cell_contents is not value for cell, value in current_values)
+                or not current(caller, caller_binding)
+            ):
+                raise RuntimeError("private_lock_source_changed")
+            return body(path, *args, **kwargs)
+
+        return admitted(finish)
+
+    select_code = _lock_stream_for_callbacks.__code__
+    current_code = current.__code__
+    current_defaults = current.__defaults__
+    current_keywords = current.__kwdefaults__
+    current_cells = current.__closure__
+    current_values = tuple((cell, cell.cell_contents) for cell in current_cells or ())
+    return _lock_stream_for_callbacks
+
+
+_lock_stream_for_callbacks = _make_lock_stream_selector(_LOCK_STREAM_BINDING)
+
+
+
 def unlink_private_file(
     path: PathInput,
     *,
@@ -2198,3 +2784,6 @@ def verify_trusted_directory(
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         close(current_fd)
+
+
+

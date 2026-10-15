@@ -35,11 +35,21 @@ from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
+    _lock_stream_for_callbacks,
     atomic_private_write_text,
     create_private_text,
     open_private_binary,
+    open_private_lock_stream,
     open_private_text_append_stream,
 )
+
+_LOCK_STREAM_SELECTOR_BINDING = (
+    _lock_stream_for_callbacks,
+    _lock_stream_for_callbacks.__code__,
+    _lock_stream_for_callbacks.__globals__,
+    tuple(cell.cell_contents for cell in _lock_stream_for_callbacks.__closure__),
+)
+
 
 _STORE_MAX_BYTES = 4 * 1024 * 1024
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}")
@@ -180,33 +190,62 @@ class HookPermissions:
         #: TASK-33642: ``(snapshot, stamp)`` a Console visit may reuse.
         self._visit_reuse: tuple[HookReviewSnapshot, tuple] | None = None
 
-    @contextmanager
-    def _store_lock(self, path: Path) -> Iterator[None]:
-        from tldw_chatbook.Backup_Recovery import raw_participants
+    def _bind_store_lock(definition):
+        """Capture the original optional selector before caller-marker lookup."""
+        @contextmanager
+        def _store_lock(self, path: Path) -> Iterator[None]:
+            from tldw_chatbook.Backup_Recovery import raw_participants
 
-        # Retain config's lease and writer locks while independently admitting
-        # this concrete store; config helpers keep their original narrow scope.
-        with raw_participants._scope(
-            self, "hook_permissions", writing=True, selected_read=path
-        ):
-            lock_path = path.with_name(path.name + ".lock")
-            try:
-                create_private_text(
-                    lock_path, "", application_owned_directory=path.parent
-                )
-            except FileExistsError:
-                pass
-            stream = open_private_text_append_stream(
-                lock_path, application_owned_directory=path.parent
-            )
-            try:
-                portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+            # Retain config's lease and writer locks while independently admitting
+            # this concrete store; config helpers keep their original narrow scope.
+            with raw_participants._scope(
+                self, "hook_permissions", writing=True, selected_read=path
+            ):
+                lock_path = path.with_name(path.name + ".lock")
+                lock_opener = None
+                binding = globals().get("_LOCK_STREAM_SELECTOR_BINDING")
+                if binding is definition:
+                    selector, selector_code, selector_globals, selector_closure = definition
+                    if (
+                        globals().get("_lock_stream_for_callbacks") is selector
+                        and selector.__code__ is selector_code
+                        and selector.__globals__ is selector_globals
+                        and selector.__defaults__ is None
+                        and selector.__kwdefaults__ is None
+                        and selector.__closure__ is not None
+                        and len(selector.__closure__) == len(selector_closure)
+                        and all(cell.cell_contents is value for cell, value in zip(selector.__closure__, selector_closure, strict=True))
+                    ):
+                        lock_opener = selector(
+                            create_private_text, open_private_text_append_stream, open_private_lock_stream, globals()
+                        )
+                if lock_opener is None:
+                    try:
+                        create_private_text(
+                            lock_path, "", application_owned_directory=path.parent
+                        )
+                    except FileExistsError:
+                        pass
+                    stream = open_private_text_append_stream(
+                        lock_path, application_owned_directory=path.parent
+                    )
+                else:
+                    stream = lock_opener(
+                        lock_path, application_owned_directory=path.parent
+                    )
                 try:
-                    yield
+                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+                    try:
+                        yield
+                    finally:
+                        portalocker.unlock(stream)
                 finally:
-                    portalocker.unlock(stream)
-            finally:
-                stream.close()
+                    stream.close()
+
+        return _store_lock
+
+    _store_lock = _bind_store_lock(_LOCK_STREAM_SELECTOR_BINDING)
+    del _bind_store_lock
 
     def _read_state(
         self, path: Path

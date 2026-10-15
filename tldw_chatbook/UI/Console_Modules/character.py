@@ -245,7 +245,26 @@ class ConsoleCharacterController:
                 except Exception:  # noqa: BLE001 - reject unavailable retained storage
                     return None
 
-            card = await asyncio.to_thread(fetch_exact)
+            from ...Chat.console_preparation_reads import run_preparation_read
+            from ...DB.base_db import operation_owned_connection
+            from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
+            if type(required_database) is CharactersRAGDB and not required_database.is_memory_db:
+                def owned_fetch():
+                    from ...Backup_Recovery.participants import _core_operation
+
+                    with (
+                        operation_owned_connection(required_database),
+                        _core_operation(required_database),
+                    ):
+                        return fetch_exact()
+
+                card = await run_preparation_read(
+                    owned_fetch, creator=self, session_id=None, reads=set(),
+                    require_current=lambda: None,
+                )
+            else:
+                card = await asyncio.to_thread(fetch_exact)
             if not admission_is_current():
                 return
         if card is None:

@@ -129,3 +129,8 @@ retains only an authentic host-issued, effect-free SessionEnd command notificati
 after ordinary admission closes. Its original grant is re-read and serialized
 with actual process creation by this same permission owner; changed or revoked
 authority still refuses, and no ordinary target or model authority reopens.
+
+
+### Current PR3023 integration: initial-review runtime lifetime
+
+Under accepted ADR230, the initial waiting-for-Send review uses the existing runtime InterruptRoundHost decision registry and FIFO. Disposable views hold only exact presentation tokens; detaching or cancelling the waiter grants no dispatch and does not discard a physically issued consent operation. Ready requires the original fresh HookPermissions verification, and launch still performs its existing live configuration/consent checks. Explicit Settings/manual review and custom three-argument callbacks retain their prior contracts. No worker waits for human input; exact native operation outcomes retire before creator Close/dispose. This changes coordination only, not consent authority or event error policy.

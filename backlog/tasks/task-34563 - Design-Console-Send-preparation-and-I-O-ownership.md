@@ -3,19 +3,18 @@ id: TASK-34563
 title: Design Console Send preparation and I/O ownership
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 21:51'
-updated_date: '2026-10-12 04:26'
+- '@codex'
+created_date: 2026-10-06 21:51
+updated_date: 2026-10-14 12:28
 labels:
-  - console
-  - architecture
-  - performance
+- console
+- architecture
+- performance
 dependencies: []
 documentation:
-  - Docs/Development/2026-10-06-console-send-architecture-review.md
-  - >-
-    Docs/superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md
-  - backlog/decisions/230-console-send-preparation-and-io-ownership.md
+- Docs/Development/2026-10-06-console-send-architecture-review.md
+- Docs/superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md
+- backlog/decisions/230-console-send-preparation-and-io-ownership.md
 priority: high
 ---
 
@@ -46,8 +45,38 @@ Reason: received-request custody, shared domain results, native outcome ownershi
 Product implementation and implementation-plan execution are outside this design task; implementation-plan review remains required before product changes.
 
 Current PR3023 integration: follow Docs/superpowers/plans/2026-10-11-pr3023-current-dev-integration.md on actual sequential current dev. ADR required: existing accepted230, accepted bounded amendment231, exact126/097semantic/179/197/220 as applicable; general231 remains Proposed. Preserve older source history/qualification above and all76optimizationIDs/14followups. Current acceptance awaits per-owner disposition, original native/caller/lifetime/security controls, unchanged budgets and separately qualified final saved-source/provider/rendered evidence; no whole-stack replacement, blanket closure or raised cap.
-<!-- SECTION:PLAN:END -->
+Current-session connected footprint closure: faithfully relocate the nine ordinary native Controller save/cancellation/recovery methods to existing console_native_commit and capture_turn_configuration_snapshot to existing console_configuration_preparation; relocate the four Store native owner/accepted-terminal/dispatch recovery methods to console_native_commit. Preserve real self fields, locks, generation, claims, checkpoints, rollback and finally retirement; public signatures/defaults/custom callbacks remain. E pr3023-complete-integration-connected-relocation-r5-proof.json binds exact pre-source/prospective bytes,14 normalized AST-exact bodies, untouched class nodes and live original-module global seams. Capture the relocated stock settlement helper at the existing finite native callback boundary, keeping custom callbacks unchanged. Extend qualification/test reader snapshots with every moved callee/code/default/global seam and exercise held source mutation/custom callback controls; no new blanket production policy. ADR required: no; ADR path: N/A; reason: mechanical relocation within existing owned services without new source authority/service contract. Run connected native/configuration/custody targeted checks, cold imports and differential owned lint, then lower structural ceilings to exact final counts; original ceilings never increase.
+Independent connected relocation review51da... found sole default-ABI blocker: captured stock helper partial bypasses preinstalled/held original same-function metadata_json defaults, including invalid nonobject JSON refusal. Preserve R1 proof/binding/63P/2P/2P and passive causal REDs. Narrow existing finite binding repair: keep actual original captured bound callback and live default argument binding; retain only the actual relocated settlement-helper reference inside existing _ConsoleNativeBinding/contextvar at the same finite capture boundary. Wrapper forwards actual bound metadata explicitly to that retained helper for the same actual store; all ordinary/custom signatures/callbacks, custody/source/locks/generation/refusal/rollback/retirement remain. No new blanket source predicate/refusal/authority. Qualify valid/invalid preinstalled and held defaults, explicit metadata override, held helper-slot/custom original controls and appropriate63 connected native/configuration controls. ADR required: no; ADR path: N/A; reason: faithful preservation of original callback/default ABI within existing finite native retention owner.
+Held-delete review correction: preserve R2 snapshot and causal ImportError receipt, resolve the existing native binding before any live settlement-helper lookup, and import the live helper only on the original uncaptured fallback. Retain actual bound callback/default/custom/explicit argument semantics and physical retirement. Run the ten connected controls and affected native integration scope; freeze R3 for independent review. ADR required: no; existing faithful connected relocation, no new source predicate or authority.
+### Current governed wiring connected relocation, 2026-10-14
 
+ADR required: yes, bounded amendments to existing ADR230 and ADR126. Reason:
+actual defining-class/module interfaces and existing consumed source-reader
+ownership move, with original service/permission/physical lifetime policy.
+
+1. Preserve exact app_service_wiring before SHAee9acfea and current
+configuration preparation before SHAaedf5abb. Independent coherent R2
+reviewf17aa6ea accepts exact proposal4be7147c after the causal stock held-pointer
+RED2F and prospective3P7.123s; frozen R1/R9 negatives remain evidence.
+2. After these ADR/CLI plan amendments, verify all four before hashes and apply
+only the four frozen R2 sources: genuine Skill/Collections mixins, actual module
+functions at original importing slots, existing source records using real
+defining owners and six explicit pointer-ordering corrections. No unrelated
+Watchlists body extraction, successor value copies or blanket callable/default
+policy. Keep original public properties, MRO/custom shadows, retained callbacks
+and actual live original module globals.
+3. Re-run affected original Skill/cold trust and Collections source/native/
+cancellation/borrowed/first-use/shutdown/custom/import controls, then the causal
+held-pointer controls against actual saved source. Preserve original assertions,
+deadlines, source/default negatives and physical creator/borrower retirement.
+4. Complete affected differential static/import/voice and source disposition
+streams. Governed wiring3509 is prospective measurement only; original cap3601
+remains until final current-base source pins. Retain all664/971/77/14 rows and
+89docs/40tasks; no whole task/status/AC/native/latency completion from this slice.
+Current reviewed connected Collections TEST-ONLY observer correction: proposal6b000cd95d223fe5580a3bea91fc860c776846f874cd2b119b1ef4112beefe65 preserves77P3F76.969 negative. Discover exact actual defining AST Raise(Call(Name _CollectionsSetupObsolete OR Attribute(Name _source_wiring,_CollectionsSetupObsolete))) lines with correct inspect source offset; passive callback checks original function/code/globals/frame and records errors without changing producer behavior. Retain every declined/outcome/resource/count/deadline/restoration assertion. After import hygiene, run3 affected negatives and whole80-case connected cohort; R1 downstream short-circuited assertions are not claimed passing.
+Reviewed TEST-ONLY static wiring source reader: after exact original3402197/prospective8918704 hashes, install only Tests/app_module_patches.py bounded literal-vars installer publications; retain runtime equality/lazy absence oracle c59b9 unchanged. Run original10 import/census/patch-target controls then final affected233; preserve original9P1F and unchanged1031 ceiling. ADR required: no new ADR; fixture-only source interpretation under existing ADR230/126, no production contract or assertions changed.
+Reviewed source-bound namespace importer fixture: preserve original9P1F19.47 raw_source_selection_changed and all runtime equality/lazy assertions; after exact c59b9/792b96 source checks add ONLY existing bootstrap_profile marker to test_source_derived_bindings_match_runtime_globals. Original10 controls run after final233; no production/config authority/census cap change. ADR required:no new; TEST-ONLY existing fixture prerequisite under ADR126.
+<!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->

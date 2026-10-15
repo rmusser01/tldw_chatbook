@@ -43,6 +43,9 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 
 
+from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+_ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
 _SURFACE_VERIFICATION_ISSUER = object()
 
 
@@ -751,6 +754,8 @@ def reconstruct_provider_gateway_kwargs(
     elif execution_key in {"qwencloud", "deepseek"}:
         kwargs["api_mode"] = getattr(resolution, "api_mode")
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
+        kwargs["api_base_url"] = resolution.base_url or None
     elif execution_key in {"moonshot", "zai"}:
         kwargs.update(
             api_base_url=getattr(resolution, "base_url") or None,
@@ -786,6 +791,10 @@ def reconstruct_provider_gateway_kwargs(
         )
         if pinned_base_url is not None:
             kwargs["api_base_url"] = pinned_base_url
+    if execution_key in _ENGINE_EXECUTION_KEYS and request.continuation_groups:
+        kwargs["provider_continuations"] = [
+            group.checkpoint for group in request.continuation_groups
+        ]
     return {name: value for name, value in kwargs.items() if value is not None}
 
 

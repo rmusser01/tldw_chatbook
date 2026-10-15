@@ -50,6 +50,7 @@ from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterControlle
 from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
     ConsoleDraftSpendRefresh,
 )
+from tldw_chatbook.UI.Console_Modules.context_spend import ConsoleContextSpendController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
@@ -88,6 +89,7 @@ _EXPECTED_SLOTS: list[tuple[str, type]] = [
 #: Complete controller graph for the Task-3070.8 construction-order contract.
 #: Kept separate because `_EXPECTED_SLOTS` is a historical common-interface subset.
 _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
+    ("_context_spend", ConsoleContextSpendController),
     ("_image", ConsoleImageController),
     ("_video", ConsoleVideoController),
     ("_retrieval", ConsoleRetrievalController),
@@ -984,9 +986,13 @@ async def test_session_verified_adoption_edges_are_late_bound(request, monkeypat
         calls = []
         patch.setattr(screen, "_console_chat_controller", controller)
         patch.setattr(screen, "_build_console_provider_selection", lambda: selection)
-        patch.setattr(screen, "_build_console_settings_summary_state", lambda: summary)
         patch.setattr(
-            screen,
+            screen._context_spend,
+            "_build_console_settings_summary_state",
+            lambda: summary,
+        )
+        patch.setattr(
+            screen._context_spend,
             "_apply_console_settings_summary_state",
             lambda value: calls.append(value),
         )
@@ -1018,3 +1024,92 @@ async def test_session_verified_adoption_edges_are_late_bound(request, monkeypat
         await host.pop_screen()
         await pilot.pause()
         assert session.is_attached is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_context_spend_keeps_real_screen_proofs_and_live_module_callbacks(
+    request, monkeypatch
+):
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    screen = _unmounted_console()
+    owner = screen._context_spend
+    settings, gateway, controller, result = (object() for _ in range(4))
+    calls = []
+    monkeypatch.setattr(screen, "_ensure_console_provider_gateway", lambda: gateway)
+    monkeypatch.setattr(
+        chat_screen.spend,
+        "cached_context_window_for_display",
+        lambda *args: (calls.append(args), result)[1],
+    )
+    assert owner._context_window_for_display(settings) is result
+    assert calls.pop() == (screen, gateway, settings)
+
+    pricing_reader = lambda: result
+    monkeypatch.setattr(chat_screen, "get_pricing_catalog", pricing_reader)
+    monkeypatch.setattr(
+        chat_screen.spend,
+        "pricing_catalog_for_display",
+        lambda *args: (calls.append(args), result)[1],
+    )
+    assert owner._display_pricing_catalog() is result
+    assert calls.pop() == (screen, pricing_reader)
+
+    def for_screen(actual_screen, *, max_age):
+        calls.append((actual_screen, max_age))
+        return SimpleNamespace(inputs=lambda *args: (calls.append(args), result)[1])
+
+    monkeypatch.setattr(
+        chat_screen.spend.ConsoleContextReadSnapshot, "for_screen", for_screen
+    )
+    monkeypatch.setattr(chat_screen, "CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS", 7.0)
+    assert owner._context_inputs(controller, "session") is result
+    assert calls == [(screen, 7.0), (controller, "session")]
+    calls.clear()
+    for method, module_name in (
+        ("_build_cost_snapshot", "build_cost_snapshot"),
+        ("_build_context_estimate", "build_console_context_estimate"),
+        ("_estimate_tokens_locally", "_estimate_tokens_locally"),
+    ):
+        monkeypatch.setattr(
+            chat_screen,
+            module_name,
+            lambda *args, **kwargs: (calls.append((args, kwargs)), result)[1],
+        )
+        assert getattr(owner, method)(settings, option=controller) is result
+        assert calls.pop() == ((settings,), {"option": controller})
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_context_spend_re_resolves_runtime_framework_and_checked_timer_entry(
+    request, monkeypatch
+):
+    screen = _unmounted_console()
+    owner = screen._context_spend
+    result = object()
+    calls = []
+    monkeypatch.setattr(
+        screen,
+        "_console_runtime",
+        lambda: SimpleNamespace(
+            response_rule_usage=lambda session_id: (calls.append(session_id), result)[1]
+        ),
+    )
+    assert owner._response_rule_usage("session") is result
+    assert calls == ["session"]
+    monkeypatch.setattr(screen, "query_one_optional", lambda *args, **kwargs: result)
+    assert owner.query_one_optional("#late") is result
+    monkeypatch.setattr(
+        screen, "_sync_console_cost_chip", lambda: calls.append("checked-screen-entry")
+    )
+    owner._sync_console_cost_chip()
+    assert calls == ["session", "checked-screen-entry"]
+    monkeypatch.setattr(
+        screen,
+        "_console_runtime",
+        lambda: SimpleNamespace(response_rule_usage=lambda session_id: None),
+    )
+    assert owner._response_rule_usage("session") is None
