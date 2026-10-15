@@ -3694,10 +3694,11 @@ class ConsoleRuntime:
 
             engine = self.ensure_hooks_v2(
                 session_id,
-                configured.v2_handlers
+                (configured.v2_handlers if configured.enabled else ())
                 + (native.definitions if native is not None else ()),
                 authority,
                 process_owner=native,
+                process_owner_for=native.process_owner if native is not None else None,
                 host_environment=native.host_environment
                 if native is not None
                 else None,
@@ -3707,8 +3708,8 @@ class ConsoleRuntime:
                 else None,
                 launch_guard=launch_guard,
                 effect_authority_check=effects_current,
-                enabled=configured.enabled,
-                invalid_admissions=configured.v2_invalid_admissions,
+                enabled=configured.enabled or bool(native and native.definitions),
+                invalid_admissions=configured.v2_invalid_admissions if configured.enabled else (),
             )
             if native is not None:
                 native.engine = engine
@@ -3735,7 +3736,10 @@ class ConsoleRuntime:
                 except Exception:  # noqa: BLE001 -- hook boundary
                     return False
 
-            lifecycle = HookSessionLifecycle(engine, session_id, current=current)
+            lifecycle = HookSessionLifecycle(
+                engine, session_id, current=current,
+                render_context=native.render_context if native is not None else None,
+            )
             lifecycle.context_key = context_key
             self._hooks_v2_lifecycles[session_id] = lifecycle
             engine.lifecycle_owner = lifecycle

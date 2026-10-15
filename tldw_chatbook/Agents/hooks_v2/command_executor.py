@@ -81,6 +81,7 @@ class CommandJob:
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     capture: _Capture | None = None
     token: str | None = None
+    owner: HookProcessOwner | None = None
     task: asyncio.Task | None = None
     cleanup_deadline: float | None = None
 
@@ -126,8 +127,10 @@ class CommandExecutor:
         authority_check: Callable,
         environment: Callable,
         deadline: float,
+        process_owner_factory: Callable | None = None,
     ) -> CommandJob:
         job = CommandJob(uuid4().hex, ticket)
+        job.owner = (process_owner_factory(job.stop) if process_owner_factory else None) or self.owner
         self.records[job.id] = job
         job.task = asyncio.create_task(
             self._run(
@@ -172,7 +175,7 @@ class CommandExecutor:
                 terminal = True
                 outcome.failure = "unsupported_platform"
                 return outcome
-            job.token = await asyncio.to_thread(self.owner.reserve_launch, event)
+            job.token = await asyncio.to_thread(job.owner.reserve_launch, event)
             env = await asyncio.to_thread(environment, handler, event)
             cwd = handler.cwd
             if cwd is not None:
@@ -232,7 +235,7 @@ class CommandExecutor:
                 outcome.failure = "launch_failed"
                 return outcome
             await asyncio.to_thread(
-                self.owner.publish_process,
+                job.owner.publish_process,
                 job.token,
                 {
                     "pid": transport.get_pid(),
@@ -289,7 +292,7 @@ class CommandExecutor:
             if job.token is not None:
                 try:
                     await asyncio.to_thread(
-                        self.owner.settle_process, job.token, terminal
+                        job.owner.settle_process, job.token, terminal
                     )
                 except Exception:  # noqa: BLE001
                     # Any owner failure preserves unresolved custody.
@@ -370,7 +373,7 @@ class CommandExecutor:
                     except ProcessLookupError:
                         try:
                             await asyncio.to_thread(
-                                self.owner.settle_process, job.token, True
+                                job.owner.settle_process, job.token, True
                             )
                         except Exception:  # noqa: BLE001, S112
                             # Retained metadata is the diagnostic.

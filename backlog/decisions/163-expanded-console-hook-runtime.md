@@ -598,3 +598,10 @@ fences run before the shared compact-once operation, which retains the same hook
 owner. Required pre-hook failures record their content-free reason with no
 summary call and do not claim a billed attempt. No consent, admission or cleanup
 policy changes. Evidence: the PR #2946 integration report.
+
+
+### Native component ownership and canonical restrictions (R74–R75)
+
+Ruling: R74 — native command hooks select their exact existing process-owner adapter from the qualified handler at dispatch and retain that adapter on the original CommandJob through reserve, publish and terminal settlement; the shared HookEvent stays unchanged — concurrent handlers can belong to different installations, so one event-wide owner cannot identify their root/revision custody — cost if wrong: revise the narrow per-job selection seam; owner lookup failure must refuse before launch, and cancellation, late cleanup or replacement must never settle another handler’s custody.
+
+Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations are immutable narrowing constraints resolved against the actual eligible parent registry at use, while noncanonical tokens require reviewed exact owner mappings — a declaration can restrict existing rights without creating a durable generic tool grant or another permission owner — cost if wrong: narrow supported declarations or revise the resolver; missing or changed identities refuse, explicit empty stays empty, recovery creates no grants, and display-name fallback never authorizes a tool.

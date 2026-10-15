@@ -479,3 +479,48 @@ visible. Parsing and exercised Chatbook behavior are separate from original-host
 comparison; fixtures record immutable upstream references and license context in
 `Tests/Plugins/fixtures/interop/README.md`. TASK-32687 implements this conservative
 subset, with evidence in the current-dev integration report.
+
+
+### Native reviewed component tool restrictions (R24/R75)
+
+The existing configuration review may map a component's noncanonical declared token to an exact same-installation/revision MCP tool mapping in that same reviewed complete set. Existing configuration rows bind the component definition and target mapping digests. The normal MCP owner revalidates those references at publication, admission, recovery and use; unavailable or changed references refuse. This declaration narrows the actual eligible parent registry and cannot recreate a permission. Canonical builtin/local IDs remain immutable runtime narrowing constraints with no additional durable tool grant.
+
+
+### Native agent invocation owner (R76)
+
+Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.
+
+### PR3148 native entry compatibility (2026-10-17, TASK32695)
+
+Retain current `$alias:command:id` and `$alias:rule:id` names and the existing
+strict named-JSON command argument parser. Preserve the published branch's
+`/alias:id` command and `@alias:id` manual-rule spellings by routing only to the
+exact corresponding typed component in the original captured installation and
+capability ceiling. Unknown, unavailable, ambiguous or wrong-kind targets cannot
+fall back to another component or display name. Reference expansion and rendered
+content cannot create invocations; original selector spans and opaque argument
+text remain authoritative.
+
+Only the original `/alias:id` command route retains its original caller rule:
+one declared argument receives the opaque captured remainder; zero or multiple
+declared arguments use strict JSON. Current `$alias:command:id` always keeps
+strict JSON. The admitted snapshot's existing renderer validates exact declared
+keys and string values again. Argument-name metadata may identify that closed
+legacy case; it carries no argument values or authority. This adds no public
+argument mode, service, schema, grant or invocation framework.
+
+### PR3148 native builtin-reference continuity (2026-10-17, TASK32695)
+
+Current `tool_references` review input can map a declared alias to an exact
+`builtin:*` tool. Preserve that capability through the existing closed dev-tool
+reference form and `BuiltinToolProvider` schema owner, including for a fresh
+explicit review. Such a row is not an MCP configuration reference. Its complete
+identity, definition/configuration digests, installation/revision and current
+actual parent registry still validate; EMPTY and normal permission gates narrow
+use. Existing protected rows stay unchanged.
+
+New MCP alias reviews use canonical configuration references to exact reviewed
+same-installation/revision MCP targets and dependency closure. The general
+canonical-new-review rule has this narrow builtin-alias exception so integration
+does not remove current host functionality. It introduces no third stored form,
+conversion, dispatcher, permission owner or grant. Unknown target families refuse.

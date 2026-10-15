@@ -561,3 +561,22 @@ These exact approved limits apply wherever this plan handles the corresponding r
 | Listing page | 50 rows | Paginate; search remains over cached metadata. |
 | Display metadata | 256 characters/name; 2,000/summary; 64 KiB README preview | Sanitize and mark display truncation; preserve immutable source for explicit file review. |
 | Operation receipts | 1,000 terminal receipts or 30 days | Drop oldest eligible terminal receipts; never delete recovery authority. |
+
+
+### Native component ownership and canonical restrictions (R74–R75)
+
+Ruling: R74 — native command hooks select their exact existing process-owner adapter from the qualified handler at dispatch and retain that adapter on the original CommandJob through reserve, publish and terminal settlement; the shared HookEvent stays unchanged — concurrent handlers can belong to different installations, so one event-wide owner cannot identify their root/revision custody — cost if wrong: revise the narrow per-job selection seam; owner lookup failure must refuse before launch, and cancellation, late cleanup or replacement must never settle another handler’s custody.
+
+Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations are immutable narrowing constraints resolved against the actual eligible parent registry at use, while noncanonical tokens require reviewed exact owner mappings — a declaration can restrict existing rights without creating a durable generic tool grant or another permission owner — cost if wrong: narrow supported declarations or revise the resolver; missing or changed identities refuse, explicit empty stays empty, recovery creates no grants, and display-name fallback never authorizes a tool.
+
+
+### Native reviewed component tool restrictions (R24/R75)
+
+The existing configuration review may map a component's noncanonical declared token to an exact same-installation/revision MCP tool mapping in that same reviewed complete set. Existing configuration rows bind the component definition and target mapping digests. The normal MCP owner revalidates those references at publication, admission, recovery and use; unavailable or changed references refuse. This declaration narrows the actual eligible parent registry and cannot recreate a permission. Canonical builtin/local IDs remain immutable runtime narrowing constraints with no additional durable tool grant.
+
+
+### Native agent invocation owner (R76)
+
+Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.
+
+I1 integration retains native projection/context/child presets in `Plugins/{components,commands,agent_presets}.py` and the existing hook facade in `Plugins/hooks.py`; persistent component serialization stays unchanged. Actual Console and lazy application composition use the existing hook/MCP/model owners. Original I1 test counts are historical; TASK32695 AC15 requires qualification and independent review of the final rebased source.

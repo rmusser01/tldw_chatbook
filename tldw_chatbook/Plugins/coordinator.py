@@ -50,6 +50,7 @@ class PluginCoordinator:
         *,
         fences=None,
         mcp_mapping_owner=None,
+        model_mapping_owner=None,
     ) -> None:
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin coordinator requires a dedicated worker")
@@ -58,6 +59,7 @@ class PluginCoordinator:
         _ = registry.schema_version
         self.registry, self.authority, self.owner = registry, authority, owner
         self.mcp_mapping_owner = mcp_mapping_owner
+        self.model_mapping_owner = model_mapping_owner
         self._thread = threading.get_ident()
         self._loop = asyncio.get_event_loop()
         from .admission import LivePluginFences
@@ -466,6 +468,7 @@ class PluginCoordinator:
         tools: dict[str, tuple[str, ...]] | None = None,
         tool_references: dict[str, dict[str, str]] | None = None,
         models: dict[str, str] | None = None,
+        component_tools: dict[str, dict[str, str]] | None = None,
     ) -> PluginReview:
         """Review complete current owner references; never accept caller-made grants."""
         from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -494,8 +497,8 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not (connections or tool_references or models)
-            or len(connections) + len(tool_references or {}) + len(models or {}) > 512
+            not (connections or tool_references or models or component_tools)
+            or len(connections) + len(tool_references or {}) + len(models or {}) + len(component_tools or {}) > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -513,49 +516,80 @@ class PluginCoordinator:
             mappings.append(mapping)
             for name in sorted(set((tools or {}).get(component_id, ()))):
                 mappings.append(owner.capture_tool_mapping(mapping, inspection, name))
-        from .host_references import capture_reference
+        from .host_references import capture_reference, capture_model_mapping, capture_tool_constraint
 
-        for component_id, references in sorted((tool_references or {}).items()):
+        declarations = {}
+        for source in (tool_references or {}, component_tools or {}):
+            for component_id, references in source.items():
+                for label, target in references.items():
+                    key = (component_id, label)
+                    if key in declarations:
+                        raise ValueError("plugin_tool_mapping_ambiguous")
+                    declarations[key] = target
+        for (component_id, label), target in sorted(declarations.items()):
             if component_id not in selection:
                 raise PermissionError("plugin_component_not_selected")
-            for label, target in sorted(references.items()):
-                mappings.append(
-                    capture_reference(
-                        installation_id,
-                        inspection,
-                        component_id,
-                        "tool",
-                        target,
-                        label=label,
-                        mappings=mappings,
-                    )
-                )
+            if target.startswith("builtin:"):
+                # R12: current fresh builtin aliases retain their actual schema owner.
+                mappings.append(capture_reference(installation_id, inspection, component_id,
+                    "tool", target, label=label, mappings=mappings))
+                continue
+            target_component, separator, raw_name = target.partition("::")
+            targets = [row for row in mappings if row["kind"] == "tool"
+                       and row["component_id"] in selection
+                       and (row["target_reference"] == target
+                            or row["component_id"] == target_component
+                            and row["target_reference"].partition("::")[2] == raw_name)]
+            if not separator or len(targets) != 1:
+                raise ValueError("plugin_tool_mapping_invalid")
+            mappings.append(capture_tool_constraint(self, installation_id, inspection,
+                component_id, label, targets[0]))
         for component_id, target in sorted((models or {}).items()):
             if component_id not in selection:
                 raise PermissionError("plugin_component_not_selected")
-            mappings.append(
-                capture_reference(
-                    installation_id,
-                    inspection,
-                    component_id,
-                    "model",
-                    target,
-                    mappings=mappings,
-                )
-            )
+            # Review input compatibility is resolved by the canonical catalog owner;
+            # protected historical rows are never converted.
+            if "::" in target:
+                provider, model = target.split("::", 1)
+                target = provider + "/" + model
+            mappings.append(capture_model_mapping(self.model_mapping_owner,
+                installation_id, inspection, component_id, target))
         return self._review_existing(
             installation_id, kind="configure", mappings_json=canonical_json(mappings)
         )
 
     def validate_mapping(self, mapping, inspection, mappings) -> None:
-        """Route each reviewed reference to its existing authority source."""
-        if mapping["mapping_id"].startswith("native-"):
-            from .host_references import validate_reference
+        """Revalidate closed protected forms through their actual current owner."""
+        from .host_references import (_reference_form, declared_tools, mapping_id,
+                                      tool_constraint_id, validate_reference,
+                                      validate_canonical_reference)
 
-            validate_reference(mapping, inspection, mappings)
+        owned = [row for row in mappings
+                 if row["installation_id"] == mapping["installation_id"]
+                 and row["revision_digest"] == mapping["revision_digest"]]
+        form = _reference_form(mapping, inspection)
+        component = inspection.inventory[mapping["component_id"]]
+        if form != "mcp":
+            if form.endswith("model"):
+                peers = [row for row in owned if row["component_id"] == component.component_id
+                         and row["kind"] == "model"]
+            else:
+                labels = [label for label in declared_tools(component) or ()
+                          if mapping["mapping_id"] in {mapping_id(component.component_id, label),
+                                                       tool_constraint_id(component.component_id, label)}]
+                if len(labels) != 1:
+                    raise PermissionError("plugin_tool_mapping_invalid")
+                ids = {mapping_id(component.component_id, labels[0]), tool_constraint_id(component.component_id, labels[0])}
+                peers = [row for row in owned if row["component_id"] == component.component_id
+                         and row["mapping_id"] in ids]
+            if len(peers) != 1:
+                raise PermissionError("plugin_reference_ambiguous")
+        if form.startswith("dev_"):
+            validate_reference(mapping, inspection, owned)
+        elif form.startswith("canonical_"):
+            validate_canonical_reference(self, mapping, inspection, owned)
         else:
             from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
-
             if not isinstance(self.mcp_mapping_owner, LocalMCPControlService):
                 raise PermissionError("plugin_mapping_owner_unavailable")
             self.mcp_mapping_owner.validate_connection_mapping(mapping, inspection)

@@ -1588,3 +1588,55 @@ visible. Parsing and exercised Chatbook behavior are separate from original-host
 comparison; fixtures record immutable upstream references and license context in
 `Tests/Plugins/fixtures/interop/README.md`. TASK-32687 implements this conservative
 subset, with evidence in the current-dev integration report.
+
+
+### Native agent invocation owner (R76)
+
+Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.
+
+### I1 native runtime entry points
+
+`PluginService.capture_maximum` publishes metadata-only native capability summaries through the existing `available_skills` inventory; `admit` preserves that immutable ceiling. `PluginComponents.project(snapshot)` projects only selected ready records, ordered by component identity. Projection keeps the existing `ComponentRecord` with its explicit runtime snapshot; persisted component serialization stays unchanged. Current commands use `$installation-alias:command:local-id` and current manual rules use `$installation-alias:rule:local-id`. Original `/installation-alias:local-id` commands and `@installation-alias:local-id` manual rules route only to their exact typed rows. `render_command(snapshot, component_id, arguments)` returns separately attributed user-role instruction and literal argument blocks. Always rules precede the triggering input in stable installation/component order. Unsupported activation modes remain blocked pending explicit manual adaptation. Reference content and rendered instructions cannot introduce further invocations.
+
+Native agents populate the existing captured child-agent roster with stable host IDs and installation aliases. `agent_definition` projects native metadata through the existing `AgentDefinition` owner: native prose is user-role context, and explicit empty tool lists stay empty through spawn and retained-child resume. Canonical builtin/local IDs are intersected with the actual parent's eligible registry. Other declared tool tokens require reviewed `component_tools` rows targeting an exact selected same-installation M4 mapping; they never create permissions. Standalone definition serialization and fingerprints remain unchanged.
+
+`review_configuration(..., models={component_id: canonical_provider_model_id}, component_tools={component_id: {declared_token: "mcp:component::raw-tool"}})` captures current existing-owner references. Model mapping uses the same application `LocalLLMProviderCatalogService`, canonical metadata and endpoint fingerprint; no network refresh occurs. Review, commit, admission, final use and authenticated recovery reject missing or changed references. The selected model must remain on the parent's provider. Required constraints are never silently removed.
+
+`TldwCli._build_plugin_service`, implemented by `SkillServiceWiringMixin` in `app_skill_wiring.py`, lazily supplies the application's existing model/MCP owners. Console composes scoped `PluginMCPProvider` instances through the same `ConnectionOwnership`, normal catalog, permissions and connected-only hook adapter. Import/startup performs no plugin discovery, connection or profile I/O. Management uses the existing I7 surface.
+
+Reference expansion retains original selector spans in the existing private, bounded `_PreparedSendContinuation` (hidden from repr), while `ConsoleTurnPreparation.executed_draft` remains a plain validated string. Paused/resumed sends reuse that captured expansion without rereading files. A resumed plugin attempt receives a fresh pending custody ID but keeps the original component/generation/dependency ceiling and must pass current owning-service admission. Disable or changed definitions during the pause cannot revive the old admission.
+
+### PR3148 native entry compatibility (2026-10-17, TASK32695)
+
+Retain current `$alias:command:id` and `$alias:rule:id` names and the existing
+strict named-JSON command argument parser. Preserve the published branch's
+`/alias:id` command and `@alias:id` manual-rule spellings by routing only to the
+exact corresponding typed component in the original captured installation and
+capability ceiling. Unknown, unavailable, ambiguous or wrong-kind targets cannot
+fall back to another component or display name. Reference expansion and rendered
+content cannot create invocations; original selector spans and opaque argument
+text remain authoritative.
+
+Only the original `/alias:id` command route retains its original caller rule:
+one declared argument receives the opaque captured remainder; zero or multiple
+declared arguments use strict JSON. Current `$alias:command:id` always keeps
+strict JSON. The admitted snapshot's existing renderer validates exact declared
+keys and string values again. Argument-name metadata may identify that closed
+legacy case; it carries no argument values or authority. This adds no public
+argument mode, service, schema, grant or invocation framework.
+
+### PR3148 native builtin-reference continuity (2026-10-17, TASK32695)
+
+Current `tool_references` review input can map a declared alias to an exact
+`builtin:*` tool. Preserve that capability through the existing closed dev-tool
+reference form and `BuiltinToolProvider` schema owner, including for a fresh
+explicit review. Such a row is not an MCP configuration reference. Its complete
+identity, definition/configuration digests, installation/revision and current
+actual parent registry still validate; EMPTY and normal permission gates narrow
+use. Existing protected rows stay unchanged.
+
+New MCP alias reviews use canonical configuration references to exact reviewed
+same-installation/revision MCP targets and dependency closure. The general
+canonical-new-review rule has this narrow builtin-alias exception so integration
+does not remove current host functionality. It introduces no third stored form,
+conversion, dispatcher, permission owner or grant. Unknown target families refuse.
