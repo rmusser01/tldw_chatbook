@@ -1,11 +1,11 @@
 ---
 id: TASK-32689
 title: Browse Git catalogs and import selected marketplace sources
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:31'
-updated_date: '2026-10-15 23:37'
+updated_date: '2026-10-15 23:48'
 labels:
   - plugins
   - implementation
@@ -28,11 +28,11 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All three supported marketplace paths normalize source-qualified listings and package/catalog overlays; local entry paths resolve against the catalog root.
-- [ ] #2 Refresh changes cached listings only, check-updates changes candidates only, and unsupported source types remain visible without hiding valid siblings.
-- [ ] #3 Explicit Cursor/Codex import previews allowlisted source/package references without foreign credentials, approvals, trust or automatic enablement; broken caches require clean sources.
-- [ ] #4 Source removal does not uninstall packages; stale cache, refresh errors, pagination and evidence invalidation remain distinct and bounded.
-- [ ] #5 Directly selected Git/local package snapshots retain authenticated origin/ref/commit and exact bytes through review, installation, separate update candidates and recovery without requiring a marketplace catalog.
+- [x] #1 All three supported marketplace paths normalize source-qualified listings and package/catalog overlays; local entry paths resolve against the catalog root.
+- [x] #2 Refresh changes cached listings only, check-updates changes candidates only, and unsupported source types remain visible without hiding valid siblings.
+- [x] #3 Explicit Cursor/Codex import previews allowlisted source/package references without foreign credentials, approvals, trust or automatic enablement; broken caches require clean sources.
+- [x] #4 Source removal does not uninstall packages; stale cache, refresh errors, pagination and evidence invalidation remain distinct and bounded.
+- [x] #5 Directly selected Git/local package snapshots retain authenticated origin/ref/commit and exact bytes through review, installation, separate update candidates and recovery without requiring a marketplace catalog.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -90,3 +90,21 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 
 29. Task22 Fix1 after initial full independent review (0 Critical,2 Important): fix I1 refresh publication after removal/supersession and I2 catalog import captured-byte mismatch. Before source edits root records exact reviewed HEAD3d44d7c0bada130ae0d45174a1dd0ae3d27d61ea BASE for source_service.py,registry.py,imports.py and their three existing tests in task-22-fix1-baseline-manifest.json; six eligible source/test paths in task-22-fix1-paths.json, no required gratuitous edits. Original implementer owns this bounded fix, no helpers/controller fixes. I1 both success and stale-error publication must preserve source removal and expected binding, never upsert an old removed row; retire unused acquired references only under existing custody. Cover actual async success/failure removal races and independent newly added source identity; guard superseding refresh publication. I2 compute candidate identity and exclusions from exactly the captures copied to managed import storage and compare approved candidate before publication/materialization; changed-then-restored captures and persistent root/preview changes refuse, unchanged import succeeds, no imported grants. Reuse existing owners/schema/ADR162, no new architecture or permissions. Port focused public REDs/positive controls before code. Final affected exact-three I4 files plus registry tests only if shared registry seam changed; strict changed-file and exact reviewed-HEAD baseline static/whitespace checks. Preserve original221 evidence index and initial report through explicit frozen-copy provenance, append Fix1 report with exact commands/output and source freeze. Root stages/commits exact paths with normal hooks, then fresh scoped re-review of I1/I2 and fix-introduced breakage only. AC/status remain In Progress until accepted; original native OSError remains unclassified, no full suite or repeated unrelated acquisition/retention suites.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented independent authenticated Git/local marketplace sources and explicit selected-root Cursor/Codex imports on the existing PluginService worker and acquisition/coordinator owners. Schema5 adds marketplace_sources without fabricating installations. Bounded cached search/source summaries preserve unsupported siblings, exact source/catalog/entry provenance and overlays; refresh changes discovery only, update checks create separately reviewed exact-target candidates, removal preserves installed revisions and pauses updates until explicit reviewed rebind.
+
+Direct Git/local acquisition retains authenticated origin/ref/commit/content through review, installation, stable source-bound revision identity, update and recovery. Producer terminal results authenticate the full caller DTO; compact optional references preserve legacy absent-field bytes. Terminal interpretation survives changed-boot checks while destructive custody remains boot-qualified. Cleanup protects complete source/revision/transition/review/candidate and persisted local dependencies; unknown/pending custody is never adopted or inferred abandoned.
+
+Imports copy only bounded allowlisted catalog/package snapshots and exclude credentials, approvals, trust, enablement and partial runtime overlays. Preview/commit identity uses the same captured bytes/inclusion/exclusion checks before materialization; changed-then-restored content refuses. Conditional source publication rejects removed/superseded bindings on both success and failure paths, releasing unused authenticated results under existing custody. No import installs/enables/connects or confers permissions.
+
+ADR required: yes. Existing ADR backlog/decisions/162-managed-agent-plugins.md applies and was amended for R87–R96 before corresponding boundary edits; linked design and marketplaces/UI subplan updated. No new architecture in Fix1. Source docs, additive migration, producer/authority/projection/recovery/retention seams and targeted tests are included; historical migrations001–004 and13 fixture/provenance files remain unchanged.
+
+Validation: initial unaffected ordinary372; initial final exact-three43/acquisition64/retention35; Fix1 final exact-three51 and registry30 passed on frozen bytes with pristine output (overlapping phases, not cumulative). Current and exact BASE Ruff/Blackpy312/AST/whole-file whitespace and git diff --check passed. Real public regression REDs cover target binding, narrow transient-file monitoring, refresh success/failure removal/supersession and changed/restored imported content/catalog/excluded files, with same-entry success controls. Root verified initial221/Fix1 36 evidence files, current/frozen/source baselines, fixture hashes and exact staged/current/committed paths. Independent review closeout is recorded separately by root only after acceptance.
+
+Limitations: original initial native OSError remains unclassified; later deterministic fixes and successful diagnostics do not explain it. Real reboot, Linux/Windows, original vendor runtime, all external-auth variants and full suite are unqualified. Protected persisted unconsumed candidates still need explicit management listing/reviewed discard after loss of the full object/session; carried to I5/I6/I7, with no empty-map abandonment or pending-custody adoption. No push/merge/environment changes/full sweep performed.
+
+Independent initial review found I1/I2; original implementer Fix1 commit1abce96397e3f38ceb2526acacbb0ead8b8cfb9d addressed both. Fresh scoped independent re-review accepted2/2,0open/0newbreakage/0newOOS; full report task-22-fix1-review.md (SHA256 e9f432872c5069ac989e2f61238b9edb7d49ce0aa5f7cc3885ec662c9a39b982). Initial implementation3d44d7c0bada130ae0d45174a1dd0ae3d27d61ea; task BASE3cd831f09afd62fc357f57d8ad5b4a0c4858835f.
+<!-- SECTION:NOTES:END -->
