@@ -38,6 +38,11 @@ def matches_handler(handler: HookHandler, event: HookEvent) -> bool:
     """
     if handler.event != event.event:
         return False
+    if handler.vendor_protocol:
+        from tldw_chatbook.Plugins.adapters.vendor_hooks import matches_vendor
+
+        if not matches_vendor(handler, event):
+            return False
     if not handler.match:
         return True
     # Check support for the whole conjunction first. An absent operation must

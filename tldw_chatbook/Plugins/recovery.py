@@ -31,80 +31,22 @@ def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspect
     """Reinspect immutable references; never fetch, execute or invent overlays."""
     from pathlib import Path
 
-    from tldw_chatbook.Skills_Interop.skill_trust_crypto import (
-        canonical_json,
-        sha256_hex,
-    )
-
-    from .inspection import inspect_package
-    from .package_files import parse_document
+    from .package_files import capture_package
+    from .retained_inspection import _retained_candidates, _select_retained
 
     result = {}
     for revision in snapshot["revisions"]:
         root = revision["materialized_identity"]
         if not root:
             raise ValueError("missing immutable package reference")
-        inspection = inspect_package(Path(root), dialect=revision["dialect"])
-        data = inspection.model_dump(mode="json")
-        for key in (
-            "dialect",
-            "format_version",
-            "adapter_version",
-            "root_manifest",
-            "overlay_identities",
-            "content_digest",
-            "activation_blockers",
-            "rejected",
-        ):
-            if data[key] != revision[key]:
-                raise ValueError("retained package interpretation mismatch")
-        if (
-            inspection.effective_digest != revision["revision_digest"]
-            or sha256_hex(
-                canonical_json(parse_document(inspection.variables_json.encode()))
-            )
-            != revision["variables_digest"]
-        ):
-            raise ValueError("retained package authority mismatch")
+        capture = capture_package(Path(root))
+        if capture.errors:
+            raise ValueError("unsafe retained package capture")
         identity = revision["installation_id"], revision["revision_digest"]
-        expected = {
-            row["component_id"]: row
-            for row in snapshot["components"]
-            if (row["installation_id"], row["revision_digest"]) == identity
-        }
-        if set(expected) != set(inspection.inventory):
-            raise ValueError("retained inventory mismatch")
-        for component_id, component in inspection.inventory.items():
-            component_data = component.model_dump(mode="json")
-            for key in ("availability", "evidence", "definition_json"):
-                component_data.pop(key)
-            component_data.update(
-                installation_id=identity[0],
-                revision_digest=identity[1],
-                definition_digest=sha256_hex(
-                    canonical_json(
-                        parse_document(
-                            b'{"definition":'
-                            + component.definition_json.encode()
-                            + b"}"
-                        )["definition"]
-                    )
-                ),
-            )
-            if component_data != expected[component_id]:
-                raise ValueError("retained component constraints mismatch")
-        # Original links are intentionally regular files in owned storage. Their
-        # acquisition provenance comes from authenticated authority, not reinspection.
-        result[identity] = inspection.model_copy(
-            update={
-                key: revision[key]
-                for key in (
-                    "source_identity",
-                    "source_digest",
-                    "materialized_identity",
-                    "link_targets",
-                )
-            }
+        components = [row for row in snapshot["components"]
+                      if (row["installation_id"], row["revision_digest"]) == identity]
+        result[identity] = _select_retained(
+            revision, components, _retained_candidates(capture, revision)
         )
     return result
 

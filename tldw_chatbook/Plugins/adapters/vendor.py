@@ -1,6 +1,8 @@
 """Bounded vendor inventory reuses native records, metadata and authority contracts."""
 
 import hashlib
+
+import yaml
 from pathlib import PurePosixPath
 
 from ..models import ComponentRecord, Diagnostic
@@ -18,6 +20,7 @@ from ..schemas import (
     require,
     validate_manifest,
     validate_mcp,
+    _FrontmatterLoader,
 )
 from .portable import ComponentLimitError, inventory_package
 from .vendor_hooks import inventory_vendor_hooks
@@ -258,6 +261,7 @@ def inventory_vendor(
     *,
     max_components: int,
     portable_manifest: dict | None = None,
+    _recipe: str = "integrated_2",
 ) -> tuple[
     dict[str, ComponentRecord],
     dict,
@@ -268,6 +272,20 @@ def inventory_vendor(
     dict,
 ]:
     """Normalize tested material, preserving unsupported constraints and exclusions."""
+    if _recipe != "dev_20261001":
+        records, variables, diagnostics, blockers = _foreign_records(
+            capture, declaration, dialect=dialect,
+            portable_root=portable_manifest is not None, _recipe=_recipe,
+        )
+        manifest = portable_manifest or {"name": declaration["name"]}
+        inventory, edges, variables, native_diags, blockers, bodies = inventory_package(
+            capture, manifest, max_components=max_components,
+            vendor_records=records, vendor_variables=variables,
+            vendor_blockers=blockers, discover_portable=portable_manifest is not None,
+            _recipe=_recipe,
+        )
+        diagnostics.extend(native_diags)
+        return inventory, edges, variables, diagnostics, blockers, bodies, manifest
     diagnostics, extra, skill_defs, blocked = [], {}, {}, {}
     global_blockers = []
     require(isinstance(declaration, dict), "vendor_manifest_invalid")
@@ -374,13 +392,14 @@ def inventory_vendor(
                 max_components=max_components,
                 skill_paths=tuple(skill_defs),
                 skill_definitions=skill_defs,
+                _recipe="dev_20261001",
             )
         )
     else:
         if declaration.get("mcpServers"):
             global_blockers.append("vendor_openai_mcp_mapping_unqualified")
         inventory, edges, variables, native_diags, native_blockers, bodies = (
-            inventory_package(capture, portable_manifest, max_components=max_components)
+            inventory_package(capture, portable_manifest, max_components=max_components, _recipe="dev_20261001")
         )
         if any(
             key in declaration
@@ -500,3 +519,456 @@ def inventory_vendor(
         bodies,
         identity,
     )
+
+
+VENDOR_FIELDS = frozenset(
+    {
+        "name",
+        "displayName",
+        "version",
+        "description",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+        "logo",
+        "category",
+        "tags",
+        "skills",
+        "rules",
+        "agents",
+        "commands",
+        "hooks",
+        "mcpServers",
+        "variables",
+        "apps",
+        "interface",
+        "source",
+        "policy",
+        "products",
+    }
+)
+
+
+def _branch_paths(capture, value, *, suffix: str, default: str, explicit=False):
+    """Resolve only captured, contained paths; an explicit empty list stays empty."""
+    paths = value if explicit else default
+    paths = [paths] if isinstance(paths, str) else paths
+    require(isinstance(paths, list) and all(isinstance(p, str) for p in paths))
+    found = set()
+    for path in paths:
+        member = validate_relative_member(path).as_posix()
+        if member in capture.files:
+            require(member.endswith(suffix), "component_path_type_unsupported")
+            found.add(member)
+        elif member in capture.directories:
+            found.update(
+                p
+                for p in capture.files
+                if p.startswith(member + "/") and p.endswith(suffix)
+            )
+        elif explicit:
+            raise PackageFileError("component_path_unavailable")
+    return sorted(found)
+
+
+def _metadata(capture, path):
+    lines = capture.read(path).decode("utf-8").splitlines()
+    require(bool(lines) and lines[0] == "---", "frontmatter_required")
+    try:
+        end = lines.index("---", 1)
+        value = yaml.load("\n".join(lines[1:end]), Loader=_FrontmatterLoader)
+        require(isinstance(value, dict))
+        return parse_document(canonical_json(value).encode())
+    except (ValueError, TypeError, yaml.YAMLError):
+        raise PackageFileError("frontmatter_invalid") from None
+
+
+def _branch_instruction(capture, path, kind):
+    """Map supported metadata to native constraints without changing body bytes."""
+    raw = _metadata(capture, path)
+    value = dict(raw)
+    if kind == "skill":
+        metadata = dict(value.get("metadata", {}))
+        for foreign, native in (
+            ("disable-model-invocation", "disable_model_invocation"),
+            ("user-invocable", "user_invocable"),
+        ):
+            if foreign in value:
+                flag = value.pop(foreign)
+                require(type(flag) is bool, "manual_declaration_invalid")
+                mapped = str(flag).lower()
+                require(
+                    native not in metadata or metadata[native] == mapped,
+                    "manual_declaration_conflict",
+                )
+                metadata[native] = mapped
+        for key in ("context", "model"):
+            if key in value:
+                mapped = value.pop(key)
+                require(
+                    key not in metadata or metadata[key] == mapped, "metadata_conflict"
+                )
+                metadata[key] = mapped
+        require(
+            metadata.get("context", "inline") in {"inline", "fork"},
+            "context_unsupported",
+        )
+        require(
+            not (
+                metadata.get("disable_model_invocation") == "true"
+                and metadata.get("user_invocable") == "false"
+            ),
+            "manual_declaration_conflict",
+        )
+        if metadata:
+            value["metadata"] = metadata
+    elif kind == "rule":
+        require(
+            set(value) <= {"name", "description", "globs", "alwaysApply", "mode"},
+            "rule_constraints_unsupported",
+        )
+        require(type(value.get("alwaysApply", False)) is bool)
+        require(
+            not (value.get("globs") and value.get("alwaysApply")), "rule_scope_conflict"
+        )
+        mode = "always" if value.get("alwaysApply") else "manual"
+        require("mode" not in value or value["mode"] == mode, "rule_scope_conflict")
+        value = {"name": value.get("name", PurePosixPath(path).stem), "mode": mode}
+    elif kind == "agent":
+        # An omitted foreign tool contract is not proof of inheritance.
+        require("tools" in value, "agent_tools_unspecified")
+    normalized = frontmatter(
+        ("---\n" + yaml.safe_dump(value) + "---\n").encode(),
+        kind,
+        directory_name=value.get("name") if kind == "skill" else None,
+    )
+    blockers = []
+    if normalized.get("allowed-tools"):
+        blockers.append("skill_tools_mapping_required")
+    if (
+        kind == "agent"
+        and isinstance(normalized.get("tools"), list)
+        and normalized["tools"]
+    ):
+        blockers.append("tool_mapping_required")
+    if "model" in normalized or normalized.get("metadata", {}).get("model"):
+        blockers.append("model_mapping_required")
+    return normalized, tuple(blockers)
+
+
+def _foreign_variables(raw, *, _recipe="integrated_2"):
+    """Accept the scalar JSON Schema subset represented by native declarations."""
+    if raw is None:
+        return {}
+    require(
+        isinstance(raw, dict) and set(raw) <= {"type", "properties", "required"},
+        "variable_schema_unsupported",
+    )
+    require(
+        raw.get("type") == "object" and isinstance(raw.get("properties"), dict),
+        "variable_schema_unsupported",
+    )
+    required = raw.get("required", [])
+    require(
+        isinstance(required, list) and all(isinstance(name, str) for name in required)
+    )
+    require(set(required) <= raw["properties"].keys())
+    result = {}
+    for name, declaration in raw["properties"].items():
+        require(
+            isinstance(declaration, dict)
+            and set(declaration) <= {"type", "default", "description", "title"},
+            "variable_schema_unsupported",
+        )
+        result[name] = {
+            "type": declaration.get("type"),
+            "required": name in required,
+            "secret": False,
+        }
+        if "default" in declaration:
+            result[name]["default"] = declaration["default"]
+    from ..schemas import validate_extension
+
+    return validate_extension({"version": 1, "variables": result}, _recipe=_recipe)["variables"]
+
+
+def _foreign_records(capture, overlay, *, dialect, portable_root=False, _recipe="integrated_2"):
+    """Normalize vendor records for the existing native dependency inventory."""
+    from .vendor_hooks import _inventory_qualified_hooks
+
+    records, diagnostics, blockers = [], [], []
+    if overlay.keys() - (VENDOR_FIELDS | (PRESENTATION if _recipe == "integrated_2" else set())):
+        blockers.append("vendor_fields_unsupported")
+        diagnostics.append(Diagnostic(code="vendor_fields_unsupported"))
+    if "policy" in overlay:
+        diagnostics.append(Diagnostic(code="foreign_policy_no_grant"))
+        if _recipe == "integrated_2" and overlay["policy"]:
+            blockers.append("vendor_manifest_constraints_unknown")
+    if _recipe == "integrated_2" and portable_root and overlay.get("mcpServers"):
+        blockers.append("vendor_openai_mcp_mapping_unqualified")
+
+    def add(kind, path, definition, local_id=None, reasons=(), support="adapted"):
+        if local_id is None:
+            name = definition.get("name") if isinstance(definition, dict) else None
+            local_id = name or PurePosixPath(path).stem
+        records.append(
+            ComponentRecord(
+                component_id=f"{kind}:{local_id}",
+                kind=kind,
+                local_id=local_id,
+                path=path,
+                definition_json=canonical_json(definition),
+                support=support,
+                activation_blockers=tuple(reasons),
+            )
+        )
+
+    for kind, field, suffix in (
+        ("skill", "skills", "SKILL.md"),
+        ("rule", "rules", ".mdc"),
+        ("agent", "agents", ".md"),
+        ("command", "commands", ".md"),
+    ):
+        if portable_root and kind == "skill":
+            continue
+        if dialect == "openai" and kind != "skill" and field not in overlay:
+            continue
+        try:
+            if _recipe == "integrated_2":
+                paths = _paths(capture, overlay, field)
+            else:
+                paths = _branch_paths(
+                    capture,
+                    overlay.get(field),
+                    suffix=suffix,
+                    default=field,
+                    explicit=field in overlay,
+                )
+                if (
+                    kind == "skill"
+                    and dialect == "cursor"
+                    and "skills" not in overlay
+                    and "skills" not in capture.directories
+                    and "SKILL.md" in capture.files
+                ):
+                    paths = ["SKILL.md"]
+            for path in paths:
+                try:
+                    definition, reasons = (
+                        _integrated_instruction(capture, path, kind, dialect)
+                        if _recipe == "integrated_2"
+                        else _branch_instruction(capture, path, kind)
+                    )
+                    add(kind, path, definition, reasons=reasons)
+                except (PackageFileError, UnicodeError, TypeError, ValueError) as exc:
+                    local_id = (
+                        PurePosixPath(path).parent.name
+                        if kind == "skill"
+                        else PurePosixPath(path).stem
+                    )
+                    add(
+                        kind,
+                        path,
+                        {},
+                        local_id=local_id,
+                        reasons=(
+                            (
+                                str(exc)
+                                if isinstance(exc, PackageFileError)
+                                else "definition_invalid"
+                            ),
+                        ),
+                        support=("invalid" if _recipe == "integrated_2" and str(exc) == "vendor_skill_metadata_invalid" else "unsupported"),
+                    )
+        except PackageFileError as exc:
+            blockers.append(str(exc))
+            diagnostics.append(Diagnostic(code=str(exc), path=field))
+
+    if not portable_root:
+        value = overlay.get(
+            "mcpServers", "./mcp.json" if dialect == "cursor" else "./.mcp.json"
+        )
+        values = value if isinstance(value, list) else [value]
+        for index, source in enumerate(values):
+            path = (
+                source
+                if isinstance(source, str)
+                else (
+                    ".cursor-plugin/plugin.json"
+                    if dialect == "cursor"
+                    else ".codex-plugin/plugin.json"
+                )
+            )
+            try:
+                if isinstance(source, str):
+                    member = validate_relative_member(source).as_posix()
+                    if member not in capture.files and "mcpServers" not in overlay:
+                        continue
+                    document = capture.document(source)
+                else:
+                    document = source
+                require(isinstance(document, dict))
+                servers = document.get("mcpServers", document)
+                require(isinstance(servers, dict))
+                for entry_index, name in enumerate(sorted(servers)):
+                    raw = servers[name]
+                    valid_name = (
+                        bool(name)
+                        and len(name) <= 128
+                        and ":" not in name
+                        and not any(c.isspace() or ord(c) < 32 for c in name)
+                    )
+                    # Colons are reserved from valid source IDs. Sorted positions
+                    # also survive canonical catalog replay without collisions.
+                    local_id = name if valid_name else f"invalid:{index}:{entry_index}"
+                    try:
+                        require(valid_name)
+                        require(isinstance(raw, dict))
+                        definition = dict(raw)
+                        if "oauth_resource" in definition:
+                            definition.pop("oauth_resource")
+                            diagnostics.append(
+                                Diagnostic(
+                                    code="foreign_oauth_metadata_no_grant",
+                                    path=path,
+                                    component_id=f"mcp:{name}",
+                                )
+                            )
+                        if "type" not in definition:
+                            definition["type"] = (
+                                "http" if "url" in definition else "stdio"
+                            )
+                        if dialect == "cursor" and definition.get("type") == "stdio":
+
+                            def variable_text(text):
+                                require(isinstance(text, str))
+                                require(
+                                    "${PLUGIN_ROOT}" not in text
+                                    and "${PLUGIN_DATA}" not in text,
+                                    "cursor_portable_variable_unsupported",
+                                )
+                                return text.replace(
+                                    "${CURSOR_PLUGIN_ROOT}", "${PLUGIN_ROOT}"
+                                ).replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
+
+                            require("command" in definition)
+                            command = variable_text(definition["command"])
+                            if command.startswith("${PLUGIN_ROOT}/"):
+                                command = "./" + command[len("${PLUGIN_ROOT}/") :]
+                            definition["command"] = command
+                            if "args" in definition:
+                                require(isinstance(definition["args"], list))
+                                definition["args"] = [
+                                    variable_text(arg) for arg in definition["args"]
+                                ]
+                            if "env" in definition:
+                                require(isinstance(definition["env"], dict))
+                                definition["env"] = {
+                                    key: variable_text(item)
+                                    for key, item in definition["env"].items()
+                                }
+                            if "cwd" in definition:
+                                definition["cwd"] = variable_text(definition["cwd"])
+                        if definition.get("type") == "http":
+                            definition["type"] = "streamable-http"
+                        definition = validate_mcp(definition, capture)
+                        require(definition["type"] != "sse", "transport_unsupported")
+                        add("mcp", path, definition, name)
+                    except (PackageFileError, TypeError, ValueError):
+                        add(
+                            "mcp",
+                            path,
+                            raw,
+                            local_id,
+                            ("definition_unsupported",),
+                            "unsupported",
+                        )
+                        if not valid_name:
+                            diagnostics.append(
+                                Diagnostic(
+                                    code="mcp_name_invalid",
+                                    path=path,
+                                    component_id=f"mcp:{local_id}",
+                                )
+                            )
+            except (PackageFileError, TypeError, ValueError):
+                blockers.append("mcp_definition_unsupported")
+                diagnostics.append(
+                    Diagnostic(code="mcp_definition_unsupported", path=path)
+                )
+    if "apps" in overlay:
+        diagnostics.append(Diagnostic(code="foreign_apps_unavailable"))
+    try:
+        variables = _foreign_variables(overlay.get("variables"), _recipe=_recipe)
+    except (PackageFileError, TypeError, ValueError):
+        variables = {}
+        blockers.append("variable_schema_unsupported")
+    hook_records, hook_diagnostics, hook_blockers = _inventory_qualified_hooks(
+        capture, overlay, dialect, _recipe=_recipe
+    )
+    records.extend(hook_records)
+    diagnostics.extend(hook_diagnostics)
+    blockers.extend(hook_blockers)
+    require(len(records) <= 512, "component_count_limit")
+    return records, variables, diagnostics, tuple(sorted(set(blockers)))
+
+
+def _integrated_instruction(capture, path, kind, dialect):
+    """Map represented constraints, retaining current policy and scope refusals."""
+    if kind == "command" and not capture.read(path).startswith((b"---\n", b"---\r\n")):
+        return _document(capture, path, kind, dialect)
+    raw = _metadata(capture, path)
+    text = capture.read(path).decode("utf-8")
+    require("$ARGUMENTS" not in text and "${" not in text, "vendor_instruction_expansion_unsupported")
+    if kind == "skill":
+        require(isinstance(raw.get("metadata", {}), dict), "vendor_skill_metadata_invalid")
+    if kind == "agent":
+        require(raw.get("readonly", False) is False and raw.get("is_background", False) is False,
+                "vendor_agent_limits_unsupported")
+        require("tools" in raw, "agent_tools_unspecified")
+        require(not (raw.keys() - {"name", "description", "tools", "model", "readonly", "is_background", "color"}),
+                "vendor_agent_constraints_unsupported")
+        value = {k: v for k, v in raw.items() if k in {"name", "description", "tools", "model"}}
+        if value.get("model") == "inherit":
+            value.pop("model")
+        definition = frontmatter(("---\n" + yaml.safe_dump(value) + "---\n").encode(), kind)
+        blockers = []
+        if isinstance(definition["tools"], list) and definition["tools"]:
+            blockers.append("tool_mapping_required")
+        if "model" in definition:
+            blockers.append("model_mapping_required")
+        return definition, tuple(blockers)
+    if kind == "rule":
+        require(not raw.get("globs"), "vendor_rule_activation_unsupported")
+    definition, reasons = _branch_instruction(capture, path, kind)
+    if kind == "skill":
+        policy_path = str(PurePosixPath(path).parent / "agents/openai.yaml")
+        if policy_path in capture.files:
+            policy_data = capture.read(policy_path)
+            require(len(policy_data) <= MAX_DOCUMENT_BYTES, "document_bytes_limit")
+            try:
+                policy = yaml.load(policy_data.decode("utf-8"), Loader=_FrontmatterLoader)
+                policy = parse_document(canonical_json(policy).encode())
+            except (ValueError, TypeError, UnicodeError, yaml.YAMLError):
+                raise PackageFileError("vendor_skill_policy_invalid") from None
+            require(isinstance(policy, dict), "vendor_skill_policy_invalid")
+            blockers = list(reasons)
+            if policy.keys() - {"interface", "policy", "dependencies"} or policy.get("dependencies"):
+                blockers.append("vendor_skill_dependencies_unavailable")
+            values = policy.get("policy", {})
+            require(isinstance(values, dict), "vendor_skill_policy_invalid")
+            if values.keys() - {"allow_implicit_invocation"}:
+                blockers.append("vendor_skill_policy_unsupported")
+            metadata = dict(definition.get("metadata", {}))
+            if "allow_implicit_invocation" in values:
+                require(type(values["allow_implicit_invocation"]) is bool, "vendor_skill_policy_invalid")
+                manual = str(not values["allow_implicit_invocation"]).lower()
+                require("disable_model_invocation" not in metadata or metadata["disable_model_invocation"] == manual,
+                        "vendor_manual_flags_conflict")
+                metadata["disable_model_invocation"] = manual
+            metadata["vendor_policy_digest"] = hashlib.sha256(policy_data).hexdigest()
+            definition["metadata"] = metadata
+            reasons = tuple(blockers)
+    return definition, reasons

@@ -177,6 +177,10 @@ class CommandExecutor:
                 return outcome
             job.token = await asyncio.to_thread(job.owner.reserve_launch, event)
             env = await asyncio.to_thread(environment, handler, event)
+            if handler.vendor_protocol:
+                from tldw_chatbook.Plugins.adapters.vendor_hooks import encode_vendor_payload
+
+                payload = encode_vendor_payload(handler, event)
             cwd = handler.cwd
             if cwd is not None:
                 current_cwd = str(
@@ -257,7 +261,10 @@ class CommandExecutor:
                 if cancelled in done or capture.done not in done or job.cancel.is_set():
                     outcome.failure = "cancelled" if job.cancel.is_set() else "timeout"
                     job.stop()
-                elif transport.get_returncode() != 0:
+                elif transport.get_returncode() != 0 and not (
+                    handler.vendor_protocol and transport.get_returncode() == 2
+                    and "deny" in handler.effects
+                ):
                     outcome.failure = "nonzero_exit"
                 elif capture.stdout_overflow:
                     outcome.failure = "stdout_overflow"
@@ -269,7 +276,14 @@ class CommandExecutor:
                     outcome.failure = "timeout"
                 else:
                     try:
-                        outcome.result = decode_result(bytes(capture.stdout), handler)
+                        if handler.vendor_protocol:
+                            from tldw_chatbook.Plugins.adapters.vendor_hooks import decode_vendor_result
+
+                            outcome.result = decode_vendor_result(
+                                bytes(capture.stdout), handler, transport.get_returncode()
+                            )
+                        else:
+                            outcome.result = decode_result(bytes(capture.stdout), handler)
                     except ValueError:
                         outcome.failure = "invalid_output"
             finally:

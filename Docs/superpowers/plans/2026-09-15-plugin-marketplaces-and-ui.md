@@ -580,3 +580,14 @@ The existing configuration review may map a component's noncanonical declared to
 Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.
 
 Original branch I1 evidence (historical): I1 completed with implementation `b6c4baa693` and reviewed Fix1 `bc1817cd70`: native projection/context/child presets use `Plugins/{components,commands,agent_presets}.py`; persistent component schema and installation-local mapping IDs remain unchanged. Actual Console/`TldwCli` compose the existing hook/MCP/model owners. Fix1 preserves manual-rule references through initial/resumed sends, scopes mapping recovery to installation/revision, and qualifies same-event distinct-installation/revision process/root custody. Fresh scoped review accepted all three items with no new findings. Final ordinary75/affected114/controller17/ownedMCP7 tests and static checks pass; counts overlap. Initial import-headroom/POSIX timing observations and H6 FD growth remain explicit I7/final-review handoffs; other-platform/external-server/management UI qualification is not claimed. These original review/test counts do not qualify the rebased source. Current integration preserves NativeHooks, ComponentRecord with explicit snapshot, unified available_skills and the existing AgentDefinition owner; TASK32695 AC15 requires final new-base checks and independent review.
+
+### Task20 implementation handoff
+
+I2 uses the existing native inventory, review/recovery, HookHandler, matcher and
+command executor seams. R77 stores one bounded canonical public catalog carrier;
+R78 selects closed version/event codecs without changing runtime ownership.
+Supported source pre-guards remain installation-wide dependencies; mixed
+transformers cannot qualify final-argument guards. Qualification and exact pinned
+fixture provenance are recorded in the Task20 implementation report and interop
+README. Original-host execution, other operating systems, external vendor services
+and full-suite qualification remain outside this increment.

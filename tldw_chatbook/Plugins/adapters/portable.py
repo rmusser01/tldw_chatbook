@@ -31,13 +31,18 @@ def inventory_package(
     max_components: int,
     skill_paths=None,
     skill_definitions=None,
+    vendor_records=(),
+    vendor_variables=None,
+    vendor_blockers=(),
+    discover_portable=True,
+    _recipe="integrated_2",
 ):
     """Return inventory and constraints; missing declarations never imply permission."""
     inventory = {}
     diagnostics = []
     edges = {}
-    variables = {}
-    global_blockers = []
+    variables = dict(vendor_variables or {})
+    global_blockers = list(vendor_blockers)
 
     def add(kind, local_id, path, definition, blockers=(), support="supported"):
         key = f"{kind}:{local_id}"
@@ -67,84 +72,88 @@ def inventory_package(
             support=support,
         )
 
-    if "skills" in capture.files:
-        diagnostics.append(Diagnostic(code="skills_location_invalid", path="skills"))
-    if skill_paths is None:
-        skill_paths = [
-            path
-            for path in capture.files
-            if len(PurePosixPath(path).parts) == 3
-            and PurePosixPath(path).parts[0] == "skills"
-            and PurePosixPath(path).name == "SKILL.md"
-        ]
-    for path in sorted(skill_paths):
-        try:
-            definition = (skill_definitions or {}).get(path)
-            if definition is None:
-                definition = frontmatter(
-                    capture.read(path),
-                    "skill",
-                    directory_name=PurePosixPath(path).parent.name,
+    for record in vendor_records:
+        add(record.kind, record.local_id, record.path, json.loads(record.definition_json),
+            record.activation_blockers, record.support)
+    if discover_portable:
+        if "skills" in capture.files:
+            diagnostics.append(Diagnostic(code="skills_location_invalid", path="skills"))
+        if skill_paths is None:
+            skill_paths = [
+                path
+                for path in capture.files
+                if len(PurePosixPath(path).parts) == 3
+                and PurePosixPath(path).parts[0] == "skills"
+                and PurePosixPath(path).name == "SKILL.md"
+            ]
+        for path in sorted(skill_paths):
+            try:
+                definition = (skill_definitions or {}).get(path)
+                if definition is None:
+                    definition = frontmatter(
+                        capture.read(path),
+                        "skill",
+                        directory_name=PurePosixPath(path).parent.name,
+                    )
+                blockers = (
+                    ("skill_tools_mapping_required",)
+                    if definition.get("allowed-tools")
+                    else ()
                 )
-            blockers = (
-                ("skill_tools_mapping_required",)
-                if definition.get("allowed-tools")
-                else ()
-            )
-            add("skill", definition["name"], path, definition, blockers)
-        except PackageFileError as exc:
-            if str(exc) == "component_count_limit":
-                raise
-            diagnostics.append(Diagnostic(code=str(exc), path=path))
+                add("skill", definition["name"], path, definition, blockers)
+            except PackageFileError as exc:
+                if str(exc) == "component_count_limit":
+                    raise
+                diagnostics.append(Diagnostic(code=str(exc), path=path))
 
-    if "mcp.json" in capture.files:
-        try:
-            mcp = closed(
-                capture.document("mcp.json"),
-                {"$schema", "mcpServers"},
-                {"$schema", "mcpServers"},
-            )
-            require(
-                mcp["$schema"] == MCP_SCHEMA and isinstance(mcp["mcpServers"], dict)
-            )
-            for local_id, raw in mcp["mcpServers"].items():
-                try:
-                    require(
-                        bool(local_id)
-                        and len(local_id) <= 128
-                        and ":" not in local_id
-                        and not any(c.isspace() for c in local_id)
-                    )
-                    definition = validate_mcp(raw, capture)
-                    unsupported = definition["type"] == "sse"
-                    add(
-                        "mcp",
-                        local_id,
-                        "mcp.json",
-                        definition,
-                        ("transport_unsupported",) if unsupported else (),
-                        "unsupported" if unsupported else "supported",
-                    )
-                except (PackageFileError, ValueError):
-                    add(
-                        "mcp",
-                        local_id,
-                        "mcp.json",
-                        raw,
-                        ("definition_invalid",),
-                        "invalid",
-                    )
-                    diagnostics.append(
-                        Diagnostic(
-                            code="mcp_entry_invalid",
-                            path="mcp.json",
-                            component_id=f"mcp:{local_id}",
+        if "mcp.json" in capture.files:
+            try:
+                mcp = closed(
+                    capture.document("mcp.json"),
+                    {"$schema", "mcpServers"},
+                    {"$schema", "mcpServers"},
+                )
+                require(
+                    mcp["$schema"] == MCP_SCHEMA and isinstance(mcp["mcpServers"], dict)
+                )
+                for local_id, raw in mcp["mcpServers"].items():
+                    try:
+                        require(
+                            bool(local_id)
+                            and len(local_id) <= 128
+                            and ":" not in local_id
+                            and not any(c.isspace() for c in local_id)
                         )
-                    )
-        except PackageFileError as exc:
-            diagnostics.append(Diagnostic(code=str(exc), path="mcp.json"))
-    elif "mcp.json" in capture.directories:
-        diagnostics.append(Diagnostic(code="mcp_location_invalid", path="mcp.json"))
+                        definition = validate_mcp(raw, capture)
+                        unsupported = definition["type"] == "sse"
+                        add(
+                            "mcp",
+                            local_id,
+                            "mcp.json",
+                            definition,
+                            ("transport_unsupported",) if unsupported else (),
+                            "unsupported" if unsupported else "supported",
+                        )
+                    except (PackageFileError, ValueError):
+                        add(
+                            "mcp",
+                            local_id,
+                            "mcp.json",
+                            raw,
+                            ("definition_invalid",),
+                            "invalid",
+                        )
+                        diagnostics.append(
+                            Diagnostic(
+                                code="mcp_entry_invalid",
+                                path="mcp.json",
+                                component_id=f"mcp:{local_id}",
+                            )
+                        )
+            except PackageFileError as exc:
+                diagnostics.append(Diagnostic(code=str(exc), path="mcp.json"))
+        elif "mcp.json" in capture.directories:
+            diagnostics.append(Diagnostic(code="mcp_location_invalid", path="mcp.json"))
 
     extensions = manifest.get("extensions", {})
     if not isinstance(extensions, dict):
@@ -156,7 +165,7 @@ def inventory_package(
             diagnostics.append(Diagnostic(code="extension_ignored", path="plugin.json"))
     if NAMESPACE in extensions:
         try:
-            extension = validate_extension(extensions[NAMESPACE])
+            extension = validate_extension(extensions[NAMESPACE], _recipe=_recipe)
         except (PackageFileError, TypeError, ValueError):
             global_blockers.append("constraints_unknown")
             diagnostics.append(Diagnostic(code="extension_invalid", path="plugin.json"))
@@ -164,7 +173,10 @@ def inventory_package(
         edges = {
             key: tuple(deps) for key, deps in extension.get("requires", {}).items()
         }
-        variables = extension.get("variables", {})
+        for name, declaration in extension.get("variables", {}).items():
+            if name in variables and variables[name] != declaration:
+                global_blockers.append("variable_declaration_conflict")
+            variables[name] = declaration
         for kind, field in (
             ("command", "commands"),
             ("rule", "rules"),
@@ -209,7 +221,7 @@ def inventory_package(
                 require(len(hooks["hooks"]) <= 64, "hook_count_limit")
                 for index, raw in enumerate(hooks["hooks"]):
                     try:
-                        definition = validate_hook(raw, capture)
+                        definition = validate_hook(raw, capture, _recipe=_recipe)
                         local_id = definition["id"]
                         add("hook", local_id, path, definition)
                         if definition["type"] == "mcp_tool":
@@ -250,31 +262,47 @@ def inventory_package(
                 diagnostics.append(Diagnostic(code=str(exc), path=path))
                 global_blockers.append("constraints_unknown")
 
-    for name, declaration in variables.items():
-        if declaration["required"] and "default" not in declaration:
-            global_blockers.append(f"variable_unset:{name}")
+    source_guards = {
+        row.component_id: json.loads(row.definition_json)
+        for row in vendor_records
+        if row.kind == "hook" and row.support == "adapted"
+        and "deny" in json.loads(row.definition_json).get("effects", ())
+    }
+    for key, row in inventory.items():
+        if row.kind != "hook" and source_guards:
+            edges[key] = tuple(dict.fromkeys((*edges.get(key, ()), *source_guards)))
+    if _recipe == "dev_20261001":
+        for name, declaration in variables.items():
+            if declaration["required"] and "default" not in declaration:
+                global_blockers.append(f"variable_unset:{name}")
     if edges.keys() - inventory.keys():
         global_blockers.append("dependency_scope_unknown")
     for key, component in list(inventory.items()):
         blockers = set(component.activation_blockers) | set(global_blockers)
-        if component.kind == "hook" and component.support != "invalid":
+        if component.kind == "hook" and (component.support != "invalid" if _recipe == "dev_20261001" else component.support in {"supported", "adapted"}):
             definition = json.loads(component.definition_json)
             if isinstance(definition, dict):
                 values = [
                     *definition.get("argv", []),
                     *definition.get("env", {}).values(),
+                    *([definition.get("cwd", "")] if _recipe != "dev_20261001" else []),
                 ]
                 for value in values:
+                    if (_recipe != "dev_20261001" and isinstance(value, dict)
+                        and set(value) == {"variable"} and value["variable"] not in variables):
+                        blockers.add(f"variable_undeclared:{value['variable']}")
                     if isinstance(value, str):
                         for variable in re.findall(
                             r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value
                         ):
                             if (
-                                variable not in {"PLUGIN_ROOT", "PLUGIN_DATA"}
+                                variable not in ({"PLUGIN_ROOT", "PLUGIN_DATA"} | ({"CHATBOOK_WORKSPACE_DATA"} if _recipe != "dev_20261001" else set()))
                                 and variable not in variables
                             ):
                                 blockers.add(f"variable_undeclared:{variable}")
         for dep in edges.get(key, ()):
+            if dep in source_guards and "updated_input" in source_guards[dep]["effects"]:
+                blockers.add(f"dependency_guard_unqualified:{dep}")
             if dep not in inventory:
                 blockers.add(f"dependency_missing:{dep}")
             elif dep.startswith("hook:"):

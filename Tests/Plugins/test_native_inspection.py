@@ -266,6 +266,8 @@ def test_inline_openai_overlay_replaces_compatibility_file(native_package):
     selected = inspect_package(root, dialect="openai")
     assert selected.overlay_identities == ("plugin.json#/extensions/com.openai",)
     assert selected.root_manifest == "plugin.json"
+    assert selected.adapter_version == "chatbook-codex/2"
+    assert "foreign_apps_unavailable" in {d.code for d in selected.diagnostics}
     assert not selected.activation_blockers
     assert set(selected.inventory) == {"skill:review"}
 

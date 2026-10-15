@@ -391,7 +391,8 @@ def _output_parent(root_fd: int, path: str):
 
 
 def materialize_package(
-    source: Path, destination: Path, *, dialect: str | None = None
+    source: Path, destination: Path, *, dialect: str | None = None,
+    expected: PackageInspection | None = None,
 ) -> PackageInspection:
     """Validate and copy into an absent child of a canonical directory.
 
@@ -405,7 +406,14 @@ def materialize_package(
     capture = capture_package(source)
     if capture.errors:
         raise PackageFileError(capture.errors[0].code)
-    inspection = inspect_capture(capture, dialect=dialect)
+    if expected is None:
+        inspection = inspect_capture(capture, dialect=dialect)
+    else:
+        from .retained_inspection import _reinspect_expected
+
+        if dialect is not None and dialect != expected.dialect:
+            raise PackageFileError("expected_dialect_mismatch")
+        inspection = _reinspect_expected(capture, expected)
     if inspection.rejected:
         raise PackageFileError("package_inspection_rejected")
     try:

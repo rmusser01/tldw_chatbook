@@ -316,6 +316,7 @@ def parse_handlers(
             "require_context",
             "match",
             "timeout_seconds",
+            "vendor_protocol",
         }
         if (
             not isinstance(raw, dict)
@@ -370,6 +371,11 @@ def parse_handlers(
                 _fail("matcher limit exceeded")
             match = _freeze(patterns)
         kwargs: dict[str, Any] = {}
+        if "vendor_protocol" in raw:
+            from tldw_chatbook.Plugins.adapters.vendor_hooks import validate_protocol
+
+            validate_protocol(raw["vendor_protocol"], event, raw["type"], effects)
+            kwargs["vendor_protocol"] = raw["vendor_protocol"]
         if raw["type"] == "command":
             argv = _strings(raw.get("argv"))
             if not argv or not argv[0] or any("\x00" in arg for arg in argv):
