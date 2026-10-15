@@ -486,22 +486,18 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/Console_Modules/left_rail.py",
         "ConsoleLeftRail.sync_model_recovery",
-        "self.query_one('#console-context-recovery-copy', Static)",
+        "context_label",
     ): (
-        "NEEDS-LAYOUT: the recovery copy row is height:auto and its label "
-        "varies with the policy failure. FINDING: on the tick path the "
-        "write fires with unchanged copy whenever a context-settings "
-        "failure is mounted; wants an equality gate."
+        "NOT-PER-TICK: Displayed context failure copy is compared before update; "
+        "changed copy keeps layout."
     ),
     (
         "tldw_chatbook/UI/Console_Modules/left_rail.py",
         "ConsoleLeftRail.sync_model_recovery",
-        "self.query_one('#console-default-recovery-copy', Static)",
+        "default_label",
     ): (
-        "NEEDS-LAYOUT: the default-recovery copy row is height:auto and "
-        "the copy is a real sentence when a default save is stuck. "
-        "FINDING: the tick path rewrites the (usually empty) copy every "
-        "sync with no equality gate."
+        "NOT-PER-TICK: Displayed default recovery copy is compared before update, "
+        "including the empty state."
     ),
     # -- UI/LLM_Management/llamacpp_setup_view.py
     (
@@ -517,10 +513,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py",
         "LlamaCppSetupView._refresh_state_locked",
-        "self.query_one('#llamacpp-connection-status', Static)",
+        "connection_status",
     ): (
-        "NOT-PER-TICK: behind the same `_last_refresh_gate` equality gate "
-        "(task-34916) as bind_status above."
+        "NOT-PER-TICK: The original refresh gate and displayed connection-status "
+        "equality both precede this update."
     ),
     (
         "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py",
@@ -533,10 +529,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py",
         "LlamaCppSetupView._render_launch_state",
-        "self.query_one('#llamacpp-preview-title', Static)",
+        "title",
     ): (
-        "NOT-PER-TICK: two fixed strings, written only behind the caller's "
-        "`_last_refresh_gate` equality gate (task-34916)."
+        "NOT-PER-TICK: The launch-state refresh and displayed title equality guard "
+        "this variable-height copy."
     ),
     # -- UI/MCP_Modules/mcp_tools_mode.py
     (
@@ -660,17 +656,14 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: behind the same two poll equality gates as "
         "_set_static_text above."
     ),
-    # -- UI/Screens/skills_screen.py
+    # -- UI/Library_Modules/skills_trust_modals.py
     (
-        "tldw_chatbook/UI/Screens/skills_screen.py",
+        "tldw_chatbook/UI/Library_Modules/skills_trust_modals.py",
         "SkillRecoveryReviewModal._check_selection",
-        "self.query_one('#skills-recovery-status', Static)",
+        "status",
     ): (
-        "NEEDS-LAYOUT: the status row is height:auto (widget defaults), so "
-        "the write keeps the layout pass. FINDING (TASK-34991): while the "
-        "reviewed selection is stale this rewrites the SAME constant every "
-        "200 ms; a healthy tick writes nothing. The write wants an "
-        "equality gate."
+        "NOT-PER-TICK: Currentness and disabled state are checked every tick; "
+        "identical displayed stale-selection copy is not updated."
     ),
     # -- UI/Wizards/first_run_busy_status.py
     (
@@ -812,31 +805,26 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/Widgets/Console/console_agent_progress_modal.py",
         "ConsoleAgentProgressModal._refresh_snapshot",
-        "self.query_one('#agent-progress-status', Static)",
+        "status",
     ): (
-        "NEEDS-LAYOUT: the status line is a bare height:auto Static. "
-        "FINDING (TASK-34991): in the inbox-error state the 0.5 s poll "
-        "rewrites the same constant every tick; wants an equality gate."
+        "NOT-PER-TICK: The refusal message is compared with the displayed status "
+        "before update."
     ),
     (
         "tldw_chatbook/Widgets/Console/console_agent_progress_modal.py",
         "ConsoleAgentProgressModal._refresh_snapshot",
-        "self.query_one('#agent-progress-count', Static)",
+        "count",
     ): (
-        "NEEDS-LAYOUT: the count line is a bare height:auto Static. "
-        "FINDING (TASK-34991): the 0.5 s poll rewrites it every tick even "
-        "while the snapshot (and so the copy) is unchanged; the "
-        "snapshot-equality gate right above guards only the SelectionList."
+        "NOT-PER-TICK: Displayed queued-count/error copy is compared before update "
+        "while current snapshot reads remain live."
     ),
     (
         "tldw_chatbook/Widgets/Console/console_agent_progress_modal.py",
         "ConsoleAgentProgressModal._sync_body",
-        "self.query_one('#agent-progress-body', Static)",
+        "body",
     ): (
-        "NEEDS-LAYOUT: the body is a multi-line height:auto report. "
-        "FINDING (TASK-34991): the poll tail calls _sync_body every 0.5 s "
-        "with unchanged highlighted/selected state; wants an equality "
-        "gate (the Selection-driven edge is fine)."
+        "NOT-PER-TICK: The exact Rich Text body is compared with the renderable "
+        "before update; selection and current snapshot still refresh."
     ),
     # -- Widgets/Console/console_session_switcher_modal.py
     (
@@ -974,33 +962,27 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/Widgets/Console/console_workspace_files_modal.py",
         "ConsoleWorkspaceFilesModal.update_attention",
-        "self.query_one('#console-workspace-files-attention', Static)",
+        "label",
     ): (
-        "NEEDS-LAYOUT: the attention row is a bare height:auto Static. "
-        "FINDING (TASK-34991): the publisher bumps its generation counter "
-        "on every Console sync tick, so update_attention's "
-        "`generation <=` guard never blocks a tick and the stable "
-        "status_copy is rewritten (and laid out) ~5x/s while the modal is "
-        "open; the gate wants to compare the snapshot, not the counter."
+        "NOT-PER-TICK: Generation and closing checks remain, and displayed attention "
+        "copy is compared before update."
     ),
     # -- Widgets/Persona_Widgets/buddy_conversation_modal.py
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
         "BuddyConversationModal.refresh_projection",
-        "self.query_one('#buddy-conversation-title', Static)",
+        "title_widget",
     ): (
-        "NOT-PER-TICK: the task-10 poll is change-gated -- "
-        "`refresh_projection(force=False)` returns on the gate_key "
-        "equality compare (store fingerprint, run state, decision "
-        "identity, notices, drafts, voice status) before any DOM write."
+        "NOT-PER-TICK: The original projection gate and displayed title equality "
+        "precede this update."
     ),
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
         "BuddyConversationModal.refresh_projection",
-        "self.query_one('#buddy-activity', Static)",
+        "activity_widget",
     ): (
-        "NOT-PER-TICK: behind the poll's gate_key equality gate, as the "
-        "title write above."
+        "NOT-PER-TICK: The original projection gate and displayed activity equality "
+        "precede this update."
     ),
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
@@ -1014,43 +996,36 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
         "BuddyConversationModal.refresh_projection",
-        "self.query_one('#buddy-reply-notice', Static)",
+        "notice_widget",
     ): (
-        "NOT-PER-TICK: the notice is part of the poll's gate_key, so an "
-        "unchanged tick returns before this write."
+        "NOT-PER-TICK: Displayed notice equality guards updates, including direct "
+        "forced refreshes."
     ),
     # -- Widgets/Persona_Widgets/buddy_speech_controls.py (TASK-34991 FINDING)
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_speech_controls.py",
         "BuddySpeechControls.refresh_state",
-        "self.query_one('#buddy-speech-status', Static)",
+        "status_widget",
     ): (
-        "NEEDS-LAYOUT: the speech status line is height:auto in the "
-        "widget's own stylesheet. FINDING (TASK-34991): the 0.5 s self-poll "
-        "rewrites unchanged copy every tick -- the queue state rarely "
-        "moves; the writer wants an equality gate."
+        "NOT-PER-TICK: Current queue state is read every poll and displayed speech "
+        "status is compared before update."
     ),
     # -- Widgets/Persona_Widgets/buddy_workspace_modal.py (TASK-34991 FINDING x2)
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_workspace_modal.py",
         "BuddyWorkspaceModal.refresh_inbox",
-        "self.query_one('#buddy-inbox-title', Static)",
+        "title_widget",
     ): (
-        "NEEDS-LAYOUT: the inbox title is a bare height:auto Static. "
-        "FINDING (TASK-34991): the 1 s self-poll rewrites 'Buddy · <title>' "
-        "every tick, BEFORE the `entries == self._entries` gate that "
-        "guards the rest of the render; the title wants to move behind "
-        "that gate or its own equality check."
+        "NOT-PER-TICK: Current inbox snapshots remain live; displayed title equality "
+        "precedes list reconciliation."
     ),
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_workspace_modal.py",
         "BuddyWorkspaceModal.refresh_inbox",
-        "self.query_one('#buddy-inbox-error', Static)",
+        "error_widget",
     ): (
-        "NEEDS-LAYOUT: the error line is a bare height:auto Static. "
-        "FINDING (TASK-34991): the healthy 1 s tick rewrites '' into the "
-        "already-empty line every poll, before the entries gate; the "
-        "error arm wants an equality gate too."
+        "NOT-PER-TICK: Healthy polls clear only nonempty displayed errors; failed "
+        "polls update only changed error copy."
     ),
     # -- Widgets/Persona_Widgets/personas_inspector_pane.py
     (
@@ -1115,6 +1090,14 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "own frame producer (its return value is the frame content), not "
         "a Static. Retires the former _update_animation row: the call "
         "moved into this method."
+    ),
+    (
+        "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
+        "BuddyConversationModal.refresh_projection",
+        "transcript_widget",
+    ): (
+        "NOT-PER-TICK: unavailable content clears only a nonempty displayed body; "
+        "the transcript key resets so the same recovered target renders again."
     ),
 }
 
@@ -1221,8 +1204,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/UI/Screens/chat_screen.py",
-            "ChatScreen",
+            "tldw_chatbook/UI/Console_Modules/context_spend.py",
+            "ConsoleContextSpendController",
             "_sync_console_cost_chip",
         ),
         (
@@ -1458,7 +1441,7 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         # in the stale-selection state -- TASK-34991 finding).
         (
             "set_interval",
-            "tldw_chatbook/UI/Screens/skills_screen.py",
+            "tldw_chatbook/UI/Library_Modules/skills_trust_modals.py",
             "SkillRecoveryReviewModal",
             "_check_selection",
         ),

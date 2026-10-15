@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 21:51
-updated_date: 2026-10-14 12:28
+updated_date: 2026-10-15 18:28
 labels:
 - console
 - architecture
@@ -84,4 +84,6 @@ Designed the Console Send preparation and I/O ownership architecture around exis
 The requested written-spec audit corrected atomic admission/promotion across entry points, approval/native-custody enablement prerequisites, attempt-scoped tool ceilings versus existing restart recovery, revision-guarded UI clearing and attachment-prefix compatibility, upstream error propagation, demand-driven capture and raw performance accounting. No new schema or stronger cross-process transaction is claimed.
 Files: Docs/superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md; Docs/Development/2026-10-06-console-send-architecture-review.md.
 Validation: eight relative document links, placeholder and whitespace checks, source-based contract review and scoped Git diff checks. This is documentation-only work; runtime/unit/integration and performance acceptance belong to the implementation tasks and are not claimed here. No full suite was run. Existing diagnostic/product candidates remain outside this task.
+
+Current-dev integration 2026-10-15: rebased the reviewed Console work onto dev7c8e0e53 while preserving the incoming deletion wave and separate Dreams boundary job. Retained the existing Skills recovery equality guard at its moved skills_trust_modals owner and retargeted its original regression; updated only the exact timer receiver/root declarations and added the twelve existing PR3023 required targets to the response-rule CI inherited argv list. Original targeted RED343 had5 failures/338 passes; the same343 controls now pass with zero failures/errors/skips, followed by33 focused polling/Interop Outputs/fake-audio TTS consumer passes. Scoped Ruff I,F,E9 passes; two unchanged formatter debts remain. Independent source/evidence review72e01837 and Python3.12 data-only compile/import scan339 surviving changed files (zero references to31 removed modules) are recorded in the review evidence. Existing ADR230/126/150 apply; no new ADR, authority/layout/cadence/budget change, task closure, whole-suite or final provider/render/performance/platform acceptance is claimed.
 <!-- SECTION:NOTES:END -->
