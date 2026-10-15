@@ -256,3 +256,17 @@ def test_configure_connection_applies_on_revival(tmp_path) -> None:
     assert revived.execute("PRAGMA cache_size").fetchone()[0] == -1234
     assert revived.isolation_level is None
     store.close()
+
+
+def test_workspace_explicit_immediate_wins_over_deferred_default(tmp_path) -> None:
+    """Tri-state composition pin (PR-3112 review): explicit immediate=True
+    on a False-default store still emits BEGIN IMMEDIATE — the write
+    serialization registry_service depends on."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    store = WorkspaceDB(str(tmp_path / "workspace.sqlite"))
+    statements = _traced(store)
+    with store.transaction(immediate=True):
+        pass
+    assert any(s.strip().upper().startswith("BEGIN IMMEDIATE") for s in statements)
+    store.close()

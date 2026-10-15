@@ -10,10 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
-import time
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from datetime import datetime, timezone
@@ -318,8 +315,6 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     _CURRENT_SCHEMA_VERSION = 24
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
-    #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
-    #: a per-call ``SELECT 1`` would double statement count on the per-step
     #: BaseDB-provenance (ADR-228): connections open through BaseDB's
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted.

@@ -189,9 +189,10 @@ class SQLiteStoreKernel:
 
         Args:
             immediate: Reserve the write lock before the first read
-                (``BEGIN IMMEDIATE``; the kernel default). Stores whose
-                contract prefers a deferred ``BEGIN`` override only this
-                default (ADR-228).
+                (``BEGIN IMMEDIATE``). ``None`` (the default) resolves to
+                the store's ``_transaction_immediate_default`` class
+                attribute; an explicit value always wins (ADR-228
+                tri-state).
 
         Raises:
             BaseException: Re-raised after rolling back, on any error inside
