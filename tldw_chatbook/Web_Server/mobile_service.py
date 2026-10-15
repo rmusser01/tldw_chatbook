@@ -513,7 +513,10 @@ class MobileChatService:
                     origin=ConsoleSubmissionOrigin.MANUAL,
                 )
             except BaseException:
-                self._state.pending_terminal.discard(session_id)
+                # Leave ``pending_terminal`` set: ``_turn_done`` owns the
+                # crash path's terminal emit and races the pump (which may
+                # observe the FAILED transition first) under the same
+                # exactly-once flag.
                 raise
             if not result.accepted:
                 # A refusal that only surfaced at submit time (e.g. hooks
@@ -542,19 +545,26 @@ class MobileChatService:
         if self._turn_tasks.get(session_id) is task:
             self._turn_tasks.pop(session_id, None)
         if task.cancelled():
-            return  # shutdown: no terminal event for a deliberately killed turn
+            # Shutdown deliberately killed the turn: no terminal event, and
+            # the flag dies with the closing service.
+            self._state.pending_terminal.discard(session_id)
+            return
         error = task.exception()
         if error is None:
             return
         # The turn died mid-run (engine-side failure). The phone already
         # holds its 202: announce a terminal event so the composer
-        # re-enables and the resync shows the persisted reality.
+        # re-enables and the resync shows the persisted reality. The
+        # ``pending_terminal`` flag makes this exactly-once with the pump,
+        # which may have observed the FAILED transition first.
         logger.error(
             "mobile turn failed session_id=%s type=%s",
             session_id,
             type(error).__name__,
         )
-        self._emit_terminal_events(session_id, ConsoleRunStatus.FAILED)
+        if session_id in self._state.pending_terminal:
+            self._state.pending_terminal.discard(session_id)
+            self._emit_terminal_events(session_id, ConsoleRunStatus.FAILED)
 
     def cancel(self, session_id: str) -> bool:
         """Stop the session's active run at the next safe boundary.

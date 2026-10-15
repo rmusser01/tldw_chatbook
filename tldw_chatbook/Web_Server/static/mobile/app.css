@@ -19,6 +19,14 @@
   box-sizing: border-box;
 }
 
+/* The `hidden` attribute must always win: author-origin `display` rules
+   (#view-chat { display: flex }, .badge { display: inline-block }) would
+   otherwise override the UA stylesheet's [hidden] { display: none } and
+   defeat showView()'s attribute toggling (re-review round 2). */
+[hidden] {
+  display: none !important;
+}
+
 /* Phone-first column: the page itself never scrolls — each view owns its
    scrollable region and the composer stays pinned to the bottom of the
    column (live-check round 1, findings 2-4). */
