@@ -1,5 +1,20 @@
 # Lessons: what counts as evidence a change works
 
+## Exercise worker failures through the runtime, not only their message copy (TASK-35028, 2026-10-15)
+
+**Incident.** Workspace-worker message tests passed while a crashed worker returned
+`blocked`, bypassing both ordinary-failure and explicit-denial limits. A model
+changing the requested path also escaped identical-call detection. Forty-two
+provider-to-runtime cases reproduced the gap before the classification fix.
+Review then caught that clearing `blocked` alone allowed an automatic goal to
+repeat a write after unproven cleanup; fourteen goal cases failed before retaining
+the separate `uncertain` dispatch fact and the goal's immediate stop.
+
+**What to do.** Vary paths through the real provider and runtime, assert the next
+model call is suppressed after three failures and the final result is recorded,
+and retain separate controls for genuine authority blocks and permission denials.
+Failure outcome and confirmed execution effects are separate facts; preserve both.
+
 
 ## One more round-robin shard need not lighten the heaviest one -- replay the logs first (TASK-34917, 2026-10-14)
 

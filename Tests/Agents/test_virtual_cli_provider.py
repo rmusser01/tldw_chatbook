@@ -391,16 +391,16 @@ def test_provider_constructs_and_injects_real_executor_by_default(
 
 
 @pytest.mark.parametrize(
-    ("code", "expected"),
+    ("code", "expected", "outcome"),
     (
-        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
-        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL),
-        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL),
-        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL),
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
+        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL, None),
     ),
 )
 def test_virtual_cli_executor_boundary_failures_map_to_pinned_refusals(
-    tmp_path, code, expected
+    tmp_path, code, expected, outcome
 ):
     executor = RecordingWorkspaceExecutor(error=code)
     provider = make_provider(
@@ -414,7 +414,7 @@ def test_virtual_cli_executor_boundary_failures_map_to_pinned_refusals(
         {"command": "ls", "argv": ["."]},
     )
 
-    assert not result.ok and result.outcome == "blocked"
+    assert not result.ok and result.outcome == outcome
     assert result.error == expected
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
@@ -988,7 +988,7 @@ def test_virtual_direct_callback_answer_authority(tmp_path, raw, unanswered, exp
     [
         ("tool_failure", "approved"),
         ("root_pin_failed", None),
-        ("authority_unavailable", None),
+        ("protocol_failure", "approved"),
     ],
 )
 def test_virtual_approved_execution_failure_is_distinct_from_authority_loss(
