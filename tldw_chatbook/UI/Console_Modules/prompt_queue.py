@@ -820,6 +820,16 @@ class ConsolePromptQueueUIController:
                 self._sending_accessor and self._sending_accessor(session_id)
             ),
         )
+        runtime = getattr(controller, "_hooks_v2_runtime", None)
+        if runtime is not None and runtime.has_received_intents(
+            session_id, unpromoted_only=True
+        ):
+            return replace(
+                presentation,
+                send_label="Preparing...",
+                send_enabled=False,
+                send_tooltip="Preparing this turn; draft kept until acceptance.",
+            )
         if controller._chat_start.is_prepared(session_id):
             return replace(
                 presentation,

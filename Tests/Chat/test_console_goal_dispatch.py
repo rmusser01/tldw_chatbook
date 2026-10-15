@@ -564,3 +564,45 @@ async def test_last_accepted_iteration_can_finish_its_remaining_model_turn(
         assert spent.used["generation"] == 1 and spent.used["model_call"] == 2
     finally:
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("successor", [False, True])
+async def test_goal_authorization_cannot_bypass_retired_received_claim(
+    stores, monkeypatch, successor
+):
+    from tldw_chatbook.Chat.console_received_turn import received_turn_claim_for
+
+    goal, store, session, controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch
+    )
+    original_admission = controller.hook_admission_reason
+    original_prepare = controller._prepare_submission_hooks
+    prepared, claims = [], []
+
+    async def retire_after_admission():
+        reason = await original_admission()
+        claim = received_turn_claim_for(store, session.id)
+        assert claim is not None and store.received_turn_is_current(claim)
+        assert store.release_received_turn(claim)
+        if successor:
+            claims.append(store.claim_received_turn(session.id, "new-manual-receipt"))
+            assert claims[-1] is not None
+        return reason
+
+    async def observe_prepare(*args, **kwargs):
+        prepared.append(True)
+        return await original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(controller, "hook_admission_reason", retire_after_admission)
+    monkeypatch.setattr(controller, "_prepare_submission_hooks", observe_prepare)
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        assert result.native_run_id is None and calls == []
+        assert prepared == [], "Goal authority bypassed its retired admission claim"
+        if successor:
+            assert store.received_turn_for_session(session.id) is claims[0]
+    finally:
+        for claim in claims:
+            store.release_received_turn(claim)
+        await gateway.aclose()

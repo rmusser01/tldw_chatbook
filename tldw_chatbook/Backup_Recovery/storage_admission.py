@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
-from . import bootstrap
+from . import bootstrap, control_records
 from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
 from .profile_paths import effective_config_path, lexical_path
@@ -881,6 +881,13 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
     if any(n.startswith(("pending-", "activation-update-")) for n in entries):
         return None
     admission = root / "admission"
+    # TASK34408 checks this fixed intent in each parent, including absence.
+    # Permission/identity stamps alone do not notice a new sibling marker.
+    ancestor_intents = {
+        child.parent / control_records._DIRECTORY_CREATION_INTENT
+        for child in (root, *root.parents)
+        if child != Path(root.anchor)
+    }
     content = [
         root,
         admission,
@@ -888,6 +895,7 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         admission / "registry.lock",
         root / "unbound-owner",
         _QUALIFICATION_FILE,
+        *sorted(ancestor_intents),
         *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
     ]
     # The selector is an input even when unbound: a profile whose fingerprint
@@ -903,7 +911,10 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
     # An absent selector is observed as absent; its appearance is a mismatch.
-    content_ok = all(s is not None for p, s in evidence.content if p != selector)
+    content_ok = all(
+        s is None if p in ancestor_intents else s is not None or p == selector
+        for p, s in evidence.content
+    )
     return evidence if posture_ok and content_ok else None
 
 
@@ -1023,6 +1034,7 @@ def _note_derived(hold, key, entry, value, before):
         previous, stamps, when = observed or (None, None, 0)
         entry.confirmed = (
             previous is not None
+            and previous.epoch == entry.epoch
             and previous.names == entry.names
             and previous.dependencies() == entry.dependencies()
             and previous.stamps() == stamps == entry.stamps()
@@ -1100,10 +1112,18 @@ def _metadata_evidence(hold, paths=(), *, registry=None, records=None):
             for p, s in evidence.posture
         ):
             return None
+        # Only the fixed creation-intent absences validated by the selector
+        # may be missing. Re-observation must still find each marker absent.
+        ancestor_intents = {
+            child.parent / control_records._DIRECTORY_CREATION_INTENT
+            for child in (root, *root.parents)
+            if child != Path(root.anchor)
+        }
         if any(
-            stamp is None
+            stamp is not None
+            if dependency in ancestor_intents
+            else stamp is None and dependency != selector
             for dependency, stamp in evidence.content
-            if dependency != selector
         ):
             return None
         return evidence

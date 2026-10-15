@@ -8,6 +8,8 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
+)
+from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 

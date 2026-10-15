@@ -338,3 +338,9 @@ class ContextWindowCache:
                 if value is not None:
                     return value
         return None
+
+
+_CONTEXT_CAPACITY_CACHE_ORIGINAL = (
+    globals(), ContextWindowCache, ContextWindowCache.cached,
+    ContextWindowCache.cached.__code__,
+)

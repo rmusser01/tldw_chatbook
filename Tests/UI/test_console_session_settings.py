@@ -1,3 +1,5 @@
+
+from Tests.UI.console_controller_stubs import context_spend_for_test
 import asyncio
 import gc
 import hashlib
@@ -1189,10 +1191,10 @@ def _install_open_settings_dependencies(screen: ChatScreen) -> None:
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda draft, **_kwargs: draft,
     )
-    screen._console_settings_context_estimate_for_session = (
+    context_spend_for_test(screen)._console_settings_context_estimate_for_session = (
         lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._console_context_control_state_for_session = (
+    context_spend_for_test(screen)._console_context_control_state_for_session = (
         lambda *_args, **_kwargs: None
     )
     if not hasattr(screen, "app_instance"):
@@ -1257,10 +1259,10 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda *args, **kwargs: args[0],
     )
-    screen._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
+    context_spend_for_test(screen)._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._console_context_control_state_for_session = lambda *args, **kwargs: None
+    context_spend_for_test(screen)._console_context_control_state_for_session = lambda *args, **kwargs: None
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
@@ -1333,10 +1335,10 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
@@ -1432,10 +1434,10 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: ConsoleSettingsContextEstimate(
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: ConsoleSettingsContextEstimate(
         10, 4096, "10 / 4k"
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
@@ -1486,10 +1488,10 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}}
@@ -1558,10 +1560,10 @@ async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_m
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
@@ -1607,10 +1609,10 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}}
@@ -1682,10 +1684,10 @@ async def test_suspended_open_uses_the_draft_pair_for_initial_discovery(
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}, "vllm": {}}
@@ -8169,14 +8171,14 @@ def _endpoint_command_screen_double(
         _ensure_active_console_session_settings=lambda: settings
     )
     screen._ensure_console_chat_store = lambda: store
-    screen._console_settings_context_estimate_for_session = lambda *_a, **_k: (
+    context_spend_for_test(screen)._console_settings_context_estimate_for_session = lambda *_a, **_k: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    context_spend_for_test(screen)._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_k: None
-    screen._console_context_control_state_for_session = lambda *_a, **_k: None
+    context_spend_for_test(screen)._active_console_context_control_state = lambda **_k: None
+    context_spend_for_test(screen)._console_context_control_state_for_session = lambda *_a, **_k: None
     screen._ensure_console_chat_controller = lambda: SimpleNamespace(
         run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
         effective_thinking_history_policy_for_session=(
@@ -10406,7 +10408,7 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     ]
     assert provider_system.startswith("Protect Captain Rowan.")
     assert provider_system.endswith("Hello Captain Rowan.")
-    estimate_result = console._active_console_settings_context_estimate()
+    estimate_result = context_spend_for_test(console)._active_console_settings_context_estimate()
     assert estimate_result.used_tokens == 17
     assert estimate_calls[-1][0][-1]["content"] == "Hello Captain Rowan."
     assert estimate_calls[-1][3] == "Protect Captain Rowan."
@@ -11022,7 +11024,7 @@ def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_de
     }
     screen = ChatScreen(app)
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = context_spend_for_test(screen)._build_console_settings_summary_state()
 
     assert summary_state.endpoint_row == "Endpoint: http://127.0.0.1:9099"
 
@@ -11132,7 +11134,7 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
         session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1")
     )
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = context_spend_for_test(screen)._build_console_settings_summary_state()
     inspector_state = screen._build_console_inspector_state(None)
     provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
     blocker_copy = screen._console_provider_blocker_copy()
@@ -11413,7 +11415,7 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
         session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
     )
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = context_spend_for_test(screen)._build_console_settings_summary_state()
 
     # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
     assert summary_state.readiness_label == "Not ready · no model"
@@ -11445,7 +11447,7 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
         session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
     )
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = context_spend_for_test(screen)._build_console_settings_summary_state()
 
     # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
     assert summary_state.readiness_label == "Ready · not tested"

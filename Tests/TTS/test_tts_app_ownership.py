@@ -1011,6 +1011,12 @@ def test_removal_settings_inputs_treat_missing_stored_draft_as_no_draft() -> Non
 async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> None:
     calls: list[str] = []
 
+    async def actor_pack_recovery_shutdown() -> None:
+        calls.append("actor-pack-recovery")
+
+    async def workflow_session_shutdown() -> None:
+        calls.append("workflow-session")
+
     class Coordinator:
         async def shutdown(self) -> None:
             calls.append("coordinator")
@@ -1063,6 +1069,8 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
         calls.append("notes")
 
     owner = SimpleNamespace(
+        _shutdown_actor_pack_recovery=actor_pack_recovery_shutdown,
+        _shutdown_workflow_session=workflow_session_shutdown,
         _audio_cpp_artifact_lease_coordinator=Coordinator(),
         audio_cpp_model_install_owner=InstallOwner(),
         _shutdown_collections_capture_runtime=collections_capture_shutdown,
@@ -1083,6 +1091,8 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
     await TldwCli._shutdown_app_owned_lifecycles(owner)
 
     assert calls == [
+        "actor-pack-recovery",
+        "workflow-session",
         "collections-capture",
         "notes-sync",
         "actor-pack-import",

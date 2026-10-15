@@ -4076,6 +4076,17 @@ as well as pytest; a stdlib-only checker can still require the project's
 Python grammar. This incident did not justify changing source syntax or
 regenerating the inventory without reviewing its result.
 
+
+**Recurrence, PR3023 warm-Send diagnostic, 2026-10-14.** A source-only preparation
+used host Python3.9 to fingerprint `_maintenance_boundary`. The actual3.12
+diagnostic refused before test entry because three empty `type_params=[]` AST
+fields changed that digest. Removing only those fields reproduced the old hash;
+no application source had changed. Compile-as-data had not validated the saved
+fingerprint. Derive and validate consumed AST metadata with the actual target
+interpreter, and retain a pre-test observer refusal separately from a product
+failure. The corrected3.12 binding subsequently reached the original warm
+timeout; correcting metadata did not turn that result green.
+
 ---
 
 ## A suite that no gate runs can rot invisibly for days

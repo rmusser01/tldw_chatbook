@@ -280,6 +280,7 @@ def _build_test_app(
     first_run_setup_completed: bool = True,
     preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
+    user_data_dir: Path | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
 
@@ -290,6 +291,9 @@ def _build_test_app(
             this app's snapshot only -- see `build_test_app_config`, and
             prefer `save_setting_to_cli_config` for anything a refreshing
             seam must also see.
+        user_data_dir: Existing private test profile directory. Factory-created
+            handles still retire through exact-owner cleanup; the caller owns
+            directory deletion. Defaults to a fresh factory-owned directory.
         preserve_profile_admission: Defaults to False, which clears
             ``library_new_profile_admission``. `app.py` sets that flag from
             `first_profile_created_this_session()`, and the per-test config
@@ -328,15 +332,20 @@ def _build_test_app(
         except ``get_subscriptions_db_path``, which stays patched for the
         rest of the test (see the comment where it is started, below).
     """
-    user_data_dir = Path(
-        tempfile.mkdtemp(prefix="tldw-chatbook-test-")
-        # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
-        # mkdtemp returns /var/folders/..., /var is a symlink, and the
-        # private-path guard refuses to traverse a symlinked component.
-        # Without it every test on this harness dies with
-        # `PrivatePathError: link_or_non_regular` before its first assertion.
-    ).resolve(strict=True)
-    _created_dirs.append(user_data_dir)
+    if user_data_dir is None:
+        user_data_dir = Path(
+            tempfile.mkdtemp(prefix="tldw-chatbook-test-")
+            # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
+            # mkdtemp returns /var/folders/..., /var is a symlink, and the
+            # private-path guard refuses to traverse a symlinked component.
+            # Without it every test on this harness dies with
+            # `PrivatePathError: link_or_non_regular` before its first assertion.
+        ).resolve(strict=True)
+        _created_dirs.append(user_data_dir)
+    else:
+        user_data_dir = Path(user_data_dir).resolve(strict=True)
+        if not user_data_dir.is_dir():
+            raise NotADirectoryError(user_data_dir)
 
     # task-1631: started (not entered via the `with ExitStack()` below) and
     # left running -- `LocalWatchlistsService.db_factory` (wired inside
