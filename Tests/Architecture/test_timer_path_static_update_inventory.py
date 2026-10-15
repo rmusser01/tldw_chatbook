@@ -1002,20 +1002,18 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
         "BuddyConversationModal.refresh_projection",
-        "self.query_one('#buddy-conversation-title', Static)",
+        "title_widget",
     ): (
-        "NOT-PER-TICK: the task-10 poll is change-gated -- "
-        "`refresh_projection(force=False)` returns on the gate_key "
-        "equality compare (store fingerprint, run state, decision "
-        "identity, notices, drafts, voice status) before any DOM write."
+        "NOT-PER-TICK: The original projection gate and displayed title equality "
+        "precede this update."
     ),
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
         "BuddyConversationModal.refresh_projection",
-        "self.query_one('#buddy-activity', Static)",
+        "activity_widget",
     ): (
-        "NOT-PER-TICK: behind the poll's gate_key equality gate, as the "
-        "title write above."
+        "NOT-PER-TICK: The original projection gate and displayed activity equality "
+        "precede this update."
     ),
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
@@ -1029,10 +1027,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
         "BuddyConversationModal.refresh_projection",
-        "self.query_one('#buddy-reply-notice', Static)",
+        "notice_widget",
     ): (
-        "NOT-PER-TICK: the notice is part of the poll's gate_key, so an "
-        "unchanged tick returns before this write."
+        "NOT-PER-TICK: Displayed notice equality guards updates, including direct "
+        "forced refreshes."
     ),
     # -- Widgets/Persona_Widgets/buddy_speech_controls.py (TASK-34991
     #    FINDING, gated by TASK-35028)
@@ -1136,6 +1134,14 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "own frame producer (its return value is the frame content), not "
         "a Static. Retires the former _update_animation row: the call "
         "moved into this method."
+    ),
+    (
+        "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
+        "BuddyConversationModal.refresh_projection",
+        "transcript_widget",
+    ): (
+        "NOT-PER-TICK: unavailable content clears only a nonempty displayed body; "
+        "the transcript key resets so the same recovered target renders again."
     ),
 }
 
@@ -1242,8 +1248,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/UI/Screens/chat_screen.py",
-            "ChatScreen",
+            "tldw_chatbook/UI/Console_Modules/context_spend.py",
+            "ConsoleContextSpendController",
             "_sync_console_cost_chip",
         ),
         (
