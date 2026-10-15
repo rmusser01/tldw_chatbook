@@ -251,4 +251,7 @@ shards, 13.7 with ten and 12.4 with eleven, plus ~1.1-1.7 min of setup. Ten is
 the fewest that leaves a hung private-profile test's ~3.3-minute report room
 under the 20-min cap, as TASK-34917 requires (~15.4 + 3.3 of 20). Four more
 runners per PR: that makes fifteen concurrent test runners per PR, then the
-aggregate, and the matrix sets no `max-parallel`.
+aggregate, and the matrix sets no `max-parallel`. Those runners bear on the
+required check's wall-clock tail that TASK-34917 and TASK-34916 left open for an
+owner decision; the owner chose to land the ten shards without `max-parallel`
+(2026-10-15).
