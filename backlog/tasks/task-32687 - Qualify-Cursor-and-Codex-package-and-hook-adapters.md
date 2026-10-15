@@ -1,11 +1,11 @@
 ---
 id: TASK-32687
 title: Qualify Cursor and Codex package and hook adapters
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:30'
-updated_date: '2026-10-15 20:58'
+updated_date: '2026-10-15 21:08'
 labels:
   - plugins
   - implementation
@@ -27,10 +27,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Version-pinned portable/OpenAI overlay, standalone Codex and Cursor fixtures cover deterministic interpretation, explicit-path replacement and execution-affecting catalog overlays.
-- [ ] #2 Vendor metadata, variables, manual-only behavior and rule/agent constraints map explicitly or remain unsupported with preserved deliberate exclusions.
-- [ ] #3 Hook mappings qualify timing, payload, matchers, input/output, cwd, shell-free argv and timeout together; required unknown guards block affected behavior.
-- [ ] #4 Each fixture records upstream revision and license with independently expected inventory; parsing evidence is separated from exercised Chatbook behavior and original-host comparison.
+- [x] #1 Version-pinned portable/OpenAI overlay, standalone Codex and Cursor fixtures cover deterministic interpretation, explicit-path replacement and execution-affecting catalog overlays.
+- [x] #2 Vendor metadata, variables, manual-only behavior and rule/agent constraints map explicitly or remain unsupported with preserved deliberate exclusions.
+- [x] #3 Hook mappings qualify timing, payload, matchers, input/output, cwd, shell-free argv and timeout together; required unknown guards block affected behavior.
+- [x] #4 Each fixture records upstream revision and license with independently expected inventory; parsing evidence is separated from exercised Chatbook behavior and original-host comparison.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,4 +66,18 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 15. Fix1/5 before source edits, BASE9de71a8694769c6d619d8c55bd120e0d5a30609b: address the one Important I1 verbatim in task-20-fix1-findings.md. Authorize only Plugins/adapters/codex.py and Tests/Plugins/test_cursor_adapter.py. Validate required stdio fields before conversion and make invalid-name/nonobject fallback safe for every JSON value, preserving explicit invalid/unsupported entry evidence and valid siblings through actual inspect_package. Do not reject the whole package or broadly swallow exceptions. No owner/schema/ID/permission change; propose any further concrete path first. Reproduce both reviewer cases with same-entry valid controls as behavioral RED, then repair the shared owner once and cover appropriate malformed object/nonobject/name cases. Final ordinary exact-three adapter files plus Tests/Plugins/{test_native_inspection.py,test_authority.py,test_coordinator.py,test_recovery.py}, each with unique explicit pytest basetemp and repository-owned profile/child/network policy. Do not repeat unchanged component/context or five hook groups.72 exact review-HEAD snapshots already exist; freeze amended source before final covering runs, preserve original report/evidence, append Fix1 commands/raw outputs/static checks/current hashes/self-review to task-20-report.md. Controller owns index/commit/Backlog/re-review; no helpers/full suite/environment changes.
 
 16. CLI8 / R82 malformed identity follow-through, before placeholder implementation: Component.local_id authority requires a nonempty Identifier and all inventory rows persist even when only good is selected. Retaining an empty/whitespace name therefore only moves I1 to publication. In the same codex.py owner, malformed source names may receive deterministic bounded internal placeholder identities solely for unsupported/unselectable records, preserving original raw declaration/source evidence and explicit invalid-name diagnostics. Reserve a form excluded by actual valid-source-ID validation; every malformed name, including a raw name imitating the placeholder, must normalize collision-free rather than clobber a valid or invalid sibling. Preserve all existing valid component IDs and persisted schemas; no host grant or executable capability follows these labels. Add actual selected-good review/commit/authenticated registry-loss recovery controls with malformed siblings, plus case coverage for missing command, empty/whitespace/nonobject and borrowed-name collision through existing public tests. Existing command/recovery owners must accept the valid subset; no whole-package rejection/broad swallowing. Authorize backlog/decisions/162-managed-agent-plugins.md as the third Fix1 path for this narrow contract documentation; exact9de baseline already retained. Root writes ADR clarification before placeholder code; all other fix scope/covering tests remain CLI7.
+
+17. Documentation-only closeout after fresh Fix1 review accepted I1 with0newC/I/M/OOS: root may update only this task, Docs/superpowers/plans/2026-09-15-plugin-marketplaces-and-ui.md accepted-I2 footer and backlog/docs/lessons-testing-evidence.md with the actual denied-native-boot-probe incident/control. Preserve reviewed runtime/test/fixture bytes at38daa5315c22d18cb33eab5eabcfce44d5deedfb. Record final113adapter/136owner and retained36component/238hook evidence, exact contexts, R77/R78/R82 and ADR162/163, historical warnings and pending I7 limits. Mark all4AC/notes/Done via CLI only after docs and acceptance evidence are in place; no new runtime change or test sweep.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented version-pinned chatbook-codex/1 and chatbook-cursor/1 inventories, root/inline/explicit-path precedence, metadata/variable/manual/rule/agent constraints and a qualified vendor command-hook subset through the existing inventory, runtime, permission and process owners. Public canonical catalog overlays survive exact reviewed publication and authenticated recovery (R77/R78; ADR162/163). Unsupported constraints remain explicit; source allow/ask/app metadata grants nothing.
+
+Independent review found malformed MCP sibling crashes. Fix1 validates stdio fields, preserves raw malformed declarations under bounded diagnostic identities and keeps valid siblings usable through actual selected-good review/commit/registry-loss recovery. Unsupported selection metadata cannot become execution eligibility (R82). Implementation9de71a8694, reviewed Fix1 38daa5315c; fresh scoped review I1 addressed,0newCritical/Important/Minor/OOS.
+
+Final affected verification:113 ordinary adapter tests and136 inspection/authority/coordinator/recovery tests, no warnings/skips;2 changed Python files clean syntax/Ruff/Black,72exact reviewer-BASE snapshots,68readonly matches,71 frozen files and29evidence hashes verified. Retained unchanged36component/context and238hook-runtime passes remain evidence in their original contexts. Exact read-only boot probe returned EPERM4/4 sandboxed vs valid UUID shape4/4 approved normal-host; only affected component/context pair used that approved context, without source shims or baseline-equivalence claim. Actual incident lesson and subplan acceptance footer updated.
+
+Nine selected upstream captures retain immutable revision/blob/license limitations. No original-host/live vendor/keychain/other-platform/UI/full-suite qualification is claimed. Historical RED cleanup warnings and prior H6FD418/I1import-headroom/POSIX-timing observations remain explicit final-triage items. See task-20-report.md, task-20-review.md and task-20-fix1-review.md in the plan workspace for commands/raw output/provenance; source/operation documentation links to ADR162/163.
+<!-- SECTION:NOTES:END -->

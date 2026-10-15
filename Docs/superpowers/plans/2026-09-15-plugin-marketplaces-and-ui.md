@@ -578,3 +578,6 @@ transformers cannot qualify final-argument guards. Qualification and exact pinne
 fixture provenance are recorded in the Task20 implementation report and interop
 README. Original-host execution, other operating systems, external vendor services
 and full-suite qualification remain outside this increment.
+
+
+I2 accepted with implementation `9de71a8694` and reviewed Fix1 `38daa5315c`: version-pinned portable/OpenAI/Cursor inventories, public catalog replay and pure vendor command-hook codecs use the existing owners. Fix1 preserves usable MCP siblings through inspection, selected-good publication, authenticated recovery and actual admission, with deterministic diagnostic identities for malformed source names (R82). Fresh scoped review closed I1 with no new findings. Final affected113adapter/136owner tests pass; unchanged36component-context/238hook results remain qualified in their recorded contexts. Only the component/context pair required approved normal-host execution after the exact native boot probe returned EPERM in the tool sandbox. Parser captures do not claim original-host execution; other platforms, external services/keychain/UI/full-suite and prior resource/startup/timing observations remain explicit later-task/final-review boundaries. Existing ADR162/163 and R77/R78/R82 govern these contracts.
