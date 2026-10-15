@@ -246,6 +246,13 @@ def _restore_drift(
       set -- an auto-paused one too, which Watchlists' Resume restarts;
       Resume clears ``is_paused`` only, so a source the switch disabled
       while it was paused (``is_active`` 0, ``is_paused`` 1) does not.
+      A rule or reminder counts only when it last changed before the
+      record's ``at`` (later is the user's re-arm). An upgraded profile's
+      records, written before ``at`` existed, have none: their rules and
+      reminders are never taken for a restore's -- a user's choice is not
+      undone on a guess, and the row's own ``updated_at`` is no stand-in
+      (any later write of the row moves it past a re-arm) -- while their
+      sources still are. Switching Dreams on and off once gives them one.
     * Dreams off, a retired watch whose retirement record says Dreams
       switched its source off (and no live watch rides it) while that
       source runs, or lists a reminder Dreams disarmed that is armed

@@ -1416,6 +1416,38 @@ async def test_a_switch_off_the_user_makes_still_stops_everything(
         stores.close()
 
 
+@pytest.mark.asyncio
+async def test_an_upgraded_profiles_record_stops_only_the_restored_source(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """Review of #3123, round 2, P3. A record an earlier build wrote has no
+    ``at``: whether its rule and reminder were re-armed by the user or by
+    the restore cannot be told, and a user's choice is not undone on a
+    guess. The restored source is stopped; the rule and the reminder stay
+    as the restore left them, at this start and the next."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        stores.backup("before")
+        await stores.switch(settings, on=False)
+        item_id = tracked["tracked_item_id"]
+        record = json.loads(_suspension(stores.dreams_path, item_id))
+        assert record.pop("at"), "fixture: this build writes one"
+        db = DreamsDB(stores.dreams_path, "restore-test")
+        try:
+            db.set_tracked_suspension(item_id, json.dumps(record))
+        finally:
+            db.close_all()
+        stores.restore("before")
+        assert await stores.running(source_id) == (True, True, True), "fixture"
+
+        for _start in range(2):
+            await track_reconcile.reconcile_at_boot(stores.app())
+            assert await stores.running(source_id) == (False, True, True)
+    finally:
+        stores.close()
+
+
 # --- Review of #3123, N3: a store that refuses the start check's read ----------
 
 
