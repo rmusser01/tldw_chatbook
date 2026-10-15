@@ -160,8 +160,15 @@ elif route=='local':
  from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_custom_openai
  call=lambda:chat_with_custom_openai(message,api_key='owned-test-key')
 elif route=='summary':
- from tldw_chatbook.LLM_Calls.Summarization_General_Lib import summarize_with_openai
- call=lambda:summarize_with_openai('owned-test-key','text','summarize')
+ from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+ def call():
+  result=analyze('openai','text','summarize',api_key='owned-test-key')
+  # TASK-34895: the public summarize seam rides chat_api_call, which wraps
+  # the gate's ProviderReconnectRequired into a ChatAPIError that the
+  # summarizer reports in-band -- the unqualified provider body itself
+  # still never ran (effects/network asserted below).
+  assert isinstance(result,str) and 'provider_reconnect_required' in result, result
+  raise recovery.ProviderReconnectRequired
 elif route=='catalog':
  from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import discover_openai_compatible_models
  call=lambda:asyncio.run(discover_openai_compatible_models(provider='anthropic',provider_list_key='anthropic',endpoint='https://api.anthropic.com/v1',api_key='owned-test-key'))

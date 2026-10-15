@@ -8,10 +8,10 @@
 # Function List
 #
 # 1. extract_text_from_segments(segments: List[Dict]) -> str
-# 2. summarize_with_openai(api_key, file_path, custom_prompt_arg)
-# 3. summarize_with_anthropic(api_key, file_path, model, custom_prompt_arg, max_retries=3, retry_delay=5)
-# 4. summarize_with_cohere(api_key, file_path, model, custom_prompt_arg)
-# 5. summarize_with_groq(api_key, file_path, model, custom_prompt_arg)
+# 2. analyze(api_name, input_data, custom_prompt_arg, ...) -- the public
+#    entry; dispatches every provider through _summarize_via_chat_api
+#    (per-provider spec table, TASK-34895) over the unified chat dispatch
+# 3. summarize_with_mock_llm(...) -- the test LLM
 #
 #
 ####################
@@ -22,54 +22,19 @@ import inspect
 import json
 import os
 import time
-from typing import Optional, Union, Generator, Any, Dict, List, Callable
+from dataclasses import dataclass
+from typing import Optional, Union, Generator, Any, Dict, List, Callable, Iterable
 
 #
 # 3rd-Party Imports
 from loguru import logger
-import requests
-from urllib3 import Retry
 
 #
 # Import Local
-from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
-    summarize_with_llama,
-    summarize_with_kobold,
-    summarize_with_oobabooga,
-    summarize_with_tabbyapi,
-    summarize_with_vllm,
-    summarize_with_local_llm,
-    summarize_with_ollama,
-    summarize_with_custom_openai,
-    summarize_with_custom_openai_2,
-)
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting, without_ciphertext
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
-from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
-from tldw_chatbook.Chat.Chat_Deps import (
-    ChatAuthenticationError,
-    ChatBadRequestError,
-    ChatProviderError,
-    ChatRateLimitError,
-)
-from tldw_chatbook.LLM_Calls.hosted_chat import (
-    HostedHTTPTransportConfig,
-    # TASK-32912: `_post_with_retry` below calls this on the retryable-status
-    # branch. TASK-32853 moved the definition to the hosted engine and left the
-    # call site, so every 429/5xx during summarization raised NameError instead
-    # of retrying -- the error-recovery path failing precisely when it was needed.
-    _retry_delay,
-    owned_json_post,
-)
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
-from tldw_chatbook.Utils.tls_trust import requests_verify
-from tldw_chatbook.model_capabilities import (
-    anthropic_model_rejects_sampling_params,
-    anthropic_model_rejects_temperature_top_p_combination,
-    openai_model_rejects_sampling_params,
-    openai_model_requires_max_completion_tokens,
-)
 
 try:
     from tldw_chatbook.Chunking.Chunk_Lib import improved_chunking_process
@@ -323,10 +288,9 @@ _CHAT_DISPATCH_NAME_ALIASES = {
     "local_vllm": "vllm",
     "local_llm": "local-llm",
 }
-# NOT aliased (no summarize_with_* implementation here): aphrodite,
-# mlx_lm/local_mlx_lm, moonshot, zai. Callers see the in-band
-# "Error: Invalid API Name" for those, which the ingest payload boundary
-# now converts into a visible "analysis failed" warning.
+# aphrodite, mlx_lm/local_mlx_lm, moonshot and zai are covered by the
+# TASK-34895 engine-preset specs below (they had no legacy per-provider
+# function; the chat handler resolves their modern api_settings keys).
 
 
 def _dispatch_to_api(
@@ -339,8 +303,7 @@ def _dispatch_to_api(
     streaming: bool,
 ) -> Union[str, Generator[str, None, None], None]:
     """
-    Internal function to call the appropriate API-specific summarization function.
-    Handles the mapping from api_name to the actual function call.
+    Internal dispatch: map api_name to the provider's chat-path handler.
     """
     # TASK-34100.4: still-encrypted `enc:` ciphertext is never a credential;
     # each summarizer then reports its key as missing (mirrors chat_api_call).
@@ -349,14 +312,6 @@ def _dispatch_to_api(
         api_name_lower = api_name.lower()
         api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(api_name_lower, api_name_lower)
         logging.debug(f"Dispatching to API: {api_name_lower}")
-
-        # Ensure required args for specific functions are handled if needed
-        # (e.g., model might be loaded from config inside specific funcs)
-
-        # NOTE: The specific functions (summarize_with_openai, etc.) should
-        # handle their own internal logic for loading API keys from config if
-        # the provided api_key is None. They also handle loading models, etc.
-        # We just pass the parameters along.
 
         handler = _SUMMARIZER_DISPATCH.get(api_name_lower)
         if handler is None:
@@ -697,1832 +652,6 @@ def analyze(
 # API Calls
 
 
-@_provider_recovery.unqualified
-def summarize_with_openai(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    try:
-        # API key validation
-        if not api_key or api_key.strip() == "":
-            logging.info("OpenAI Summarize: API key not provided as parameter")
-            logging.info("OpenAI Summarize: Attempting to use API key from config file")
-            api_key = without_ciphertext(
-                get_cli_setting("openai_api", "api_key", ""), absent=""
-            )
-            logging.debug("OpenAI Summarize: Config credential lookup completed")
-
-        if not api_key or not api_key.strip():
-            logging.error(
-                "OpenAI: API key not found or is empty (checked param and config)."
-            )
-            return "Error: OpenAI API Key Not Provided/Found or is empty."
-
-        # Model handling: load from config
-        openai_model = get_cli_setting("openai_api", "model", "gpt-4o")  # Default model
-        logging.debug(f"OpenAI: Using model: {openai_model}")
-
-        # NOTE: input_data passed to this function should *already be the extracted text*
-        # by the time the main `summarize` function calls `_dispatch_to_api`.
-        # So, the complex input parsing logic previously here is removed.
-        text = str(input_data)  # Ensure it's a string
-
-        logging.debug(f"OpenAI: Received text length: {len(text)}")
-        logging.debug("OpenAI: Custom prompt configured")
-        logging.debug("OpenAI: Request options prepared")
-
-        logging.debug("OpenAI: Credential configured")
-        logging.debug("openai: Preparing data + prompt for submittal")
-        openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        if temp is None:
-            temp = 0.7
-        if system_message is None:
-            system_message = "You are a helpful AI assistant."
-        try:
-            temp = float(temp)
-        except (ValueError, TypeError):
-            logging.warning(f"Invalid temperature value '{temp}', using default 0.7")
-            temp = 0.7
-
-        payload = {
-            "model": openai_model,
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": openai_prompt},
-            ],
-            "stream": streaming,
-        }
-        # TASK-18802: per-model request capabilities. Reasoning-family models
-        # (o-series, gpt-5) reject the classic `max_tokens` cap with
-        # 400 unsupported_parameter ("Use 'max_completion_tokens' instead")
-        # and reject non-default `temperature` with 400 unsupported_value, so
-        # both are gated on the model_capabilities predicates instead of being
-        # sent unconditionally.
-        # FIXME - Set a Max tokens value in config file for each API
-        if openai_model_requires_max_completion_tokens(openai_model):
-            payload["max_completion_tokens"] = 4096
-        else:
-            payload["max_tokens"] = 4096
-        if not openai_model_rejects_sampling_params(openai_model):
-            payload["temperature"] = temp
-
-        # TASK-32853: transport, bounded retries (capped Retry-After), and
-        # exactly-once resource closure moved to the hosted engine; the
-        # capability-gated payload construction above is unchanged.
-        retry_count = int(get_cli_setting("openai_api", "api_retries", 3))
-        retry_delay = int(get_cli_setting("openai_api", "api_retry_delay", 1))
-        request_timeout = int(get_cli_setting("openai_api", "api_timeout", 120))
-        base_url = get_cli_setting(
-            "openai_api", "api_base_url", "https://api.openai.com/v1"
-        )
-        logging.debug("OpenAI: Endpoint configured")
-        transport_config = HostedHTTPTransportConfig(
-            provider="openai",
-            base_url=base_url,
-            api_key=api_key,
-            timeout=float(request_timeout),
-            retries=retry_count,
-            retry_delay=float(retry_delay),
-        )
-
-        if streaming:
-            logging.debug("OpenAI: Processing streaming response.")
-
-            records = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=payload,
-                streaming=True,
-            )
-
-            def stream_generator():
-                try:
-                    for record in records:
-                        if record.data == "[DONE]":
-                            break
-                        try:
-                            data_json = json.loads(record.data)
-                            chunk = data_json["choices"][0]["delta"].get("content", "")
-                        except json.JSONDecodeError:
-                            logging.error("OpenAI Stream: Response event rejected")
-                            continue
-                        except (KeyError, IndexError):
-                            logging.error("OpenAI Stream: Response event rejected")
-                            continue
-                        if chunk:
-                            yield chunk
-                except Exception as stream_error:
-                    logging.error(
-                        "OpenAI Stream: Streaming failed; exception_type=%s",
-                        safe_metadata_token(type(stream_error).__name__),
-                    )
-                    yield f"Error during streaming: {stream_error}"
-                finally:
-                    records.close()
-
-            return stream_generator()
-        else:
-            logging.debug("OpenAI: Processing non-streaming response.")
-            response_data = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=payload,
-                streaming=False,
-            )
-            if (
-                "choices" in response_data
-                and len(response_data["choices"]) > 0
-                and "message" in response_data["choices"][0]
-                and "content" in response_data["choices"][0]["message"]
-            ):
-                summary = response_data["choices"][0]["message"]["content"].strip()
-                logging.debug("OpenAI: Summarization successful (non-streaming).")
-                return summary
-            else:
-                logging.warning("OpenAI: Summary not found in response")
-                return "Error: OpenAI Summary not found in response."
-
-    except requests.exceptions.RequestException as e:
-        logging.error(
-            "OpenAI: API request failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Error: OpenAI API request failed: {str(e)}"
-    except Exception as e:
-        logging.error(
-            "OpenAI: Unexpected error; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Error: OpenAI unexpected error: {str(e)}"
-
-
-def _post_with_retry(
-    *,
-    url,
-    headers,
-    payload,
-    streaming,
-    max_attempts,
-    retry_delay,
-    timeout,
-    retry_status_codes,
-):
-    """One shared transport post for the wire-specific summarizer shapes.
-
-    TASK-32853 Phase C: the anthropic/cohere/google/huggingface handlers
-    keep their own wire shapes and status semantics, but share this
-    transport -- one reused session per call, per-attempt response closure,
-    the hosted engine's bounded Retry-After policy (60s cap), credential-safe
-    redirect refusal, and the TLS trust policy. Only the status codes the
-    provider names retry; everything else returns the response for the
-    caller's own handling. Raises the final ``requests.RequestException``
-    when network attempts are exhausted.
-    """
-    from tldw_chatbook.LLM_Calls.provider_sessions import get_session
-
-    # ADR-222 (TASK-34418): one registry session per (url, thread); the
-    # attempts below reuse it (unchanged in-call retry reuse). This
-    # transport passes an explicit timeout and a per-request verify, so no
-    # config-derived fragment is needed in the key.
-    session = get_session(f"summarizer:{url}", create_default_session)
-    for attempt in range(max_attempts):
-        try:
-            response = session.post(
-                url,
-                headers=headers,
-                json=payload,
-                stream=streaming,
-                timeout=timeout,
-                allow_redirects=False,
-                verify=requests_verify(),
-            )
-        except requests.RequestException as exc:
-            del exc
-            if attempt >= max_attempts - 1:
-                raise
-            delay = min(
-                float(retry_delay) * (2**attempt),
-                60.0,
-            )
-            if delay > 0:
-                time.sleep(delay)
-            continue
-        if response.status_code in retry_status_codes and attempt < max_attempts - 1:
-            delay = _retry_delay(
-                response, attempt=attempt, retry_delay=float(retry_delay)
-            )
-            response.close()
-            if delay > 0:
-                time.sleep(delay)
-            continue
-        return response
-    raise RuntimeError("unreachable retry exhaustion")
-
-
-@_provider_recovery.unqualified
-def summarize_with_anthropic(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-    max_retries=3,
-    retry_delay=5,
-):
-    logging.debug("Anthropic: Summarization process starting...")
-    try:
-        logging.debug("Anthropic: Loading and validating configurations")
-        # Prioritize the API key passed as a parameter
-        if api_key and api_key.strip():
-            anthropic_api_key = api_key
-            logging.info("Anthropic: Using API key provided as parameter")
-        else:
-            # If no parameter is provided, use the key from the config
-            anthropic_api_key = without_ciphertext(
-                get_cli_setting("anthropic_api", "api_key")
-            )
-            if anthropic_api_key:
-                logging.info("Anthropic: Using API key from config file")
-            else:
-                logging.warning("Anthropic: No API key found in config file")
-
-        # Final check to ensure we have a valid API key
-        if not anthropic_api_key or not anthropic_api_key.strip():
-            logging.error("Anthropic: No valid API key available")
-            return "Anthropic: API Key Not Provided/Found in Config file or is empty"
-
-        logging.debug("AnthropicAI: Using provided string data for summarization")
-        data = input_data
-
-        # DEBUG - Debug logging to identify sent data
-        log_debug_data(data, "AnthropicAI")
-
-        if isinstance(data, dict) and "summary" in data:
-            # If the loaded data is a dictionary and already contains a summary, return it
-            logging.debug("Anthropic: Summary already exists in the loaded data")
-            return data["summary"]
-
-        # If the loaded data is a list of segment dictionaries or a string, proceed with summarization
-        if isinstance(data, list):
-            segments = data
-            text = extract_text_from_segments(segments)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError("Anthropic: Invalid input data format")
-
-        if temp is None:
-            temp = 0.1
-        temp = float(temp)
-
-        if system_message is None:
-            system_message = (
-                "You are a helpful AI assistant who does whatever the user requests."
-            )
-
-        headers = {
-            "x-api-key": anthropic_api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        }
-
-        anthropic_prompt = custom_prompt_arg
-        logging.debug("Anthropic: Prompt prepared")
-        user_message = {"role": "user", "content": f"{text} \n\n\n\n{anthropic_prompt}"}
-
-        # TASK-19020: the former fallback default claude-3-haiku-20240307 is
-        # retired server-side (404 not_found_error, req_011CeEDXZ8iS29MZCgyySwQa);
-        # claude-haiku-4-5 is its currently-served successor in the same
-        # cheap-fast-haiku lineage.
-        model = get_cli_setting("anthropic_api", "model", "claude-haiku-4-5")
-
-        data = {
-            "model": model,
-            "max_tokens": 4096,  # max possible tokens to return
-            "messages": [user_message],
-            "stop_sequences": ["\n\nHuman:"],
-            "metadata": {
-                "user_id": "example_user_id",
-            },
-            "stream": streaming,
-            "system": system_message,
-        }
-        # TASK-18802: the Fable 5 / Mythos 5 / Opus 5 / Opus 4.8 / Opus 4.7 /
-        # Sonnet 5 families reject temperature/top_p/top_k with HTTP 400
-        # ("`temperature` is deprecated for this model."), so sampling params
-        # are gated on the same model_capabilities predicate the chat path
-        # consults (TASK-18414). This function sends no thinking config, so
-        # the fixed-thinking-budget predicate has nothing to gate here.
-        if not anthropic_model_rejects_sampling_params(model):
-            data["temperature"] = temp
-            data["top_k"] = 0
-            # TASK-19020: every served Claude 4.x rejects temperature and top_p
-            # together ("`temperature` and `top_p` cannot both be specified for
-            # this model."). Mirror the chat path's precedence (LLM_API_Calls
-            # chat_with_anthropic): send temperature and drop top_p; top_k is
-            # probe-verified compatible alongside temperature. No warning log
-            # here, deliberately: the diagnostic-privacy manifest
-            # (test_summarization_diagnostic_privacy.py) freezes this module's
-            # reviewed diagnostic set, and the drop is deterministic -- both
-            # values are this function's own constants, not caller input.
-            if not anthropic_model_rejects_temperature_top_p_combination(model):
-                data["top_p"] = 1.0
-
-        # TASK-32853 Phase C: the shared transport owns session reuse,
-        # bounded backoff (the engine's capped Retry-After policy), redirect
-        # refusal, and the TLS trust policy. Anthropic's own semantics are
-        # preserved: only 500 and network errors retry (the urllib3 adapter
-        # the old loop built was dead code -- it posted via bare
-        # requests.post and never mounted it), and the per-attempt network
-        # log keeps its provider-labelled shape.
-        logging.debug("Anthropic: Posting request to API")
-        try:
-            response = _post_with_retry(
-                url="https://api.anthropic.com/v1/messages",
-                headers=headers,
-                payload=data,
-                streaming=streaming,
-                max_attempts=max_retries,
-                retry_delay=retry_delay,
-                timeout=int(get_cli_setting("anthropic_api", "api_timeout", 120)),
-                retry_status_codes={500},
-            )
-        except requests.RequestException as e:
-            return f"Anthropic: Network error: {str(e)}"
-
-        if 300 <= response.status_code < 400:
-            # No new logging call here, deliberately: this module's
-            # diagnostic call sites are frozen and individually reviewed by
-            # test_summarization_diagnostic_privacy.py's ledger. The
-            # returned string is the caller-visible signal; it mirrors this
-            # function's own "API Key Not Provided"/"Network error"
-            # convention of reporting failure via a returned string rather
-            # than a log line or a raised exception. The helper already
-            # refused the redirect with credentials; release the body.
-            response.close()
-            return (
-                "Anthropic: API endpoint redirected unexpectedly -- "
-                "refusing to follow with credentials."
-            )
-
-        # Check if the status code indicates success
-        if response.status_code == 200:
-            if streaming:
-                # Handle streaming response
-                def stream_generator():
-                    try:
-                        collected_text = ""
-                        event_type = None
-                        for line in response.iter_lines():
-                            line = line.decode("utf-8").strip()
-                            if line == "":
-                                continue
-                            if line.startswith("event:"):
-                                event_type = line[len("event:") :].strip()
-                            elif line.startswith("data:"):
-                                data_str = line[len("data:") :].strip()
-                                if data_str == "[DONE]":
-                                    break
-                                try:
-                                    data_json = json.loads(data_str)
-                                    if (
-                                        event_type == "content_block_delta"
-                                        and data_json.get("type")
-                                        == "content_block_delta"
-                                    ):
-                                        delta = data_json.get("delta", {})
-                                        text_delta = delta.get("text", "")
-                                        collected_text += text_delta
-                                        yield text_delta
-                                except json.JSONDecodeError:
-                                    logging.error(
-                                        "Anthropic: Stream JSON decode failed"
-                                    )
-                                    continue
-                        # Optionally, return the full collected text at the end
-                        # yield collected_text
-                    finally:
-                        # TASK-32853: clean exhaustion AND consumer
-                        # abandonment both release the response (the old
-                        # generator never closed it on any path).
-                        response.close()
-
-                return stream_generator()
-            else:
-                # Non-streaming response
-                logging.debug("Anthropic: Post submittal successful")
-                response_data = response.json()
-                response.close()
-                try:
-                    # Extract the assistant's reply from the 'content' field
-                    content_blocks = response_data.get("content", [])
-                    summary = ""
-                    for block in content_blocks:
-                        if block.get("type") == "text":
-                            summary += block.get("text", "")
-                    summary = summary.strip()
-                    logging.debug("Anthropic: Summarization successful")
-                    logging.debug(
-                        "Anthropic: Summary prepared; character_count=%s",
-                        len(summary),
-                    )
-                    return summary
-                except Exception:
-                    logging.debug("Anthropic: Unexpected data in response")
-                    logging.error("Unexpected response format from Anthropic API")
-                    return None
-        elif response.status_code == 500:
-            # The helper exhausted 500 retries (or single attempt).
-            logging.debug("Anthropic: Internal server error")
-            logging.error("Internal server error from API. Retrying may be necessary.")
-            return None
-        else:
-            logging.error(
-                "Failed to process summary; status_code=%s",
-                response.status_code,
-            )
-            response.close()
-            return None
-
-    except FileNotFoundError:
-        logging.error("Anthropic: File not found")
-        return f"Anthropic: File not found: {input_data}"
-    except json.JSONDecodeError:
-        logging.error("Anthropic: Invalid JSON format in file")
-        return f"Anthropic: Invalid JSON format in file: {input_data}"
-    except Exception as e:
-        logging.error(
-            "Anthropic: Error in processing; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Anthropic: Error occurred while processing summary with Anthropic: {str(e)}"
-
-
-# Summarize with Cohere
-@_provider_recovery.unqualified
-def summarize_with_cohere(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    logging.debug("Cohere: Summarization process starting...")
-    try:
-        logging.debug("Cohere: Loading and validating configurations")
-        # Prioritize the API key passed as a parameter
-        if api_key and api_key.strip():
-            cohere_api_key = api_key
-            logging.info("Cohere: Using API key provided as parameter")
-        else:
-            # If no parameter is provided, use the key from the config
-            cohere_api_key = without_ciphertext(
-                get_cli_setting("cohere_api", "api_key")
-            )
-            if cohere_api_key:
-                logging.info("Cohere: Using API key from config file")
-            else:
-                logging.warning("Cohere: No API key found in config file")
-
-        # Final check to ensure we have a valid API key
-        if not cohere_api_key or not cohere_api_key.strip():
-            logging.error("Cohere: No valid API key available")
-            return "Cohere: API Key Not Provided/Found in Config file or is empty"
-
-        if custom_prompt_arg is None:
-            custom_prompt_arg = ""
-
-        if system_message is None:
-            system_message = ""
-
-        logging.debug("Cohere: Credential configured")
-
-        logging.debug("Cohere: Using provided string data for summarization")
-        data = input_data
-
-        # DEBUG - Debug logging to identify sent data
-        log_debug_data(data, "Cohere")
-
-        if isinstance(data, dict) and "summary" in data:
-            # If the loaded data is a dictionary and already contains a summary, return it
-            logging.debug("Cohere: Summary already exists in the loaded data")
-            return data["summary"]
-
-        # If the loaded data is a list of segment dictionaries or a string, proceed with summarization
-        if isinstance(data, list):
-            segments = data
-            text = extract_text_from_segments(segments)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError("Cohere: Invalid input data format")
-
-        # Aligned with config.py's cohere_api section default (the old
-        # inline 'command-r-plus' fallback disagreed with it) -- task-297.
-        cohere_model = get_cli_setting("cohere_api", "model", "command-a-03-2025")
-
-        if temp is None:
-            temp = 0.3
-        temp = float(temp)
-
-        headers = {
-            "accept": "application/json",
-            "content-type": "application/json",
-            "Authorization": f"Bearer {cohere_api_key}",
-        }
-
-        cohere_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(
-            "Cohere: Prompt prepared; character_count=%s",
-            len(cohere_prompt),
-        )
-
-        # Cohere v2 /chat (task-297): the last v1 /chat caller in the repo --
-        # chat_with_cohere migrated in task-267 (PR #690); v2 takes a
-        # messages array (system inline) instead of preamble/message, and
-        # the stream flag is named "stream".
-        messages = []
-        if str(system_message or "").strip():
-            messages.append({"role": "system", "content": system_message})
-        messages.append({"role": "user", "content": cohere_prompt})
-        data = {
-            "model": cohere_model,
-            "messages": messages,
-            "temperature": temp,
-            "stream": streaming,
-        }
-
-        if streaming:
-            # TASK-32853 Phase C: shared transport (session reuse, bounded
-            # Retry-After, per-attempt closure); the adapter's real retry
-            # set {429, 502, 503, 504} is preserved via retry_status_codes.
-            retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("cohere_api", "api_retry_delay", 5))
-            logging.debug("Cohere: Submitting streaming request to API endpoint")
-            response = _post_with_retry(
-                url="https://api.cohere.com/v2/chat",
-                headers=headers,
-                payload=data,
-                streaming=True,
-                max_attempts=retry_count + 1,
-                retry_delay=float(retry_delay),
-                timeout=120.0,
-                retry_status_codes=frozenset({429, 502, 503, 504}),
-            )
-            if response.status_code != 200:
-                # Same pinned format as the non-streaming path; the engine
-                # precedent applies -- the response BODY no longer reaches
-                # the returned error string, only the status code.
-                logging.error(
-                    "Cohere: API request failed; status_code=%s",
-                    response.status_code,
-                )
-                response.close()
-                return f"Cohere: API request failed: {response.status_code}"
-
-            def stream_generator():
-                # v2 streams SSE "data: {...}" events discriminated by
-                # "type"; summary text arrives as content-delta events at
-                # delta.message.content.text (mirrors chat_with_cohere's
-                # live-gated v2 loop, task-267).
-                try:
-                    yield from _stream_events()
-                finally:
-                    # Deterministic close even if the consumer abandons the
-                    # generator mid-stream (Qodo #698-1; sibling parity).
-                    response.close()
-
-            def _stream_events():
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    decoded_line = line.decode("utf-8").strip()
-                    # This request sends "accept: application/json", so the
-                    # LIVE v2 stream is raw JSON lines (no SSE framing) --
-                    # proven by the task-297 live smoke, where a strict
-                    # data:-only filter dropped every line. Handle both
-                    # framings: strip a data: prefix when present, skip
-                    # standalone event:/comment lines, parse bare JSON.
-                    if decoded_line.startswith("data:"):
-                        decoded_line = decoded_line[len("data:") :].strip()
-                    elif decoded_line.startswith("event:"):
-                        continue
-                    elif not decoded_line.startswith("{"):
-                        # SSE transports may interleave metadata/comment lines
-                        # (id:, retry:, ": keep-alive") -- harmless, so debug
-                        # not warning (Qodo #698-3).
-                        logging.debug("Cohere Stream: Non-JSON line skipped")
-                        continue
-                    if not decoded_line or decoded_line == "[DONE]":
-                        continue
-                    try:
-                        event = json.loads(decoded_line)
-                    except json.JSONDecodeError:
-                        logging.error("Cohere Stream: Response event rejected")
-                        continue
-                    if not isinstance(event, dict):
-                        # A JSON list/primitive line would crash .get() and
-                        # kill the generator (Gemini #698-1).
-                        logging.debug("Cohere Stream: Non-object event skipped")
-                        continue
-                    if event.get("type") == "content-delta":
-                        chunk = (
-                            ((event.get("delta") or {}).get("message") or {}).get(
-                                "content"
-                            )
-                            or {}
-                        ).get("text")
-                        if chunk:
-                            yield chunk
-                    else:
-                        logging.debug("Cohere: Unhandled streaming event")
-
-            return stream_generator()
-        else:
-            retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("cohere_api", "api_retry_delay", 5))
-            logging.debug("Cohere: Submitting request to API endpoint")
-            response = _post_with_retry(
-                url="https://api.cohere.com/v2/chat",
-                headers=headers,
-                payload=data,
-                streaming=False,
-                max_attempts=retry_count + 1,
-                retry_delay=float(retry_delay),
-                timeout=120.0,
-                retry_status_codes=frozenset({429, 502, 503, 504}),
-            )
-
-            if response.status_code == 200:
-                # json() only on success: a non-JSON error body (gateway/CDN
-                # HTML) would raise into the outer except and break the
-                # pinned failure format (Gemini/Qodo #698-2).
-                response_data = response.json()
-                logging.debug("Cohere: API response received")
-                # v2 returns message.content as a parts array; concatenate
-                # the text parts (mirrors chat_with_cohere, task-267).
-                content_parts = (response_data.get("message") or {}).get(
-                    "content"
-                ) or []
-                summary = "".join(
-                    part.get("text") or ""
-                    for part in content_parts
-                    if isinstance(part, dict)
-                ).strip()
-                if summary:
-                    logging.debug("Cohere: Summarization successful")
-                    return summary
-                logging.error("Cohere: Expected data not found in API response.")
-                return "Cohere: Expected data not found in API response."
-            else:
-                logging.error(
-                    "Cohere: API request failed; status_code=%s",
-                    response.status_code,
-                )
-                response.close()
-                return f"Cohere: API request failed: {response.status_code}"
-
-    except Exception as e:
-        logging.error(
-            "Cohere: Processing failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Cohere: Error occurred while processing summary with Cohere: {str(e)}"
-
-
-# https://console.groq.com/docs/quickstart
-@_provider_recovery.unqualified
-def summarize_with_groq(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    logging.debug("Groq: Summarization process starting...")
-    try:
-        logging.debug("Groq: Loading and validating configurations")
-        # Prioritize the API key passed as a parameter
-        if api_key and api_key.strip():
-            groq_api_key = api_key
-            logging.info("Groq: Using API key provided as parameter")
-        else:
-            # If no parameter is provided, use the key from the config
-            groq_api_key = without_ciphertext(
-                get_cli_setting("groq_api", "api_key")
-            )
-            if groq_api_key:
-                logging.info("Groq: Using API key from config file")
-            else:
-                logging.warning("Groq: No API key found in config file")
-
-        # Final check to ensure we have a valid API key
-        if not groq_api_key or not groq_api_key.strip():
-            logging.error("Groq: No valid API key available")
-            return "Groq: API Key Not Provided/Found in Config file or is empty"
-
-        logging.debug("Groq: Credential configured")
-
-        # Input data handling
-        logging.debug("Groq: Using provided string data for summarization")
-        data = input_data
-
-        # Debug logging to identify sent data
-        logging.debug("Groq: Input prepared; character_count=%s", len(str(data)))
-        logging.debug(f"Groq: Type of data: {type(data)}")
-
-        if isinstance(data, dict) and "summary" in data:
-            logging.debug("Groq: Summary already exists in the loaded data")
-            return data["summary"]
-
-        # Text extraction
-        if isinstance(data, list):
-            segments = data
-            text = extract_text_from_segments(segments)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError("Groq: Invalid input data format")
-
-        # Set the model to be used
-        groq_model = get_cli_setting("groq_api", "model", "llama3-70b-8192")
-
-        if temp is None:
-            temp = 0.2
-        temp = float(temp)
-        if system_message is None:
-            system_message = (
-                "You are a helpful AI assistant who does whatever the user requests."
-            )
-
-        groq_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(
-            "Groq: Prompt prepared; character_count=%s",
-            len(groq_prompt),
-        )
-
-        data = {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_message,
-                },
-                {
-                    "role": "user",
-                    "content": groq_prompt,
-                },
-            ],
-            "model": groq_model,
-            "temperature": temp,
-            "stream": streaming,
-        }
-
-        logging.debug("Groq: Submitting request to API endpoint")
-        # TASK-32853: transport, bounded retries (capped Retry-After), and
-        # exactly-once resource closure moved to the hosted engine; the
-        # config reads below keep their original order and count so the
-        # diagnostic ledger's settings-call pin holds.
-        retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
-        retry_delay = int(get_cli_setting("groq_api", "api_retry_delay", 5))
-        transport_config = HostedHTTPTransportConfig(
-            provider="groq",
-            base_url="https://api.groq.com/openai/v1",
-            api_key=groq_api_key,
-            timeout=180.0 if streaming else 120.0,
-            retries=retry_count,
-            retry_delay=float(retry_delay),
-        )
-        if streaming:
-            records = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=data,
-                streaming=True,
-            )
-
-            def stream_generator():
-                try:
-                    for record in records:
-                        if record.data == "[DONE]":
-                            break
-                        try:
-                            data_json = json.loads(record.data)
-                            chunk = data_json["choices"][0]["delta"].get("content", "")
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            logging.error("Groq Stream: Response event rejected")
-                            continue
-                        if chunk:
-                            yield chunk
-                finally:
-                    # Clean exhaustion AND consumer abandonment both close the
-                    # owned response/session exactly once (the old relay never
-                    # closed on any path).
-                    records.close()
-
-            return stream_generator()
-        else:
-            response_data = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=data,
-                streaming=False,
-            )
-            logging.debug("Groq: API response received")
-
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                summary = response_data["choices"][0]["message"]["content"].strip()
-                logging.debug("Groq: Summarization successful")
-                return summary
-            else:
-                logging.error("Groq: Expected data not found in API response.")
-                return "Groq: Expected data not found in API response."
-
-    except Exception as e:
-        logging.error(
-            "Groq: Processing failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Groq: Error occurred while processing summary with Groq: {str(e)}"
-
-
-@_provider_recovery.unqualified
-def summarize_with_openrouter(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    import requests
-    import json
-
-    try:
-        # Prioritize the API key passed as a parameter
-        if api_key and api_key.strip():
-            openrouter_api_key = api_key
-            logging.info("OpenRouter: Using API key provided as parameter")
-        else:
-            # If no parameter is provided, use the key from the config
-            openrouter_api_key = without_ciphertext(
-                get_cli_setting("openrouter_api", "api_key")
-            )
-            if openrouter_api_key:
-                logging.info("OpenRouter: Using API key from config file")
-            else:
-                logging.warning("OpenRouter: No API key found in config file")
-
-        # Model Selection validation
-        logging.debug("OpenRouter: Validating model selection")
-        load_and_log_configs()
-        openrouter_model = get_cli_setting(
-            "openrouter_api", "model", "mistralai/mistral-7b-instruct"
-        )
-        logging.debug(f"OpenRouter: Using model from config file: {openrouter_model}")
-
-        # Final check to ensure we have a valid API key
-        if not openrouter_api_key or not openrouter_api_key.strip():
-            logging.error("OpenRouter: No valid API key available")
-            raise ValueError("No valid Anthropic API key available")
-    except Exception as e:
-        logging.error("OpenRouter: Error in processing: {str(e)}")
-        return f"OpenRouter: Error occurred while processing config file with OpenRouter: {str(e)}"
-
-    logging.debug("OpenRouter: Credential configured")
-
-    logging.debug(f"OpenRouter: Using Model: {openrouter_model}")
-
-    logging.debug("OpenRouter: Using provided string data for summarization")
-    data = input_data
-
-    # DEBUG - Debug logging to identify sent data
-    log_debug_data(data, "OpenRouter")
-
-    if isinstance(data, dict) and "summary" in data:
-        # If the loaded data is a dictionary and already contains a summary, return it
-        logging.debug("OpenRouter: Summary already exists in the loaded data")
-        return data["summary"]
-
-    # If the loaded data is a list of segment dictionaries or a string, proceed with summarization
-    if isinstance(data, list):
-        segments = data
-        extract_text_from_segments(segments)
-    elif isinstance(data, str):
-        pass
-    else:
-        raise ValueError("OpenRouter: Invalid input data format")
-
-    openrouter_prompt = f"{input_data} \n\n\n\n{custom_prompt_arg}"
-
-    if temp is None:
-        temp = 0.1
-    temp = float(temp)
-    if system_message is None:
-        system_message = (
-            "You are a helpful AI assistant who does whatever the user requests."
-        )
-
-    if streaming:
-        try:
-            # TASK-32853: transport, bounded retries (capped Retry-After),
-            # and exactly-once resource closure moved to the hosted engine.
-            # The consume-then-return-string contract and every frozen
-            # reviewed-safe statement below are preserved verbatim; the
-            # former per-chunk "Content received" INFO log was removed
-            # (review-B B26: one log line per streamed chunk).
-            retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("openrouter_api", "api_retry_delay", 5))
-            transport_config = HostedHTTPTransportConfig(
-                provider="openrouter",
-                base_url="https://openrouter.ai/api/v1",
-                api_key=openrouter_api_key,
-                timeout=180.0,
-                retries=retry_count,
-                retry_delay=float(retry_delay),
-            )
-            logging.debug("OpenRouter: Submitting streaming request to API endpoint")
-            records = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload={
-                    "model": openrouter_model,
-                    "messages": [
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": openrouter_prompt},
-                    ],
-                    "temperature": temp,
-                    "stream": True,
-                },
-                streaming=True,
-            )
-            try:
-                full_response = ""
-                # Process the streaming response
-                for record in records:
-                    if record.data == "[DONE]":
-                        break
-                    try:
-                        json_data = json.loads(record.data)
-                        if "choices" in json_data and len(json_data["choices"]) > 0:
-                            delta = json_data["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                full_response += delta["content"]
-                    except json.JSONDecodeError:
-                        continue
-
-                logging.debug("openrouter: Streaming completed successfully")
-                return full_response.strip()
-            finally:
-                # Clean exhaustion AND exception paths both close the owned
-                # response/session exactly once (the old relay never closed
-                # the response on any path).
-                records.close()
-
-        except (
-            ChatAuthenticationError,
-            ChatRateLimitError,
-            ChatBadRequestError,
-            ChatProviderError,
-        ) as exc:
-            # The engine maps non-2xx to typed, redacted Chat errors; the
-            # response BODY never reaches the return (the old branch
-            # interpolated response.text) or any log line.
-            # Bind the typed error as `response` so the reviewed metadata
-            # status log keeps its approved expression shape
-            # (response.status_code); only the status code -- never the
-            # body -- is interpolated.
-            response = exc
-            logging.error(
-                "OpenRouter Stream: API request failed; status_code=%s",
-                response.status_code,
-            )
-            return (
-                f"openrouter: Streaming API request failed with status code"
-                f" {response.status_code}"
-            )
-        except Exception as e:
-            error_msg = f"openrouter: Error occurred while processing stream: {str(e)}"
-            logging.error(
-                "OpenRouter Stream: Processing failed; exception_type=%s",
-                safe_metadata_token(type(e).__name__),
-            )
-            return error_msg
-    else:
-        try:
-            retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("openrouter_api", "api_retry_delay", 5))
-            transport_config = HostedHTTPTransportConfig(
-                provider="openrouter",
-                base_url="https://openrouter.ai/api/v1",
-                api_key=openrouter_api_key,
-                timeout=120.0,
-                retries=retry_count,
-                retry_delay=float(retry_delay),
-            )
-            logging.debug("OpenRouter: Submitting request to API endpoint")
-            logging.info("OpenRouter: Submitting request to API endpoint")
-            response_data = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload={
-                    "model": openrouter_model,
-                    "messages": [
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": openrouter_prompt},
-                    ],
-                    "temperature": temp,
-                },
-                streaming=False,
-            )
-            logging.debug("OpenRouter: API response received")
-
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                summary = response_data["choices"][0]["message"]["content"].strip()
-                logging.debug("openrouter: Summarization successful")
-                logging.info("openrouter: Summarization successful.")
-                return summary
-            logging.error("openrouter: Expected data not found in API response.")
-            return "openrouter: Expected data not found in API response."
-        except (
-            ChatAuthenticationError,
-            ChatRateLimitError,
-            ChatBadRequestError,
-            ChatProviderError,
-        ) as exc:
-            response = exc
-            logging.error(
-                "OpenRouter: API request failed; status_code=%s",
-                response.status_code,
-            )
-            return f"openrouter: API request failed: {response.status_code}"
-        except Exception as e:
-            logging.error(
-                "OpenRouter: Processing failed; exception_type=%s",
-                safe_metadata_token(type(e).__name__),
-            )
-            return f"openrouter: Error occurred while processing summary with openrouter: {str(e)}"
-
-
-@_provider_recovery.unqualified
-def summarize_with_huggingface(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    streaming=False,
-):
-    # https://huggingface.co/docs/api-inference/tasks/chat-completion
-    load_and_log_configs()
-    logging.debug("HuggingFace: Summarization process starting...")
-    # Prioritize the API key passed as a parameter
-    if api_key and api_key.strip():
-        huggingface_api_key = api_key
-        logging.info("HuggingFace: Using API key provided as parameter")
-    else:
-        # If no parameter is provided, use the key from the config
-        huggingface_api_key = without_ciphertext(
-            get_cli_setting("huggingface_api", "api_key")
-        )
-        if huggingface_api_key:
-            logging.info("HuggingFace: Using API key from config file")
-        else:
-            logging.warning("HuggingFace: No API key found in config file")
-
-    try:
-        # Final check to ensure we have a valid API key
-        if not huggingface_api_key or not huggingface_api_key.strip():
-            logging.error("HuggingFace: No valid API key available")
-            raise ValueError("No valid Anthropic API key available")
-
-        logging.debug("HuggingFace: Credential configured")
-
-        logging.debug("HuggingFace: Using provided string data for summarization")
-        data = input_data
-
-        # DEBUG - Debug logging to identify sent data
-        log_debug_data(data, "HuggingFace")
-
-        if isinstance(data, dict) and "summary" in data:
-            # If the loaded data is a dictionary and already contains a summary, return it
-            logging.debug("HuggingFace: Summary already exists in the loaded data")
-            return data["summary"]
-
-        # If the loaded data is a list of segment dictionaries or a string, proceed with summarization
-        if isinstance(data, list):
-            segments = data
-            text = extract_text_from_segments(segments)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError("HuggingFace: Invalid input data format")
-
-        headers = {"Authorization": f"Bearer {huggingface_api_key}"}
-        huggingface_model = get_cli_setting(
-            "huggingface_api", "model", "mistralai/Mistral-7B-Instruct-v0.2"
-        )
-        API_URL = f"https://api-inference.huggingface.co/models/{huggingface_model}"
-        if temp is None:
-            temp = 0.1
-        temp = float(temp)
-        huggingface_prompt = f"{custom_prompt_arg}\n\n\n{text}"
-        logging.debug(
-            "HuggingFace: Prompt prepared; character_count=%s",
-            len(huggingface_prompt),
-        )
-        data_payload = {
-            "inputs": huggingface_prompt,
-            "max_tokens": 4096,
-            "stream": streaming,
-            "temperature": temp,
-        }
-
-        logging.debug("HuggingFace: Submitting request...")
-        if streaming:
-            # TASK-32853 Phase C: shared transport (session reuse, bounded
-            # Retry-After, per-attempt closure); the adapter's real retry
-            # set {429, 502, 503, 504} preserved. The legacy inputs API
-            # endpoint is kept as-is: modernizing to the router is a
-            # live-verification decision recorded in the task notes, not a
-            # transport migration.
-            retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("huggingface_api", "api_retry_delay", 5))
-            response = _post_with_retry(
-                url=API_URL,
-                headers=headers,
-                payload=data_payload,
-                streaming=True,
-                max_attempts=retry_count + 1,
-                retry_delay=float(retry_delay),
-                timeout=120.0,
-                retry_status_codes=frozenset({429, 502, 503, 504}),
-            )
-            response.raise_for_status()
-
-            def stream_generator():
-                try:
-                    for line in response.iter_lines():
-                        if line:
-                            decoded_line = line.decode("utf-8").strip()
-                            if decoded_line.startswith("data:"):
-                                data_str = decoded_line[len("data:") :].strip()
-                                if data_str == "[DONE]":
-                                    break
-                                try:
-                                    data_json = json.loads(data_str)
-                                    if "token" in data_json:
-                                        token_text = data_json["token"].get("text", "")
-                                        yield token_text
-                                    elif "generated_text" in data_json:
-                                        # Some models may send the full generated text
-                                        generated_text = data_json["generated_text"]
-                                        yield generated_text
-                                    else:
-                                        logging.debug(
-                                            "HuggingFace Stream: Response event rejected"
-                                        )
-                                except json.JSONDecodeError:
-                                    logging.error(
-                                        "HuggingFace Stream: JSON decode failed"
-                                    )
-                                    continue
-                finally:
-                    # TASK-32853: clean exhaustion AND consumer abandonment
-                    # both release the response (the old generator never
-                    # closed it on any path).
-                    response.close()
-
-            return stream_generator()
-        else:
-            retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("huggingface_api", "api_retry_delay", 5))
-            response = _post_with_retry(
-                url=API_URL,
-                headers=headers,
-                payload=data_payload,
-                streaming=False,
-                max_attempts=retry_count + 1,
-                retry_delay=float(retry_delay),
-                timeout=120.0,
-                retry_status_codes=frozenset({429, 502, 503, 504}),
-            )
-
-            if response.status_code == 200:
-                response_json = response.json()
-                logging.debug("HuggingFace: API response received")
-                if (
-                    isinstance(response_json, dict)
-                    and "generated_text" in response_json
-                ):
-                    chat_response = response_json["generated_text"].strip()
-                elif (
-                    isinstance(response_json, list)
-                    and len(response_json) > 0
-                    and "generated_text" in response_json[0]
-                ):
-                    chat_response = response_json[0]["generated_text"].strip()
-                else:
-                    logging.error("HuggingFace: Expected 'generated_text' in response")
-                    return "HuggingFace: Expected 'generated_text' in API response."
-
-                logging.debug("HuggingFace: Summarization successful")
-                return chat_response
-            else:
-                logging.error(
-                    "HuggingFace: Summarization failed; status_code=%s",
-                    response.status_code,
-                )
-                return f"HuggingFace: Failed to process summary. Status code: {response.status_code}"
-
-    except Exception as e:
-        logging.error(
-            "HuggingFace: Processing failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"HuggingFace: Error occurred while processing summary with HuggingFace: {str(e)}"
-
-
-@_provider_recovery.unqualified
-def summarize_with_deepseek(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    # https://api-docs.deepseek.com/api/create-chat-completion
-    logging.debug("DeepSeek: Summarization process starting...")
-    try:
-        # Prioritize the API key passed as a parameter
-        if api_key and api_key.strip():
-            deepseek_api_key = api_key
-            logging.info("DeepSeek: Using API key provided as parameter")
-        else:
-            # If no parameter is provided, use the key from the config
-            deepseek_api_key = without_ciphertext(
-                get_cli_setting("deepseek_api", "api_key")
-            )
-            if deepseek_api_key:
-                logging.info("DeepSeek: Using API key from config file")
-            else:
-                logging.warning("DeepSeek: No API key found in config file")
-
-        # Final check to ensure we have a valid API key
-        if not deepseek_api_key or not deepseek_api_key.strip():
-            logging.error("DeepSeek: No valid API key available")
-            return "DeepSeek: API Key Not Provided/Found in Config file or is empty"
-
-        logging.debug("DeepSeek: Credential configured")
-
-        # Input data handling
-        logging.debug("DeepSeek: Using provided string data for summarization")
-        data = input_data
-
-        # DEBUG - Debug logging to identify sent data
-        log_debug_data(data, "DeepSeek")
-
-        if isinstance(data, dict) and "summary" in data:
-            logging.debug("DeepSeek: Summary already exists in the loaded data")
-            return data["summary"]
-
-        # Text extraction
-        if isinstance(data, list):
-            segments = data
-            text = extract_text_from_segments(segments)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError("DeepSeek: Invalid input data format")
-
-        deepseek_model = get_cli_setting("deepseek_api", "model", "deepseek-chat")
-
-        if temp is None:
-            temp = 0.1
-        temp = float(temp)
-        if system_message is None:
-            system_message = (
-                "You are a helpful AI assistant who does whatever the user requests."
-            )
-
-        logging.debug("DeepSeek: Preparing data + prompt for submission")
-        deepseek_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        data = {
-            "model": deepseek_model,
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": deepseek_prompt},
-            ],
-            "stream": streaming,
-            "temperature": temp,
-        }
-
-        # TASK-32853: transport, bounded retries (capped Retry-After), and
-        # exactly-once resource closure moved to the hosted engine; the
-        # hardcoded api.deepseek.com URL now honors the configured
-        # api_base_url, and the trailing whole-text yield (which doubled
-        # every streamed summary for chunk-joining consumers) is gone.
-        retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
-        retry_delay = int(get_cli_setting("deepseek_api", "api_retry_delay", 5))
-        base_url = get_cli_setting(
-            "deepseek_api", "api_base_url", "https://api.deepseek.com"
-        )
-        transport_config = HostedHTTPTransportConfig(
-            provider="deepseek",
-            base_url=base_url,
-            api_key=deepseek_api_key,
-            timeout=180.0 if streaming else 120.0,
-            retries=retry_count,
-            retry_delay=float(retry_delay),
-        )
-        if streaming:
-            logging.debug("DeepSeek: Posting streaming request")
-            records = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=data,
-                streaming=True,
-            )
-
-            def stream_generator():
-                try:
-                    for record in records:
-                        if record.data == "[DONE]":
-                            break
-                        try:
-                            data_json = json.loads(record.data)
-                            delta_content = data_json["choices"][0]["delta"].get(
-                                "content", ""
-                            )
-                        except json.JSONDecodeError:
-                            logging.error("DeepSeek Stream: JSON decode failed")
-                            continue
-                        except KeyError:
-                            logging.error(
-                                "DeepSeek Stream: Response event missing required field"
-                            )
-                            continue
-                        if delta_content:
-                            yield delta_content
-                finally:
-                    # Clean exhaustion AND consumer abandonment both close the
-                    # owned response/session exactly once (the old relay never
-                    # closed on any path).
-                    records.close()
-
-            return stream_generator()
-        else:
-            logging.debug("DeepSeek: Posting request")
-            response_data = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=data,
-                streaming=False,
-            )
-
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                summary = response_data["choices"][0]["message"]["content"].strip()
-                logging.debug("DeepSeek: Summarization successful")
-                return summary
-            else:
-                logging.warning("DeepSeek: Summary not found in the response data")
-                return "DeepSeek: Summary not available"
-
-    except (
-        ChatAuthenticationError,
-        ChatRateLimitError,
-        ChatBadRequestError,
-        ChatProviderError,
-    ) as exc:
-        # The engine maps non-2xx to typed, redacted Chat errors (no
-        # response body reaches here). Keep the frozen reviewed-safe
-        # status log and the caller-visible status error string; only
-        # the status code -- never the body -- is interpolated.
-        # Bind the typed error as `response` so the frozen reviewed-safe
-        # status log keeps its exact reviewed shape (DeepSeek ->
-        # response.status_code); only the status code -- never the body --
-        # is interpolated.
-        response = exc
-        logging.error(
-            f"DeepSeek: Summarization failed with status code {response.status_code}"
-        )
-        return (
-            f"DeepSeek: Failed to process summary. Status code: {response.status_code}"
-        )
-    except Exception as e:
-        logging.error(
-            "DeepSeek: Processing failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"DeepSeek: Error occurred while processing summary: {str(e)}"
-
-
-@_provider_recovery.unqualified
-def summarize_with_mistral(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    logging.debug("Mistral: Summarization process starting...")
-    try:
-        logging.debug("Mistral: Loading and validating configurations")
-        # Prioritize the API key passed as a parameter
-        if api_key and api_key.strip():
-            mistral_api_key = api_key
-            logging.info("Mistral: Using API key provided as parameter")
-        else:
-            # If no parameter is provided, use the key from the config
-            mistral_api_key = without_ciphertext(
-                get_cli_setting("mistral_api", "api_key")
-            )
-            if mistral_api_key:
-                logging.info("Mistral: Using API key from config file")
-            else:
-                logging.warning("Mistral: No API key found in config file")
-
-        # Final check to ensure we have a valid API key
-        if not mistral_api_key or not mistral_api_key.strip():
-            logging.error("Mistral: No valid API key available")
-            return "Mistral: API Key Not Provided/Found in Config file or is empty"
-
-        logging.debug("Mistral: Credential configured")
-
-        # Input data handling
-        logging.debug("Mistral: Using provided string data for summarization")
-        data = input_data
-
-        # DEBUG - Debug logging to identify sent data
-        log_debug_data(data, "Mistral")
-
-        if isinstance(data, dict) and "summary" in data:
-            logging.debug("Mistral: Summary already exists in the loaded data")
-            return data["summary"]
-
-        # Text extraction
-        if isinstance(data, list):
-            segments = data
-            text = extract_text_from_segments(segments)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError("Mistral: Invalid input data format")
-
-        mistral_model = get_cli_setting("mistral_api", "model", "mistral-large-latest")
-
-        if temp is None:
-            temp = 0.2
-        temp = float(temp)
-        if system_message is None:
-            system_message = (
-                "You are a helpful AI assistant who does whatever the user requests."
-            )
-
-        logging.debug("Mistral: Preparing data + prompt for submission")
-        mistral_prompt = f"{custom_prompt_arg}\n\n\n\n{text} "
-        data = {
-            "model": mistral_model,
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": mistral_prompt},
-            ],
-            "temperature": temp,
-            "top_p": 1,
-            "max_tokens": 4096,
-            "stream": streaming,
-            "safe_prompt": False,
-        }
-
-        # TASK-32853: transport, bounded retries (capped Retry-After), and
-        # exactly-once resource closure moved to the hosted engine; the
-        # hardcoded api.mistral.ai URL now honors the configured api_base_url.
-        retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
-        retry_delay = int(get_cli_setting("mistral_api", "api_retry_delay", 5))
-        base_url = get_cli_setting(
-            "mistral_api", "api_base_url", "https://api.mistral.ai/v1"
-        )
-        transport_config = HostedHTTPTransportConfig(
-            provider="mistral",
-            base_url=base_url,
-            api_key=mistral_api_key,
-            timeout=180.0 if streaming else 120.0,
-            retries=retry_count,
-            retry_delay=float(retry_delay),
-        )
-        if streaming:
-            logging.debug("Mistral: Posting streaming request")
-            records = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=data,
-                streaming=True,
-            )
-
-            def stream_generator():
-                try:
-                    for record in records:
-                        if record.data == "[DONE]":
-                            break
-                        try:
-                            data_json = json.loads(record.data)
-                        except json.JSONDecodeError:
-                            logging.error("Mistral Stream: JSON decode failed")
-                            continue
-                        if "choices" in data_json and len(data_json["choices"]) > 0:
-                            try:
-                                delta_content = data_json["choices"][0]["delta"].get(
-                                    "content", ""
-                                )
-                            except KeyError:
-                                logging.error(
-                                    "Mistral Stream: Response event missing required field"
-                                )
-                                continue
-                            if delta_content:
-                                yield delta_content
-                        else:
-                            logging.error("Mistral Stream: Response event rejected")
-                            continue
-                finally:
-                    # Clean exhaustion AND consumer abandonment both close the
-                    # owned response/session exactly once (the old relay never
-                    # closed on any path).
-                    records.close()
-
-            return stream_generator()
-        else:
-            logging.debug("Mistral: Posting non-streaming request")
-            response_data = owned_json_post(
-                config=transport_config,
-                route="chat/completions",
-                payload=data,
-                streaming=False,
-            )
-
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                summary = response_data["choices"][0]["message"]["content"].strip()
-                logging.debug("Mistral: Summarization successful")
-                return summary
-            else:
-                logging.warning("Mistral: Summary not found in the response data")
-                return "Mistral: Summary not available"
-
-    except (
-        ChatAuthenticationError,
-        ChatRateLimitError,
-        ChatBadRequestError,
-        ChatProviderError,
-    ) as exc:
-        # The engine maps non-2xx to typed, redacted Chat errors (no
-        # response body reaches here). Keep the frozen reviewed-safe
-        # status log and the caller-visible status error string; only
-        # the status code -- never the body -- is interpolated.
-        # Bind the typed error as `response` so the frozen reviewed-safe
-        # status log keeps its exact reviewed shape (Mistral ->
-        # response.status_code); only the status code -- never the body --
-        # is interpolated.
-        response = exc
-        logging.error(
-            f"Mistral: Summarization failed with status code {response.status_code}"
-        )
-        return (
-            f"Mistral: Failed to process summary. Status code: {response.status_code}"
-        )
-    except Exception as e:
-        logging.error(
-            "Mistral: Processing failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Mistral: Error occurred while processing summary: {str(e)}"
-
-
-@_provider_recovery.unqualified
-def summarize_with_google(
-    api_key,
-    input_data,
-    custom_prompt_arg,
-    temp=None,
-    system_message=None,
-    streaming=False,
-):
-    load_and_log_configs()
-    try:
-        # API key validation
-        if not api_key or api_key.strip() == "":
-            logging.info("Google: #1 API key not provided as parameter")
-            logging.info("Google: Attempting to use API key from config file")
-            api_key = without_ciphertext(get_cli_setting("google_api", "api_key"))
-
-        if not api_key or api_key.strip() == "":
-            logging.error("Google: #2 API key not found or is empty")
-            return "Google: API Key Not Provided/Found in Config file or is empty"
-
-        google_api_key = api_key
-        logging.debug("Google: Credential configured")
-
-        # Input data handling
-        logging.debug(f"Google: Raw input data type: {type(input_data)}")
-        logging.debug("Google: Raw input received")
-
-        if isinstance(input_data, str):
-            if input_data.strip().startswith("{"):
-                # It's likely a JSON string
-                logging.debug(
-                    "Google: Parsing provided JSON string data for summarization"
-                )
-                try:
-                    data = json.loads(input_data)
-                except json.JSONDecodeError as e:
-                    logging.error(
-                        "Google: JSON input parsing failed; exception_type=%s",
-                        safe_metadata_token(type(e).__name__),
-                    )
-                    return f"Google: Error parsing JSON input: {str(e)}"
-            else:
-                logging.debug("Google: Using provided string data for summarization")
-                data = input_data
-        else:
-            data = input_data
-
-        logging.debug(f"Google: Processed data type: {type(data)}")
-        logging.debug("Google: Processed input ready")
-
-        # Text extraction
-        if isinstance(data, dict):
-            if "summary" in data:
-                logging.debug("Google: Summary already exists in the loaded data")
-                return data["summary"]
-            elif "segments" in data:
-                text = extract_text_from_segments(data["segments"])
-            else:
-                text = json.dumps(data)  # Convert dict to string if no specific format
-        elif isinstance(data, list):
-            text = extract_text_from_segments(data)
-        elif isinstance(data, str):
-            text = data
-        else:
-            raise ValueError(f"Google: Invalid input data format: {type(data)}")
-
-        logging.debug("Google: Input prepared; character_count=%s", len(text))
-
-        google_model = get_cli_setting("google_api", "model", "gemini-1.5-pro")
-        logging.debug(f"Google: Using model: {google_model}")
-
-        headers = {
-            "Authorization": f"Bearer {google_api_key}",
-            "Content-Type": "application/json",
-        }
-
-        logging.debug("openai: Preparing data + prompt for submittal")
-        google_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(
-            "Google: Prompt prepared; character_count=%s",
-            len(google_prompt),
-        )
-        # if temp is None:
-        #    temp = 0.7
-        if system_message is None:
-            system_message = (
-                "You are a helpful AI assistant who does whatever the user requests."
-            )
-        # temp = float(temp)
-        data = {
-            "model": google_model,
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": google_prompt},
-            ],
-            "stream": streaming,
-            # "max_tokens": 4096,
-            # "temperature": temp
-        }
-
-        if streaming:
-            # TASK-32853 Phase C: shared transport (session reuse, bounded
-            # Retry-After, per-attempt closure) with the adapter's real
-            # retry set. The URL fix is the 2026-09-17 review's AC: the old
-            # hardcoded base path had NO /chat/completions route (the
-            # suspected live 404); the endpoint now matches the chat path.
-            retry_count = int(get_cli_setting("google_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("google_api", "api_retry_delay", 5))
-            logging.debug("Google: Posting streaming request")
-            response = _post_with_retry(
-                url=(
-                    "https://generativelanguage.googleapis.com/v1beta/openai/"
-                    "chat/completions"
-                ),
-                headers=headers,
-                payload=data,
-                streaming=True,
-                max_attempts=retry_count + 1,
-                retry_delay=float(retry_delay),
-                timeout=120.0,
-                retry_status_codes=frozenset({429, 502, 503, 504}),
-            )
-            if response.status_code != 200:
-                # Same failure surface as the old raise_for_status: the
-                # outer RequestException handler logs the pinned statement
-                # and returns the caller-visible error string.
-                response.close()
-                response.raise_for_status()
-
-            def stream_generator():
-                try:
-                    for line in response.iter_lines():
-                        if line:
-                            decoded_line = line.decode("utf-8").strip()
-                            if decoded_line == "":
-                                continue
-                            if decoded_line.startswith("data: "):
-                                data_str = decoded_line[len("data: ") :]
-                                if data_str == "[DONE]":
-                                    break
-                                try:
-                                    data_json = json.loads(data_str)
-                                    chunk = data_json["choices"][0]["delta"].get(
-                                        "content", ""
-                                    )
-                                    yield chunk
-                                except json.JSONDecodeError:
-                                    logging.error("Google Stream: JSON decode failed")
-                                    continue
-                                except KeyError:
-                                    logging.error(
-                                        "Google Stream: Response event missing"
-                                        " required field"
-                                    )
-                                    continue
-                finally:
-                    # TASK-32853: clean exhaustion AND consumer abandonment
-                    # both release the response (the old generator never
-                    # closed it on any path).
-                    response.close()
-
-            return stream_generator()
-        else:
-            retry_count = int(get_cli_setting("google_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("google_api", "api_retry_delay", 5))
-            logging.debug("Google: Posting request")
-            response = _post_with_retry(
-                url=(
-                    "https://generativelanguage.googleapis.com/v1beta/openai/"
-                    "chat/completions"
-                ),
-                headers=headers,
-                payload=data,
-                streaming=False,
-                max_attempts=retry_count + 1,
-                retry_delay=float(retry_delay),
-                timeout=120.0,
-                retry_status_codes=frozenset({429, 502, 503, 504}),
-            )
-
-            if response.status_code == 200:
-                response_data = response.json()
-                if "choices" in response_data and len(response_data["choices"]) > 0:
-                    summary = response_data["choices"][0]["message"]["content"].strip()
-                    logging.debug("Google: Summarization successful")
-                    logging.debug(
-                        "Google: Summary generated; character_count=%s",
-                        len(summary),
-                    )
-                    return summary
-                else:
-                    logging.warning("Google: Summary not found in the response data")
-                    return "Google: Summary not available"
-            else:
-                logging.error(
-                    f"Google: Summarization failed with status code {response.status_code}"
-                )
-                return f"Google: Failed to process summary. Status code: {response.status_code}"
-    except json.JSONDecodeError as e:
-        logging.error(
-            "Google: JSON decoding failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Google: Error decoding JSON input: {str(e)}"
-    except requests.RequestException as e:
-        logging.error(
-            "Google: API request failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Google: Error making API request: {str(e)}"
-    except Exception as e:
-        logging.error(
-            "Google: Processing failed; exception_type=%s",
-            safe_metadata_token(type(e).__name__),
-        )
-        return f"Google: Unexpected error occurred: {str(e)}"
-
-
 def summarize_with_mock_llm(
     text_to_summarize: str,
     custom_prompt_arg: Optional[str],
@@ -2590,110 +719,7 @@ def summarize_with_mock_llm(
 #
 
 
-def summarize_chunk(
-    api_name, text, custom_prompt_input, api_key, temp=None, system_message=None
-):
-    logging.debug("Entered 'summarize_chunk' function")
-    if api_name in (None, "None", "none"):
-        logging.warning("summarize_chunk: API name not provided for summarization")
-        return "No summary available"
-
-    try:
-        # TASK-34845: this call previously rotated the first three
-        # arguments into analyze (text landing on api_name) and swapped
-        # temp/system_message; analyze's signature is (api_name, input_data,
-        # custom_prompt_arg, api_key, system_message, temp, ...).
-        result = analyze(
-            api_name,
-            text,
-            custom_prompt_input,
-            api_key=api_key,
-            system_message=system_message,
-            temp=temp,
-        )
-
-        # Handle streaming generator responses
-        if inspect.isgenerator(result):
-            logging.debug(f"Handling streaming response from {api_name}")
-            collected_chunks = []
-            for chunk in result:
-                # Check for error chunks first
-                if isinstance(chunk, str) and chunk.startswith("Error:"):
-                    logging.warning(
-                        "Streaming summarization failed; provider=%s",
-                        safe_metadata_token(api_name),
-                    )
-                    return chunk
-                collected_chunks.append(chunk)
-            final_result = "".join(collected_chunks)
-            logging.info(f"Summarization with {api_name} streaming successful")
-            return final_result
-
-        # Handle regular string responses
-        elif isinstance(result, str):
-            if result.startswith("Error:"):
-                logging.warning(
-                    "Summarization failed; provider=%s",
-                    safe_metadata_token(api_name),
-                )
-                return None
-            logging.info(f"Summarization with {api_name} successful")
-            return result
-
-        # Handle unexpected response types
-        else:
-            logging.error(f"Unexpected response type from {api_name}: {type(result)}")
-            return None
-
-    except Exception as e:
-        logging.error(
-            "Error in summarize_chunk; provider=%s exception_type=%s",
-            safe_metadata_token(api_name),
-            safe_metadata_token(type(e).__name__),
-        )
-        return None
-
-
-def extract_metadata_and_content(input_data):
-    metadata = {}
-    content = ""
-
-    if isinstance(input_data, str):
-        if os.path.exists(input_data):
-            with open(input_data, "r", encoding="utf-8") as file:
-                data = json.load(file)
-        else:
-            try:
-                data = json.loads(input_data)
-            except json.JSONDecodeError:
-                return {}, input_data
-    elif isinstance(input_data, dict):
-        data = input_data
-    else:
-        return {}, str(input_data)
-
-    # Extract metadata
-    metadata["title"] = data.get("title", "No title available")
-    metadata["author"] = data.get("author", "Unknown author")
-
-    # Extract content
-    if "transcription" in data:
-        content = extract_text_from_segments(data["transcription"])
-    elif "segments" in data:
-        content = extract_text_from_segments(data["segments"])
-    elif "content" in data:
-        content = data["content"]
-    else:
-        content = json.dumps(data)
-
-    return metadata, content
-
-
-def format_input_with_metadata(metadata, content):
-    formatted_input = f"Title: {metadata.get('title', 'No title available')}\n"
-    formatted_input += f"Author: {metadata.get('author', 'Unknown author')}\n\n"
-    formatted_input += content
-    return formatted_input
+# FIXME
 
 
 #
@@ -2701,37 +727,536 @@ def format_input_with_metadata(metadata, content):
 ############################################################################################################################################
 
 
+# --- TASK-34895: chat-dispatch core -----------------------------------
+# The OpenAI-wire cloud summarizers ride the SAME provider layer as chat:
+# analyze()'s dispatch routes them through chat_api_call instead of the
+# per-provider HTTP copies. Each spec preserves the legacy function's
+# model sourcing (legacy `<provider>_api` section incl. its fallback),
+# prompt assembly order, default temperature, and in-band error strings,
+# so ingest callers and the Web_Scraping failure-marker contract see
+# identical behavior. Deliberately NO diagnostic statements in this
+# section: the diagnostic ledger pins this module's statement counts
+# (Tests/LLM_Calls/test_summarization_diagnostic_privacy.py).
+#
+# Key resolution mirrors the legacy functions exactly (parameter key,
+# then the legacy `<provider>_api` section; ciphertext never a key), so
+# keyless users see the same in-band refusal the per-provider functions
+# produced.
+
+_CHAT_SUMMARIZER_DEFAULT_SYSTEM = (
+    "You are a helpful AI assistant who does whatever the user requests."
+)
+
+
+@dataclass(frozen=True)
+class _SummarizerChatSpec:
+    endpoint: str
+    legacy_section: str
+    default_model: Optional[str]
+    default_temp: Optional[float]
+    missing_key_message: str
+    empty_message: str
+    error_template: str
+    # Local endpoints have no key requirement (auth optional or absent);
+    # the keyless in-band refusal applies only where the legacy function
+    # had one.
+    require_key: bool = True
+    # Read `<section>.temperature` when the caller passes no temp, the
+    # way the legacy local functions did.
+    config_temp: bool = False
+    # "text" -> f"{text} \n\n\n\n{cp}" (the openai-family order);
+    # "mistral" -> f"{cp}\n\n\n\n{text} " (legacy summarize_with_mistral);
+    # "huggingface" -> f"{cp}\n\n\n{text}" (legacy summarize_with_huggingface).
+    prompt_style: str = "text"
+    # The chat path already applies the model_capabilities sampling gates
+    # (openai max_completion_tokens swap, anthropic temperature/top_k/top_p
+    # predicates) when the model is forwarded, so specs only carry the
+    # per-provider system-message default the legacy function used.
+    system_default: str = _CHAT_SUMMARIZER_DEFAULT_SYSTEM
+
+
+_SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
+    "groq": _SummarizerChatSpec(
+        endpoint="groq",
+        legacy_section="groq_api",
+        default_model="llama3-70b-8192",
+        default_temp=0.2,
+        missing_key_message=(
+            "Groq: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Groq: Expected data not found in API response.",
+        error_template=(
+            "Groq: Error occurred while processing summary with Groq: {detail}"
+        ),
+    ),
+    "deepseek": _SummarizerChatSpec(
+        endpoint="deepseek",
+        legacy_section="deepseek_api",
+        default_model="deepseek-chat",
+        default_temp=0.1,
+        missing_key_message=(
+            "DeepSeek: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="DeepSeek: Summary not available",
+        error_template="DeepSeek: Error occurred while processing summary: {detail}",
+    ),
+    "mistral": _SummarizerChatSpec(
+        endpoint="mistral",
+        legacy_section="mistral_api",
+        default_model="mistral-large-latest",
+        default_temp=0.2,
+        missing_key_message=(
+            "Mistral: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Mistral: Summary not available",
+        error_template="Mistral: Error occurred while processing summary: {detail}",
+        prompt_style="mistral",
+    ),
+    "openrouter": _SummarizerChatSpec(
+        endpoint="openrouter",
+        legacy_section="openrouter_api",
+        default_model="mistralai/mistral-7b-instruct",
+        default_temp=0.1,
+        # Marker-matching on purpose: Web_Scraping's failure detector
+        # recognizes "error occurred", not the legacy "not provided" shape.
+        missing_key_message=(
+            "OpenRouter: Error occurred while processing summary with "
+            "OpenRouter: API key not provided/found or is empty"
+        ),
+        empty_message="openrouter: Expected data not found in API response.",
+        error_template=(
+            "openrouter: Error occurred while processing summary with "
+            "openrouter: {detail}"
+        ),
+    ),
+    "openai": _SummarizerChatSpec(
+        endpoint="openai",
+        legacy_section="openai_api",
+        default_model="gpt-4o",
+        default_temp=0.7,
+        missing_key_message=("Error: OpenAI API Key Not Provided/Found or is empty."),
+        empty_message="Error: OpenAI Summary not found in response.",
+        error_template="Error: OpenAI API request failed: {detail}",
+        system_default="You are a helpful AI assistant.",
+    ),
+    "anthropic": _SummarizerChatSpec(
+        endpoint="anthropic",
+        legacy_section="anthropic_api",
+        default_model="claude-haiku-4-5",
+        default_temp=0.1,
+        missing_key_message=(
+            "Anthropic: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Anthropic: Summary not available",
+        error_template=(
+            "Anthropic: Error occurred while processing summary with "
+            "Anthropic: {detail}"
+        ),
+    ),
+    "cohere": _SummarizerChatSpec(
+        endpoint="cohere",
+        legacy_section="cohere_api",
+        default_model="command-a-03-2025",
+        default_temp=0.3,
+        missing_key_message=(
+            "Cohere: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Cohere: Expected data not found in API response.",
+        error_template=(
+            "Cohere: Error occurred while processing summary with Cohere: {detail}"
+        ),
+    ),
+    "google": _SummarizerChatSpec(
+        endpoint="google",
+        legacy_section="google_api",
+        default_model="gemini-1.5-pro",
+        default_temp=0.2,
+        missing_key_message=(
+            "Google: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Google: Summary not available",
+        error_template="Google: Unexpected error occurred: {detail}",
+    ),
+    "huggingface": _SummarizerChatSpec(
+        endpoint="huggingface",
+        legacy_section="huggingface_api",
+        default_model="mistralai/Mistral-7B-Instruct-v0.2",
+        default_temp=0.1,
+        missing_key_message=(
+            "HuggingFace: Error occurred while processing summary with "
+            "HuggingFace: API key not provided/found or is empty"
+        ),
+        empty_message="HuggingFace: Expected 'generated_text' in API response.",
+        error_template=(
+            "HuggingFace: Error occurred while processing summary with "
+            "HuggingFace: {detail}"
+        ),
+        prompt_style="huggingface",
+    ),
+    "llama.cpp": _SummarizerChatSpec(
+        endpoint="llama_cpp",
+        legacy_section="llama_cpp_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Llama: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Llama: No choices in response data",
+        error_template="Llama: Error occurred while processing summary with Llama: {detail}",
+        require_key=False,
+        prompt_style="template_nl",
+        config_temp=True,
+    ),
+    "kobold": _SummarizerChatSpec(
+        endpoint="koboldcpp",
+        legacy_section="kobold_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Kobold: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Kobold: Expected data not found in API response.",
+        error_template="Kobold: Error occurred while processing summary with Kobold: {detail}",
+        require_key=False,
+        prompt_style="template_nl4",
+    ),
+    "ooba": _SummarizerChatSpec(
+        endpoint="oobabooga",
+        legacy_section="ooba_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Ooba API: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Ooba API: Failed to process summary.",
+        error_template="Ooba API: Unexpected error occurred: {detail}",
+        require_key=False,
+        config_temp=True,
+    ),
+    "tabbyapi": _SummarizerChatSpec(
+        endpoint="tabbyapi",
+        legacy_section="tabby_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="TabbyAPI: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Error: Received an invalid response structure from TabbyAPI.",
+        error_template="TabbyAPI: Unexpected error in summarization process: {detail}",
+        require_key=False,
+        prompt_style="template_nl4",
+    ),
+    "vllm": _SummarizerChatSpec(
+        endpoint="vllm",
+        legacy_section="vllm_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="vLLM Summarization: API Key Not Provided/Found in Config file or is empty",
+        empty_message="vLLM Summarization: Summary not available",
+        error_template="vLLM Summarization: Unexpected error occurred: {detail}",
+        require_key=False,
+        config_temp=True,
+    ),
+    "local-llm": _SummarizerChatSpec(
+        endpoint="local-llm",
+        legacy_section="local_llm",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Local LLM: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Local LLM: Summary not available",
+        error_template="Local LLM: Error occurred while processing summary: {detail}",
+        require_key=False,
+    ),
+    "ollama": _SummarizerChatSpec(
+        endpoint="ollama",
+        legacy_section="ollama_api",
+        default_model=None,
+        default_temp=0.7,
+        missing_key_message="Ollama: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Ollama: Summarization API response missing text.",
+        error_template="Ollama: Error occurred while summarizing: {detail}",
+        require_key=False,
+        prompt_style="ollama",
+        config_temp=True,
+    ),
+    "custom-openai-api": _SummarizerChatSpec(
+        endpoint="custom-openai-api",
+        legacy_section="custom_openai_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message=(
+            "Custom OpenAI API: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Custom OpenAI API: Chat not available",
+        error_template="OpenAI: Failed to process chat response. Status code: {detail}",
+        config_temp=True,
+    ),
+    "custom-openai-api-2": _SummarizerChatSpec(
+        endpoint="custom-openai-api-2",
+        legacy_section="custom_openai_api_2",
+        default_model=None,
+        default_temp=None,
+        missing_key_message=(
+            "Custom OpenAI API API-2: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Custom OpenAI API API-2: Chat not available",
+        error_template="OpenAI: Failed to process chat response. Status code: {detail}",
+        config_temp=True,
+    ),
+    # --- engine presets (task-34895): summarization can now select any
+    # chat-dispatch endpoint; these had NO legacy per-provider function,
+    # so there is no legacy behavior to preserve -- the chat handler's own
+    # defaults govern model/temperature.
+    "moonshot": _SummarizerChatSpec(
+        endpoint="moonshot",
+        legacy_section="moonshot_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="Moonshot: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Moonshot: Summary not available",
+        error_template="Moonshot: Error occurred while processing summary: {detail}",
+        require_key=False,
+    ),
+    "zai": _SummarizerChatSpec(
+        endpoint="zai",
+        legacy_section="zai_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="ZAI: API Key Not Provided/Found in Config file or is empty",
+        empty_message="ZAI: Summary not available",
+        error_template="ZAI: Error occurred while processing summary: {detail}",
+        require_key=False,
+    ),
+    "aphrodite": _SummarizerChatSpec(
+        endpoint="aphrodite",
+        legacy_section="aphrodite_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="Aphrodite: API Key Not Provided/Found in Config file or is empty",
+        empty_message="Aphrodite: Summary not available",
+        error_template="Aphrodite: Error occurred while processing summary: {detail}",
+        require_key=False,
+    ),
+    "mlx_lm": _SummarizerChatSpec(
+        endpoint="mlx_lm",
+        legacy_section="mlx_lm_api",
+        default_model=None,
+        default_temp=None,
+        missing_key_message="MLX: API Key Not Provided/Found in Config file or is empty",
+        empty_message="MLX: Summary not available",
+        error_template="MLX: Error occurred while processing summary: {detail}",
+        require_key=False,
+    ),
+}
+
+
+@_provider_recovery.unqualified
+def _chat_stream_text_chunks(stream: Iterable[Any]) -> Generator[str, None, None]:
+    """Translate one chat streaming reply into plain text chunks.
+
+    Chat handlers stream OpenAI-style SSE wire frames (``data: {...}``
+    lines with a terminal ``data: [DONE]``); the summarization contract
+    yields plain text chunks. Unparseable frames are skipped, matching the
+    legacy per-provider stream generators; an in-stream provider error
+    frame becomes one ``Error during streaming: ...`` chunk, matching the
+    legacy OpenAI summarizer's behavior.
+    """
+    for frame in stream:
+        for line in frame.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[len("data:") :].strip()
+            if not payload:
+                continue
+            if payload == "[DONE]":
+                return
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            failure = event.get("error")
+            if isinstance(failure, dict):
+                failure = failure.get("message") or failure.get("code")
+            if failure:
+                yield f"Error during streaming: {failure}"
+                return
+            choices = event.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            delta = choices[0].get("delta") or {}
+            piece = delta.get("content") or choices[0].get("text") or ""
+            if piece:
+                yield piece
+
+
+def _resolve_summarizer_temp(spec: "_SummarizerChatSpec", temp: Any) -> Any:
+    if temp is not None:
+        return float(temp)
+    if spec.config_temp:
+        return get_cli_setting(spec.legacy_section, "temperature", spec.default_temp)
+    return spec.default_temp
+
+
+def _summarize_via_chat_api(
+    spec_key: str,
+    api_key,
+    input_data,
+    custom_prompt_arg,
+    temp,
+    system_message,
+    streaming,
+):
+    """One summarization call over the unified chat provider dispatch."""
+    spec = _SUMMARIZER_CHAT_SPECS[spec_key]
+    if isinstance(input_data, dict) and "summary" in input_data:
+        return input_data["summary"]
+    if isinstance(input_data, list):
+        text = extract_text_from_segments(input_data)
+    elif isinstance(input_data, str):
+        text = input_data
+    else:
+        raise ValueError(f"{spec.endpoint}: Invalid input data format")
+
+    if spec.prompt_style == "mistral":
+        user_content = f"{custom_prompt_arg}\n\n\n\n{text} "
+    elif spec.prompt_style == "huggingface":
+        user_content = f"{custom_prompt_arg}\n\n\n{text}"
+    elif spec.prompt_style in ("template_nl", "template_nl4", "ollama"):
+        # The local summarizers fall back to the registry's local template
+        # when the caller brings no custom prompt (the five LS call sites
+        # the internal-prompts migration pinned).
+        effective_cp = custom_prompt_arg or get_internal_prompt(
+            "summarization.local_summarizer_template"
+        )
+        if spec.prompt_style == "ollama":
+            user_content = f"{effective_cp}\n\n{text}"
+        elif spec.prompt_style == "template_nl":
+            user_content = f"{effective_cp}\n\n{text}"
+        else:
+            user_content = f"{effective_cp}\n\n\n\n{text}"
+    else:
+        user_content = f"{text} \n\n\n\n{custom_prompt_arg}"
+    messages = [{"role": "user", "content": user_content}]
+
+    # Deferred: chat-side imports stay off this module's import time (the
+    # ingest import-weight tests pin it).
+    from ..Chat.Chat_Functions import chat_api_call, chat_reply_text
+    from ..Chat.Chat_Deps import (
+        ChatAPIError,
+    )
+
+    # Key resolution mirrors the legacy functions exactly: parameter key
+    # first, then the legacy `<provider>_api` section; `enc:` ciphertext is
+    # never a credential. Refusing HERE (in-band, before the chat dispatch)
+    # keeps the legacy refusal shape and keeps the chat handler's own
+    # settings resolution off the keyless path entirely.
+    raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
+    if api_key and api_key.strip():
+        resolved_key = api_key
+    else:
+        resolved_key = without_ciphertext(raw_config_key)
+    if not (resolved_key and resolved_key.strip()):
+        # Refuse where the provider requires a key, and wherever a key WAS
+        # declared but is ciphertext -- `enc:` text is never a credential,
+        # even for providers where auth is otherwise optional.
+        if spec.require_key or raw_config_key:
+            return spec.missing_key_message
+
+    try:
+        result = chat_api_call(
+            spec.endpoint,
+            messages,
+            api_key=resolved_key,
+            temp=_resolve_summarizer_temp(spec, temp),
+            system_message=(
+                spec.system_default if system_message is None else system_message
+            ),
+            model=get_cli_setting(spec.legacy_section, "model", spec.default_model),
+            streaming=streaming,
+        )
+    except ChatAPIError as exc:
+        # Handler-side failures (auth, missing URL/model, provider status)
+        # all use the generic template: the pre-dispatch key resolution
+        # above is the only source of the missing-key literal, so a
+        # valid-but-rejected key or a missing local URL reports what
+        # actually happened instead of masquerading as "no key".
+        return spec.error_template.format(detail=str(exc))
+
+    if streaming:
+        return _chat_stream_text_chunks(result)
+    summary = chat_reply_text(result).strip()
+    if not summary:
+        # An empty completion with reasoning-content evidence gets the
+        # spec's diagnostic; a plain empty completion returns "" (the
+        # openai-family legacy behavior) so downstream falsy-summary
+        # fallbacks fire instead of storing a pseudo-error string.
+        detail = _reasoning_only_completion_detail(result)
+        if detail:
+            return spec.empty_message + detail
+        return ""
+    return summary
+
+
+def _reasoning_only_completion_detail(result: Any) -> str:
+    """Explain an empty completion that spent its budget on reasoning.
+
+    Port of the legacy llama summarizer's diagnostic (task-17384): a
+    response with choices but no message content usually spent its token
+    budget on ``reasoning_content``. The empty-message prefix stays
+    spec-owned so the Web_Scraping failure detector keeps recognizing it.
+    """
+    if not isinstance(result, dict):
+        return ""
+    first = (result.get("choices") or [{}])[0]
+    if not isinstance(first, dict):
+        return ""
+    finish = first.get("finish_reason")
+    message = first.get("message")
+    reasoning = ""
+    if isinstance(message, dict):
+        reasoning = str(message.get("reasoning_content") or "")
+    spent = (result.get("usage") or {}).get("completion_tokens")
+    parts = []
+    if finish:
+        parts.append(f"finish_reason={finish}")
+    if spent is not None:
+        parts.append(f"completion_tokens={spent}")
+    if reasoning:
+        parts.append(
+            f"reasoning-only completion ({len(reasoning)} chars "
+            "of reasoning, no content)"
+        )
+    if parts:
+        return " (" + "; ".join(parts) + ")"
+    return ""
+
+
 # --- TASK-33245: dispatch table replacing the per-provider elif chain ---
 # Late-binding on purpose: the analyze/privacy suites monkeypatch the
 # module-level provider names, so entries must be lambdas resolving
 # globals at call time -- direct function references would bypass them.
 _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
-    "openai": lambda ak, text, cp, temp, sm, st: summarize_with_openai(
-        ak, text, cp, temp, sm, st
+    "openai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "openai", ak, text, cp, temp, sm, st
     ),
-    "anthropic": lambda ak, text, cp, temp, sm, st: summarize_with_anthropic(
-        ak, text, cp, temp, sm, st
+    "anthropic": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "anthropic", ak, text, cp, temp, sm, st
     ),
-    "cohere": lambda ak, text, cp, temp, sm, st: summarize_with_cohere(
-        ak, text, cp, temp, sm, st
+    "cohere": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "cohere", ak, text, cp, temp, sm, st
     ),
-    "google": lambda ak, text, cp, temp, sm, st: summarize_with_google(
-        ak, text, cp, temp, sm, st
+    "google": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "google", ak, text, cp, temp, sm, st
     ),
-    "groq": lambda ak, text, cp, temp, sm, st: summarize_with_groq(
-        ak, text, cp, temp, sm, st
+    "groq": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "groq", ak, text, cp, temp, sm, st
     ),
-    "huggingface": lambda ak, text, cp, temp, sm, st: summarize_with_huggingface(
-        ak, text, cp, temp, st
+    "huggingface": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "huggingface", ak, text, cp, temp, sm, st
     ),
-    "openrouter": lambda ak, text, cp, temp, sm, st: summarize_with_openrouter(
-        ak, text, cp, temp, sm, st
+    "openrouter": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "openrouter", ak, text, cp, temp, sm, st
     ),
-    "deepseek": lambda ak, text, cp, temp, sm, st: summarize_with_deepseek(
-        ak, text, cp, temp, sm, st
+    "deepseek": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "deepseek", ak, text, cp, temp, sm, st
     ),
-    "mistral": lambda ak, text, cp, temp, sm, st: summarize_with_mistral(
-        ak, text, cp, temp, sm, st
+    "mistral": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "mistral", ak, text, cp, temp, sm, st
     ),
     # --- Mocking test LLM calls ---
     "mock-llm": lambda ak, text, cp, temp, sm, st: summarize_with_mock_llm(
@@ -2739,44 +1264,45 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     ),
     # --- Local LLM Calls (adapters preserve each function's original
     # argument order) ---
-    "llama.cpp": lambda ak, text, cp, temp, sm, st: summarize_with_llama(
-        text, cp, ak, temp, sm, st
+    "llama.cpp": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "llama.cpp", ak, text, cp, temp, sm, st
     ),
-    # TASK-34812: kobold's signature is (input_data, api_key,
-    # custom_prompt_input, system_message, temp, kobold_api_ip, streaming);
-    # the old positional order silently bound system_message=temp,
-    # temp=system_message, the streaming flag onto kobold_api_ip, and left
-    # streaming False.
-    "kobold": lambda ak, text, cp, temp, sm, st: summarize_with_kobold(
-        text, ak, cp, sm, temp, streaming=st
+    "kobold": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "kobold", ak, text, cp, temp, sm, st
     ),
-    "ooba": lambda ak, text, cp, temp, sm, st: summarize_with_oobabooga(
-        text, ak, cp, sm, temp=temp, streaming=st
+    "ooba": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "ooba", ak, text, cp, temp, sm, st
     ),
-    # TASK-34812: tabbyapi's signature is (input_data,
-    # custom_prompt_input, system_message, api_key, temp, api_IP,
-    # streaming); the old positional order bound system_message=temp,
-    # api_key=system_message, and temp=streaming.
-    "tabbyapi": lambda ak, text, cp, temp, sm, st: summarize_with_tabbyapi(
-        text, cp, sm, ak, temp, streaming=st
+    "tabbyapi": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "tabbyapi", ak, text, cp, temp, sm, st
     ),
-    "vllm": lambda ak, text, cp, temp, sm, st: summarize_with_vllm(
-        ak, text, cp, temp, sm, st
+    "vllm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "vllm", ak, text, cp, temp, sm, st
     ),
-    "local-llm": lambda ak, text, cp, temp, sm, st: summarize_with_local_llm(
-        text, cp, temp, sm, st
+    "local-llm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "local-llm", ak, text, cp, temp, sm, st
     ),
-    "custom-openai-api": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai(
-        ak, text, cp, temp, sm, st
+    "custom-openai-api": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "custom-openai-api", ak, text, cp, temp, sm, st
     ),
-    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai_2(
-        ak, text, cp, temp, sm, st
+    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "custom-openai-api-2", ak, text, cp, temp, sm, st
     ),
-    # TASK-34812: ollama's signature is (input_data, custom_prompt,
-    # api_url, api_key, temp, system_message, model, ...); the old
-    # positional call landed the streaming flag on model (api_url
-    # correctly received None and resolves from config).
-    "ollama": lambda ak, text, cp, temp, sm, st: summarize_with_ollama(
-        text, cp, api_key=ak, temp=temp, system_message=sm, streaming=st
+    "ollama": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "ollama", ak, text, cp, temp, sm, st
+    ),
+    # --- engine presets (task-34895): no legacy function ever existed;
+    # the chat handler resolves keys/models from api_settings ---
+    "moonshot": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "moonshot", ak, text, cp, temp, sm, st
+    ),
+    "zai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "zai", ak, text, cp, temp, sm, st
+    ),
+    "aphrodite": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "aphrodite", ak, text, cp, temp, sm, st
+    ),
+    "mlx_lm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "mlx_lm", ak, text, cp, temp, sm, st
     ),
 }
