@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 20:46
+updated_date: 2026-10-15 21:37
 labels: []
 dependencies:
 - TASK-34564
@@ -68,7 +68,7 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented frozen owner-captured approval authority, row and batch presentation, provider-specific scope copy, and the semantic revision payload interface. Counts preserve addressable calls; independent same-tool MCP remembered-input choices are withheld without changing stamps. Captured permission-profile IDs identify the actual gate profile. Raw grants remain limited to this Console chat and clear on Disarm or exit; Default persistent inheritance is explained.
 
 Local original arguments are captured before safe summary formatting through optional captured_arguments, excluded from repr/equality and every known authorization, persistence, model/provider and advisory projection. Legacy summaries stay intact; argument_sets retain nested originals and empty mappings. Settled, nonactionable finishing projections drop stale view/revision and retain legacy changed-call guards. Generic risk copy is High risk: current policy requires approval for this call.
@@ -84,8 +84,8 @@ Functional AC1–3 supported by reviewed captured-view/interaction and integrati
 Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-235.
 
 PR3036 remediation: shared recursive URL/URI query/userinfo redaction preserves original matching inputs and harmless spelling, handles malformed and whitespace-prefixed URIs. Direct MCP fallback now captures the exact gate profile/server owner. URL/capture/Details144, provider90, scope journeys14, trace26 targeted checks passed. Independent review found no remaining actionable issue after its whitespace finding was fixed with RED/GREEN. ADR-235/220; no new ADR. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/Windows dispatch/full qualification remain open; In Progress.
-<!-- SECTION:NOTES:END -->
-
+Current1c72 integration: captured presentation/targets/authority composed through current provider owners. Real admitted virtual-CLI -> captured view -> lazy Details privacy8RED/2positive then115GREEN; originals preserved. Shared redact_args display projection and existing redact_url fragment/nested URL boundary repaired once. No full intermediate pre-repair source snapshot was saved; exact retained binding limit is explicit in Task1 report. Current core540passed84.15s includes real scope/owner checks. ADR235; external qualification remains open.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 Originally TASK-34412 in the reviewed approval checkout. Renumbered to TASK-34565 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.

@@ -2614,3 +2614,8 @@ Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authorit
 Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authority_and_stale_revision[settings]
 Tests/UI/test_portrait_region_editor.py::test_open_dialog_retires_after_another_editor_changes_saved_artwork[review-source-False]
 Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_over_the_video_replace_confirmation_asks_first
+
+# TASK-34569: bounded approval privacy/currentness, appended without moving existing shards.
+Tests/UI/test_approval_details_privacy.py
+Tests/UI/test_approval_details.py::test_page_from_old_revision_is_ignored
+Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement

@@ -540,3 +540,7 @@ $ds-portrait-idle-offset-px: 0;
 /* Offline portrait review uses the Console renderer at a fixed cell budget. */
 $ds-portrait-review-cols: 24;
 $ds-portrait-review-lines: 13;
+/* Console approval scope labels include the complete temporary-grant name. */
+$ds-approval-decision-width: 28;
+
+$ds-approval-compact-body-height: 6;

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:42
-updated_date: 2026-10-15 20:46
+updated_date: 2026-10-15 21:48
 labels: []
 dependencies:
 - TASK-34564
@@ -70,14 +70,15 @@ Ruling: require bounded executable approval safety coverage in qualification-tas
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented captured-card guides and reproducible artwork with production theme fallback, destination-validation/bare-theme regressions, finite targeted launcher additions and final content-free receipts under Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/. New journeys connect painted consent/controller arbitration to real permission/cache owners and private SQLite using harmless external transport doubles (scope9/UI4). Existing stale-generation, disclosure, Details, FIFO/deadline and Alt+A composer cases are credited separately. Final targeted presentation18/feedback29/Details18/interaction21/artwork5/recorder16/bundle5 pass. Tokens7pass1existingfail, component13pass5existingfails with matching BASE messages; startup lazy imports2pass, optional-work wait fails identically on BASE. Owned root Ruff/format pass. Native/browser presented-frame observers unavailable, zero qualified samples, actual Windows local/virtual dispatch root-pin failures and complete transport visual matrix remain open. No freeze/speed claim or full sweep. ADR-235; all13 rulings/costs preserved; final independent review pending; In Progress, not Done.
 
 Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-235.
 
 Independent bounded plan preflight preserves original scope but found missing recurring required-CI acceptance/verification argument. Current plan and this acceptance now make final executable critical coverage explicit. Applicable original measurement/prerequisite/consumer obligations are clarified without relaxing limits or claiming implementation/UAT.
-<!-- SECTION:NOTES:END -->
-
+Current1c72 integration: canonical CSS and approval SVG regenerated and inspected; fallback Cairo glyph limitation remains explicit. Diagnostic inventory statement review proves existing warnings only re-indented, no new diagnostic or sink. Current core540passed84.15s; final targeted UI/guard/provider checks ongoing. Exact inherited no-row nav assertion, stale local-worker refusal expectations, dimension/Python-style floors and size debt retained separately; no all-green claim. New bounded critical CI enrollment preserves prior190 UI members and existing lanes/limits. Current acceptance/physical matrix/40warm timing/Windows/current-head hosted CI remain open; Root owns independent reviews/publication. ADR235, In Progress.
+Current final selected checks: core540passed47.70s; provider/security544passed29.12s after independently proved ten stale existing expectation cells were aligned to the unchanged current worker-failure contract (the eleventh was a separate newly ported stale assertion). UI184passed/1known unchanged1c72 nav-away failure; startup/import/CSS/custody28passed. Final guards50passed/6explicit failures: inherited dimension floor, Python style floor, Library sheet2004 and three unchanged size ceilings. Additional current atomicity/callback/scope checks68passed; two fake-provider native-chat controls stop at protected trace database_error before the fake provider, still unqualified pending Root baseline attribution. Actual native/browser physical timing0/0, full matrix/Windows/hosted CI and final independent review remain open. Exact source/commands/XML and all negatives in owned Task1 report and external manifest. No cap/guard relaxation, Task Done or publication.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 Originally TASK-34416 in the reviewed approval checkout. Renumbered to TASK-34569 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.

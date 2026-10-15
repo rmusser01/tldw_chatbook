@@ -40,6 +40,12 @@ def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_firs
     reason = SimpleNamespace(value="Keep this private.", disabled=False)
     toolbar = [SimpleNamespace(disabled=False) for _ in range(3)]
     card = SimpleNamespace(
+        _draft=None,
+        _close_details=Mock(),
+        _details_buttons=[],
+        _batch_is_raw_shell=[False],
+        _raw_reviewed=set(),
+        _batch_legal_values=[["approve_once", "approve_session", "deny"]],
         _batch_submitted=False,
         _batch_phase="pending",
         _batch_names=["call-1"],
@@ -47,7 +53,16 @@ def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_firs
         _batch_selects=[select],
         _batch_fast_buttons=[fast],
         _batch_reason_inputs=[reason],
-        query_one=Mock(side_effect=toolbar),
+        query_one=Mock(
+            side_effect=lambda selector, *args: SimpleNamespace(
+                update=lambda text: None
+            )
+            if selector == "#approval-title"
+            else toolbar[
+                int(selector == "#approval-approve-all")
+                + 2 * int(selector == "#approval-deny-all")
+            ]
+        ),
         ApprovalDecided=ChatApprovalCard.ApprovalDecided,
     )
     card._disable_batch_submit_controls = MethodType(
@@ -58,13 +73,19 @@ def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_firs
 
     def publish(message):
         assert card._batch_submitted
+        card._close_details.assert_called_once_with()
         assert select.disabled and fast.disabled and reason.disabled
         assert all(b.disabled for b in toolbar)
         published.append(message)
 
     card.post_message = publish
-    normal = lambda: ChatApprovalCard._submit_batch_decisions(card)
-    quick = lambda: ChatApprovalCard._submit_fast_decision(card, "deny")
+
+    def normal():
+        ChatApprovalCard._submit_batch_decisions(card)
+
+    def quick():
+        ChatApprovalCard._submit_fast_decision(card, "deny")
+
     first, second = (quick, normal) if fast_first else (normal, quick)
 
     first()
@@ -127,6 +148,9 @@ async def test_queued_repeated_submit_decides_the_batch_only_once(action):
         card = app.query_one(ChatApprovalCard)
         card.set_batch([_sample_calls()[0]], timeout_seconds=0, round_id="one")
         await pilot.pause()
+        if action == "submit":
+            await pilot.click(card.query_one(".approval-more-options", Button))
+            await pilot.pause()
         selector = (
             "#approval-submit" if action == "submit" else f".approval-row-{action}"
         )
@@ -147,17 +171,26 @@ async def test_unchanged_resync_keeps_a_queued_toolbar_action_valid(action):
         calls = _sample_calls()
         card.set_batch(calls, timeout_seconds=0, round_id="same")
         await pilot.pause()
+        if action == "submit":
+            card.query_one("#approval-more-options-batch", Button).press()
+            await pilot.pause()
         for select in card._batch_selects:
             select.value = "deny" if action == "approve-all" else "approve_once"
         card.query_one(f"#approval-{action}", Button).press()
         card.set_batch(calls, timeout_seconds=0, round_id="same")
         await pilot.pause()
-        if action == "submit":
-            assert len(app.decided) == 1 and app.decided_round_ids == ["same"]
-        else:
-            expected = "deny" if action == "deny-all" else "approve_once"
-            assert all(select.value == expected for select in card._batch_selects)
-            assert not app.decided
+        # Approved Task3: bulk decisions commit immediately for this unchanged
+        # snapshot. Changed/replaced generations are rejected by the preceding
+        # parameterized test, which remains intact.
+        expected = "deny" if action == "deny-all" else "approve_once"
+        assert app.decided == [
+            {
+                "mcp__srv_a__search": expected,
+                "mcp__srv_b__write": expected,
+            }
+        ]
+        assert app.decided_round_ids == ["same"]
+        assert all(select.disabled for select in card._batch_selects)
 
 
 @pytest.mark.asyncio
@@ -168,6 +201,9 @@ async def test_submitted_round_stays_inert_but_a_fresh_round_can_submit():
         calls = [_sample_calls()[0]]
         card.set_batch(calls, timeout_seconds=0, round_id="first")
         await pilot.pause()
+        if not card.has_class("approval-options-open"):
+            await pilot.click(card.query_one(".approval-more-options", Button))
+            await pilot.pause()
         card.query_one("#approval-submit", Button).press()
         await pilot.pause()
         assert app.decided_round_ids == ["first"]
@@ -185,6 +221,9 @@ async def test_submitted_round_stays_inert_but_a_fresh_round_can_submit():
         assert app.decided_round_ids == ["first"]
         card.set_batch(calls, timeout_seconds=0, round_id="second")
         await pilot.pause()
+        if not card.has_class("approval-options-open"):
+            await pilot.click(card.query_one(".approval-more-options", Button))
+            await pilot.pause()
         card.query_one("#approval-submit", Button).press()
         await pilot.pause()
         assert app.decided_round_ids == ["first", "second"]

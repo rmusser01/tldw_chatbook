@@ -91,6 +91,7 @@ from ...LLM_Provider_Catalog.provider_model_resolution import (
 )
 from ...state.settings_config_models import SettingsCategoryId
 from ..Console_Modules.attach_visit import ConsoleAttachVisit
+from ..Console_Modules.approval_feedback import ApprovalFeedbackChanged
 from ..Console_Modules.frame import (
     apply_scoped_breakpoints,
     frame_console_region,
@@ -23874,6 +23875,7 @@ class ChatScreen(BaseAppScreen):
             lambda: send_os_notification(kind, session_display, settings=settings)
         )
 
+    @on(ApprovalFeedbackChanged)
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -23887,6 +23889,9 @@ class ChatScreen(BaseAppScreen):
         actually showing, never "whichever session is active right now".
         """
         event.stop()
+        if isinstance(event, ApprovalFeedbackChanged):
+            self._approval_feedback.refresh(event.session_id, event.run_id)
+            return
         controller = self._console_chat_controller
         if controller is not None:
             controller.resolve_pending_approval(

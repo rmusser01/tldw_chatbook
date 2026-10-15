@@ -22,10 +22,11 @@ from tldw_chatbook.Chat.console_endpoint_provenance import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedback
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDispatchCheckpoint,
     )
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -299,6 +300,7 @@ ConsoleActivityKind = Literal[
     "activity",
 ]
 ConsoleActivityStatus = Literal[
+    "starting",
     "queued",
     "running",
     "awaiting_approval",
@@ -344,6 +346,7 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
 )
 CONSOLE_ACTIVITY_STATUSES = frozenset(
     {
+        "starting",
         "queued",
         "running",
         "awaiting_approval",
@@ -753,6 +756,7 @@ class ConsoleActivityPresentation:
     result_preview: str | None = None
     started_at_monotonic: float | None = None
     elapsed_seconds: float | None = None
+    approval_feedback: ApprovalFeedback | None = None
 
     def __post_init__(self) -> None:
         """Reject unbounded labels and values outside the public vocabulary."""
