@@ -51,6 +51,7 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
 from .keyword_store import KeywordStore, KeywordStoreSpec
+from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import (
     validate_column_name,
     validate_identifier,
@@ -1064,6 +1065,38 @@ class MediaDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
+        # TASK-34904: shared library page-search engine.
+        self._library_search_spec = LibrarySearchSpec(
+            table="Media",
+            base_filter="deleted = 0 AND is_trash = 0",
+            exact_column="title",
+            substring_branches=(
+                ("title LIKE ? ESCAPE '\\'", "title"),
+                ("content LIKE ? ESCAPE '\\'", "content"),
+            ),
+            fts_branches=(
+                (
+                    "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)",
+                    "content",
+                ),
+            ),
+            keyword_branch=(
+                "id IN (SELECT mk.media_id FROM MediaKeywords mk "
+                "JOIN Keywords k ON mk.keyword_id = k.id "
+                "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            ),
+            page_columns=(
+                "id, uuid, title, type, author, ingestion_date, "
+                "last_modified, version, substr(content, 1, ?) AS preview"
+            ),
+            tiebreaker="id DESC",
+            fetch_keywords=self._library_keywords_for_media,
+            make_item=self._library_media_item,
+            make_database_error=lambda message: DatabaseError(message),
+            error_prefix="Failed to search library media: ",
+            preview_first=True,
+            log_label="library media search",
+        )
         self._keywords = KeywordStore(self, _MEDIA_KEYWORD_SPEC)
 
         logging.info(
@@ -8210,109 +8243,15 @@ class MediaDatabase:
 
         Match branches (OR, deduplicated by Media row): case-insensitive exact
         title, title substring, content substring, FTS over title/content, and
-        keyword substring via the MediaKeywords relation. LIKE input is escaped
-        and FTS input is tokenized/quoted, so wildcards and FTS operators in
-        ``query`` match literally. Exact-title hits rank first, then recency,
-        then id.
-
-        Args:
-            query: Raw user search text.
-            limit: Maximum number of items to return.
-            offset: Number of items to skip.
-
-        Returns:
-            Dict with ``items`` (library projections plus ``matched_fields``
-            and ``matched_keywords``) and ``total``.
-
-        Raises:
-            DatabaseError: If a database error occurs.
+        keyword substring via the MediaKeywords relation.
         """
-        like_pattern = f"%{self._escape_library_like(query)}%"
-        fts_query = self._library_fts_query(query)
-        keyword_branch = (
-            "id IN (SELECT mk.media_id FROM MediaKeywords mk "
-            "JOIN Keywords k ON mk.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        return library_search_page(
+            self,
+            self._library_search_spec,
+            query=query,
+            limit=limit,
+            offset=offset,
         )
-
-        branches = [
-            "LOWER(title) = LOWER(?)",
-            "title LIKE ? ESCAPE '\\'",
-            "content LIKE ? ESCAPE '\\'",
-        ]
-        params: List[Any] = [query, like_pattern, like_pattern]
-        if fts_query is not None:
-            branches.append(
-                "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)"
-            )
-            params.append(fts_query)
-        branches.append(keyword_branch)
-        params.append(like_pattern)
-
-        where_clause = " OR ".join(f"({branch})" for branch in branches)
-        # Re-evaluate branch hits per row so matched_fields is evidence-based.
-        hit_selects = ", ".join(
-            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
-        )
-        hit_params = list(params)
-
-        try:
-            with self.transaction() as conn:
-                total = conn.execute(
-                    f"SELECT COUNT(*) AS count FROM Media "
-                    f"WHERE deleted = 0 AND is_trash = 0 AND ({where_clause})",
-                    tuple(params),
-                ).fetchone()["count"]
-                cursor = conn.execute(
-                    f"""
-                    SELECT id, uuid, title, type, author, ingestion_date,
-                           last_modified, version,
-                           substr(content, 1, ?) AS preview,
-                           {hit_selects}
-                    FROM Media
-                    WHERE deleted = 0 AND is_trash = 0 AND ({where_clause})
-                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
-                             last_modified DESC, id DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    tuple(
-                        [self._LIBRARY_PREVIEW_CHARS]
-                        + hit_params
-                        + params
-                        + [query, limit, offset]
-                    ),
-                )
-                rows = cursor.fetchall()
-                keywords_by_media = self._library_keywords_for_media(
-                    conn, [row["id"] for row in rows]
-                )
-            lowered_query = query.lower()
-            items = []
-            for row in rows:
-                item = self._library_media_item(row, keywords_by_media)
-                matched_fields = set()
-                if row["hit_0"] or row["hit_1"]:
-                    matched_fields.add("title")
-                content_hit_indexes = [2] + ([3] if fts_query is not None else [])
-                keyword_hit_index = 4 if fts_query is not None else 3
-                if any(row[f"hit_{index}"] for index in content_hit_indexes):
-                    matched_fields.add("content")
-                if row[f"hit_{keyword_hit_index}"]:
-                    matched_fields.add("keywords")
-                item["matched_fields"] = sorted(matched_fields)
-                item["matched_keywords"] = [
-                    keyword
-                    for keyword in keywords_by_media.get(row["id"], [])
-                    if lowered_query in keyword.lower()
-                ][: self._LIBRARY_KEYWORD_CAP]
-                items.append(item)
-            return {"items": items, "total": total}
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                "Error searching library media "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
-            )
-            raise DatabaseError(f"Failed to search library media: {e}") from e
 
     def get_library_media_text(
         self, media_uuid: str, *, start: int, max_chars: int

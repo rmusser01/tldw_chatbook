@@ -95,6 +95,12 @@ from tldw_chatbook.Metrics.metrics_logger import (
 # Third-Party Libraries
 #
 # Local Imports
+from .library_search_engine import (
+    LibrarySearchSpec,
+    build_lexical_group,
+    library_search_page,
+    matched_fields_from_hits,
+)
 from .sql_validation import (
     escape_identifier,
     validate_table_name,
@@ -803,7 +809,9 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 81  # ADR-232 device-local response rules after browse-order indexes.
+    _CURRENT_SCHEMA_VERSION = (
+        81  # ADR-232 device-local response rules after browse-order indexes.
+    )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7862,10 +7870,15 @@ DELETE FROM keywords
     def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
         """Preserve checkpoint owners while adding native chat-start receipts."""
         self._require_migration_entry_version(conn, 76, "V76→V77")
-        if conn.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name='fleet_progress_messages'"
-        ).fetchone() is not None:
-            raise SchemaError("V76 to V77 unsupported native receipt catalog (progress predecessor)")
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='fleet_progress_messages'"
+            ).fetchone()
+            is not None
+        ):
+            raise SchemaError(
+                "V76 to V77 unsupported native receipt catalog (progress predecessor)"
+            )
         migration = (
             Path(__file__).parent
             / "migrations"
@@ -12333,9 +12346,7 @@ DELETE FROM keywords
         """
         try:
             with self.transaction() as conn:
-                count_row = conn.execute(
-                    count_query, (conversation_id,)
-                ).fetchone()
+                count_row = conn.execute(count_query, (conversation_id,)).fetchone()
                 total_roots = int(count_row[0]) if count_row else 0
                 root_rows = [
                     dict(row)
@@ -18400,9 +18411,7 @@ DELETE FROM keywords
                 "LIMIT ? OFFSET ?"
             )
             try:
-                cursor = self.execute_query(
-                    query, (int(preview_chars), limit, offset)
-                )
+                cursor = self.execute_query(query, (int(preview_chars), limit, offset))
                 return [dict(row) for row in cursor.fetchall()]
             except CharactersRAGDBError as e:
                 logger.error(
@@ -18953,30 +18962,38 @@ DELETE FROM keywords
         ):
             raise ValueError("at least one selector is required")
 
+        # TASK-34904: the lexical group routes through the shared engine's
+        # builder (same branch order/escaping/tokenizing as the other
+        # surfaces); the exact-keyword and folder selectors stay here.
         lexical_branches: List[str] = []
         lexical_params: List[Any] = []
         fts_query: Optional[str] = None
+        lexical_hit_fields: Dict[int, List[str]] = {}
         if normalized_query is not None:
-            like_pattern = f"%{self._escape_library_note_like(normalized_query)}%"
-            fts_query = self._library_note_fts_query(normalized_query)
-            lexical_branches = [
-                "LOWER(title) = LOWER(?)",
-                "title LIKE ? ESCAPE '\\'",
-                "content LIKE ? ESCAPE '\\'",
-            ]
-            lexical_params = [normalized_query, like_pattern, like_pattern]
-            if fts_query is not None:
-                lexical_branches.append(
-                    "rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)"
-                )
-                lexical_params.append(fts_query)
-            lexical_branches.append(
+            (
+                lexical_branches,
+                lexical_params,
+                lexical_hit_fields,
+                fts_query,
+            ) = build_lexical_group(
+                "title",
+                (
+                    ("title LIKE ? ESCAPE '\\'", "title"),
+                    ("content LIKE ? ESCAPE '\\'", "content"),
+                ),
+                (
+                    (
+                        "rowid IN (SELECT rowid FROM notes_fts "
+                        "WHERE notes_fts MATCH ?)",
+                        "content",
+                    ),
+                ),
                 "id IN (SELECT nk.note_id FROM note_keywords nk "
                 "JOIN keywords k ON nk.keyword_id = k.id "
                 "WHERE k.deleted = 0 "
-                "AND k.keyword LIKE ? ESCAPE '\\')"
+                "AND k.keyword LIKE ? ESCAPE '\\')",
+                normalized_query,
             )
-            lexical_params.append(like_pattern)
 
         selectors: List[str] = []
         selector_params: List[Any] = []
@@ -19071,16 +19088,12 @@ DELETE FROM keywords
                 item = self._library_note_item(
                     row, keywords_by_note, organization_by_note
                 )
-                matched_fields = set()
                 if normalized_query is not None:
-                    if row["hit_0"] or row["hit_1"]:
-                        matched_fields.add("title")
-                    content_hit_indexes = [2] + ([3] if fts_query is not None else [])
-                    keyword_hit_index = 4 if fts_query is not None else 3
-                    if any(row[f"hit_{index}"] for index in content_hit_indexes):
-                        matched_fields.add("content")
-                    if row[f"hit_{keyword_hit_index}"]:
-                        matched_fields.add("keywords")
+                    matched_fields = set(
+                        matched_fields_from_hits(row, lexical_hit_fields)
+                    )
+                else:
+                    matched_fields = set()
                 exact_keyword_is_linked = normalized_keyword is not None and any(
                     value == normalized_keyword
                     for value in keywords_by_note.get(row["id"], [])
@@ -19336,110 +19349,58 @@ DELETE FROM keywords
         Raises:
             CharactersRAGDBError: If a database error occurs.
         """
-        like_pattern = f"%{self._escape_library_conversation_like(query)}%"
-        fts_query = self._library_conversation_fts_query(query)
-
-        # Message-content substring matching stays a LIKE (substring
-        # semantics, mid-word included, are the Library contract) but the
-        # subquery is deliberately UNCORRELATED (TASK-34784): one bounded
-        # pass over ``messages`` per search -- shared by the COUNT, the
-        # page query, and the per-row hit_N projections via this branches
-        # list -- instead of a per-candidate correlated scan. Rule: never a
-        # leading-wildcard LIKE inside a correlated EXISTS. Precedent:
-        # task-33261/PERF-02 eliminated the correlated-EXISTS shape on the
-        # sibling search_conversations_page seam (see
-        # _conversation_search_filter); its ~70 s at 150k messages measured
-        # the correlated FTS-MATCH EXISTS there, not this LIKE form. This
-        # branch's own numbers: 8.77 ms -> 3.29/5.99 ms per no-match
-        # search at 50 conversations x 50 messages.
-        branches = [
-            "LOWER(title) = LOWER(?)",
-            "title LIKE ? ESCAPE '\\'",
-            "id IN (SELECT m.conversation_id FROM messages m "
-            "WHERE m.deleted = 0 AND m.content LIKE ? ESCAPE '\\')",
-        ]
-        params: List[Any] = [query, like_pattern, like_pattern]
-        title_hit_indexes = [0, 1]
-        message_hit_indexes = [2]
-        if fts_query is not None:
-            title_hit_indexes.append(len(branches))
-            branches.append(
-                "rowid IN (SELECT rowid FROM conversations_fts "
-                "WHERE conversations_fts MATCH ?)"
-            )
-            params.append(fts_query)
-            message_hit_indexes.append(len(branches))
-            branches.append(
-                "id IN (SELECT m.conversation_id FROM messages m "
-                "WHERE m.deleted = 0 AND m.rowid IN "
-                "(SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?))"
-            )
-            params.append(fts_query)
-        keyword_hit_index = len(branches)
-        branches.append(
-            "id IN (SELECT ck.conversation_id FROM conversation_keywords ck "
-            "JOIN keywords k ON ck.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
-        )
-        params.append(like_pattern)
-
-        where_clause = " OR ".join(f"({branch})" for branch in branches)
-        hit_selects = ", ".join(
-            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
-        )
-
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
         self._validate_conversation_page_coordinates(limit, offset)
-        try:
-            with self.transaction() as conn:
-                total = conn.execute(
-                    f"SELECT COUNT(*) AS count FROM conversations "
-                    f"WHERE deleted = 0 AND {archive_clause} AND ({where_clause})",
-                    tuple(params),
-                ).fetchone()["count"]
-                cursor = conn.execute(
-                    f"""
-                    SELECT id, title, created_at, last_modified, version, archived, workspace_id, scope_type, state,
-                           {hit_selects}
-                    FROM conversations
-                    WHERE deleted = 0 AND {archive_clause} AND ({where_clause})
-                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
-                             last_modified DESC, rowid DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    tuple(params + params + [query, limit, offset]),
-                )
-                rows = cursor.fetchall()
-                keywords_by_conversation = self._library_keywords_for_conversations(
-                    conn, [row["id"] for row in rows]
-                )
-            lowered_query = query.lower()
-            items = []
-            for row in rows:
-                item = self._library_conversation_item(row, keywords_by_conversation)
-                matched_fields = set()
-                if any(row[f"hit_{index}"] for index in title_hit_indexes):
-                    matched_fields.add("title")
-                if any(row[f"hit_{index}"] for index in message_hit_indexes):
-                    matched_fields.add("message")
-                if row[f"hit_{keyword_hit_index}"]:
-                    matched_fields.add("keywords")
-                item["matched_fields"] = sorted(matched_fields)
-                item["matched_keywords"] = [
-                    keyword
-                    for keyword in keywords_by_conversation.get(row["id"], [])
-                    if lowered_query in keyword.lower()
-                ][: self._LIBRARY_CONVERSATION_KEYWORD_CAP]
-                items.append(item)
-            return {"items": items, "total": total}
-        except sqlite3.Error as e:
-            logger.error(
-                "Error searching library conversations "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): exception_type={type(e).__name__}"
-            )
-            raise CharactersRAGDBError(
-                f"Failed to search library conversations: {e}"
-            ) from e
+        spec = self._library_conversation_search_spec(archive_clause)
+        return library_search_page(self, spec, query=query, limit=limit, offset=offset)
+
+    def _library_conversation_search_spec(
+        self, archive_clause: str
+    ) -> "LibrarySearchSpec":
+        """Per-call search spec (TASK-34904): the archive clause is validated
+        by the caller and injected as the extra WHERE predicate."""
+        return LibrarySearchSpec(
+            table="conversations",
+            base_filter="deleted = 0",
+            extra_where=archive_clause,
+            exact_column="title",
+            substring_branches=(
+                ("title LIKE ? ESCAPE '\\'", "title"),
+                (
+                    "id IN (SELECT m.conversation_id FROM messages m "
+                    "WHERE m.deleted = 0 AND m.content LIKE ? ESCAPE '\\')",
+                    "message",
+                ),
+            ),
+            fts_branches=(
+                (
+                    "rowid IN (SELECT rowid FROM conversations_fts "
+                    "WHERE conversations_fts MATCH ?)",
+                    "title",
+                ),
+                (
+                    "id IN (SELECT m.conversation_id FROM messages m "
+                    "WHERE m.deleted = 0 AND m.rowid IN "
+                    "(SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?))",
+                    "message",
+                ),
+            ),
+            keyword_branch=(
+                "id IN (SELECT ck.conversation_id FROM conversation_keywords ck "
+                "JOIN keywords k ON ck.keyword_id = k.id "
+                "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            ),
+            page_columns=(
+                "id, title, created_at, last_modified, version, archived, "
+                "workspace_id, scope_type, state"
+            ),
+            tiebreaker="rowid DESC",
+            fetch_keywords=self._library_keywords_for_conversations,
+            make_item=self._library_conversation_item,
+            make_database_error=lambda message: CharactersRAGDBError(message),
+            error_prefix="Failed to search library conversations: ",
+            log_label="library conversations search",
+        )
 
     @staticmethod
     def _library_message_revision(version: int, total_chars: int) -> str:
