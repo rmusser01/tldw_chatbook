@@ -1037,8 +1037,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "2508fc72c8d86f695d37",
+      "call_count": 4,
+      "diagnostic_digest": "b37b0fc1873c16ebdac8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Dreams/track_reconcile.py",
       "reason": "remaining Chatbook production diagnostic owner"
