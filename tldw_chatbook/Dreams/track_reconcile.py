@@ -33,7 +33,7 @@ import asyncio
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,6 +41,7 @@ from loguru import logger
 
 from tldw_chatbook.config import get_dreams_db_path, get_subscriptions_db_path
 from tldw_chatbook.Dreams.settings import dreams_setting
+from tldw_chatbook.Utils.timestamps import as_utc
 
 #: ``settled`` values of a wrapper's suspension record (the record itself
 #: is documented in ``track_service``). They live HERE because this
@@ -173,12 +174,16 @@ def changed_after(changed: Any, at: Any) -> bool:
 
 
 def _moment(value: Any) -> datetime | None:
-    """An ISO 8601 time as an aware UTC-assumed datetime, or None."""
-    try:
-        moment = datetime.fromisoformat(str(value))
-    except (TypeError, ValueError):
-        return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+    """A stored time as aware UTC, to the millisecond, or None.
+
+    A record's ``at`` is canonical (ADR-173: milliseconds, truncated) while
+    a row's ``updated_at`` may carry microseconds: compared unrounded, a
+    row Dreams changed in the same millisecond it wrote the record would
+    read as changed after it.
+    """
+    moment = as_utc(value)
+    return None if moment is None else moment.replace(
+        microsecond=moment.microsecond // 1000 * 1000)
 
 
 class _StoreReadRefused(RuntimeError):

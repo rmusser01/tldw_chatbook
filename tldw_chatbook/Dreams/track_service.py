@@ -108,7 +108,7 @@ from tldw_chatbook.Utils.egress import (
     evaluate_url_policy_async,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
-from tldw_chatbook.Utils.timestamps import to_utc_iso
+from tldw_chatbook.Utils.timestamps import to_utc_iso, utc_now_iso
 
 from . import discovery
 from .discovery import Candidate
@@ -1058,7 +1058,7 @@ async def _record_retirement(
                 # tracking the page again re-enables them
                 # (:func:`_restore_rules_left_off`).
                 reminders=owed_reminders + reminders, rules=owed_rules,
-                settled=_SETTLED_RETIRED, at=_now_iso()))
+                settled=_SETTLED_RETIRED, at=utc_now_iso()))
     except Exception as exc:  # noqa: BLE001 - the retirement stands
         logger.warning(
             "Dreams retire: recording item {} failed: {}",
@@ -2484,11 +2484,6 @@ def _record_text(
     return json.dumps(record)
 
 
-def _now_iso() -> str:
-    """The ``at`` a record is written with: now, UTC, ISO 8601."""
-    return datetime.now(UTC).isoformat()
-
-
 def _enabled_linked_reminder_ids(scheduling_db: Any, item_id: int) -> list[str]:
     """Ids of the item's linked reminders that are armed right now (sync)."""
     return [
@@ -2718,7 +2713,7 @@ async def _suspend_pass(
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 int(item["id"]),
                 _record_text(subscription=subscription, reminders=reminders,
-                             rules=rules, settled=SETTLED_OFF, at=_now_iso()))
+                             rules=rules, settled=SETTLED_OFF, at=utc_now_iso()))
         except Exception as exc:  # noqa: BLE001 - stays unsettled
             logger.warning(
                 "Dreams suspend: switching tracked item {} failed: {}",

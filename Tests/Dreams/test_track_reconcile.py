@@ -1236,6 +1236,23 @@ async def test_the_switch_off_never_stops_a_users_source_on_a_reused_id(
 # before that is taken for one a restore brought back.
 
 
+def test_record_and_row_times_compare_to_the_millisecond():
+    """A record's ``at`` is canonical (milliseconds, ADR-173); a rule's
+    ``updated_at`` carries microseconds. A row Dreams changed in the same
+    millisecond it wrote the record is not the user's."""
+    from tldw_chatbook.Dreams.track_reconcile import (
+        _changed_before,
+        changed_after,
+    )
+
+    at = "2026-10-15T12:00:00.123Z"
+    same_ms = "2026-10-15T12:00:00.123456+00:00"
+    assert _changed_before(same_ms, at)
+    assert not changed_after(same_ms, at)
+    assert changed_after("2026-10-15T12:00:00.124000+00:00", at)
+    assert not _changed_before(None, at) and not changed_after(None, at)
+
+
 @pytest.mark.asyncio
 async def test_a_reminder_and_rule_the_user_re_arms_while_off_stay_armed(
         tmp_path, settings, egress_seams, monkeypatch):
