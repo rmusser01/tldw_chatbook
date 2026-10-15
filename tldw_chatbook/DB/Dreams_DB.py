@@ -1607,6 +1607,53 @@ class DreamsDB(BaseDB):
                 (subscription_id,),
             )
 
+    _BOOT_BACKLOG_SQL = (
+        "SELECT 1 FROM dream_tracked_items"
+        " WHERE created_by_dreams = 1 AND subscription_id IS NOT NULL"
+        " AND egress_marked = 0 LIMIT 1"
+    )
+
+    _LIVE_BOOT_ROWS_SQL = (
+        "SELECT id, subscription_id, created_by_dreams, alert_rule_id,"
+        " event_date, suspension FROM dream_tracked_items"
+        " WHERE status IN ('active', 'paused')"
+    )
+
+    _RETIRED_BOOT_ROWS_SQL = (
+        "SELECT id, subscription_id, created_by_dreams, alert_rule_id,"
+        " event_date, suspension FROM dream_tracked_items"
+        " WHERE status = 'retired' AND suspension IS NOT NULL"
+    )
+
+    def tracking_boot_rows(
+        self, *, retired: bool = False,
+    ) -> tuple[list[dict], list[dict], bool]:
+        """:meth:`tracking_boot_state`, with each wrapper's row.
+
+        The start check of TASK-34924 needs, beside each live wrapper's
+        record, the source and rule it rides and whether Dreams created
+        that source -- and, with Dreams off, what a retired wrapper's
+        record says Dreams stopped when it retired.
+
+        Args:
+            retired: Also read the retired wrappers that carry a record.
+
+        Returns:
+            ``(live, retired_rows, egress_backlog)``: one dict per active or
+            paused wrapper (``id``, ``subscription_id``,
+            ``created_by_dreams``, ``alert_rule_id``, ``event_date``,
+            ``suspension``), the same for each retired wrapper with a
+            record (empty unless asked for), and the backlog flag of
+            :meth:`tracking_boot_state`.
+        """
+        with self.connection() as conn:
+            live = [dict(row) for row in conn.execute(self._LIVE_BOOT_ROWS_SQL)]
+            gone = ([dict(row) for row in conn.execute(
+                self._RETIRED_BOOT_ROWS_SQL)] if retired else [])
+            backlog = conn.execute(
+                self._BOOT_BACKLOG_SQL).fetchone() is not None
+        return live, gone, backlog
+
     def tracking_boot_state(self) -> tuple[list[str | None], bool]:
         """Everything the startup reconcile asks, in one hop.
 
@@ -1630,10 +1677,7 @@ class DreamsDB(BaseDB):
             # reaches thousands -- the same ceiling as
             # ``_EGRESS_BACKLOG_SQL``.
             backlog = conn.execute(
-                "SELECT 1 FROM dream_tracked_items"
-                " WHERE created_by_dreams = 1 AND subscription_id IS NOT NULL"
-                " AND egress_marked = 0 LIMIT 1"
-            ).fetchone() is not None
+                self._BOOT_BACKLOG_SQL).fetchone() is not None
         return records, backlog
 
     def set_tracked_status(

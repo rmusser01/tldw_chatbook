@@ -3186,6 +3186,32 @@ async def reconcile_tracking(
     return await asyncio.shield(task)
 
 
+async def stop_restored_leftovers(
+    subs_service: Any, scheduling_db: Any,
+    source_ids: list[int], reminder_ids: list[str],
+) -> None:
+    """Stop again what a restore brought back for retired watches.
+
+    TASK-34924. With Dreams off the start check (``track_reconcile.
+    _restore_drift``) finds a source a retirement record says Dreams
+    switched off, running again with no live watch behind it, and a
+    reminder such a record lists as disarmed, armed again. No switch pass
+    reads a retired watch, so they are switched off here, through the
+    same seams the retirement used. The records stay as they are: they
+    already say Dreams stopped these.
+
+    Raises:
+        Exception: Whatever a service raises; the caller keeps holding
+            Dreams' dispatch then.
+    """
+    for source_id in source_ids:
+        if subs_service is not None:
+            await _disable_dream_source(subs_service, int(source_id))
+    if reminder_ids and scheduling_db is not None:
+        await asyncio.to_thread(run_finite_local_worker,
+            _disable_reminders, scheduling_db, list(reminder_ids))
+
+
 async def retry_unfinished_resume(
     subs_service: Any,
     dreams_db: Any,

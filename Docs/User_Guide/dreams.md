@@ -146,6 +146,17 @@ its event reminders with **Schedules, notifications, and sync**, and the
 on/off switch with **Settings**. Each comes back
 as it was when the backup was taken, and a group you leave out keeps
 what it has now, so restore them together to get Dreams back as it was.
+
+When they do not come back together, the next start puts your watches
+in line with the switch. With Dreams off, a tracked page's source,
+change alert or reminder that the restore switched back on is stopped
+again before anything runs -- and so is a source or reminder Dreams had
+switched off when you untracked its page. With Dreams on, the source of
+a page you are tracking that the restore left off is switched back on
+(after the same public-address check as always). A change alert or
+reminder that a restore left off while Dreams is on stays off: Dreams
+cannot tell it from one you switched off yourself.
+
 On a profile restored from a backup
 and still waiting for your review, Dreams cycles, tracked checks and this startup
 reconciliation remain inactive until the Dreams owner is approved. Reconciliation
