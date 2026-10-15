@@ -3,18 +3,17 @@ id: TASK-34567
 title: Provide complete lazy Console approval details
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-10-06 06:41'
-updated_date: '2026-10-12 03:56'
+- '@codex'
+created_date: 2026-10-06 06:41
+updated_date: 2026-10-15 20:46
 labels: []
 dependencies:
-  - TASK-34565
-  - TASK-34566
+- TASK-34565
+- TASK-34566
 documentation:
-  - >-
-    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-  - backlog/decisions/229-console-approval-interaction-and-feedback.md
-  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+- backlog/decisions/235-console-approval-interaction-and-feedback.md
+- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -38,7 +37,7 @@ Let users inspect complete captured arguments and distinguish long targets while
 <!-- SECTION:PLAN:BEGIN -->
 ### Task 4 Add complete arguments without eager UI work
 
-**Backlog:** TASK-34567. **ADR:** ADR-229/090/150. **Consumes:** ApprovalRowView and its semantic revision, Task 3's neutral focus target and disclosure lifecycle.
+**Backlog:** TASK-34567. **ADR:** ADR-235/090/150. **Consumes:** ApprovalRowView and its semantic revision, Task 3's neutral focus target and disclosure lifecycle.
 
 **Files:** Create `tldw_chatbook/UI/Console_Modules/approval_details.py`, `Tests/UI/test_approval_details.py`. Modify `Widgets/Chat_Widgets/chat_approval_card.py` and `css/features/_console_approvals.tcss`. Extend `Tests/UI/test_approval_argument_budget.py` and `test_approval_row_information_budget.py` where their old summary-only assumptions change.
 
@@ -53,16 +52,16 @@ Its keyword-only constructor takes `current_identity: Callable[[], DetailsIdenti
 - [ ] **Step 5: Verify and commit.** Run the new Details tests and affected argument-budget, row-information, action-ownership and compact-layout cases plus token/bundle guards. Characterize large requests with Task 1's recorder, distinguishing first page preparation from UI feedback. Record source hashes, exact frames and memory/cancellation observations; close this task only after its complete-data and stale-page ACs hold.
 
 ADR required: yes
-ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md
-Reason: Existing ADR229/090/150 governs snapshot-only lazy redacted details; no new authority or persistence.
+ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md
+Reason: Existing ADR235/090/150 governs snapshot-only lazy redacted details; no new authority or persistence.
 
-Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented snapshot-only lazy redacted Details with4096-character pages, two-page cache, cooperative cancellation and round/revision/generation/verdict-key/latest-page fences. Neutral Details focus and Escape preserve decisions/deadline; maximum raw command retains its primary viewport. Tokens/bundle retained. ADR229/090/150.
+Implemented snapshot-only lazy redacted Details with4096-character pages, two-page cache, cooperative cancellation and round/revision/generation/verdict-key/latest-page fences. Neutral Details focus and Escape preserve decisions/deadline; maximum raw command retains its primary viewport. Tokens/bundle retained. ADR235/090/150.
 Verification: Details15, argument28, row12, ownership25, interaction21, real Console4-variant journey1, tokens3, bundle5; owned Ruff/format and diff-check pass. Component preparation receipt is unqualified for native latency.
 Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-4/README.md and component.json. Changed card, Console_Modules/approval_details.py, feature CSS/bundle, targeted tests, private launcher and testing lesson.
 Task remains In Progress: full live matrix/native-browser qualification and independent review open; preserve existing Windows dispatch/governance limitations. Cache misses replay from capture; no authority, storage or policy changes.
