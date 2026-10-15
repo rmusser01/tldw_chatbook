@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .inspection import _inspect_capture, catalog_overlay_from
-from .models import PackageInspection
+from .models import AcquisitionReference, CatalogBinding, PackageInspection
 from .package_files import PackageCapture, canonical_json, parse_document
 
 _RECIPES = {
@@ -23,21 +23,61 @@ _REVISION_FIELDS = (
 )
 _PROVENANCE = ("source_identity", "source_digest", "materialized_identity", "link_targets")
 
+_UNSET_CATALOG = object()
+
+
+def _source_bindings(revision: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse only the two closed provenance forms, without granting authority."""
+    bindings = {}
+    for name, model in (("catalog_binding", CatalogBinding),
+                        ("acquisition_reference", AcquisitionReference)):
+        if revision.get(name) is not None:
+            bindings[name] = model.model_validate(revision[name])
+    if len(bindings) > 1:
+        raise ValueError("ambiguous_acquisition_binding")
+    return bindings
+
+
+def _verify_retained_source(revision: Mapping[str, Any], coordinator) -> None:
+    """Require the actual signed producer/physical/bytes evidence before selection."""
+    bindings = _source_bindings(revision)
+    if not bindings:
+        return
+    if coordinator is None:
+        raise ValueError("catalog owner required")
+    from .acquisition import verify_reference
+
+    catalog = bindings.get("catalog_binding")
+    references = ((catalog.catalog, catalog.package) if catalog is not None
+                  else (bindings["acquisition_reference"],))
+    for reference in references:
+        verify_reference(coordinator.owner, coordinator.authority, reference)
+
 
 def _retained_candidates(
-    capture: PackageCapture, revision: Mapping[str, Any]
+    capture: PackageCapture, revision: Mapping[str, Any],
+    *, catalog_overlay: Any = _UNSET_CATALOG,
 ) -> tuple[PackageInspection, ...]:
     """Try only interpretations issued under this exact stored identity."""
     recipes = _RECIPES.get((revision.get("dialect"), revision.get("adapter_version")))
     if recipes is None:
         raise ValueError("retained_adapter_unsupported")
+    bindings = _source_bindings(revision)
     candidates = []
     for recipe in recipes:
         try:
-            overlay = None if recipe == "dev_20261001" else catalog_overlay_from(revision["overlay_identities"])
-            candidates.append(_inspect_capture(
+            overlay = catalog_overlay
+            if overlay is _UNSET_CATALOG:
+                overlay = (None if recipe == "dev_20261001"
+                           else catalog_overlay_from(revision["overlay_identities"]))
+            candidate = _inspect_capture(
                 capture, dialect=revision["dialect"], catalog_overlay=overlay, recipe=recipe
-            ))
+            )
+            if bindings:
+                from .source_service import bind_source_inspection
+
+                candidate = bind_source_inspection(candidate, **bindings)
+            candidates.append(candidate)
         except (TypeError, ValueError):
             # A malformed carrier never falls back to a fresh adapter identity.
             continue
@@ -108,7 +148,10 @@ def _select_retained(
     return selected.model_copy(update={key: revision[key] for key in _PROVENANCE})
 
 
-def _reinspect_expected(capture: PackageCapture, expected: PackageInspection) -> PackageInspection:
+def _reinspect_expected(
+    capture: PackageCapture, expected: PackageInspection,
+    *, catalog_overlay: Any = _UNSET_CATALOG,
+) -> PackageInspection:
     """Bind an issued in-process review, including its original candidate menu."""
     from .review import inspection_identity
 
@@ -121,7 +164,9 @@ def _reinspect_expected(capture: PackageCapture, expected: PackageInspection) ->
     ):
         raise ValueError("stale review source provenance")
     matches = []
-    for candidate in _retained_candidates(capture, expected.model_dump(mode="json")):
+    for candidate in _retained_candidates(
+        capture, expected.model_dump(mode="json"), catalog_overlay=catalog_overlay
+    ):
         # Regular materialized files replace original links only after content matches.
         if candidate.content_digest != expected.content_digest:
             continue

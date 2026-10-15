@@ -412,6 +412,27 @@ class PluginAuthorityStore:
         if not hmac.compare_digest(self.sign_acquisition_custody(payload), mac):
             raise ValueError("acquisition custody authentication failed")
 
+    def sign_marketplace_source(self, payload: dict) -> str:
+        """Bind selected source origins using the existing namespace/key owner."""
+        from .source_service import SourceBinding
+
+        binding = SourceBinding.model_validate(payload)
+        if (
+            binding.namespace_id != self.namespace_id()
+            or len(canonical_json(payload)) > 32768
+        ):
+            raise ValueError("marketplace_source_invalid")
+        self.verify_current()
+        return hmac.new(
+            self._require_keys().committed_key,
+            authority_message("marketplace-source-v1", payload),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def verify_marketplace_source(self, payload: dict, mac: str) -> None:
+        if not hmac.compare_digest(self.sign_marketplace_source(payload), mac):
+            raise ValueError("marketplace_source_authentication_failed")
+
     def metadata(self) -> dict:
         """Read versioned trust metadata without reinterpreting historical bytes."""
         value = _read(self.store_dir / "metadata.json")
