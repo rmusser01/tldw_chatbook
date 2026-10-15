@@ -1449,7 +1449,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
             "CharacterVoiceWidget",
             "DEFAULT_CSS",
         ),
-        ("Widgets/voice_input_widget.py", "VoiceInputWidget", "DEFAULT_CSS"),
         ("Widgets/voice_profile_dialog.py", "VoiceProfileDialog", "DEFAULT_CSS"),
     ]
 )

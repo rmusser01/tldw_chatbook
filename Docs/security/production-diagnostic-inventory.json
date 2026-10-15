@@ -4523,13 +4523,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "131f76ca88d5a531b059",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/voice_input_widget.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 4,
       "diagnostic_digest": "49e49487771f82b37dd0",
       "owner": "TASK-494",

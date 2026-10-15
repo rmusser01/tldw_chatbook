@@ -64,7 +64,7 @@ Auto-speak is fail-closed: unknown session, hands-free active, or a missing/diff
 4. Stop (button, command, or limit) → `stop_and_transcribe()` blocks for the final transcript; failure offers a faster-whisper retry.
 5. Insertion is caret-aware and trims only spaces/tabs (a full `.strip()` used to eat spoken `new-line` commands); for non-live sessions the draft is appended to the store and banked undo history is deliberately dropped.
 
-Note: the `Event_Handlers/Audio_Events` dictation message family serves the legacy dictation window/voice widget — the Console mic path is `Chat/console_voice_input.py` + `UI/Console_Modules/dictation.py`.
+Note: the `Event_Handlers/Audio_Events` dictation message family (`DictationEvent` + `VoiceCommandEvent`) serves the legacy dictation window (the voice widget was removed, task-34898) — the Console mic path is `Chat/console_voice_input.py` + `UI/Console_Modules/dictation.py`.
 
 ## Hands-free loop
 

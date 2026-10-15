@@ -714,7 +714,7 @@ class ImprovedDictationWindow(Widget):
 
     def _on_command(self, command: str):
         """Handle voice commands."""
-        self.post_message(VoiceCommandEvent(command=command))
+        self.post_message(VoiceCommandEvent(command=command, raw_text=command))
         logger.info(f"Voice command detected: {command}")
 
     def _update_privacy_ui(self):
