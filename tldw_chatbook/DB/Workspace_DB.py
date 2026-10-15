@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Union
 
+from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
-
 
 
 class WorkspaceDB(SQLiteStoreKernel, BaseDB):
@@ -743,25 +745,66 @@ COMMIT;
 
 
 # Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_WORKSPACE_BASES = WorkspaceDB.__bases__
+_RUN_LOG_PROBE_INHERITED = (
+    "_init_store_kernel",
+    "_get_connection",
+    "_held_connection",
+    "connection",
+    "close",
+)
+_RUN_LOG_PROBE_SLOTS = (
+    (globals(), "WorkspaceDB", WorkspaceDB),
+    (globals(), "BaseDB", BaseDB),
+    (globals(), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (globals(), "_store_kernel", _store_kernel),
+    (globals(), "_RUN_LOG_PROBE_WORKSPACE_BASES", _RUN_LOG_PROBE_WORKSPACE_BASES),
+    (globals(), "_RUN_LOG_PROBE_INHERITED", _RUN_LOG_PROBE_INHERITED),
+    (sys.modules, _store_kernel.__name__, _store_kernel),
+    (vars(_store_kernel), "__name__", _store_kernel.__name__),
+    (vars(_store_kernel), "__file__", _store_kernel.__file__),
+    (vars(_store_kernel), "__spec__", _store_kernel.__spec__),
+    (_store_kernel.__spec__, "origin", getattr(_store_kernel.__spec__, "origin", None)),
+    (vars(_store_kernel), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (SQLiteStoreKernel, "is_memory_db", vars(SQLiteStoreKernel)["is_memory_db"]),
+    (WorkspaceDB, "_kernel_sqlite_owner", vars(WorkspaceDB)["_kernel_sqlite_owner"]),
+    (BaseDB, "_get_connection", vars(BaseDB)["_get_connection"]),
+    (
+        BaseDB._get_connection.__globals__,
+        "connect_private_sqlite",
+        BaseDB._get_connection.__globals__["connect_private_sqlite"],
+    ),
+    *(
+        (WorkspaceDB, name, inspect.getattr_static(WorkspaceDB, name))
+        for name in (
+            "__init__",
+            "_initialize_schema",
+            "_open_connection",
+            "_configure_connection",
+            "transaction",
+            *_RUN_LOG_PROBE_INHERITED,
+        )
+    ),
+    *(
+        (SQLiteStoreKernel, name, vars(SQLiteStoreKernel)[name])
+        for name in (*_RUN_LOG_PROBE_INHERITED, "transaction")
+    ),
+    *(
+        (vars(_store_kernel), name, vars(_store_kernel)[name])
+        for name in (
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_core_closing",
+        )
+    ),
+)
 _RUN_LOG_PROBE_SOURCE = (
     globals(),
     __file__,
     __spec__,
     getattr(__spec__, "origin", None),
-    (
-        (globals(), "WorkspaceDB", WorkspaceDB),
-        *(
-            (WorkspaceDB, name, vars(WorkspaceDB)[name])
-            for name in (
-                "__init__",
-                "_initialize_schema",
-                "_get_connection",
-                "_held_connection",
-                "connection",
-                "close",
-            )
-        ),
-    ),
+    _RUN_LOG_PROBE_SLOTS,
     tuple(
         (
             function,
@@ -774,20 +817,7 @@ _RUN_LOG_PROBE_SOURCE = (
             tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
             vars(function).get("__wrapped__"),
         )
-        for _owner, _name, descriptor in (
-            (globals(), "WorkspaceDB", WorkspaceDB),
-            *(
-                (WorkspaceDB, name, vars(WorkspaceDB)[name])
-                for name in (
-                    "__init__",
-                    "_initialize_schema",
-                    "_get_connection",
-                    "_held_connection",
-                    "connection",
-                    "close",
-                )
-            ),
-        )
+        for _owner, _name, descriptor in _RUN_LOG_PROBE_SLOTS
         if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
         for outer in (
             descriptor.__func__

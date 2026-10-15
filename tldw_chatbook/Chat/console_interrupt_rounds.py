@@ -6518,4 +6518,3 @@ _CONSOLE_PENDING_FACTS_READERS = tuple(
     )
     for method in (getattr(InterruptRoundHost, name),)
 )
-

@@ -1461,4 +1461,3 @@ async def _controller_capture_turn_configuration_snapshot(
             "Console turn-context provider returned a different session."
         )
     return context
-

@@ -6,7 +6,7 @@ import asyncio
 import difflib
 import re
 from dataclasses import dataclass, replace
-from functools import lru_cache
+from functools import lru_cache, partial
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping
 from weakref import WeakSet
@@ -2015,8 +2015,7 @@ class ConsoleMarkdownMessage(Vertical):
 
             # TASK-34937: the OS spawn can cost 50-150ms of UI freeze.
             self.run_worker(
-                webbrowser.open,
-                href,
+                partial(webbrowser.open, href),
                 thread=True,
                 exit_on_error=False,
                 name="open-link",

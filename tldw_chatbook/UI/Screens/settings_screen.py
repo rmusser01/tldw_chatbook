@@ -11,6 +11,7 @@ import json
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
+from functools import partial
 import logging
 import math
 import os
@@ -23623,8 +23624,7 @@ class SettingsScreen(BaseAppScreen):
 
             # TASK-34937: OS spawn off the UI thread.
             self.run_worker(
-                webbrowser.open,
-                href,
+                partial(webbrowser.open, href),
                 thread=True,
                 exit_on_error=False,
                 name="open-link",

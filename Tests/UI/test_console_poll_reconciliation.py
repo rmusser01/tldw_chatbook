@@ -1167,4 +1167,3 @@ async def test_poll_terminal_transition_settles_while_background_turn_remains_ac
                 await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True), 15
                 )
-

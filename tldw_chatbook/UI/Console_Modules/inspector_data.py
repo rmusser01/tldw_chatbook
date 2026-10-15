@@ -741,4 +741,3 @@ def _sync_console_pending_display(screen):
         # This optional display fragment never replaces the original full
         # body or its errors. Malformed optional facts safely keep the retry.
         return False
-

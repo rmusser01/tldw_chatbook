@@ -28,6 +28,7 @@ import re
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -1583,9 +1584,8 @@ class LibraryCollectionsController:
             # TASK-34937: OS spawn off the UI thread; a thread-worker
             # failure cannot reach the except below, so the notify for a
             # failed spawn is handled by exit_on_error=False instead.
-            self.run_worker(
-                webbrowser.open,
-                detail.capture.canonical_url,
+            self._screen.run_worker(
+                partial(webbrowser.open, detail.capture.canonical_url),
                 thread=True,
                 exit_on_error=False,
                 name="open-capture-url",

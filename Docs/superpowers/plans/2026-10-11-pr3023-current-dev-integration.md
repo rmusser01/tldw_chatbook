@@ -304,3 +304,12 @@ ADR path: N/A
 Reason: local Git checkpoint/rebase sequencing under the existing integration and preservation plan; no runtime or application contract changes.
 
 Preserve the reviewed isolated source as a normal local WIP commit before rebasing onto fresh origin/dev. This enables the requested current-dev reconciliation while Windows publication approval and final acceptance remain open. Retain original refs, immutable negative/positive receipts, pending candidate source choices and all unchecked task criteria. Use normal hooks, no public push/auto-merge, and no whole-PR acceptance claim. Resolve actual incoming-owner conflicts from current implementations, inspect the combined diff and qualify only affected relationships before final source review, provider/native acceptance and protected sequential merge. Nine whitespace-only EOF findings are recorded for minimal final cleanup; they are not functional failures.
+
+
+### Current-dev Workspace kernel stock-probe reconciliation
+
+ADR required: no new ADR; bounded amendment to existing ADR126.
+ADR paths: backlog/decisions/126-complete-local-backup-and-recovery.md,230-console-send-preparation-and-io-ownership.md,228-sqlite-store-kernel.md (Proposed unchanged).
+Reason: preserve existing source and finite native lifetime contracts at current inherited defining owners, without changing Kernel or authority.
+
+Follow Root-accepted design5fcd60b0 and the appended Task34563.6 plan before authoring the finite two-file compatibility repair and small source-refusal TEST family. Actual saved-path collection RED4a0ec74d at a81d50a is preserved. Distinct source review precedes Root-only exact guarded apply/targeted execution. Keep native4/custom8 and current Workspace/Kernel/direct caller controls separate from old122/platform/provider/timing evidence; no generic MRO registry, new observer, source-check waiver, permission expansion or TaskDone.

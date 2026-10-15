@@ -399,4 +399,3 @@ def test_first_use_does_not_schedule_reconciliation_after_closing(
     app._reconcile_collections_capture_startup = unexpected_reconciliation
     monkeypatch.setattr(TldwCli, "_wire_collections_capture_services", compose)
     assert TldwCli.ensure_collections_capture_services(app) is scope
-

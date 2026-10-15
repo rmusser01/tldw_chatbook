@@ -1909,8 +1909,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
             # TASK-34937: pbcopy spawn off the UI thread; copy runs whole.
             self.run_worker(
-                pyperclip.copy,
-                text,
+                partial(pyperclip.copy, text),
                 thread=True,
                 exit_on_error=False,
                 name="copy-json",
