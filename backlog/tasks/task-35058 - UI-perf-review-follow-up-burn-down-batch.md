@@ -1,5 +1,5 @@
 ---
-id: TASK-35026
+id: TASK-35058
 title: UI-perf review follow-up burn-down batch
 status: Done
 assignee: []
@@ -40,4 +40,4 @@ The independent review of PR #3083 documented follow-ups that did not belong in 
 
 ## Renumbering provenance
 
-Renumbered from task-34991 to TASK-35026 (2026-10-15): dev minted the same id after this branch cut; per the owner rule (TASK-19601) the dev-side arrival keeps the id on merge.
+Renumbered from task-34991 to TASK-35026 to TASK-35058 (2026-10-15): dev minted the same id after this branch cut; per the owner rule (TASK-19601) the dev-side arrival keeps the id on merge.
