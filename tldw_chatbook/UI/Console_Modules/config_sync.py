@@ -9,6 +9,7 @@ def run_console_config_sync(
     *,
     maintenance_paused: bool,
     defer: Callable[[], None],
+    checked_projection: object | None = None,
 ) -> bool:
     """Render under current configuration, or defer without waiting on its locks.
 
@@ -30,6 +31,12 @@ def run_console_config_sync(
     if maintenance_paused:
         defer()
         return False
+    if checked_projection is not None:
+        from .console_spend_projection import _run_checked_display_sync
+
+        displayed = _run_checked_display_sync(checked_projection, sync, defer)
+        if displayed is not None:
+            return displayed
     failure: BaseException | None = None
     entered = False
     try:
@@ -67,3 +74,30 @@ def run_console_config_sync(
     if failure is not None:
         raise failure
     return True
+
+
+def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
+    """Select the existing screen's checked display, retaining live fallback."""
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _screen_readiness_config,
+    )
+
+    def render(projection=None):
+        return run_console_config_sync(
+            sync,
+            maintenance_paused=getattr(screen, "_console_sync_maintenance_paused", False),
+            defer=lambda: screen._request_console_control_bar_sync(delayed=True),
+            checked_projection=projection,
+        )
+
+    if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
+        screen, "_closing", False
+    ):
+        screen._request_console_control_bar_sync(delayed=True)
+        return False
+    value = _screen_readiness_config(screen)
+    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+        return render()
+    projection = ConsoleReadinessConfigProjection.for_screen(screen)
+    return projection.run(lambda: render(projection))

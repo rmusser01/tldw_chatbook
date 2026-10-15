@@ -919,3 +919,14 @@ class ResponseRuleRuntime:
         finally:
             if self.state(session_id).phase == "testing":
                 self._project(session_id, phase="idle")
+
+
+# Direct callback definitions for optional manual Preparing display selection.
+_PREPARING_STATE_READERS = tuple(
+    (name, method, method.__code__, method.__defaults__, method.__kwdefaults__,
+     tuple((method.__kwdefaults__ or {}).items()))
+    for name in ('state',)
+    for method in (getattr(ResponseRuleRuntime, name),)
+)
+
+_PREPARING_STATE_READER = _PREPARING_STATE_READERS[0]

@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -916,7 +917,7 @@ class LocalWorkspaceRegistryService:
                 """
             params = (0,)
         try:
-            with self.db.connection() as conn:
+            with operation_owned_connection(self.db), self.db.connection() as conn:
                 rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -927,7 +928,7 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            with operation_owned_connection(self.db), self.db.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT *
@@ -3811,3 +3812,111 @@ def next_local_workspace_identity(
         if workspace_id not in existing_ids and workspace_name not in existing_names:
             return workspace_id, workspace_name
         index += 1
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+        (globals(), "WorkspaceDB", WorkspaceDB),
+        *(
+            (
+                LocalWorkspaceRegistryService,
+                name,
+                vars(LocalWorkspaceRegistryService)[name],
+            )
+            for name in (
+                "__init__",
+                "get_active_workspace",
+                "list_folder_bindings",
+                "list_runtime_bindings",
+            )
+        ),
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_workspace_from_row",
+                "_runtime_binding_from_row",
+                "_filesystem_binding_missing",
+                "_assistant_defaults_from_json",
+                "_metadata_from_json",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+            (globals(), "WorkspaceDB", WorkspaceDB),
+            *(
+                (
+                    LocalWorkspaceRegistryService,
+                    name,
+                    vars(LocalWorkspaceRegistryService)[name],
+                )
+                for name in (
+                    "__init__",
+                    "get_active_workspace",
+                    "list_folder_bindings",
+                    "list_runtime_bindings",
+                )
+            ),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_workspace_from_row",
+                    "_runtime_binding_from_row",
+                    "_filesystem_binding_missing",
+                    "_assistant_defaults_from_json",
+                    "_metadata_from_json",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+_HOOK_WORKSPACE_READERS = tuple(
+    (
+        LocalWorkspaceRegistryService,
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        function.__closure__,
+    )
+    for name in ('get_workspace', 'read_change_review_consent')
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)

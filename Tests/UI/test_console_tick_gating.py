@@ -37,6 +37,8 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Static
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+from Tests.UI.test_console_cost_chip_screen import _settle_successful_full
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -73,12 +75,14 @@ class _CountingConversationService:
         workspace_id: str | None = None,
         limit: int = 25,
         offset: int = 0,
+        character_scope: str = "generic",
     ) -> dict[str, object]:
         self.list_calls.append(
             {
                 "query": query,
                 "scope_type": scope_type,
                 "workspace_id": workspace_id,
+                "character_scope": character_scope,
             }
         )
         return {
@@ -88,6 +92,7 @@ class _CountingConversationService:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_persisted_rows_cache_gates_list_conversations_calls():
     """RED-first: repeated ticks must not re-query the DB while nothing changed.
 
@@ -150,7 +155,7 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
         # TTL expiry (equivalent to letting monotonic() advance past the TTL)
         # forces exactly one more fresh query even without explicit
         # invalidation.
-        console._console_persisted_rows_cache_at -= (
+        console._workspace._console_persisted_rows_cache_at -= (
             CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS + 0.5
         )
         await console._sync_native_console_chat_ui()
@@ -165,6 +170,7 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_settings_summary_sync_state_is_noop_when_state_unchanged():
     """Settings-summary sub-sync must not touch Static.update() when state is equal."""
     app = _build_test_app()
@@ -178,8 +184,8 @@ async def test_console_settings_summary_sync_state_is_noop_when_state_unchanged(
         # Two separately-constructed, value-equal state snapshots (frozen
         # dataclass equality), mirroring how the screen rebuilds state fresh
         # every tick.
-        state_a = console._build_console_settings_summary_state()
-        state_b = console._build_console_settings_summary_state()
+        state_a = context_spend_for_test(console)._build_console_settings_summary_state()
+        state_b = context_spend_for_test(console)._build_console_settings_summary_state()
         assert state_a == state_b
 
         update_calls: list[str] = []
@@ -199,6 +205,7 @@ async def test_console_settings_summary_sync_state_is_noop_when_state_unchanged(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_workspace_context_tray_sync_state_always_recomposes():
     """Regression test protecting a second deliberate Change-2 deviation.
 
@@ -272,6 +279,7 @@ async def test_console_workspace_context_tray_sync_state_always_recomposes():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_unchanged():
     """Screen-side no-op: the legacy-alias worker only kicks off on a real change.
 
@@ -328,6 +336,7 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_inspector_content_stays_fresh_while_right_rail_hidden():
     """Regression test protecting the deliberate Change-3 deviation.
 
@@ -360,12 +369,12 @@ async def test_console_inspector_content_stays_fresh_while_right_rail_hidden():
         # The transcript must render the message as a row before it will
         # accept a selection against it -- sync once first (mirrors
         # `test_console_selected_message_updates_inspector_action_guidance`).
-        await console._sync_native_console_chat_ui()
+        await _settle_successful_full(console, pilot)
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         assert transcript.selected_message_id == message.id
         await pilot.pause()
-        await console._sync_native_console_chat_ui()
+        await _settle_successful_full(console, pilot)
         await pilot.pause()
 
         inspector = console.query_one(
@@ -382,6 +391,7 @@ async def test_console_inspector_content_stays_fresh_while_right_rail_hidden():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_streaming_message_excerpt_is_static_placeholder():
     """A selected streaming message must show a static excerpt, not live content.
 
@@ -438,6 +448,7 @@ def _pin_workspace_state(console):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_workspace_context_tray_not_recomposed_when_state_unchanged():
     """TASK-344/349: unchanged run-tick syncs must not recompose the tray."""
     app = _build_test_app()
@@ -480,6 +491,7 @@ async def test_console_workspace_context_tray_not_recomposed_when_state_unchange
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
     """Fresh peer context trays still heal after a mid-run recompose.
 
@@ -542,6 +554,7 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_conversation_rows_stay_stable_during_cache_refresh():
     from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 

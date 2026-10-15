@@ -193,6 +193,7 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "staged_evidence_launch",
         "one_shot_prefill",
         "one_shot_prefill_revision",
+        "draft_revision",
     }
     assert {field.name for field in fields(type(record))} == {
         "turn_id",
@@ -202,6 +203,10 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "task",
         # TASK-32873: the record carries the archive reservation handle.
         "archive_conversation_id",
+        # Exact issuing handles for same-slot receipt promotion and cleanup.
+        "store",
+        "received_claim",
+        "received_intent",
     }
     assert {field.name for field in fields(type(record.inputs))} == {
         "attachments",
@@ -1500,6 +1505,9 @@ def _attach_reconciliation_screen(sync, *, start=None, resume_pending=False):
     screen._console_attach_reconcile_running = False
     screen._console_resume_after_reconcile = resume_pending
     screen._console_runtime_attachment_generation = 1
+    runtime.view = screen
+    runtime._attached_generation = 1
+    screen._is_active_console_screen = lambda: True
     screen._sync_native_console_chat_ui = sync
     screen._console_runtime = lambda: runtime
     screen._start_console_view_after_reconciliation = start or (lambda: None)

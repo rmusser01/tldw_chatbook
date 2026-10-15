@@ -741,7 +741,12 @@ class ConsoleLeftRail(Vertical):
 
         try:
             title = self.query_one("#console-rail-section-title-model", Static)
-            title.update("Model ⚠" if has_warning else "Model")
+            title_copy = "Model ⚠" if has_warning else "Model"
+            self.query_one(
+                "#console-rail-section-header-model", DestinationRailSectionHeader
+            ).title = title_copy
+            if str(title.renderable) != title_copy:
+                title.update(title_copy)
             generation_group = self.query_one("#console-generation-recovery-row")
             context_group = self.query_one("#console-context-recovery-row")
             default_group = self.query_one("#console-default-recovery-row")
@@ -775,13 +780,16 @@ class ConsoleLeftRail(Vertical):
             context_button.console_settings_revision = context.revision
             policy_label = context.policy_failure_label
             assert isinstance(policy_label, ConsoleSettingsPolicyFailureLabel)
-            self.query_one("#console-context-recovery-copy", Static).update(
-                f"Not saved: {policy_label.value}"
-            )
+            context_label = self.query_one("#console-context-recovery-copy", Static)
+            context_copy = f"Not saved: {policy_label.value}"
+            if str(context_label.renderable) != context_copy:
+                context_label.update(context_copy)
         generation_button.disabled = generation is None
         context_button.disabled = context is None
 
-        self.query_one("#console-default-recovery-copy", Static).update(default_copy)
+        default_label = self.query_one("#console-default-recovery-copy", Static)
+        if str(default_label.renderable) != default_copy:
+            default_label.update(default_copy)
         generation_token = default_state.newest_intent_generation
         for button in (
             retry_default,

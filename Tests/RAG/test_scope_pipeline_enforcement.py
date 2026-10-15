@@ -2834,6 +2834,7 @@ class TestCapturePromptBoundaryFreshAuthority:
         assert [candidate.rank for candidate in candidates] == [2]
 
 
+@pytest.mark.bootstrap_profile
 class TestActiveConsoleSessionRealGlue:
     """Integration coverage for ``chat_rag_events._active_console_session``'s
     REAL chain: ``app.screen`` -> ``isinstance(screen, ChatScreen)`` ->

@@ -9,6 +9,7 @@ from textual.widgets import Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.console_controller_stubs import context_spend_for_test
 from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_dictation import _mounted_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -60,7 +61,7 @@ async def test_model_values_update_hidden_rows_without_screen_wide_scans(
             screen_scans.clear()
             with monkeypatch.context() as observer:
                 observer.setattr(DOMQuery, "nodes", property(observe_nodes))
-                console._apply_console_settings_summary_state(state)
+                context_spend_for_test(console)._apply_console_settings_summary_state(state)
             assert [str(value.renderable).strip() for value in values] == [
                 temperature or "—",
                 max_tokens or "—",
@@ -101,10 +102,10 @@ async def test_model_values_follow_missing_and_remounted_rows(request) -> None:
             row = console.query_one(f"#console-model-section-{row_id}")
             parent = row.parent
             position = parent.children.index(row)
-            console._apply_console_settings_summary_state(state)
+            context_spend_for_test(console)._apply_console_settings_summary_state(state)
 
             await row.query_one(".console-model-section-value", Static).remove()
-            console._apply_console_settings_summary_state(changed)
+            context_spend_for_test(console)._apply_console_settings_summary_state(changed)
             for other_id, _, other_value in sections:
                 if other_id != row_id:
                     assert (
@@ -120,11 +121,11 @@ async def test_model_values_follow_missing_and_remounted_rows(request) -> None:
                 "stale", classes="console-model-section-value", markup=False
             )
             await row.mount(replacement_value)
-            console._apply_console_settings_summary_state(changed)
+            context_spend_for_test(console)._apply_console_settings_summary_state(changed)
             assert str(replacement_value.renderable).strip() == expected
 
             await row.remove()
-            console._apply_console_settings_summary_state(state)
+            context_spend_for_test(console)._apply_console_settings_summary_state(state)
             replacement_value = Static(
                 "stale", classes="console-model-section-value", markup=False
             )
@@ -135,7 +136,7 @@ async def test_model_values_follow_missing_and_remounted_rows(request) -> None:
                 classes="console-model-section-line",
             )
             await parent.mount(replacement_row, before=position)
-            console._apply_console_settings_summary_state(changed)
+            context_spend_for_test(console)._apply_console_settings_summary_state(changed)
             assert (
                 console.query_one(f"#console-model-section-{row_id}") is replacement_row
             )
@@ -189,6 +190,19 @@ async def test_model_sync_updates_rows_with_the_actual_values(request) -> None:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
 
+        from dataclasses import replace
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        settings = store.session_settings(session_id)
+        assert settings is not None
+        # Keep the original rendered-summary fixture consistent with the live
+        # settings that ordinary parked refreshes continue to publish.
+        store.replace_session_settings(
+            session_id,
+            replace(settings, temperature=0.42, max_tokens=4096, streaming=False, source="user"),
+        )
+
         state = ConsoleSettingsSummaryState(
             model_row="Model: test",
             context_row="",
@@ -198,7 +212,7 @@ async def test_model_sync_updates_rows_with_the_actual_values(request) -> None:
             max_tokens="4096",
             streaming="Off",
         )
-        console._apply_console_settings_summary_state(state)
+        context_spend_for_test(console)._apply_console_settings_summary_state(state)
         await pilot.pause(0.2)
 
         temperature = console.query_one(

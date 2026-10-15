@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 import stat
+import sys
 import threading
 import time
 import uuid
@@ -792,7 +793,14 @@ class Admission:
             hold = storage._ordinary_hold(self)
             key = ("pause", names, str(bootstrap.effective_config_path()))
             before = storage._derived_before(hold, key)
-            reused, group = storage._derived_reuse(hold, key, before)
+            stock = _pause_metadata_current(self)
+            reused, group = (
+                storage._derived_reuse(hold, key, before) if stock else (False, None)
+            )
+            stock = stock and _pause_metadata_current(self)
+            if not stock:
+                reused = False
+                storage._note_derived(hold, key, None, None, before)
             if not reused:
                 registry = self._read(parent)
                 group = self._groups(registry, names)
@@ -808,7 +816,11 @@ class Admission:
                         name: row.model_dump() for name, row in registry.entries.items()
                     },
                 )
-                storage._note_derived(hold, key, evidence, group, before)
+                storage._note_derived(
+                    hold, key,
+                    evidence if stock and _pause_metadata_current(self) else None,
+                    group, before,
+                )
             contended = False
             for name in group:
                 fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)
@@ -938,3 +950,92 @@ class Admission:
                         None,
                     )
                     self._write(parent, registry)
+
+
+# One direct stock-query witness. No native result or permission is retained.
+_ORDINARY_PAUSE_REQUEST_BINDING = (
+    sys.modules[__name__],
+    Admission,
+    Admission.pause_requested,
+    Admission.pause_requested.__code__,
+    Admission.pause_requested.__globals__,
+    Admission.pause_requested.__defaults__,
+    Admission.pause_requested.__kwdefaults__,
+    Admission.pause_requested.__closure__,
+    vars(Admission).get("__getattribute__"),
+    vars(Admission).get("__dict__"),
+)
+
+
+def _pause_metadata_current(authority):
+    """Decline optional metadata reuse when its original readers changed."""
+    if any(owner.get(name) is not value for owner, name, value in _PAUSE_METADATA_BINDINGS):
+        return False
+    for cls, lookup, dictionary in _PAUSE_METADATA_CLASSES:
+        if (vars(cls).get("__getattribute__") is not lookup
+                or vars(cls).get("__dict__") is not dictionary):
+            return False
+    if type(authority) is not _PAUSE_METADATA_BINDINGS[0][2]:
+        return False
+    values = vars(authority)
+    if type(values) is not dict or any(
+        name in values for name in ("_read", "_read_intent", "_groups", "_tokens", "_open")
+    ):
+        return False
+    for module, namespace, filename, spec, origin in _PAUSE_METADATA_MODULES:
+        if (sys.modules.get(namespace["__name__"]) is not module
+                or vars(module) is not namespace or namespace.get("__file__") != filename
+                or namespace.get("__spec__") is not spec or getattr(spec, "origin", None) != origin):
+            return False
+    for owner, name, descriptor, original, code, namespace, defaults, keywords, items, closure, values in _PAUSE_METADATA_READERS:
+        if (owner.get(name) is not descriptor or original.__code__ is not code
+                or original.__globals__ is not namespace or original.__defaults__ is not defaults
+                or original.__kwdefaults__ is not keywords or original.__closure__ is not closure
+                or keywords is not None and (len(keywords) != len(items)
+                    or any(key not in keywords or keywords[key] is not value for key, value in items))
+                or any(cell.cell_contents is not value for cell, value in values)):
+            return False
+    return True
+
+
+# Exact readers skipped by this owner's optional derivation; no native authority.
+_PAUSE_METADATA_BINDINGS = (
+    (globals(), "Admission", Admission),
+    (globals(), "bootstrap", bootstrap),
+    (globals(), "_Registry", _Registry),
+    (globals(), "_WriteIntent", _WriteIntent),
+    (globals(), "_Entry", _Entry),
+)
+_PAUSE_METADATA_CLASSES = tuple(
+    (cls, vars(cls).get("__getattribute__"), vars(cls).get("__dict__"))
+    for cls in (Admission,)
+)
+_PAUSE_METADATA_READERS = tuple(
+    (row_owner, row_name, descriptor, function, function.__code__, function.__globals__,
+     function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+     function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
+    for owner, names in (
+        (vars(Admission), ("_read", "_read_intent", "_groups", "_tokens", "_open")),
+        (globals(), ("pinned_directory", "_pause_metadata_current")),
+        (vars(bootstrap), (
+            "_records", "_control_records", "_registry", "_registry_read_lock",
+            "pinned_directory", "_read", "_strings", "_paths", "_key",
+            "_activation_witness", "_validate_ancestry_record",
+            "_open_verified_parent", "_native_close",
+            "effective_roots", "identity_view", "inode_token", "inode_token_for",
+        )),
+    )
+    for name in names
+    for original in (owner[name],)
+    for callback in (original.__func__ if type(original) is staticmethod else original,)
+    for row_owner, row_name, descriptor, function in (
+        (owner, name, original, callback),
+        *(((vars(callback), "__wrapped__", callback.__wrapped__, callback.__wrapped__),)
+          if hasattr(callback, "__wrapped__") else ()),
+    )
+)
+_PAUSE_METADATA_MODULES = tuple(
+    (module, vars(module), module.__file__, module.__spec__, getattr(module.__spec__, "origin", None))
+    for name in dict.fromkeys(row[5]["__name__"] for row in _PAUSE_METADATA_READERS)
+    for module in (sys.modules[name],)
+)

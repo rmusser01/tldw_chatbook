@@ -214,8 +214,15 @@ class LocalCollectionsCaptureService:
         if self.repository.db.is_memory_db:
             return function(*args, **kwargs)
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+        from tldw_chatbook.Chat.console_preparation_reads import run_preparation_read
 
-        return await asyncio.to_thread(run_finite_local_worker, function, *args, **kwargs)
+        return await run_preparation_read(
+            lambda: run_finite_local_worker(function, *args, **kwargs),
+            creator=self,
+            session_id=None,
+            reads=set(),
+            require_current=lambda: None,
+        )
 
     async def capabilities(self) -> CaptureCapabilities:
         supported = {
@@ -962,3 +969,47 @@ __all__ = [
     "build_local_capture_authority",
     "build_server_capture_authority",
 ]
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "LocalCollectionsCaptureService"),
+        (globals(), "CollectionsCaptureScopeService"),
+        (globals(), "build_local_capture_authority"),
+        (LocalCollectionsCaptureService, "__init__"),
+        (CollectionsCaptureScopeService, "__init__"),
+        (CollectionsCaptureScopeService, "activate"),
+    )
+)
+del _record_collections_setup_source
