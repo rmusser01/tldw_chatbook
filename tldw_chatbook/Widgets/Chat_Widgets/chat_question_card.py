@@ -116,6 +116,10 @@ class ChatQuestionCard(Container):
         self._rendered_request_id: str | None = None
         self._questions: list[dict[str, Any]] = []
         self._deadline_timer: Timer | None = None
+        # TASK-35028: the countdown copy ``_sync_deadline`` last wrote into
+        # ``#question-deadline``, so the 1 s tick compares one string instead
+        # of repainting the height:auto row when M:SS has not moved.
+        self._last_deadline_text: str | None = None
 
     def compose(self) -> ComposeResult:
         """Yield the title, deadline line, scrolling sections, and Submit.
@@ -319,9 +323,23 @@ class ChatQuestionCard(Container):
         remaining = self._remaining_seconds()
         if remaining is None:
             self._stop_deadline_timer()
-            label.update(format_question_deadline((self._payload or {}).get("timeout_seconds")))
+            # TASK-35028: only repaint when the unarmed copy actually
+            # changed (a tick cannot reach here while the timer is stopped,
+            # but re-arms call this with the same static copy).
+            text = format_question_deadline(
+                (self._payload or {}).get("timeout_seconds")
+            )
+            if text != self._last_deadline_text:
+                self._last_deadline_text = text
+                label.update(text)
             return
-        label.update(format_question_deadline(remaining) or "Auto-continues now")
+        # TASK-35028: the tick fires once a second but the M:SS copy only
+        # moves once a second; #question-deadline is height:auto, so an
+        # unchanged tick costs a compare instead of a repaint + layout.
+        text = format_question_deadline(remaining) or "Auto-continues now"
+        if text != self._last_deadline_text:
+            self._last_deadline_text = text
+            label.update(text)
         if remaining <= 0:
             self._stop_deadline_timer()
         elif self._deadline_timer is None:

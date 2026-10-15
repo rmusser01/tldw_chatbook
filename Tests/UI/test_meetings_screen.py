@@ -2055,3 +2055,69 @@ async def test_the_passphrase_never_lingers_in_the_input(tmp_path):
         screen.query_one("#meetings-voice-merge", Button).press()
         await pilot.pause(0.1)
         assert passphrase.value == ""
+
+
+# --- TASK-35028: the timer-driven rail writes are equality-gated ------------
+
+
+@pytest.mark.asyncio
+async def test_tick_repaints_the_clock_only_when_the_formatted_time_moves(tmp_path):
+    """The 5 Hz tick costs a string compare while the seconds digit is still.
+
+    TASK-35028: `#meetings-timer` is a bare height:auto Static, so an
+    ungated per-tick write armed a whole-screen relayout even though the
+    painted copy (HH:MM:SS) only moves once a second.
+    """
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.3)
+        timer = screen.query_one("#meetings-timer", Static)
+        calls = []
+        original_update = timer.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        timer.update = counting_update
+        # One write for the first tick after the gate resets, then none
+        # while the formatted copy is unchanged (the fake capture stands
+        # still at 65.0 s).
+        screen._last_timer_text = None
+        screen._tick()
+        assert len(calls) == 1
+        screen._tick()
+        screen._tick()
+        assert len(calls) == 1, "unchanged ticks must not repaint the clock"
+        owner.session.capture.audio_position_s = 66.0
+        screen._tick()
+        assert len(calls) == 2
+        assert _text(timer) == "00:01:06"
+
+
+@pytest.mark.asyncio
+async def test_enroll_progress_repaints_only_when_the_copy_changes(tmp_path):
+    """The 1 Hz countdown write is gated on its own last-written copy."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        progress = screen.query_one("#meetings-enroll-progress", Static)
+        calls = []
+        original_update = progress.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        progress.update = counting_update
+        screen._set_enroll_progress("Recording… 30s left")
+        assert len(calls) == 1
+        screen._set_enroll_progress("Recording… 30s left")
+        assert len(calls) == 1, "an unchanged countdown tick must not repaint"
+        screen._set_enroll_progress("Recording… 29s left")
+        assert len(calls) == 2
+        assert _text(progress) == "Recording… 29s left"

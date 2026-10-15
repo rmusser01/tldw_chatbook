@@ -396,7 +396,17 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self, attention: WorkspaceFilesAttention, generation: int
     ) -> bool:
         """Publish a newer generic attention snapshot while this visit lives."""
-        if generation <= self._attention_generation or self._workspace_files_closing:
+        if self._workspace_files_closing:
+            return False
+        # TASK-35028: the publisher bumps its generation counter on every
+        # Console sync tick, so the counter alone never blocks a tick. The
+        # gate that stops the repaint compares the snapshot itself: an
+        # unchanged snapshot adopts the ordering stamp (so a later stale
+        # publish still cannot overwrite) but writes nothing.
+        if attention == self._attention:
+            self._attention_generation = max(self._attention_generation, generation)
+            return False
+        if generation <= self._attention_generation:
             return False
         self._attention_generation = generation
         self._attention = attention

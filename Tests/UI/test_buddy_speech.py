@@ -299,3 +299,43 @@ async def test_workspace_questions_precede_named_results_and_never_acknowledge(
         assert store.active_session_id == other.id
     finally:
         await speech.aclose()
+
+
+@pytest.mark.asyncio
+async def test_speech_status_poll_repaints_only_when_the_copy_changes():
+    """TASK-35028: the 0.5 s self-poll rewrote unchanged status copy every
+    tick; the gate compares the last-written copy instead."""
+    from textual.widgets import Static
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_speech_controls import (
+        BuddySpeechControls,
+    )
+
+    app, _, owner, _, _, _ = setup()
+    speech = BuddySpeechCoordinator(app)
+    speech.enabled = True
+    ui = App()
+    async with ui.run_test(size=(80, 24)) as pilot:
+        controls = BuddySpeechControls(speech)
+        await ui.screen.mount(controls)
+        await pilot.pause()
+        status = ui.query_one("#buddy-speech-status", Static)
+        calls = []
+        original_update = status.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        status.update = counting_update
+        controls.refresh_state()   # idle queue -> "Buddy speech enabled"
+        painted_once = len(calls)
+        controls.refresh_state()
+        controls.refresh_state()
+        assert len(calls) == painted_once, "unchanged queue state must not repaint"
+        speech.queue.pause()
+        controls.refresh_state()
+        assert len(calls) == painted_once + 1
+        assert "Speech paused" in str(status.renderable)
+    await speech.aclose()

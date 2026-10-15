@@ -849,3 +849,56 @@ async def test_every_task_surface_card_hugs_its_content():
                 f"the task surface is {surface.size.height} lines tall for "
                 f"{visible} lines of visible cards"
             )
+
+
+# --- TASK-35028: the deadline countdown write is equality-gated --------------
+
+
+@pytest.mark.asyncio
+async def test_deadline_tick_repaints_only_when_the_countdown_copy_moves(
+    monkeypatch,
+):
+    """The card's 1 s deadline tick costs a string compare while M:SS stands.
+
+    TASK-35028: ``#approval-deadline`` is a bare height:auto Static, so an
+    ungated per-tick write armed a whole-screen relayout every second even
+    though the copy only changes once per second.
+    """
+    import time
+    from types import SimpleNamespace
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as module
+
+    app = _task_surface_harness()
+    async with app.run_test(size=(200, 50)) as pilot:
+        card = await _mounted_batch(app, pilot, 1)
+        label = card.query_one("#approval-deadline", Static)
+        assert card._deadline_at is not None and card._deadline_timer is not None
+        calls = []
+        original_update = label.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        label.update = counting_update
+        deadline = card._deadline_at
+        # Freeze the card's clock mid-countdown: the first tick paints (or
+        # matches whatever the arm painted), and any further tick within the
+        # same second must not repaint at all.
+        clock = [deadline - 30.0]
+        monkeypatch.setattr(
+            module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+        )
+        card._render_deadline(label)
+        painted_once = len(calls)
+        card._render_deadline(label)
+        card._render_deadline(label)
+        assert len(calls) == painted_once, "unchanged ticks must not repaint"
+        # Past the deadline the copy clears once, then the timer stops.
+        clock[0] = deadline + 0.001
+        card._render_deadline(label)
+        assert len(calls) == painted_once + 1
+        assert card._deadline_timer is None

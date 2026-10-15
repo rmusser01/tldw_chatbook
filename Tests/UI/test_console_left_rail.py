@@ -497,3 +497,66 @@ async def test_clicking_a_rail_section_toggle_moves_focus_to_the_toggle_button()
                 break
             await pilot.pause(0.05)
         assert pilot.app.focused is toggle_button
+
+
+# --- TASK-35028: sync_model_recovery's three writes are equality-gated -------
+
+
+@pytest.mark.asyncio
+async def test_sync_model_recovery_repaints_only_rows_whose_copy_changed() -> None:
+    """The Console sync tick reached sync_model_recovery unconditionally, so
+    unchanged recovery state repainted 'Model' and the (usually empty)
+    default-copy row on every tick (TASK-34991 findings). TASK-35028 gates
+    each write on the widget's own stored content, which also keeps the gate
+    correct across a same-instance recompose."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Chat.console_settings_defaults import (
+        ConsoleDefaultDurabilityState,
+    )
+
+    async with make_console_pilot(size=(160, 45), production_styles=True) as pilot:
+        console = pilot.app.screen_stack[-1]
+        rail = console.query_one(ConsoleLeftRail)
+        rows = {
+            "title": rail.query_one("#console-rail-section-title-model", Static),
+            "default": rail.query_one("#console-default-recovery-copy", Static),
+            "context": rail.query_one("#console-context-recovery-copy", Static),
+        }
+        calls: dict[str, list] = {}
+        originals = {}
+
+        def spy(name, widget):
+            originals[name] = widget.update
+            calls[name] = []
+
+            def counting_update(*args, **kwargs):
+                calls[name].append(args)
+                return originals[name](*args, **kwargs)
+
+            widget.update = counting_update
+
+        for name, widget in rows.items():
+            spy(name, widget)
+        kwargs = dict(
+            session_id=None,
+            failures={},
+            default_state=ConsoleDefaultDurabilityState(),
+        )
+        rail.sync_model_recovery(**kwargs)
+        baseline = {name: len(entries) for name, entries in calls.items()}
+        rail.sync_model_recovery(**kwargs)
+        rail.sync_model_recovery(**kwargs)
+        for name, base in baseline.items():
+            assert len(calls[name]) == base, (
+                f"an unchanged sync must not repaint the {name} row"
+            )
+        # Content that differs (e.g. a same-instance recompose left the fresh
+        # Statics at their defaults) is repainted exactly once per sync.
+        rows["title"].update("Model X")
+        rows["default"].update("a stuck default-save sentence")
+        rail.sync_model_recovery(**kwargs)
+        assert len(calls["title"]) == baseline["title"] + 1
+        assert str(rows["title"].content) == "Model"
+        assert len(calls["default"]) == baseline["default"] + 1
+        assert str(rows["default"].content) == ""
