@@ -1,4 +1,4 @@
-name: PR3023 bounded current Windows Video four
+name: PR3023 bounded Windows quit diagnostic
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       # Intentionally unrunnable until the distinct reviews and binding seal.
-      VIDEO_FOUR_BINDING_SHA256: '30915631f0aefa6889b8bb6da3f2d061c8425155f08906d72ade4dff5b0b1117'
+      VIDEO_FOUR_BINDING_SHA256: 'fafbf927e326298c6b61e1db8da49a179f1c337ec00f70fc88c281f380d3620c'
     steps:
       - name: Set LF checkout policy before checkout and create failure archive
         shell: pwsh
@@ -41,7 +41,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           $output = $env:VIDEO_FOUR_OUTPUT
           $archive = Join-Path $output 'run'
-          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-video-r1'
+          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-video-quit-diagnostic-r1'
           python (Join-Path $owned 'outer.py.txt') initialize --checkout $env:GITHUB_WORKSPACE --archive $archive --binding (Join-Path $owned 'binding.json') --binding-sha256 $env:VIDEO_FOUR_BINDING_SHA256 *> (Join-Path $output 'initialize.log')
           if ($LASTEXITCODE -ne 0) { throw 'Snapshot/packet initialization refused; inspect initialize.log' }
       - name: Install existing dev dependencies and exact test versions
@@ -54,18 +54,18 @@ jobs:
       - name: Select ordinary current-profile fixture temporary root
         shell: pwsh
         run: |
-          $fixture = Join-Path $env:USERPROFILE ('.config/pr3023-video-four-r1-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          $fixture = Join-Path $env:USERPROFILE ('.config/pr3023-video-quit-diagnostic-r1-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           New-Item -ItemType Directory -Path $fixture -ErrorAction Stop | Out-Null
           "TEMP=$fixture" >> $env:GITHUB_ENV
           "TMP=$fixture" >> $env:GITHUB_ENV
-      - name: Run exact original Video four with read-only final audit
+      - name: Run original quit diagnostic with read-only final audit
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
           $output = $env:VIDEO_FOUR_OUTPUT
           $archive = Join-Path $output 'run'
           $outer = Join-Path $archive 'outer.py'
-          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-video-r1'
+          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-video-quit-diagnostic-r1'
           $publishedOuter = Join-Path $owned 'outer.py.txt'
           $binding = Join-Path $owned 'binding.json'
           $executionCode = 1
@@ -86,7 +86,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           $output = $env:VIDEO_FOUR_OUTPUT
           $archive = Join-Path $output 'run'
-          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-video-r1'
+          $owned = Join-Path $env:GITHUB_WORKSPACE '.github/qualification/pr3023-video-quit-diagnostic-r1'
           $publishedOuter = Join-Path $owned 'outer.py.txt'
           $binding = Join-Path $owned 'binding.json'
           $auditCode = 1
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pr3023-video-four-r1-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr3023-video-quit-diagnostic-r1-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.VIDEO_FOUR_OUTPUT }}/
           include-hidden-files: true
           if-no-files-found: error
