@@ -211,7 +211,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR2921: production Library Dreams reader and native modal layout/owner checks.
 # PR3010 adds two bounded native rule phase/Stop event node IDs.
 # TASK-34569 adds three bounded approval privacy/currentness entries.
-MINIMUM_FILES = 193
+# TASK-34569 review repair adds the bounded approval lifecycle regression file.
+MINIMUM_FILES = 194
 
 
 def read_census(path: Path) -> list[str]:

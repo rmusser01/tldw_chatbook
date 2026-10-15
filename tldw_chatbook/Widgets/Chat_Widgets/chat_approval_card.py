@@ -1014,7 +1014,28 @@ class ChatApprovalCard(Container):
         if self._restore_details_scroll is not None:
             x, y = self._restore_details_scroll
             self._restore_details_scroll = None
-            area.call_after_refresh(area.scroll_to, x, y, animate=False, immediate=True)
+            identity = self._current_details_identity()
+            generation = self._batch_generation
+            state = self._presentation_state
+            # A same-row/page reopen has the same identity but cancels this request.
+            cancel = self._details._cancel
+
+            def restore() -> None:
+                if (
+                    identity is not None
+                    and identity == self._current_details_identity()
+                    and generation == self._batch_generation
+                    and page.index == self._details_page_index
+                    and page.index == self._details._requested
+                    and not cancel.is_set()
+                    and area is self._details_area
+                    and area.is_attached
+                    and state is self._presentation_state
+                    and (state is None or not state.get("retired"))
+                ):
+                    area.scroll_to(x, y, animate=False, immediate=True)
+
+            area.call_after_refresh(restore)
             self._restore_rows_scroll()
         continuation = (
             " · More content available" if page.has_more else " · End of arguments"

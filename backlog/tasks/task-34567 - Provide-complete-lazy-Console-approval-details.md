@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 22:39
+updated_date: 2026-10-15 23:06
 labels: []
 dependencies:
 - TASK-34565
@@ -58,6 +58,7 @@ Reason: Existing ADR235/090/150 governs snapshot-only lazy redacted details; no 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 Review repair: hold real Details preparation and queue a page before actual card removal; RED must show private cancellation/identity remains live. Synchronously close/fence existing controller at actual card unmount, drop cache/capture/opener references without DOM queries/focus. Persist only bounded nonauthoritative reading position through existing pending-round presentation state; never retain pages/bodies/callbacks. Test actual removal/recreation, late delivery rejection and exact identity mismatch. ADR required:no new; existing ADR235/custody.
+Final two-correction review wave: reproduce a held real Details after-refresh scroll crossing close/reopen, page/row, round/revision, settlement and unmount; fence the callback with existing request cancellation/current identity, displayed/requested page, generation, state retirement and attached area. Preserve current nonzero restoration. ADR required: no new ADR; ADR235 already governs presentation currentness.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -70,6 +71,7 @@ Task remains In Progress: full live matrix/native-browser qualification and inde
 Independent review found eager generic captured-body formatting and unowned navigation. Actual-card RED3 then Details18/ownership25/interaction21/Console1 GREEN. Captured rows skip eager generic formatting; nav events capture row identity and page index. Source hashes refreshed. Re-review pending; native/full matrix limits retained.
 Current1c72 integration: bounded lazy Details/cache/cancellation and identity fences use existing collaborators. Actual admitted argv/OAuth privacy regressions fail before repairs and pass through existing shared redactors afterward; captured matching arguments remain untouched. Required UI census now enrolls privacy plus stale-page/stale-options nodes without dropping190 existing entries. Current core540passed84.15s; browser/native physical qualification stays open. ADR235, In Progress.
 Review repair: actual card unmount cooperatively closes Details, rejects queued/held pages and drops capture/cache/opener references without retiring-DOM query or focus restoration. Existing retained round payload stores only scalar choices/review/disclosure/key/page/scroll for exact session/run/round/revision; actual host unpark/replacement retires state. Real provider/controller parked head through shipping ChatTaskCards clear/remove/recreate covers broader choice plus deliberate raw Deny and Details page/scroll, scalar-only retained state, fresh gesture fences and identity mismatch. Final affected141PASS/0guards. Existing ADR235; no new durable store/framework. Complete native/browser/timing criteria remain open; no Done.
+Final review currentness correction: queued Details scroll now revalidates the exact Details identity, requested/displayed page, generation, same attached TextArea, current state/retirement and existing request cancellation Event at execution. Seven genuine live/replaced/detached viewport REDs and a separate actual settled-scroll-method RED precede the fix; unchanged current page restores offset5. Settlement test observation mistakes are separately retained. Final affected138PASS26.329XMLs,0F/E/S and0profile/network refusals. ADR235 applies; no new authority/store/framework or completed external acceptance.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 

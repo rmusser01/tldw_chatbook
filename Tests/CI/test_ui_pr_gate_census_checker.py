@@ -464,3 +464,16 @@ def test_dead_defines_test_is_gone():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert not hasattr(module, "defines_test")
+
+
+def test_removing_an_older_noncritical_member_fails_current_floor(monkeypatch, capsys):
+    spec = importlib.util.spec_from_file_location("cen_current_floor", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    entries = module.read_census(module.CENSUS_PATH)
+    assert module.main([]) == 0
+    capsys.readouterr()
+    entries.remove("Tests/UI/test_adaptive_pane_shell.py")
+    monkeypatch.setattr(module, "read_census", lambda path: entries)
+    assert module.main([]) == 1
+    assert "census has shrunk: 193 entries, floor is 194" in capsys.readouterr().err
