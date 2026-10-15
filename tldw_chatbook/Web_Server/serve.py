@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlparse, urlsplit, urlunparse
 
 from loguru import logger
@@ -74,6 +75,7 @@ from ..Utils.optional_deps import (
     require_dependency,
 )
 from ..Utils.paths import get_user_data_dir
+from .mobile_api import MOBILE_MAX_BODY_BYTES, build_mobile_routes, mobile_surface_enabled
 from .session_store import WebSessionStore
 
 _TEXTUAL_SERVE_RESIZE_HOOK = "window.onresize=()=>{this.fit()}"
@@ -651,8 +653,23 @@ class ChatbookWebServerMixin:
         session_store: WebSessionStore | None = None,
         session_idle_timeout_seconds: float | None = None,
         session_absolute_timeout_seconds: float | None = None,
+        mobile_service: Any | None = None,
+        mobile_provider_gateway: Any | None = None,
         **kwargs,
     ) -> None:
+        """Initialize the served shell and its feature surfaces.
+
+        Args:
+            mobile_service: Injected mobile companion service (ADR-234).
+                ``None`` (the default) constructs ``MobileChatService``
+                lazily on the first ``/api/v1/mobile`` request.
+            mobile_provider_gateway: Optional provider gateway forwarded to
+                the lazily constructed ``MobileChatService`` — a test /
+                Task-6 live-check seam. ``None`` (the default) defers the
+                real provider gateway construction to Task 6; it is safe
+                today because every current caller either injects the
+                whole service (tests) or never touches the surface.
+        """
         super().__init__(*args, **kwargs)
         if web_auth_policy is None:
             web_auth_policy = build_web_auth_policy(
@@ -682,6 +699,8 @@ class ChatbookWebServerMixin:
             profile_snapshot=self._canvas_profile_snapshot,
         )
         self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
+        self._mobile_service = mobile_service
+        self._mobile_provider_gateway = mobile_provider_gateway
 
     def __repr__(self) -> str:
         return (
@@ -732,7 +751,9 @@ class ChatbookWebServerMixin:
 
         app = web.Application(
             middlewares=[web_auth_middleware, served_canvas_middleware],
-            client_max_size=16 * 1024,
+            # Mobile sends carry up to 32 KiB of text (ADR-234); every
+            # other surface keeps its own tighter per-route body guard.
+            client_max_size=MOBILE_MAX_BODY_BYTES,
         )
         aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(self.templates_path))
 
@@ -794,6 +815,11 @@ class ChatbookWebServerMixin:
                     name="served_canvas_runtime_asset",
                 ),
             )
+        if mobile_surface_enabled():
+            # Authed mobile companion routes (ADR-234); registered — like
+            # the Canvas routes above — only while the feature gate is on,
+            # so a disabled surface 404s instead of authing a dead API.
+            routes.extend(build_mobile_routes(self))
         app.add_routes(routes)
         if self._canvas_enabled():
             self._served_canvas_gateway.mount_on_app(app, origin=self.public_url)
@@ -1175,6 +1201,25 @@ class ChatbookWebServerMixin:
         nonce = self._web_auth.issue_bootstrap()
         return f"{self.public_url.rstrip('/')}/auth/bootstrap?nonce={quote(nonce)}"
 
+    def _get_mobile_service(self) -> Any:
+        """Return the mobile companion service, constructing it on first use.
+
+        The real ``MobileChatService`` (Task 3) binds the parent-process
+        Console engine over the user data dir; its ``provider_gateway`` is
+        the injected seam value (``mobile_provider_gateway`` — ``None``
+        today: the real provider gateway construction lands with the
+        Task-6 live check; tests inject a fake service instead, so this
+        lazy path stays unexercised until then).
+        """
+        if self._mobile_service is None:
+            from .mobile_service import MobileChatService
+
+            self._mobile_service = MobileChatService(
+                data_dir=get_user_data_dir() / "mobile",
+                provider_gateway=self._mobile_provider_gateway,
+            )
+        return self._mobile_service
+
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""
 
@@ -1209,6 +1254,13 @@ class ChatbookWebServerMixin:
         await self._served_canvas_gateway.aclose()
         self._served_canvas_launches.clear()
         self._served_browser_children.clear()
+        mobile_service = getattr(self, "_mobile_service", None)
+        if mobile_service is not None:
+            try:
+                await mobile_service.shutdown()
+            except Exception:  # noqa: BLE001 - teardown must finish regardless
+                logger.exception("mobile service shutdown failed")
+            self._mobile_service = None
         self._web_auth.revoke_all()
         await super().on_shutdown(app)
 
