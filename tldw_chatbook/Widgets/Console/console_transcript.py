@@ -2014,14 +2014,32 @@ class ConsoleMarkdownMessage(Vertical):
             import webbrowser
 
             # TASK-34937: the OS spawn can cost 50-150ms of UI freeze.
+            # Follow-up: a failed spawn surfaces as a sanitized warning
+            # instead of the success toast a bare worker would show.
+            def _open_and_report() -> None:
+                opened = False
+                try:
+                    opened = bool(webbrowser.open(href))
+                except Exception:  # noqa: BLE001 - sanitized categories only
+                    opened = False
+                if opened:
+                    self.app.call_from_thread(
+                        self.notify, f"Opened in browser: {href}", timeout=4
+                    )
+                else:
+                    self.app.call_from_thread(
+                        self.notify,
+                        f"Could not open the browser for: {href}",
+                        severity="warning",
+                        timeout=6,
+                    )
+
             self.run_worker(
-                webbrowser.open,
-                href,
+                _open_and_report,
                 thread=True,
                 exit_on_error=False,
                 name="open-link",
             )
-            self.notify(f"Opened in browser: {href}", timeout=4)
         else:
             self.notify(
                 f"Link not opened (unsupported scheme): {href}",

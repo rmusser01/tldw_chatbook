@@ -3179,7 +3179,6 @@ class ChatPersistenceService:
         preserve_provider_continuation: bool = False,
         preserve_descendants: bool = False,
         clear_generation_provenance: bool = False,
-        loaded_message: Optional[Mapping[str, Any]] = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -3244,13 +3243,6 @@ class ChatPersistenceService:
                 ``terminal_receipt_id`` and committed in the same transaction.
             preserve_descendants: Skip descendant tombstones when this
                 update belongs to an authoritative bulk-history resave.
-            loaded_message: Optional caller-held row for ``message_id``
-                (e.g. the bulk-history resave already loaded the full
-                conversation). When supplied together with no expected
-                version/content guards, it replaces the per-update
-                ``get_message_by_id`` re-read; the underlying
-                ``update_message`` still re-validates the row's version
-                inside its own transaction.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -3262,19 +3254,9 @@ class ChatPersistenceService:
             ConflictError: If the message was concurrently modified or
                 soft-deleted (optimistic-lock version mismatch).
         """
-        loaded_message_is_authoritative = (
-            loaded_message is not None
-            and expected_version is None
-            and expected_roleplay_version is None
-            and expected_roleplay_template_source is None
-            and expected_message_contents is None
-        )
-        if loaded_message_is_authoritative:
-            current_message = loaded_message
-        else:
-            current_message = self.db.get_message_by_id(message_id)
-            if not current_message:
-                raise ValueError(f"Message {message_id} not found")
+        current_message = self.db.get_message_by_id(message_id)
+        if not current_message:
+            raise ValueError(f"Message {message_id} not found")
         terminal_mark_type = self._terminal_mark_type(
             terminal_receipt_id,
             terminal_outcome,
@@ -4279,211 +4261,3 @@ class ChatPersistenceService:
         """
         return self.db.get_generation_metadata_for_messages(message_ids)
 
-    def save_history(
-        self,
-        *,
-        conversation_id: str,
-        chatbot_history: List[Dict[str, Any]],
-    ) -> int:
-        """Persist (resave) a full conversation history.
-
-        Recomputes each message's payload from ``chatbot_history`` — text
-        parts plus ``data:`` URI images decoded to bytes — then updates the
-        matching existing rows in place (variant closure included) without
-        re-reading rows already held in memory.
-
-        Args:
-            conversation_id: The conversation whose messages are resaved.
-            chatbot_history: The full message list, in conversation order.
-
-        Returns:
-            The number of messages updated.
-        """
-        existing_messages = self.db.get_messages_for_conversation(
-            conversation_id,
-            limit=10000,
-            order_by_timestamp="ASC",
-        )
-        existing_by_id = {message["id"]: message for message in existing_messages}
-        existing_by_position = [
-            message
-            for message in existing_messages
-            if message.get("variant_of") is None
-        ]
-        consumed_existing_ids = set()
-
-        saved_count = 0
-        fallback_index = 0
-
-        for message_obj in chatbot_history:
-            sender = message_obj.get("role")
-            if not sender or sender == "system":
-                continue
-
-            content, image_data, image_mime_type = self._extract_message_payload(
-                message_obj
-            )
-            if not content and not image_data:
-                continue
-
-            message_id = message_obj.get("id")
-            parent_message_id = message_obj.get("parent_message_id")
-            feedback = message_obj.get("feedback")
-
-            if message_id and message_id in existing_by_id:
-                updated = self.update_message_content(
-                    message_id=message_id,
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                    update_parent="parent_message_id" in message_obj,
-                    update_feedback="feedback" in message_obj,
-                    preserve_descendants=True,
-                    loaded_message=existing_by_id[message_id],
-                )
-                if updated:
-                    # Mirror the fresh re-read the previous per-update
-                    # ``get_message_by_id`` performed, so a repeated id in
-                    # one history resaves against the post-update version.
-                    existing_by_id[message_id]["version"] += 1
-                consumed_existing_ids.add(message_id)
-            elif message_id:
-                self.create_message(
-                    conversation_id=conversation_id,
-                    sender=sender,
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    message_id=message_id,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                )
-            else:
-                while (
-                    fallback_index < len(existing_by_position)
-                    and existing_by_position[fallback_index]["id"]
-                    in consumed_existing_ids
-                ):
-                    fallback_index += 1
-
-            if not message_id and fallback_index < len(existing_by_position):
-                existing_message = existing_by_position[fallback_index]
-                updated = self.update_message_content(
-                    message_id=existing_message["id"],
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                    update_parent="parent_message_id" in message_obj,
-                    update_feedback="feedback" in message_obj,
-                    preserve_descendants=True,
-                    loaded_message=existing_by_id[existing_message["id"]],
-                )
-                if updated:
-                    existing_by_id[existing_message["id"]]["version"] += 1
-                consumed_existing_ids.add(existing_message["id"])
-                fallback_index += 1
-            elif not message_id:
-                self.create_message(
-                    conversation_id=conversation_id,
-                    sender=sender,
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                )
-
-            saved_count += 1
-
-        # Transitive variant closure over an adjacency index: one O(n) pass
-        # to build ``variant_of -> children`` plus a worklist walk, instead
-        # of rescanning every message until the retained set stops growing.
-        retained_existing_ids = set(consumed_existing_ids)
-        children_by_variant: Dict[str, List[str]] = {}
-        for existing_message in existing_messages:
-            variant_of = existing_message.get("variant_of")
-            if variant_of is not None:
-                children_by_variant.setdefault(variant_of, []).append(
-                    existing_message["id"]
-                )
-        pending_parents = [
-            message_id
-            for message_id in retained_existing_ids
-            if message_id in children_by_variant
-        ]
-        while pending_parents:
-            parent_id = pending_parents.pop()
-            for child_id in children_by_variant.get(parent_id, ()):
-                if child_id not in retained_existing_ids:
-                    retained_existing_ids.add(child_id)
-                    pending_parents.append(child_id)
-
-        for existing_message in existing_messages:
-            if existing_message["id"] not in retained_existing_ids:
-                self.db.soft_delete_message(
-                    existing_message["id"],
-                    existing_message["version"],
-                )
-
-        return saved_count
-
-    @staticmethod
-    def _extract_message_payload(
-        message_obj: Dict[str, Any],
-    ) -> Tuple[str, Optional[bytes], Optional[str]]:
-        """Flatten one history message into (text, image_bytes, image_mime).
-
-        ``data:`` URI image parts are base64-decoded; anything malformed
-        degrades to an inline error placeholder rather than raising.
-        """
-        text_content_parts: List[str] = []
-        image_data_bytes: Optional[bytes] = None
-        image_mime_type_str: Optional[str] = None
-        content_data = message_obj.get("content")
-
-        if isinstance(content_data, str):
-            text_content_parts.append(content_data)
-        elif isinstance(content_data, list):
-            for part in content_data:
-                part_type = part.get("type")
-                if part_type == "text":
-                    text_content_parts.append(part.get("text", ""))
-                elif part_type == "image_url":
-                    image_url_dict = part.get("image_url", {})
-                    url_str = image_url_dict.get("url", "")
-                    if url_str.startswith("data:") and ";base64," in url_str:
-                        try:
-                            header, b64_data = url_str.split(";base64,", 1)
-                            image_mime_type_str = (
-                                header.split("data:", 1)[1]
-                                if "data:" in header
-                                else None
-                            )
-                            if image_mime_type_str:
-                                image_data_bytes = base64.b64decode(b64_data)
-                            else:
-                                text_content_parts.append(
-                                    "<Error: Malformed image data URI in history>"
-                                )
-                        except Exception:
-                            image_data_bytes = None
-                            image_mime_type_str = None
-                            text_content_parts.append(
-                                "<Error: Failed to decode image data from history>"
-                            )
-                    elif url_str:
-                        text_content_parts.append(f"<Image URL: {url_str}>")
-        elif content_data is not None:
-            text_content_parts.append(
-                f"<Unsupported content type: {type(content_data)}>"
-            )
-
-        return (
-            "\n".join(text_content_parts).strip(),
-            image_data_bytes,
-            image_mime_type_str,
-        )
