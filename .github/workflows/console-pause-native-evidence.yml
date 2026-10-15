@@ -13,7 +13,7 @@ jobs:
     env:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      OPT36_BINDING_SHA256: '1968d198ec007965b78c6ee9d94b7ad49b54de6e159beed7f6b9863cc84d6a06'
+      OPT36_BINDING_SHA256: 'de9902e5c90d189c761b671120cb0f720b333a90ae400deebcc4a7b56d0fce47'
     steps:
       - name: Set LF checkout policy before checkout and create failure archive
         shell: pwsh
