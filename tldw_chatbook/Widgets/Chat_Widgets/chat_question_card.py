@@ -277,7 +277,14 @@ class ChatQuestionCard(Container):
         else:
             who = "The agent"
         count = len(self._questions)
-        title.update(f"{who} has {count} question{'s' if count != 1 else ''} for you:")
+        # layout=False: `#question-title` is a pinned row (height: 1 in the
+        # card's own stylesheet, width filled by its parent), so the new copy
+        # cannot move any box -- proven with a geometry-equivalence A/B in
+        # Tests/UI/test_timer_path_layout_cost.py (TASK-34992).
+        title.update(
+            f"{who} has {count} question{'s' if count != 1 else ''} for you:",
+            layout=False,
+        )
         self._sync_deadline(deadline)
         if self._rendered_request_id == self._request_id:
             return

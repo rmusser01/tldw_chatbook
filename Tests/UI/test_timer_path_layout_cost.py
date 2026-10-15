@@ -41,6 +41,7 @@ from textual.widgets import Static
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddySnapshot
 from tldw_chatbook.Persona_Buddy.preferences import PersonaBuddyPreferences
+from tldw_chatbook.Widgets.Chat_Widgets.chat_question_card import ChatQuestionCard
 from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
     PersonaBuddyWidget,
 )
@@ -462,6 +463,118 @@ async def test_persona_buddy_frame_geometry_is_content_independent() -> None:
                 "rich-text": Text("\n".join("pet" for _ in range(height))),
             },
             witnesses,
+        )
+
+
+# --------------------------------------------------------------------------
+# ChatQuestionCard -- the ask-user title row (TASK-34992)
+# --------------------------------------------------------------------------
+
+
+class _QuestionCardHost(ConsolidatedCSSApp):
+    """The bundled stack, so the card's own compiled rules are the ones
+    that decide ``#question-title``'s geometry."""
+
+    CSS_PATH = BUNDLED_STYLESHEET
+
+    def compose(self) -> ComposeResult:
+        yield ChatQuestionCard()
+
+
+@pytest.mark.asyncio
+async def test_question_title_geometry_is_content_independent() -> None:
+    """``#question-title`` is a pinned row, so its repaint may skip layout.
+
+    TASK-34992. ``ChatQuestionCard._paint`` rewrites the title on every
+    projection change the buddy modal's poll admits; the row is pinned
+    (``height: 1`` in the card's own stylesheet, width filled by the card),
+    so the write passes ``layout=False``. This is that claim's proof: no
+    content -- empty, one cell, one past the width, multi-row scrub, CJK --
+    lands different geometry with the layout pass than without it.
+    """
+    host = _QuestionCardHost()
+    async with host.run_test(size=VIEWPORT) as pilot:
+        await pilot.pause()
+        card = host.query_one(ChatQuestionCard)
+        card.display = True
+        await _settle(pilot)
+        title = card.query_one("#question-title", Static)
+        width = max(title.size.width, 1)
+        assert title.size.height == 1, (
+            "#question-title stopped being a pinned one-row box; the "
+            "layout=False write in _paint needs re-proving"
+        )
+
+        await assert_geometry_is_content_independent(
+            pilot,
+            title,
+            {
+                "empty": "",
+                "one-cell": "x",
+                "exactly-width": "y" * width,
+                "one-past-width": "y" * (width + 1),
+                "multi-row": "\n".join("row" for _ in range(5)),
+                "cjk-double-width": "漢" * width,
+                "rich-text": Text("styled title"),
+            },
+            [card, *card.children],
+        )
+
+
+# --------------------------------------------------------------------------
+# HomeScreen -- the triage header line (TASK-34991)
+# --------------------------------------------------------------------------
+
+
+class _HomeHeaderHost(ConsolidatedCSSApp):
+    """The bundled stack, so ``#home-header-line``'s real rules decide its
+    geometry: ``css/features/_home.tcss`` pins the row's height and
+    min-height to ``$ds-home-compact-row-height`` and leaves the width to
+    the parent fill."""
+
+    CSS_PATH = BUNDLED_STYLESHEET
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="home-header-line")
+
+
+@pytest.mark.asyncio
+async def test_home_header_line_geometry_is_content_independent() -> None:
+    """``#home-header-line`` is a pinned row, so its refresh may skip layout.
+
+    TASK-34991. ``HomeScreen._sync_home_triage`` rewrites the header line on
+    every adapter recompute the 3 s auto-refresh tick admits; the row's
+    height is pinned by its own rule, so the write passes ``layout=False``.
+    This is that claim's proof: no content -- empty, one cell, one past the
+    width, multi-row scrub, CJK -- lands different geometry with the layout
+    pass than without it.
+    """
+    host = _HomeHeaderHost()
+    async with host.run_test(size=VIEWPORT) as pilot:
+        await pilot.pause()
+        header = host.query_one("#home-header-line", Static)
+        header.display = True
+        await _settle(pilot)
+        width = max(header.size.width, 1)
+        assert header.size.height == 1, (
+            "#home-header-line stopped being the fixed-height row "
+            "$ds-home-compact-row-height pins; the layout=False write in "
+            "_sync_home_triage needs re-proving"
+        )
+
+        await assert_geometry_is_content_independent(
+            pilot,
+            header,
+            {
+                "empty": "",
+                "one-cell": "x",
+                "exactly-width": "y" * width,
+                "one-past-width": "y" * (width + 1),
+                "multi-row": "\n".join("row" for _ in range(5)),
+                "cjk-double-width": "漢" * width,
+                "rich-text": Text("12 notes · 3 conversations · 1 job running"),
+            },
+            [header],
         )
 
 

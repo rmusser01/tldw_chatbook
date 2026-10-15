@@ -995,7 +995,16 @@ class HomeScreen(BaseAppScreen):
                 triage, self._home_rail_preferences()
             )
             self.query_one("#home-canvas", HomeCanvas).sync_state(triage.canvas)
-            self.query_one("#home-header-line", Static).update(triage.header_line)
+            # layout=False: `#home-header-line` is a pinned row (fixed height
+            # and min-height in css/features/_home.tcss, width filled by its
+            # parent), so the refresh cannot move any box -- proven with a
+            # geometry-equivalence A/B in Tests/UI/test_timer_path_layout_
+            # cost.py (TASK-34991). The 3 s auto-refresh tick lands here on
+            # every adapter recompute, so the default would be ~0.3 whole-
+            # screen reflows per idle second on Home.
+            self.query_one("#home-header-line", Static).update(
+                triage.header_line, layout=False
+            )
         except Exception:
             pass
 
