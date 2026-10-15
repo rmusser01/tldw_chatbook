@@ -1855,11 +1855,31 @@ def create_server(
     return server
 
 
+def _print_pair_qr(server, *, echo=print) -> bool:
+    """Print a one-use pairing QR for a server about to start (ADR-233 §3.3)."""
+    if not getattr(server, "public_url", None):
+        echo("--pair skipped: [web_server] public_url is not configured.")
+        return False
+    url = server.issue_browser_bootstrap_url()
+    try:
+        import qrcode
+    except ImportError:
+        echo(f"Pair with this one-use link (install 'qrcode' for a QR): {url}")
+        return True
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(url)
+    echo("Scan with your phone to sign in (valid once, for 120 seconds):")
+    qr.print_ascii(invert=True)
+    echo(url)
+    return True
+
+
 def run_web_server(
     host: str | None = None,
     port: int | None = None,
     title: str | None = None,
     debug: bool | None = None,
+    pair: bool = False,
 ):
     """
     Run the tldw_chatbook application as a web server.
@@ -1872,6 +1892,8 @@ def run_web_server(
         port: Port number (default: from config or 8000)
         title: Page title (default: from config or "tldw chatbook")
         debug: Enable debug mode (default: from config or False)
+        pair: Print a one-use phone pairing QR before serving
+            (default: False; skipped with a notice when public_url is unset)
 
     Raises:
         ImportError: If textual-serve is not installed
@@ -1892,6 +1914,9 @@ def run_web_server(
 
     # Create and run the server
     server = create_server(host=host, port=port, title=title, debug=debug)
+
+    if pair:
+        _print_pair_qr(server)
 
     logger.info("Starting web server on {}:{}", host, port)
     logger.info("Press Ctrl+C to stop the server")
@@ -1918,11 +1943,22 @@ def main():
     parser.add_argument("--port", type=int, help="Port to bind to (default: 8000)")
     parser.add_argument("--title", type=str, help="Title for the web page")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument(
+        "--pair",
+        action="store_true",
+        help="Print a QR to pair a phone before serving",
+    )
 
     args = parser.parse_args()
 
     # Run the web server with provided arguments
-    run_web_server(host=args.host, port=args.port, title=args.title, debug=args.debug)
+    run_web_server(
+        host=args.host,
+        port=args.port,
+        title=args.title,
+        debug=args.debug,
+        pair=args.pair,
+    )
 
 
 if __name__ == "__main__":
