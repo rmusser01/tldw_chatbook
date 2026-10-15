@@ -537,13 +537,19 @@ class MobileChatService:
                 return
             logger.info("mobile send accepted session_id=%s", session_id)
             self._scan_stream(engine, session_id, active=False, flush=True)
-            self._announce_run_terminal(engine, session_id)
+        # Outside the lock: clear this turn's admission slot BEFORE the
+        # terminal event is observable. The event fan-out is synchronous
+        # (``put_nowait``), so a subscriber reacting to ``run_completed``
+        # — the phone re-enabling its composer, or a back-to-back send —
+        # runs before this task's done-callback if the announce stays
+        # inside the lock/turn lifetime, and the send is refused with
+        # "a turn is already in flight" in that window.
+        self._release_turn_slot(session_id, asyncio.current_task())
+        self._announce_run_terminal(engine, session_id)
 
     def _turn_done(self, session_id: str, task: asyncio.Task[None]) -> None:
         """Reap one finished turn task; convert its failure into events."""
-        self._state.turns_in_flight.discard(session_id)
-        if self._turn_tasks.get(session_id) is task:
-            self._turn_tasks.pop(session_id, None)
+        self._release_turn_slot(session_id, task)
         if task.cancelled():
             # Shutdown deliberately killed the turn: no terminal event, and
             # the flag dies with the closing service.
@@ -725,6 +731,13 @@ class MobileChatService:
         it observes the transition; the ``pending_terminal`` flag makes the
         two exactly-once.
         """
+        if self._turn_slot_owned(session_id):
+            # A scheduled turn still owns the admission slot: hold the
+            # announcement. The owning turn announces after releasing the
+            # slot (or its done-callback emits on the crash path), so no
+            # subscriber can observe a terminal event while sends for the
+            # session are still refused.
+            return
         if session_id not in self._state.pending_terminal:
             return
         self._state.pending_terminal.discard(session_id)
@@ -754,7 +767,17 @@ class MobileChatService:
             state = engine.controller.run_state_for(session_id)
             status = state.status
             active = status not in _SEND_ALLOWED_STATUSES
-            self._scan_stream(engine, session_id, active=active)
+            self._scan_stream(
+                engine,
+                session_id,
+                # A scheduled turn's session stays "live" for scanning even
+                # when the engine status already flipped terminal mid-return
+                # of ``submit_draft``: the silent first-observation baseline
+                # must not swallow the content the owning turn has not
+                # flushed yet (fast runs landing between ticks otherwise
+                # finish with zero deltas).
+                active=active or self._turn_slot_owned(session_id),
+            )
             previous = self._state.run_status.get(session_id, ConsoleRunStatus.IDLE)
             if status != previous:
                 was_active = previous not in _SEND_ALLOWED_STATUSES
@@ -763,9 +786,14 @@ class MobileChatService:
                     ConsoleRunStatus.FAILED,
                     ConsoleRunStatus.STOPPED,
                     ConsoleRunStatus.BLOCKED,
-                ):
-                    # Observed the transition (or its residue) before send()
-                    # returned: this emitter wins, and send()'s announce
+                ) and not self._turn_slot_owned(session_id):
+                    # Observed the transition (or its residue) before the
+                    # owning turn released its admission slot: hold the
+                    # announcement — the turn announces post-release (its
+                    # done-callback emits on the crash path) so no
+                    # subscriber reacts to a terminal event while sends
+                    # for the session are still refused. With the slot
+                    # free this emitter wins, and the turn's announce
                     # becomes a no-op via the pending flag.
                     self._state.pending_terminal.discard(session_id)
                     self._emit_terminal_events(session_id, status)
@@ -774,6 +802,27 @@ class MobileChatService:
                         "run_started", session_id, {"status": status.value}
                     )
             self._state.run_status[session_id] = status
+
+    def _release_turn_slot(
+        self, session_id: str, task: asyncio.Task[None]
+    ) -> None:
+        """Clear one finished turn's admission bookkeeping.
+
+        Identity-guarded: when a newer turn already owns the session's
+        slot (its task replaced ``_turn_tasks[session_id]``), this turn's
+        cleanup must not drop the newer turn's in-flight marker.
+        """
+        if self._turn_tasks.get(session_id) is not task:
+            return
+        self._turn_tasks.pop(session_id, None)
+        self._state.turns_in_flight.discard(session_id)
+
+    def _turn_slot_owned(self, session_id: str) -> bool:
+        """Whether a scheduled turn still owns the session's admission slot."""
+        lock = self._session_locks.get(session_id)
+        return session_id in self._state.turns_in_flight or (
+            lock is not None and lock.locked()
+        )
 
     def _scan_stream(
         self,
@@ -822,7 +871,8 @@ class MobileChatService:
                     {"message_id": track.message_id, "status": track.status},
                 )
             offset = 0
-            if track is None and not active and not flush:
+            baselined = track is None and not active and not flush
+            if baselined:
                 # First observation of an INACTIVE session: baseline the
                 # existing history silently (events are live-only).
                 offset = len(content)
@@ -836,7 +886,12 @@ class MobileChatService:
                         "text": content[offset:],
                     },
                 )
-            if flush and status in _TERMINAL_MESSAGE_STATUSES:
+            if status in _TERMINAL_MESSAGE_STATUSES and not baselined:
+                # The message was live-delivered (the send-time flush, or a
+                # pump tick on a turn that has not flushed yet): a terminal
+                # message status arrives with its content. Exactly-once with
+                # the flush: the stored track status makes the other path's
+                # transition guard a no-op.
                 self._emit(
                     "message_done",
                     session_id,

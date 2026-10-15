@@ -67,6 +67,9 @@ tls_private_key = ""
 trusted_proxy_addresses = []
 # Emergency plaintext development override; keep false for normal use.
 allow_insecure_remote_http = false
+# Phone companion surface at /m (page, REST API, stream). Set false to
+# disable the surface; its routes then 404 as unregistered.
+mobile_surface = true
 ```
 
 `font_size` controls the browser terminal text size in CSS pixels. The default
@@ -181,6 +184,41 @@ download actions sit outside that generated runtime. See the
 [Canvas user guide](../../Docs/User_Guide/console/canvas.md) and
 [V1 compatibility boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md) and
 [V2 compatibility boundary](../../Docs/Canvas/V2_RUNTIME_COMPATIBILITY.md).
+
+## Mobile companion surface
+
+`/m` is a phone-first companion page for a served Chatbook: chat and
+tool-call approvals for conversations initiated from the phone, plus reading
+of earlier mobile conversations. It is not the full served terminal. The
+mobile surface runs its own engine over its own databases under
+`<user data dir>/mobile/`, so it shows only mobile-initiated conversations;
+desktop conversations stay on the desktop surfaces.
+
+Reach it through the **Phone view** link on the login page (shown on narrow
+screens) or at `/m` directly. It uses the same browser sign-in as the rest
+of the served app. `tldw-serve --pair` prints a one-use QR that signs a
+phone in before serving (this requires `public_url`).
+
+v1 limits:
+
+- Approvals cover mobile-initiated conversations only; desktop-initiated
+  runs never wait on the phone.
+- Desktop activity reaches the phone via completion-level polling — every
+  12 seconds and again when the page regains focus — not live streaming.
+  The phone's own runs do stream over a WebSocket while it is connected.
+- There is no service worker and no offline support; with no connection the
+  page shows the last synced state.
+- REVIEWED run hooks never fire on mobile sends (`ensure_run_hooks` is not
+  wired on this path). Hooks that are unreviewed or fail their configuration
+  check still refuse sends, fail-closed.
+- Approval rounds mount only for the most recently activated session.
+- Conversations created without an explicit workspace (the default) expose
+  no local `fs_*`/`git_*` tools to the agent.
+- `[web_server] mobile_surface = true` (the default) enables the surface.
+  With `false` the page, its assets and manifest, the REST API under
+  `/api/v1/mobile/*`, and the stream all 404 as unregistered routes.
+- A web app manifest and icons are served, so a phone browser's
+  add-to-home-screen installs `/m` as a standalone app.
 
 ## Binary Distribution
 
