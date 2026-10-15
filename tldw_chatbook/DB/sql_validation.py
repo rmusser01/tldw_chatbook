@@ -431,6 +431,8 @@ VALID_COLUMNS = {
         "deleted_at",
         "client_id",
     },
+    # TASK-34903: re-synced with the live Keywords DDL (the old set listed
+    # a never-existing deleted_at and lacked the sync-replica columns).
     "Keywords": {
         "id",
         "uuid",
@@ -438,8 +440,20 @@ VALID_COLUMNS = {
         "deleted",
         "last_modified",
         "version",
-        "deleted_at",
         "client_id",
+        "prev_version",
+        "merge_parent_uuid",
+    },
+    "PromptKeywordsTable": {
+        "id",
+        "uuid",
+        "keyword",
+        "deleted",
+        "last_modified",
+        "version",
+        "client_id",
+        "prev_version",
+        "merge_parent_uuid",
     },
     # TASK-864: these four are Media's soft-delete/undelete cascade child
     # tables (Client_Media_DB_v2.py, ``child_tables`` cascade loops in
@@ -571,7 +585,7 @@ LINK_TABLE_COLUMNS = {
     "collection_keywords": {"collection_id", "keyword_id", "created_at"},
     "note_keywords": {"note_id", "keyword_id", "created_at"},
     "MediaKeywords": {"media_id", "keyword_id"},
-    "PromptKeywords": {"prompt_id", "keyword_id"},
+    "PromptKeywordLinks": {"prompt_id", "keyword_id"},
 }
 
 

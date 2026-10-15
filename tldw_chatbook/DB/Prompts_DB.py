@@ -48,6 +48,7 @@ from loguru import logger as logging
 
 #
 # Local Imports
+from .keyword_store import KeywordStore, KeywordStoreSpec
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
 from tldw_chatbook.Backup_Recovery.participants import (
@@ -334,6 +335,36 @@ class PromptsDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
+        # TASK-34903: shared keyword write path. The spec's callables close
+        # over ``self`` because normalization/canonicalization are instance
+        # methods here; conflict construction preserves the original
+        # 3-arg (message, table, identifier) shape.
+        self._keywords = KeywordStore(
+            self,
+            KeywordStoreSpec(
+                keywords_table="PromptKeywordsTable",
+                fts_table="prompt_keywords_fts",
+                link_table="PromptKeywordLinks",
+                entity_table="Prompts",
+                entity_fk="prompt_id",
+                entity_label="Prompt",
+                sync_entity="PromptKeywordsTable",
+                link_sync_entity="PromptKeywordLinks",
+                entity_uuid_key="prompt_uuid",
+                normalize_keyword=self._normalize_keyword,
+                canonicalize_keywords=self._canonicalize_prompt_keywords,
+                make_input_error=lambda message: InputError(message),
+                make_database_error=lambda message: DatabaseError(message),
+                make_conflict=lambda site, kw_id: ConflictError(
+                    "Failed to undelete keyword due to version mismatch or it was not found."
+                    if site == "undelete"
+                    else "Failed to soft-delete keyword due to a version mismatch.",
+                    "PromptKeywordsTable",
+                    kw_id,
+                ),
+                unlink_all_links=True,
+            ),
+        )
 
         logging.info(
             f"Initializing PromptsDatabase object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -1323,30 +1354,13 @@ class PromptsDatabase:
             logging.error("Prompt FTS delete failed category={}", type(e).__name__)
             raise DatabaseError("Failed to delete Prompt FTS.") from None
 
-    def _update_fts_prompt_keyword(
-        self, conn: sqlite3.Connection, keyword_id: int, keyword: str
-    ):
-        try:
-            conn.execute(
-                "INSERT OR REPLACE INTO prompt_keywords_fts (rowid, keyword) VALUES (?, ?)",
-                (keyword_id, keyword),
-            )
-        except sqlite3.Error as e:
-            logging.error(
-                "Prompt keyword FTS update failed category={}", type(e).__name__
-            )
-            raise DatabaseError("Failed to update Prompt keyword FTS.") from None
+    def _update_fts_prompt_keyword(self, conn, keyword_id: int, keyword: str) -> None:
+        """Delegate to the shared keyword store (task-34903)."""
+        self._keywords.update_fts(conn, keyword_id, keyword)
 
-    def _delete_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int):
-        try:
-            conn.execute(
-                "DELETE FROM prompt_keywords_fts WHERE rowid = ?", (keyword_id,)
-            )
-        except sqlite3.Error as e:
-            logging.error(
-                "Prompt keyword FTS delete failed category={}", type(e).__name__
-            )
-            raise DatabaseError("Failed to delete Prompt keyword FTS.") from None
+    def _delete_fts_prompt_keyword(self, conn, keyword_id: int) -> None:
+        """Delegate to the shared keyword store (task-34903)."""
+        self._keywords.delete_fts(conn, keyword_id)
 
     # --- Public Mutating Methods ---
     def add_keyword(self, keyword_text: str) -> Optional[int]:
@@ -1365,130 +1379,12 @@ class PromptsDatabase:
     def _add_keyword_full(
         self, keyword_text: str
     ) -> Tuple[Optional[int], Optional[str]]:
-        if not keyword_text or not keyword_text.strip():
-            raise InputError("Keyword cannot be empty.")
-        normalized_keyword = self._normalize_keyword(keyword_text)
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
-
-        try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, uuid, deleted, version FROM PromptKeywordsTable WHERE keyword = ?",
-                    (normalized_keyword,),
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    kw_id, kw_uuid, is_deleted, current_version = (
-                        existing["id"],
-                        existing["uuid"],
-                        existing["deleted"],
-                        existing["version"],
-                    )
-                    if is_deleted:  # Undelete
-                        new_version = current_version + 1
-                        cursor.execute(
-                            "UPDATE PromptKeywordsTable SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                            (
-                                current_time,
-                                new_version,
-                                client_id,
-                                kw_id,
-                                current_version,
-                            ),
-                        )
-                        if cursor.rowcount == 0:
-                            raise ConflictError(
-                                "Failed to undelete keyword due to version mismatch or it was not found.",
-                                "PromptKeywordsTable",
-                                kw_id,
-                            )
-                        cursor.execute(
-                            "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,)
-                        )
-                        payload = dict(cursor.fetchone())
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordsTable",
-                            kw_uuid,
-                            "update",
-                            new_version,
-                            payload,
-                        )
-                        self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
-                        return kw_id, kw_uuid
-                    else:  # Already active, just return its ID and UUID
-                        logger.debug(
-                            "Prompt keyword reused operation=add_keyword "
-                            "category=existing"
-                        )
-                        return kw_id, kw_uuid
-                else:  # New keyword
-                    new_uuid = self._generate_uuid()
-                    new_version = 1
-                    cursor.execute(
-                        "INSERT INTO PromptKeywordsTable (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)",
-                        (
-                            normalized_keyword,
-                            new_uuid,
-                            current_time,
-                            new_version,
-                            client_id,
-                        ),
-                    )
-                    kw_id = cursor.lastrowid
-                    if not kw_id:
-                        raise DatabaseError("Failed to get ID for new prompt keyword.")
-                    cursor.execute(
-                        "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,)
-                    )
-                    payload = dict(cursor.fetchone())
-                    self._log_sync_event(
-                        conn,
-                        "PromptKeywordsTable",
-                        new_uuid,
-                        "create",
-                        new_version,
-                        payload,
-                    )
-                    self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
-                    return kw_id, new_uuid
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as exc:
-            logger.error(
-                "Prompt keyword write failed operation=add_keyword category={}",
-                type(exc).__name__,
-            )
-            if isinstance(exc, (InputError, ConflictError, DatabaseError)):
-                raise
-            raise DatabaseError("Failed to add or update Prompt keyword.") from None
+        """Add (or undelete) a keyword; see KeywordStore.add_keyword_full."""
+        return self._keywords.add_keyword_full(keyword_text)
 
     def get_active_keyword_by_text(self, keyword_text: str) -> Optional[Dict]:
-        """
-        Fetches an active (not deleted) keyword by its exact normalized text.
-
-        Args:
-            keyword_text: The keyword text to search for.
-
-        Returns:
-            A dictionary of the keyword's data if found and active, else None.
-        """
-        if not keyword_text or not keyword_text.strip():
-            return None  # Or raise InputError if strictness is preferred here
-        normalized_keyword = self._normalize_keyword(keyword_text)
-        query = "SELECT id, uuid, keyword, last_modified, version, client_id FROM PromptKeywordsTable WHERE keyword = ? AND deleted = 0"
-        try:
-            cursor = self.execute_query(query, (normalized_keyword,))
-            result = cursor.fetchone()
-            return dict(result) if result else None
-        except (DatabaseError, sqlite3.Error) as e:
-            logger.error(
-                f"Error fetching active keyword by text '{normalized_keyword}': {e}"
-            )
-            # Depending on desired strictness, could raise or return None
-            # For a simple check, returning None on error is acceptable if the next step handles it.
-            return None
+        """Fetch an active keyword by exact normalized text; see KeywordStore."""
+        return self._keywords.get_active_keyword_by_text(keyword_text)
 
     def add_prompt(
         self,
@@ -1838,125 +1734,11 @@ class PromptsDatabase:
             else:
                 raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
 
-    def update_keywords_for_prompt(self, prompt_id: int, keywords_list: List[str]):
-        normalized_new_keywords = self._canonicalize_prompt_keywords(keywords_list)
-
-        try:
-            # TASK-32801.2: same shape as the Media P0 (TASK-32801.1). This
-            # said it is 'called within an existing transaction' and took the
-            # raw connection, but the connection keeps the legacy isolation
-            # level, so a caller that opened none left an implicit transaction
-            # that nothing committed -- and `transaction()` then borrows it and
-            # skips its own commit, so every later write on that thread is
-            # rolled back at close. `Prompts_Interop.update_keywords_for_prompt`
-            # is exactly such a wrapper; it has no caller today, which made this
-            # a trap rather than a live loss. `transaction()` joins an open
-            # outer transaction, so `add_prompt` and friends are unaffected.
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-
-                # Get prompt_uuid for logging
-                cursor.execute(
-                    "SELECT uuid FROM Prompts WHERE id = ? AND deleted = 0", (prompt_id,)
-                )
-                prompt_info = cursor.fetchone()
-                if not prompt_info:
-                    raise InputError(
-                        f"Cannot update keywords: Prompt ID {prompt_id} not found or deleted."
-                    )
-                prompt_uuid = prompt_info["uuid"]
-
-                # Get current keywords for the prompt
-                cursor.execute(
-                    """
-                               SELECT pkl.keyword_id, pkw.keyword, pkw.uuid as keyword_uuid
-                               FROM PromptKeywordLinks pkl
-                                        JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
-                               WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                               """,
-                    (prompt_id,),
-                )
-                current_keyword_links = {
-                    row["keyword_id"]: {"text": row["keyword"], "uuid": row["keyword_uuid"]}
-                    for row in cursor.fetchall()
-                }
-                current_keyword_ids = set(current_keyword_links.keys())
-
-                target_keyword_data: Dict[
-                    int, Dict[str, str]
-                ] = {}  # {keyword_id: {'text': text, 'uuid': uuid}}
-                if normalized_new_keywords:
-                    for kw_text in normalized_new_keywords:
-                        # _add_keyword_full is an instance method, it will use the existing transaction
-                        kw_id, kw_uuid = self._add_keyword_full(kw_text)
-                        if kw_id and kw_uuid:
-                            target_keyword_data[kw_id] = {"text": kw_text, "uuid": kw_uuid}
-                        else:
-                            # This should not happen if add_keyword is robust
-                            raise DatabaseError(
-                                f"Failed to get/add keyword '{kw_text}' during prompt keyword update."
-                            )
-
-                target_keyword_ids = set(target_keyword_data.keys())
-
-                ids_to_add = target_keyword_ids - current_keyword_ids
-                ids_to_remove = current_keyword_ids - target_keyword_ids
-                link_sync_version = 1  # For link/unlink operations, version is on the junction table itself if it had one, or just 1 for the event
-
-                if ids_to_remove:
-                    remove_placeholders = ",".join("?" * len(ids_to_remove))
-                    cursor.execute(
-                        f"DELETE FROM PromptKeywordLinks WHERE prompt_id = ? AND keyword_id IN ({remove_placeholders})",
-                        (prompt_id, *list(ids_to_remove)),
-                    )
-                    for removed_id in ids_to_remove:
-                        keyword_uuid = current_keyword_links[removed_id]["uuid"]
-                        link_composite_uuid = (
-                            f"{prompt_uuid}_{keyword_uuid}"  # Composite UUID for the link
-                        )
-                        payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "unlink",
-                            link_sync_version,
-                            payload,
-                        )
-
-                if ids_to_add:
-                    insert_params = [(prompt_id, kid) for kid in ids_to_add]
-                    cursor.executemany(
-                        "INSERT OR IGNORE INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)",
-                        insert_params,
-                    )
-                    for added_id in ids_to_add:
-                        keyword_uuid = target_keyword_data[added_id]["uuid"]
-                        link_composite_uuid = f"{prompt_uuid}_{keyword_uuid}"
-                        payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "link",
-                            link_sync_version,
-                            payload,
-                        )
-
-                if ids_to_add or ids_to_remove:
-                    logger.debug(
-                        "Prompt keyword membership updated added={} removed={}",
-                        len(ids_to_add),
-                        len(ids_to_remove),
-                    )
-        except (InputError, DatabaseError, sqlite3.Error) as exc:
-            logger.error(
-                "Prompt keyword membership update failed category={}",
-                type(exc).__name__,
-            )
-            if isinstance(exc, (InputError, DatabaseError)):
-                raise
-            raise DatabaseError("Keyword update failed.") from None
+    def update_keywords_for_prompt(
+        self, prompt_id: int, keywords_list: List[str]
+    ) -> None:
+        """Synchronize the Prompt row's keyword links; see KeywordStore."""
+        self._keywords.update_keywords_for_entity(prompt_id, keywords_list)
 
     def update_prompt_by_id(
         self,
@@ -2855,111 +2637,10 @@ class PromptsDatabase:
         return restored_payload
 
     def soft_delete_keyword(self, keyword_text: str) -> bool:
+        """Soft-delete a keyword and unlink it; see KeywordStore."""
         if not keyword_text or not keyword_text.strip():
             raise InputError("Keyword to delete cannot be empty.")
-        normalized_keyword = self._normalize_keyword(keyword_text)
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
-
-        try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, uuid, version FROM PromptKeywordsTable WHERE keyword = ? AND deleted = 0",
-                    (normalized_keyword,),
-                )
-                kw_info = cursor.fetchone()
-                if not kw_info:
-                    logger.warning(
-                        f"Prompt keyword '{normalized_keyword}' not found or already deleted."
-                    )
-                    return False
-
-                kw_id, kw_uuid, current_version = (
-                    kw_info["id"],
-                    kw_info["uuid"],
-                    kw_info["version"],
-                )
-                new_version = current_version + 1
-
-                cursor.execute(
-                    "UPDATE PromptKeywordsTable SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                    (current_time, new_version, client_id, kw_id, current_version),
-                )
-                if cursor.rowcount == 0:
-                    raise ConflictError(
-                        "Failed to soft-delete keyword due to a version mismatch.",
-                        "PromptKeywordsTable",
-                        kw_id,
-                    )
-
-                delete_payload = {
-                    "uuid": kw_uuid,
-                    "last_modified": current_time,
-                    "version": new_version,
-                    "client_id": client_id,
-                    "deleted": 1,
-                }
-                self._log_sync_event(
-                    conn,
-                    "PromptKeywordsTable",
-                    kw_uuid,
-                    "delete",
-                    new_version,
-                    delete_payload,
-                )
-                self._delete_fts_prompt_keyword(conn, kw_id)
-
-                # Explicitly unlink from prompts and log events
-                cursor.execute(
-                    """
-                               SELECT p.uuid AS prompt_uuid
-                               FROM PromptKeywordLinks pkl
-                                        JOIN Prompts p ON pkl.prompt_id = p.id
-                               WHERE pkl.keyword_id = ? AND p.deleted = 0
-                               """,
-                    (kw_id,),
-                )
-                prompts_to_unlink = cursor.fetchall()
-
-                if prompts_to_unlink:
-                    # FK ON DELETE CASCADE will handle actual deletion from PromptKeywordLinks.
-                    # Log these unlinks.
-                    cursor.execute(
-                        "DELETE FROM PromptKeywordLinks WHERE keyword_id = ?", (kw_id,)
-                    )
-                    link_sync_version = 1
-                    for p_to_unlink in prompts_to_unlink:
-                        prompt_uuid_val = p_to_unlink["prompt_uuid"]
-                        link_composite_uuid = f"{prompt_uuid_val}_{kw_uuid}"
-                        unlink_payload = {
-                            "prompt_uuid": prompt_uuid_val,
-                            "keyword_uuid": kw_uuid,
-                        }
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "unlink",
-                            link_sync_version,
-                            unlink_payload,
-                        )
-                    logging.debug(
-                        f"Unlinked keyword ID {kw_id} from {len(prompts_to_unlink)} prompts during soft delete."
-                    )
-
-                logger.info(
-                    f"Soft deleted prompt keyword '{normalized_keyword}' (ID: {kw_id}, UUID: {kw_uuid})."
-                )
-                return True
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error soft deleting prompt keyword '{keyword_text}': {e}"
-            )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed to soft delete prompt keyword: {e}") from e
+        return self._keywords.soft_delete_keyword(keyword_text)
 
     # --- Read Methods ---
     def get_all_active_prompt_ids(self) -> List[int]:
@@ -3975,8 +3656,7 @@ class PromptsDatabase:
             id_params: list[Any] = []
             if any(field in text_search_fields for field in search_fields):
                 id_legs.append(
-                    "p.id IN (SELECT rowid FROM prompts_fts "
-                    "WHERE prompts_fts MATCH ?)"
+                    "p.id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
                 )
                 id_params.append(effective_match_query)
             if "keywords" in search_fields:
@@ -4015,9 +3695,7 @@ class PromptsDatabase:
                     self.get_connection(), [res["id"] for res in results_list]
                 )
                 for res_dict in results_list:
-                    res_dict["keywords"] = keywords_by_prompt.get(
-                        res_dict["id"], []
-                    )
+                    res_dict["keywords"] = keywords_by_prompt.get(res_dict["id"], [])
 
             # Log success metrics
             duration = time.time() - start_time
@@ -4670,38 +4348,6 @@ class PromptsDatabase:
             Dictionary with prompt data and keywords, or None if not found
         """
         return self.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
-
-    def _add_keyword_with_retry(
-        self, keyword_text: str
-    ) -> Tuple[Optional[int], Optional[str]]:
-        """
-        Internal method to add a keyword with retry logic for concurrent access.
-
-        Args:
-            keyword_text: The keyword text to add
-
-        Returns:
-            Tuple of (keyword_id, keyword_uuid)
-        """
-        max_retries = 5
-        retry_delay = 0.1  # Start with 100ms
-
-        for attempt in range(max_retries):
-            try:
-                return self._add_keyword_full(keyword_text)
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
-                    logger.warning(
-                        f"Database locked on add_keyword attempt {attempt + 1}, retrying in {retry_delay}s"
-                    )
-                    import time
-
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    raise
-            except Exception:
-                raise
 
     def execute_query_with_retry(
         self, query: str, params: tuple = None, *, commit: bool = False

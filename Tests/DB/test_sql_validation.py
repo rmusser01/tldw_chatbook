@@ -307,7 +307,10 @@ class TestValidateLinkTable:
         )
         assert validate_link_table("note_keywords", "note_id", "keyword_id") is True
         assert validate_link_table("MediaKeywords", "media_id", "keyword_id") is True
-        assert validate_link_table("PromptKeywords", "prompt_id", "keyword_id") is True
+        # TASK-34903: renamed to the live junction table's actual name.
+        assert (
+            validate_link_table("PromptKeywordLinks", "prompt_id", "keyword_id") is True
+        )
 
     def test_invalid_link_tables(self):
         """Test invalid link table configurations."""
