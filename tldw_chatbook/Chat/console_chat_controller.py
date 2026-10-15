@@ -47,9 +47,7 @@ from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
     selected_approval_key,
 )
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-    TOOL_DESCRIPTION_CAPTURE_CAP,
-)
+from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteRunSnapshot,
     append_character_emote_prompt_instruction,
