@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="chatbook-csrf" content="__CHATBOOK_CSRF__">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1c1f27">
+  <title>Chatbook</title>
+  <link rel="manifest" href="/static/mobile/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/mobile/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/mobile/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/mobile/app.css">
+</head>
+<body>
+  <header class="app-header" id="app-header">
+    <button type="button" id="back-button" class="header-button" hidden>Back</button>
+    <strong class="brand">Chatbook</strong>
+    <nav class="header-actions">
+      <button type="button" id="approvals-button" class="header-button" aria-label="Approvals">
+        Approvals <span id="approvals-badge" class="badge" hidden>0</span>
+      </button>
+      <a href="/" class="header-link">Open terminal</a>
+      <a href="/auth/devices" class="header-link">Sign out</a>
+    </nav>
+  </header>
+
+  <main id="app-main">
+    <p id="status-line" class="status-line" role="status" aria-live="polite" hidden></p>
+
+    <section id="view-list" class="view" aria-label="Conversations">
+      <div class="list-actions">
+        <button type="button" id="new-chat-button" class="primary-button">+ New chat</button>
+      </div>
+      <form id="new-chat-form" class="new-chat-form" hidden>
+        <input type="text" id="new-chat-title" maxlength="120" autocomplete="off"
+               placeholder="Title for the new chat" aria-label="New chat title">
+        <button type="submit" class="primary-button">Create</button>
+      </form>
+      <ul id="session-list" class="session-list" aria-label="Your conversations"></ul>
+      <p id="sessions-empty" class="empty-note" hidden>No conversations yet — start one.</p>
+    </section>
+
+    <section id="view-chat" class="view" aria-label="Conversation" hidden>
+      <h2 id="chat-title" class="chat-title"></h2>
+      <ul id="transcript" class="transcript" aria-label="Messages"></ul>
+      <p id="chat-empty" class="empty-note" hidden>No messages yet.</p>
+      <form id="composer" class="composer" autocomplete="off">
+        <label for="composer-input" class="visually-hidden">Message</label>
+        <textarea id="composer-input" rows="1" maxlength="32768"
+                  placeholder="Message Chatbook"></textarea>
+        <button type="submit" id="send-button" class="primary-button">Send</button>
+        <button type="button" id="stop-button" class="danger-button" hidden>Stop</button>
+      </form>
+    </section>
+
+    <section id="view-approvals" class="view" aria-label="Approvals inbox" hidden>
+      <ul id="approvals-list" class="approvals-list"></ul>
+      <p id="approvals-empty" class="empty-note" hidden>No pending approvals.</p>
+    </section>
+  </main>
+
+  <script src="/static/mobile/app.js" defer></script>
+</body>
+</html>

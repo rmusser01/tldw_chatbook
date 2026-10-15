@@ -1,0 +1,350 @@
+/* Chatbook mobile companion — /m (ADR-234 Phase 1b).
+   Phone-first single-column layout with notch safe areas; dark surface. */
+
+:root {
+  --bg: #14161c;
+  --surface: #1c1f27;
+  --surface-raised: #242833;
+  --text: #e8eaf0;
+  --text-dim: #9aa0b0;
+  --accent: #5e52e0;
+  --accent-strong: #786ef0;
+  --danger: #d05050;
+  --user-bubble: #2c3145;
+  --assistant-bubble: #242833;
+  --border: #303544;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+}
+
+/* Notch / home-indicator safe areas (viewport-fit=cover). */
+.app-header {
+  padding-top: calc(8px + env(safe-area-inset-top));
+  padding-left: calc(12px + env(safe-area-inset-left));
+  padding-right: calc(12px + env(safe-area-inset-right));
+}
+
+.composer {
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+#app-main {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-size: 17px;
+}
+
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.header-link {
+  color: var(--accent-strong);
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.header-link:visited {
+  color: var(--accent-strong);
+}
+
+.header-button {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 14px;
+  padding: 6px 10px;
+}
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  margin-left: 2px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  text-align: center;
+}
+
+#app-main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding-top: 10px;
+}
+
+.status-line {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #3a2b2b;
+  border: 1px solid var(--danger);
+  color: #f0c9c9;
+  font-size: 14px;
+}
+
+.view {
+  padding: 0 12px;
+}
+
+.list-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.new-chat-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.new-chat-form input {
+  flex: 1;
+}
+
+input[type="text"],
+textarea {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font: inherit;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  outline: 1px solid var(--accent);
+}
+
+.primary-button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  font-size: 15px;
+  padding: 10px 14px;
+}
+
+.primary-button:disabled {
+  opacity: 0.45;
+}
+
+.danger-button {
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  font-size: 15px;
+  padding: 10px 14px;
+}
+
+.session-list,
+.transcript,
+.approvals-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.session-list li:active {
+  background: var(--surface-raised);
+}
+
+.session-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-badge {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent-strong);
+  border: 1px solid var(--accent-strong);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+
+.chat-title {
+  margin: 4px 2px 10px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transcript li {
+  max-width: 88%;
+  border-radius: 14px;
+  padding: 9px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.transcript li.role-user {
+  align-self: flex-end;
+  background: var(--user-bubble);
+  border-bottom-right-radius: 4px;
+}
+
+.transcript li.role-assistant {
+  align-self: flex-start;
+  background: var(--assistant-bubble);
+  border-bottom-left-radius: 4px;
+}
+
+.transcript li.role-assistant.status-failed,
+.transcript li.role-assistant.status-stopped {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.transcript li.role-tool {
+  align-self: flex-start;
+  max-width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 4px 10px;
+}
+
+.composer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  background: var(--bg);
+  padding-top: 8px;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  max-height: 160px;
+  min-height: 42px;
+}
+
+.empty-note {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 24px 0;
+}
+
+.approvals-list li {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.approval-call {
+  margin-bottom: 10px;
+}
+
+.approval-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.approval-args {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin: 6px 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.approval-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.option-button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  padding: 8px 12px;
+}
+
+.option-button.option-deny {
+  background: var(--danger);
+}
+
+.approval-note {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 6px 0 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
