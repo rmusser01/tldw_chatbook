@@ -44,6 +44,14 @@ This document describes the agent execution loop: the pure control loop in `Agen
 10. **Dispatch** per call: cancel → approval-revoked + `RUN_CANCELLED`; loop detection (repeated identical calls, period-aware) short-circuits; special in-loop tools (spawn, fleet, fork/new-chat, find/load tools, skill tools, run-log tools) execute directly; everything else goes through `deps.invoke_tool`.
 11. **Result capture**: the `tool_call` run-log record is written **before** dispatch (a crash still leaves a durable trace); the `tool_result` after; content is capped with a recovery pointer into the run log. Consecutive same-tool failures (≥3) → `RUN_STUCK`.
 
+Local file-worker execution errors (including crashes, timeouts, spawn/protocol
+and cleanup failures) are ordinary failures in both `LocalToolProvider` and
+`VirtualCliProvider`, so the same-tool limit applies even when paths change.
+Without a conclusive worker receipt their effects remain `uncertain`, which
+stops automatic goals immediately rather than permitting another write.
+Workspace-root and scratch-authority refusals remain blocked; only authoritative
+permission denials count toward the separate denial circuit breaker (ADR-154).
+
 ## Tool execution bounds
 
 `AgentService._call_with_timeout` runs each call on a daemon thread with chunked joins; on timeout the worker is **abandoned** — it may still complete side effects, so retrying an abandoned call risks running it twice (documented trade-off). The per-call ceiling is clamped to the run's remaining wall budget; a `None` ceiling means "do not dispatch" rather than start-and-abandon. Tools with `ToolExecutionPolicy.DEFINITIVE_AFTER_START` skip the timeout wrapper entirely (cancel-before-start, scrubbed result, terminal notify); the default policy is `BOUNDED_ABANDONABLE`. ADR-067: approval waits re-arm the deadline while human input is pending — waiting on a human never consumes tool budget.

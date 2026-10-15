@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     TODO_UPDATE_DELETE_RULE,
     LocalApprovalEffect,
     LocalToolExposure,
@@ -591,17 +592,18 @@ def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
     assert executor.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    ("code", "expected"),
+    ("code", "expected", "outcome"),
     (
-        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
-        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
+        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL, None),
     ),
 )
 def test_local_executor_boundary_failures_map_to_pinned_refusals(
-    tmp_path, code, expected
+    tmp_path, code, expected, outcome
 ):
     executor = RecordingWorkspaceExecutor(error=code)
 
@@ -610,11 +612,12 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
         workspace_executor=executor,
     ).invoke("local:fs_list", {"path": "."})
 
-    assert not result.ok and result.outcome == "blocked"
+    assert not result.ok and result.outcome == outcome
     assert result.error == expected
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("code", "expected_reason", "expected_error", "expected_outcome"),
     (
@@ -627,44 +630,44 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
         (
             "containment_unavailable",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "spawn_failed",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "cleanup_unproven",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_timed_out",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_crashed",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_failure",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "protocol_failure",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "invalid_request",
@@ -4651,12 +4654,13 @@ def test_local_stamped_answer_scope_and_clear(tmp_path, unanswered, expected):
     assert provider.invoke("local:fs_list", {"path": "."}).approval_decision is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "failure,expected",
     [
         ("tool_failure", "approved"),
         ("root_pin_failed", None),
-        ("protocol_failure", None),
+        ("protocol_failure", "approved"),
     ],
 )
 def test_local_approved_execution_failure_preserves_only_valid_fact(

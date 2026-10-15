@@ -707,7 +707,9 @@ def _workspace_execution_error_result(
     if reason is LocalToolInvocationReason.ROOT_CHANGED:
         return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
     if reason is LocalToolInvocationReason.AUTHORITY_UNAVAILABLE:
-        return ToolResult.blocked(LOCAL_WORKER_FAILED_REFUSAL)
+        return ToolResult(
+            ok=False, error=LOCAL_WORKER_FAILED_REFUSAL, dispatch_state="uncertain"
+        )
     text = redact_root_locator(str(error), redaction_root)
     return ToolResult(ok=False, error=text[:_MAX_ERROR_CHARS])
 

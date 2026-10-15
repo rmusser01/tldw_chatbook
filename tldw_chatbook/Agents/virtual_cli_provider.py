@@ -574,7 +574,11 @@ class VirtualCliProvider:
                 if exc.code == "root_pin_failed":
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
                 if exc.code not in {"invalid_request", "tool_failure"}:
-                    return ToolResult.blocked(LOCAL_WORKER_FAILED_REFUSAL)
+                    return ToolResult(
+                        ok=False,
+                        error=LOCAL_WORKER_FAILED_REFUSAL,
+                        dispatch_state="uncertain",
+                    )
                 error = redact_root_locator(
                     str(exc),
                     self._error_redaction_root(authority),
