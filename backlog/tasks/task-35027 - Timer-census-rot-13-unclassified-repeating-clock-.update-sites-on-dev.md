@@ -1,5 +1,5 @@
 ---
-id: TASK-34992
+id: TASK-35027
 title: 'Timer census rot: 13 unclassified repeating-clock .update() sites on dev'
 status: To Do
 created_date: 2026-10-14 20:03
@@ -34,3 +34,7 @@ Tests/Architecture/test_timer_path_static_update_inventory.py is deterministical
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from task-34992 to TASK-35027 (2026-10-15): dev minted the same id after this branch cut; per the owner rule (TASK-19601) the dev-side arrival keeps the id on merge.

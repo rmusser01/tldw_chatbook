@@ -1,5 +1,5 @@
 ---
-id: TASK-34991
+id: TASK-35026
 title: UI-perf review follow-up burn-down batch
 status: Done
 assignee: []
@@ -37,3 +37,7 @@ The independent review of PR #3083 documented follow-ups that did not belong in 
 - Spawn notifiers: the clipboard and link-open thread workers now report through `call_from_thread` — sanitized error/warning notices naming only the exception class — instead of swallowing runtime failures under the success toast. 4 new tests pin both paths; transcript suite 17/17. The misleading collections comment is corrected.
 - The Watchlists revisit cache was attempted under its own task (34929→34967) and REVERTED again: the read-cache broke the P0 load/mount ordering contract (panes mounting after a cached instant load stay in LOADING). Task reopened with the finding; see its notes. Dev's duplicate 348xx task IDs were verified NOT to exist on current dev — no action needed.
 - ADR required: no — four bounded fixes plus one cache, each inside existing contracts.
+
+## Renumbering provenance
+
+Renumbered from task-34991 to TASK-35026 (2026-10-15): dev minted the same id after this branch cut; per the owner rule (TASK-19601) the dev-side arrival keeps the id on merge.
