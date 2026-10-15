@@ -42,6 +42,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     _register_core_connection,
 )
 from .private_sqlite import connect_private_sqlite
+from .transaction_helpers import flat_store_transaction
 
 
 class LibraryIngestJobLinkConflictError(RuntimeError):
@@ -63,30 +64,16 @@ class LibraryIngestJobsDB(BaseDB):
     @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Open a write transaction that rolls back on failure.
+        """Yield a write connection inside an immediate transaction.
 
-        The explicit BEGIN below is the ONLY transaction owner on this
-        store's autocommit connection (task-22224, module docstring): every
-        multi-statement write must run inside this manager, because outside
-        it each statement commits individually.
+        Uses ``BEGIN IMMEDIATE`` so the write lock is acquired up front;
+        rolls back on any error or interruption (``BaseException`` --
+        TASK-32801.5) and commits on clean exit. Delegates to the shared
+        flat-store helper (task-34905); nesting this inside another
+        transaction on the same thread raises, as before.
         """
-        conn = self._get_connection()
-        conn.execute("BEGIN")
-        try:
+        with flat_store_transaction(self._get_connection(), immediate=False) as conn:
             yield conn
-        # TASK-32801.5: BaseException, not Exception. A CancelledError or
-        # KeyboardInterrupt raised inside the block is not an Exception, so
-        # the rollback used to be skipped and the transaction stayed open --
-        # and because `transaction()` treats an already-open transaction as
-        # nested, every later write on that thread then rode it uncommitted
-        # and was lost at close. Proven on Prompts_DB: a write after an
-        # escaped KeyboardInterrupt did not survive close+reopen.
-        # Library_Collections_DB and Workflows_DB already do this.
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
 
     @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
@@ -130,7 +117,9 @@ class LibraryIngestJobsDB(BaseDB):
                     self._conn.close()
                     self._conn = None
                 except Exception:
-                    logger.opt(exception=True).debug("LibraryIngestJobsDB: close failed")
+                    logger.opt(exception=True).debug(
+                        "LibraryIngestJobsDB: close failed"
+                    )
 
     def _migrate_v1_to_v2(self) -> None:
         """Add JSON columns for ingest options, progress, error detail, and content hash.

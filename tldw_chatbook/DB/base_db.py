@@ -99,6 +99,7 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
     its executor callback. Existing connections and memory/custom owners retain
     their original lifetimes.
     """
+
     def invoke() -> _CallResult:
         from .AgentRuns_DB import AgentRunsDB
         from .ChaChaNotes_DB import CharactersRAGDB
@@ -323,9 +324,9 @@ class SQLiteConnectionQuiescenceRegistry:
             return len(self._connections)
 
 
-_QUIESCENCE_REGISTRIES: WeakValueDictionary[
-    str, SQLiteConnectionQuiescenceRegistry
-] = WeakValueDictionary()
+_QUIESCENCE_REGISTRIES: WeakValueDictionary[str, SQLiteConnectionQuiescenceRegistry] = (
+    WeakValueDictionary()
+)
 _QUIESCENCE_REGISTRIES_LOCK = threading.Lock()
 
 
@@ -600,7 +601,9 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             try:
                 result = run(*args)
             except sqlite3.DatabaseError as error:
-                refused = getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_AUTH
+                refused = (
+                    getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_AUTH
+                )
                 raise
             finally:
                 connection._observe_transaction_state(
@@ -742,6 +745,7 @@ def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
     if issubclass(_QuiescentSQLiteCursor, factory):
         return _QuiescentSQLiteCursor
     return type(f"_Quiescent{factory.__name__}", (_QuiescentSQLiteCursor, factory), {})
+
 
 class _SemanticMutationAuthorization:
     """Connection-local authorization read by SQLite mutation triggers.
@@ -1032,8 +1036,7 @@ class BaseDB(ABC):
                 ``check_same_thread=False``). The connection is still
                 opened HERE, under this module's ``db.base`` owner.
         """
-        conn = connect_private_sqlite(
-            "db.base", self.db_path_str, **connect_kwargs)
+        conn = connect_private_sqlite("db.base", self.db_path_str, **connect_kwargs)
         conn.row_factory = sqlite3.Row
         return conn
 

@@ -1153,7 +1153,10 @@ class SubscriptionsDB(BaseDB):
     def _migrate_from_v2_to_v3(self):
         """Persist conservative URL lineage before any restored source is fetched."""
         with self.transaction(immediate=True) as conn:
-            migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
+            migration = (
+                Path(__file__).with_name("migrations")
+                / "subscriptions_v2_to_v3_url_provenance.sql"
+            )
             pending = ""
             for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
                 pending += line

@@ -205,7 +205,6 @@ class RAGIndexingDB(SQLiteStoreKernel):
         # connection holds no read snapshot and does not block checkpointing.
         return conn
 
-
     def _initialize_schema(self):
         """Initialize the database schema."""
         schema = """
@@ -558,9 +557,7 @@ class RAGIndexingDB(SQLiteStoreKernel):
         try:
             with self.connection() as conn:
                 for start in range(0, len(unique_hashes), EMBEDDING_CACHE_LOOKUP_CHUNK):
-                    chunk = unique_hashes[
-                        start : start + EMBEDDING_CACHE_LOOKUP_CHUNK
-                    ]
+                    chunk = unique_hashes[start : start + EMBEDDING_CACHE_LOOKUP_CHUNK]
                     placeholders = ",".join("?" * len(chunk))
                     cursor = conn.execute(
                         "SELECT content_hash, vector FROM embedding_cache "

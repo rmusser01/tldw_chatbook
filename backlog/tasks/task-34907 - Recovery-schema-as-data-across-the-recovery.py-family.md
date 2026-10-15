@@ -1,10 +1,13 @@
 ---
 id: TASK-34907
 title: Recovery schema-as-data across the recovery.py family
-status: To Do
+status: In Progress
 created_date: 2026-10-12 17:54
 labels:
 - simplification
+assignee:
+- '@zcode'
+updated_date: 2026-10-15 21:04
 ---
 
 ## Description
@@ -19,6 +22,12 @@ Evidence (verified on dev df4985e): Examples: Kanban_Interop/local_kanban_db.py 
 <!-- AC:BEGIN -->
 - [ ] #1 DDL declared once per domain in a leaf module consumed by both the runtime store initializer and the recovery validator,Shared SQLite adapter factory replaces the copy-pasted adapter bodies,Recovery modules still never import runtime engines (documented policy),Backup owner inventory tests green
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Baseline Backup_Recovery suites 2. Map the 21 recovery.py DDL duplicates + adapter bodies 3. Extract schema-as-data leaf modules 4. Migrate consumers 5. Tests vs baseline 6. Review + PR
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

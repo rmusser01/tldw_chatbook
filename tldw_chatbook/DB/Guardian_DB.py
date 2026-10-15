@@ -12,6 +12,7 @@ additive schema-versioned DDL, thread-local held connections) because the
 Guardian, like Dreams, is reached both from the UI thread and from
 ``asyncio.to_thread`` hops in the check pipeline.
 """
+
 # ruff: noqa: N999 - Existing DB owner naming convention and published module API.
 from __future__ import annotations
 
@@ -203,9 +204,7 @@ class GuardianDB(BaseDB):
         """,
     )
 
-    def __init__(
-        self, database_path: str | Path, client_id: str | None = None
-    ) -> None:
+    def __init__(self, database_path: str | Path, client_id: str | None = None) -> None:
         # Per-thread connections (DreamsDB trap): every ":memory:" connection
         # is its own empty database, so to_thread hops would see no schema.
         if str(database_path) == ":memory:":
@@ -215,7 +214,9 @@ class GuardianDB(BaseDB):
             )
         self._thread_local = threading.local()
         try:
-            super().__init__(database_path, client_id if client_id is not None else "default")
+            super().__init__(
+                database_path, client_id if client_id is not None else "default"
+            )
         except BaseException:
             self.close()
             raise
@@ -260,8 +261,7 @@ class GuardianDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
@@ -308,7 +308,9 @@ class GuardianDB(BaseDB):
                 try:
                     conn.close()
                 except Exception as exc:  # noqa: BLE001 - retain uncertain retirement
-                    logger.debug("Guardian native close failed ({})", type(exc).__name__)
+                    logger.debug(
+                        "Guardian native close failed ({})", type(exc).__name__
+                    )
                     return
                 self._thread_local.conn = None
 
@@ -322,28 +324,45 @@ class GuardianDB(BaseDB):
         """Native catalog for the retained v1 DDL and additive v2 migration."""
         from tldw_chatbook.DB.guardian_schema import GUARDIAN_SCHEMAS
 
-        catalog = next(schema for schema_version, schema in GUARDIAN_SCHEMAS
-                       if schema_version == version)
+        catalog = next(
+            schema
+            for schema_version, schema in GUARDIAN_SCHEMAS
+            if schema_version == version
+        )
         return tuple(" ".join(statement.split()) for statement in catalog)
 
     @staticmethod
     def _schema_catalog(connection: sqlite3.Connection) -> tuple[str, ...]:
-        return tuple(" ".join(row[0].split()) for row in connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+        return tuple(
+            " ".join(row[0].split())
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
 
     @staticmethod
     def _migration_statements() -> tuple[str, ...]:
-        path = Path(__file__).parent / "migrations/guardian_v1_to_v2_crisis_provenance.sql"
-        return tuple(part.strip() for part in path.read_text().split(";") if part.strip())
+        path = (
+            Path(__file__).parent / "migrations/guardian_v1_to_v2_crisis_provenance.sql"
+        )
+        return tuple(
+            part.strip() for part in path.read_text().split(";") if part.strip()
+        )
 
     def _initialize_schema(self) -> None:
         """Validate lineage before atomically initializing or migrating."""
         with self.transaction() as conn:
-            tables = {row[0] for row in conn.execute(
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            }
             fresh = not tables
             if fresh:
-                conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+                conn.execute(
+                    "CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)"
+                )
                 for statement in self._SCHEMA_DDL:
                     conn.execute(statement)
                 self._seed_defaults(conn)
@@ -356,7 +375,9 @@ class GuardianDB(BaseDB):
                     raise GuardianSchemaError("schema_version_invalid")
                 version = versions[0][0]
                 if version not in (1, 2):
-                    raise GuardianSchemaError("schema_too_new" if version > 2 else "schema_version_invalid")
+                    raise GuardianSchemaError(
+                        "schema_too_new" if version > 2 else "schema_version_invalid"
+                    )
                 if self._schema_catalog(conn) != self._expected_schema(version):
                     raise GuardianSchemaError("schema_lineage_mismatch")
             if version == 1:
@@ -618,7 +639,9 @@ class GuardianDB(BaseDB):
         """
         with self.transaction() as conn:
             if is_crisis is None:
-                rule = conn.execute("SELECT is_crisis FROM guardian_rules WHERE id=?", (rule_id,)).fetchone()
+                rule = conn.execute(
+                    "SELECT is_crisis FROM guardian_rules WHERE id=?", (rule_id,)
+                ).fetchone()
                 classification = int(bool(rule[0])) if rule is not None else -1
             else:
                 classification = int(bool(is_crisis))
@@ -626,8 +649,15 @@ class GuardianDB(BaseDB):
                 "INSERT INTO guardian_alerts"
                 " (rule_id, session_id, visit_id, topic, message_digest, ts, crisis_provenance)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (rule_id, session_id, visit_id, topic, message_digest,
-                 ts or _utc_now_iso(), classification),
+                (
+                    rule_id,
+                    session_id,
+                    visit_id,
+                    topic,
+                    message_digest,
+                    ts or _utc_now_iso(),
+                    classification,
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -698,8 +728,7 @@ class GuardianDB(BaseDB):
         """
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM guardian_alerts"
-                " WHERE topic = ? AND visit_id = ?",
+                "SELECT COUNT(*) FROM guardian_alerts WHERE topic = ? AND visit_id = ?",
                 (topic, visit_id),
             ).fetchone()
         return int(row[0]) if row is not None else 0
@@ -855,32 +884,24 @@ class GuardianDB(BaseDB):
                 expired = (
                     window_days is not None
                     and state["window_start"] is not None
-                    and str(now) > _shift_iso(str(state["window_start"]),
-                                             float(window_days))
+                    and str(now)
+                    > _shift_iso(str(state["window_start"]), float(window_days))
                 )
-                window_count = (
-                    1 if expired else int(state["window_count"]) + 1
-                )
+                window_count = 1 if expired else int(state["window_count"]) + 1
                 window_start = now if expired else str(state["window_start"])
 
             base = ACTION_LADDER.index(str(rule["action"]))
             rung = base
             session_threshold = rule["escalate_session_threshold"]
             window_threshold = rule["escalate_window_threshold"]
-            if (
-                session_threshold is not None
-                and session_count >= int(session_threshold)
+            if session_threshold is not None and session_count >= int(
+                session_threshold
             ):
                 rung = max(rung, base + 1)
-            if (
-                window_threshold is not None
-                and window_count >= int(window_threshold)
-            ):
+            if window_threshold is not None and window_count >= int(window_threshold):
                 rung = max(rung, base + 2)
             rung = min(rung, len(ACTION_LADDER) - 1)
-            current_action = (
-                "notify" if rule["is_crisis"] else ACTION_LADDER[rung]
-            )
+            current_action = "notify" if rule["is_crisis"] else ACTION_LADDER[rung]
 
             conn.execute(
                 "INSERT INTO guardian_escalation_state"
@@ -892,8 +913,7 @@ class GuardianDB(BaseDB):
                 " window_count = excluded.window_count,"
                 " window_start = excluded.window_start,"
                 " current_action = excluded.current_action",
-                (rule_id, session_count, window_count, window_start,
-                 current_action),
+                (rule_id, session_count, window_count, window_start, current_action),
             )
             return {
                 "session_count": session_count,

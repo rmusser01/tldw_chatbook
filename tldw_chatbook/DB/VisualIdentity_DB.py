@@ -11,7 +11,9 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Backup_Recovery import visual_identity_participants as visual_lifetime
+from tldw_chatbook.Backup_Recovery import (
+    visual_identity_participants as visual_lifetime,
+)
 
 LOCAL_OWNER_ID: Final = 0
 
@@ -283,7 +285,12 @@ class VisualIdentityRepository:
                     )
                 ):
                     raise ValueError("visual_identity_binding_changed")
-            if publication_guard is not None and not visual_lifetime.evaluate_repository_publication_guard(publication_guard):
+            if (
+                publication_guard is not None
+                and not visual_lifetime.evaluate_repository_publication_guard(
+                    publication_guard
+                )
+            ):
                 raise ValueError("visual_identity_publication_changed")
             pack_id = int(
                 self.db.execute_query(
@@ -438,7 +445,12 @@ class VisualIdentityRepository:
                 )
                 if reserved.rowcount != 1:
                     raise ValueError("visual_identity_binding_changed")
-            if publication_guard is not None and not visual_lifetime.evaluate_repository_publication_guard(publication_guard):
+            if (
+                publication_guard is not None
+                and not visual_lifetime.evaluate_repository_publication_guard(
+                    publication_guard
+                )
+            ):
                 raise ValueError("visual_identity_publication_changed")
 
             version_number = int(

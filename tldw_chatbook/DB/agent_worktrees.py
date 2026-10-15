@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from .AgentRuns_DB import AgentRunsDB
 
 
-
 _ACTIONS = {"apply": "applying", "merge": "merging", "discard": "discarding"}
 _COMPLETIONS = {
     "applying": "applied",

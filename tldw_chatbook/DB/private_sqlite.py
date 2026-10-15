@@ -214,138 +214,184 @@ _SQLITE_OWNER_POLICIES = {
         "path without opening the whole SubscriptionsDB.",
     ),
     "recovery.operations.dreams": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_dreams_guardian",
+        _PRIVATE_AND_READ_ONLY,
         "Installed Dreams history snapshot; restored behavior remains inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.guardian": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_dreams_guardian",
+        _PRIVATE_AND_READ_ONLY,
         "Installed local Guardian snapshot; restored behavior remains inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.workspaces": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_operations",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.agent_runs": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_operations",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.subscriptions": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_operations",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.scheduled_tasks": SQLiteOwnerPolicy(
-        "tldw_chatbook/Scheduling/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Scheduling/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.notifications": SQLiteOwnerPolicy(
-        "tldw_chatbook/Notifications/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Notifications/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.events": SQLiteOwnerPolicy(
-        "tldw_chatbook/Notifications/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Notifications/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.sync": SQLiteOwnerPolicy(
-        "tldw_chatbook/Sync_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Sync_Interop/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.file_notes": SQLiteOwnerPolicy(
-        "tldw_chatbook/Notes/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Notes/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.agent_logs": SQLiteOwnerPolicy(
-        "tldw_chatbook/Agents/recovery", _READ_ONLY_URI,
+        "tldw_chatbook/Agents/recovery",
+        _READ_ONLY_URI,
         "Read exact workspace and historical change roots for retained run logs.",
-        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
     ),
     "recovery.operations.kanban": SQLiteOwnerPolicy(
-        "tldw_chatbook/Kanban_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Kanban_Interop/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Installed Kanban content/history snapshot with explicit schema metadata.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.note_bindings": SQLiteOwnerPolicy(
-        "tldw_chatbook/Notes/recovery", _READ_ONLY_URI,
+        "tldw_chatbook/Notes/recovery",
+        _READ_ONLY_URI,
         "Semantic sync/member validation of core-owned shared payload.",
-        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
     ),
     "recovery.domain.study": SQLiteOwnerPolicy(
-        "tldw_chatbook/Study_Interop/recovery", _READ_ONLY_URI,
+        "tldw_chatbook/Study_Interop/recovery",
+        _READ_ONLY_URI,
         "Semantic study/quiz validation of the core-owned shared physical payload.",
-        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
     ),
     "recovery.domain.research": SQLiteOwnerPolicy(
-        "tldw_chatbook/Research_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Research_Interop/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.domain.writing": SQLiteOwnerPolicy(
-        "tldw_chatbook/Writing_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Writing_Interop/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.domain.evals": SQLiteOwnerPolicy(
-        "tldw_chatbook/Evals/recovery", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Evals/recovery",
+        _PRIVATE_AND_READ_ONLY,
         "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.rag_indexing": SQLiteOwnerPolicy(
-        "tldw_chatbook/Backup_Recovery/rag_indexing", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/rag_indexing",
+        _PRIVATE_AND_READ_ONLY,
         "Exact installed RAG indexing schema; no vector engine startup.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.chachanotes": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_core",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.media": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_core",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.prompts": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_core",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.library_collections": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_core",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.library_ingest_jobs": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/DB/recovery_core",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
-        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "db.chachanotes.backup": SQLiteOwnerPolicy(
@@ -1486,8 +1532,10 @@ def _with_storage_admission(function):
         if kwargs.get("_verified_descriptor_fd") is None:
             _classify_target(database, read_only=kwargs.get("read_only", False))
         if (
-            owner_id in {
-                "recovery.validation", "recovery.credentials",
+            owner_id
+            in {
+                "recovery.validation",
+                "recovery.credentials",
                 "recovery.rag_projection_validation",
             }
             or kwargs.get("_verified_descriptor_fd") is not None
@@ -1722,7 +1770,6 @@ def _connect_registered_sqlite(
     expected_identity: os.stat_result | FileIdentity | None = None,
     _verified_descriptor_fd: int | None = None,
     _descriptor_outcome: _SQLiteDescriptorOutcome | None = None,
-
     operation_deadline: float | None = None,
     reservation: HelperReservation | None = None,
     **kwargs: Any,
@@ -1870,14 +1917,17 @@ def _connect_registered_sqlite(
             if private_paths._WINDOWS_PLATFORM:
                 deadline.remaining(5.0)
                 _prepare_artifact(
-                    selected, writable=request.writable,
+                    selected,
+                    writable=request.writable,
                     create_if_missing=request.create_if_missing,
                     enforce_private_mode=not request.preserve_source_mode,
                 )
                 for suffix in _SIDECAR_SUFFIXES:
                     _prepare_artifact(
-                        Path(f"{selected}{suffix}"), writable=request.writable,
-                        create_if_missing=False, optional=True,
+                        Path(f"{selected}{suffix}"),
+                        writable=request.writable,
+                        create_if_missing=False,
+                        optional=True,
                         enforce_private_mode=not request.preserve_source_mode,
                     )
             else:
@@ -1984,6 +2034,7 @@ def open_recovery_validation(
 
 
 _ORIGINAL_DESCRIPTOR_CONNECTOR = _connect_registered_sqlite
+
 
 def connect_private_sqlite_descriptor(
     owner_id: str,
@@ -2481,12 +2532,20 @@ def _source_postcondition_holds(source: _PinnedSQLiteSource) -> bool:
     )
 
 
-def _reverify_source(source: _PinnedSQLiteSource, *, deadline: OperationDeadline | None = None) -> None:
+def _reverify_source(
+    source: _PinnedSQLiteSource, *, deadline: OperationDeadline | None = None
+) -> None:
     if source.lease is not None:
         deadline = deadline or OperationDeadline(None)
-        result = _helper_result(source.selected, source.lease.request("recheck_source", deadline=deadline))
+        result = _helper_result(
+            source.selected, source.lease.request("recheck_source", deadline=deadline)
+        )
         if not source.identity.same_inode(result.main_identity):
-            raise _failure(source.selected, PrivatePathStatus.OPERATION_FAILED, "private_sqlite_source_identity_changed")
+            raise _failure(
+                source.selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_source_identity_changed",
+            )
         return
     if not _source_postcondition_holds(source):
         raise _failure(
@@ -2521,7 +2580,9 @@ def _pin_sqlite_source(
             job.check()
             source.lease = HelperLease.start(
                 PrepareRequest(str(selected), False, False, not enforce_private_mode),
-                operation="pin_source", reservation=reservation, deadline=deadline,
+                operation="pin_source",
+                reservation=reservation,
+                deadline=deadline,
             )
             result = _helper_result(selected, source.lease.initial_response)
             source.identity = result.main_identity
@@ -2603,10 +2664,15 @@ def _reject_unsafe_or_aliased_destination(
     if rejected is not None:
         raise _failure(destination, rejected, "unsafe_sqlite_backup_target")
     source_identity = (
-        source.identity if source is not None and isinstance(source.identity, FileIdentity)
-        else FileIdentity.from_stat(source.identity) if source is not None else None
+        source.identity
+        if source is not None and isinstance(source.identity, FileIdentity)
+        else FileIdentity.from_stat(source.identity)
+        if source is not None
+        else None
     )
-    if source_identity is not None and source_identity.same_inode(FileIdentity.from_stat(destination_stat)):
+    if source_identity is not None and source_identity.same_inode(
+        FileIdentity.from_stat(destination_stat)
+    ):
         raise ValueError("SQLite source and destination cannot be the same file")
 
 
@@ -2892,7 +2958,9 @@ def _verify_profile_migration_destination(
         raise SQLitePrivateDestinationError()
     opened_path = lexical_path(os.fsdecode(cast(str, main_row[2])))
     verify_trusted_directory(opened_path.parent, allow_shared_sticky=False)
-    if not private_paths._same_identity(os.stat(opened_path, follow_symlinks=False), file_stat):
+    if not private_paths._same_identity(
+        os.stat(opened_path, follow_symlinks=False), file_stat
+    ):
         raise SQLitePrivateDestinationError()
     parent_fd, leaf = private_paths._open_verified_parent(
         selected,
@@ -3144,7 +3212,9 @@ def open_canonical_profile_migration_destination(
             raise ValueError
         parent_fd, file_fd, file_identity, authority = open_new_or_reused_private_file(
             selected,
-            parent_authority=ParentAuthority(os.stat(selected.parent, follow_symlinks=False)),
+            parent_authority=ParentAuthority(
+                os.stat(selected.parent, follow_symlinks=False)
+            ),
             tombstone_key=tombstone_key,
         )
         connection = _connect_registered_sqlite(

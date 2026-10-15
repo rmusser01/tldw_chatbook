@@ -942,12 +942,18 @@ CHACHANOTES_BROWSE_V79_TO_V80_SQL = (
 
 
 # ADR-207: exact fresh and native v4-to-v5 capture table SQL (PR2921).
-COLLECTIONS_V4_SCHEMA = next(schema for owner, _, schema in CORE_SCHEMAS
-                             if owner == "db.library_collections")
-COLLECTIONS_V5_CAPTURE_TABLES = ("CREATE TABLE collection_capture_items (\n            authority_key TEXT NOT NULL,\n            capture_id TEXT NOT NULL,\n            submitted_url TEXT NOT NULL,\n            canonical_url TEXT NOT NULL,\n            domain TEXT NOT NULL DEFAULT '',\n            title TEXT,\n            summary TEXT,\n            freeform_note TEXT,\n            text_content TEXT,\n            clean_html TEXT,\n            byline TEXT,\n            published_at TEXT,\n            read_at TEXT,\n            content_hash TEXT,\n            word_count INTEGER,\n            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),\n            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),\n            processing_state TEXT NOT NULL\n                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),\n            last_fetch_error TEXT,\n            extraction_owner_token TEXT,\n            extraction_lease_expires_at TEXT,\n            media_authority_key TEXT,\n            media_item_id TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n            purge_state TEXT,\n            url_provenance TEXT NOT NULL DEFAULT 'unknown'\n                CHECK(url_provenance IN ('unknown', 'user_entered')),\n            PRIMARY KEY(authority_key, capture_id),\n            UNIQUE(authority_key, canonical_url)\n        )", "CREATE TABLE collection_capture_items (\n            authority_key TEXT NOT NULL,\n            capture_id TEXT NOT NULL,\n            submitted_url TEXT NOT NULL,\n            canonical_url TEXT NOT NULL,\n            domain TEXT NOT NULL DEFAULT '',\n            title TEXT,\n            summary TEXT,\n            freeform_note TEXT,\n            text_content TEXT,\n            clean_html TEXT,\n            byline TEXT,\n            published_at TEXT,\n            read_at TEXT,\n            content_hash TEXT,\n            word_count INTEGER,\n            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),\n            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),\n            processing_state TEXT NOT NULL\n                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),\n            last_fetch_error TEXT,\n            extraction_owner_token TEXT,\n            extraction_lease_expires_at TEXT,\n            media_authority_key TEXT,\n            media_item_id TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n            purge_state TEXT, url_provenance TEXT NOT NULL DEFAULT 'unknown'\nCHECK(url_provenance IN ('unknown', 'user_entered')),\n            PRIMARY KEY(authority_key, capture_id),\n            UNIQUE(authority_key, canonical_url)\n        )")
+COLLECTIONS_V4_SCHEMA = next(
+    schema for owner, _, schema in CORE_SCHEMAS if owner == "db.library_collections"
+)
+COLLECTIONS_V5_CAPTURE_TABLES = (
+    "CREATE TABLE collection_capture_items (\n            authority_key TEXT NOT NULL,\n            capture_id TEXT NOT NULL,\n            submitted_url TEXT NOT NULL,\n            canonical_url TEXT NOT NULL,\n            domain TEXT NOT NULL DEFAULT '',\n            title TEXT,\n            summary TEXT,\n            freeform_note TEXT,\n            text_content TEXT,\n            clean_html TEXT,\n            byline TEXT,\n            published_at TEXT,\n            read_at TEXT,\n            content_hash TEXT,\n            word_count INTEGER,\n            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),\n            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),\n            processing_state TEXT NOT NULL\n                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),\n            last_fetch_error TEXT,\n            extraction_owner_token TEXT,\n            extraction_lease_expires_at TEXT,\n            media_authority_key TEXT,\n            media_item_id TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n            purge_state TEXT,\n            url_provenance TEXT NOT NULL DEFAULT 'unknown'\n                CHECK(url_provenance IN ('unknown', 'user_entered')),\n            PRIMARY KEY(authority_key, capture_id),\n            UNIQUE(authority_key, canonical_url)\n        )",
+    "CREATE TABLE collection_capture_items (\n            authority_key TEXT NOT NULL,\n            capture_id TEXT NOT NULL,\n            submitted_url TEXT NOT NULL,\n            canonical_url TEXT NOT NULL,\n            domain TEXT NOT NULL DEFAULT '',\n            title TEXT,\n            summary TEXT,\n            freeform_note TEXT,\n            text_content TEXT,\n            clean_html TEXT,\n            byline TEXT,\n            published_at TEXT,\n            read_at TEXT,\n            content_hash TEXT,\n            word_count INTEGER,\n            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),\n            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),\n            processing_state TEXT NOT NULL\n                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),\n            last_fetch_error TEXT,\n            extraction_owner_token TEXT,\n            extraction_lease_expires_at TEXT,\n            media_authority_key TEXT,\n            media_item_id TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n            purge_state TEXT, url_provenance TEXT NOT NULL DEFAULT 'unknown'\nCHECK(url_provenance IN ('unknown', 'user_entered')),\n            PRIMARY KEY(authority_key, capture_id),\n            UNIQUE(authority_key, canonical_url)\n        )",
+)
 COLLECTIONS_V5_SCHEMAS = tuple(
-    tuple(table if sql.startswith("CREATE TABLE collection_capture_items") else sql
-          for sql in COLLECTIONS_V4_SCHEMA)
+    tuple(
+        table if sql.startswith("CREATE TABLE collection_capture_items") else sql
+        for sql in COLLECTIONS_V4_SCHEMA
+    )
     for table in COLLECTIONS_V5_CAPTURE_TABLES
 )
 COLLECTIONS_V4_TO_V5_SQL = (
@@ -972,14 +978,19 @@ CHACHANOTES_V81_ADDITIONS = (
     "CREATE TRIGGER console_response_rules_conversation_cleanup\nAFTER DELETE ON conversations BEGIN\n    DELETE FROM console_response_rule_revisions\n    WHERE NOT EXISTS (\n        SELECT 1 FROM console_response_rule_bindings b\n        WHERE b.rule_id = console_response_rule_revisions.rule_id\n          AND b.revision = console_response_rule_revisions.revision\n    ) AND NOT EXISTS (\n        SELECT 1 FROM console_response_rule_drafts d\n        WHERE d.rule_id = console_response_rule_revisions.rule_id\n          AND d.revision = console_response_rule_revisions.revision\n    );\nEND",
 )
 
+
 def _installed_schema_order(sql: str) -> tuple[str, str]:
     # Only immutable installed constants enter this ordering function. SQL bodies
     # are never normalized and archive-supplied SQL never enters this catalog.
     import re
-    match = re.match(r"CREATE (?:(?:UNIQUE|VIRTUAL) )?(INDEX|TABLE|TRIGGER|VIEW)\s+([^\s(]+)", sql)
+
+    match = re.match(
+        r"CREATE (?:(?:UNIQUE|VIRTUAL) )?(INDEX|TABLE|TRIGGER|VIEW)\s+([^\s(]+)", sql
+    )
     if match is None:
         raise ValueError("installed_schema_declaration_invalid")
     return match[1].lower(), match[2].strip("\"'`[]")
+
 
 CHACHANOTES_V81_SCHEMAS = tuple(
     tuple(sorted(schema + CHACHANOTES_V81_ADDITIONS, key=_installed_schema_order))
@@ -988,7 +999,8 @@ CHACHANOTES_V81_SCHEMAS = tuple(
 CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V81_SCHEMAS[1]
 CORE_SCHEMAS = tuple(
     (owner, 81, CHACHANOTES_V81_SCHEMAS[0])
-    if owner == "db.chachanotes.primary" else (owner, version, sql)
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
     for owner, version, sql in CORE_SCHEMAS
 )
 CHACHANOTES_RULES_V80_TO_V81_SQL = (

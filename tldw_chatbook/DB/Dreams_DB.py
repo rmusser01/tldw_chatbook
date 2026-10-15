@@ -21,6 +21,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
+from .transaction_helpers import flat_store_transaction
 
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
@@ -253,8 +254,10 @@ class DreamsDB(BaseDB):
         # own empty database: cycle stages running under asyncio.to_thread
         # would see no schema. Refuse it rather than fail mid-cycle.
         if str(database_path) == ":memory:":
-            raise ValueError("DreamsDB needs a file path; ':memory:' is not "
-                             "shared across its per-thread connections")
+            raise ValueError(
+                "DreamsDB needs a file path; ':memory:' is not "
+                "shared across its per-thread connections"
+            )
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
         self._thread_local = threading.local()
@@ -322,8 +325,7 @@ class DreamsDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
@@ -357,25 +359,16 @@ class DreamsDB(BaseDB):
     @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
+        """Yield a write connection inside an immediate transaction.
 
-        ``BEGIN IMMEDIATE`` takes the write lock up front so a read-then-
-        write block cannot fail to upgrade under a concurrent writer. On any
-        error or interruption inside the ``with`` block the transaction is
-        rolled back and the exception re-raised; on clean exit it commits.
-
-        The yielded object is the connection: call ``conn.execute(...)`` and
-        use the returned cursor's ``lastrowid``/``rowcount``.
+        Uses ``BEGIN IMMEDIATE`` so the write lock is acquired up front;
+        rolls back on any error or interruption (``BaseException`` --
+        TASK-32801.5) and commits on clean exit. Delegates to the shared
+        flat-store helper (task-34905); nesting this inside another
+        transaction on the same thread raises, as before.
         """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with flat_store_transaction(self._held_connection()) as conn:
             yield conn
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
 
     def close(self) -> None:
         """Retire only the calling thread's handle when its owner permits."""
@@ -421,21 +414,32 @@ class DreamsDB(BaseDB):
         """Recognize complete historical catalogs before any schema write."""
         from .dreams_schema import DREAMS_SCHEMAS
 
-        catalog = tuple(" ".join(row[0].split()) for row in conn.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+        catalog = tuple(
+            " ".join(row[0].split())
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
         if not catalog:
             return 0
         try:
-            versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
+            versions = [
+                row[0] for row in conn.execute("SELECT version FROM schema_version")
+            ]
         except sqlite3.Error as exc:
             raise DreamsSchemaError("schema_version_missing") from exc
-        if not versions or any(type(version) is not int or version < 1 for version in versions):
+        if not versions or any(
+            type(version) is not int or version < 1 for version in versions
+        ):
             raise DreamsSchemaError("schema_version_invalid")
         version = max(versions)
         if version > DreamsDB._CURRENT_SCHEMA_VERSION:
             raise DreamsSchemaError("schema_too_new")
-        if not any(version == known and catalog == tuple(" ".join(sql.split()) for sql in schema)
-                   for known, schema in DREAMS_SCHEMAS):
+        if not any(
+            version == known
+            and catalog == tuple(" ".join(sql.split()) for sql in schema)
+            for known, schema in DREAMS_SCHEMAS
+        ):
             raise DreamsSchemaError("schema_lineage_mismatch")
         return version
 
@@ -446,7 +450,9 @@ class DreamsDB(BaseDB):
             if current_version == self._CURRENT_SCHEMA_VERSION:
                 return
             if not current_version:
-                conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+                conn.execute(
+                    "CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)"
+                )
             for statement in self._SCHEMA_DDL:
                 conn.execute(statement)
             self._migrate_profile_source_check_v3(conn)
@@ -499,13 +505,11 @@ class DreamsDB(BaseDB):
             """
         )
         conn.execute(
-            "INSERT INTO dream_interest_profile_v3"
-            " SELECT * FROM dream_interest_profile"
+            "INSERT INTO dream_interest_profile_v3 SELECT * FROM dream_interest_profile"
         )
         conn.execute("DROP TABLE dream_interest_profile")
         conn.execute(
-            "ALTER TABLE dream_interest_profile_v3"
-            " RENAME TO dream_interest_profile"
+            "ALTER TABLE dream_interest_profile_v3 RENAME TO dream_interest_profile"
         )
 
     @staticmethod
@@ -520,8 +524,7 @@ class DreamsDB(BaseDB):
         is known to have surfaced them.
         """
         columns = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(dream_stories)")
+            str(row[1]) for row in conn.execute("PRAGMA table_info(dream_stories)")
         }
         if "goal" not in columns:
             conn.execute("ALTER TABLE dream_stories ADD COLUMN goal TEXT")
@@ -540,8 +543,7 @@ class DreamsDB(BaseDB):
             for row in conn.execute("PRAGMA table_info(dream_tracked_items)")
         }
         if "suspension" not in columns:
-            conn.execute(
-                "ALTER TABLE dream_tracked_items ADD COLUMN suspension TEXT")
+            conn.execute("ALTER TABLE dream_tracked_items ADD COLUMN suspension TEXT")
 
     @staticmethod
     def _migrate_tracked_provenance_v6(conn: sqlite3.Connection) -> None:
@@ -573,8 +575,8 @@ class DreamsDB(BaseDB):
         ):
             if column not in columns:
                 conn.execute(
-                    "ALTER TABLE dream_tracked_items"
-                    f" ADD COLUMN {column} {declaration}")
+                    f"ALTER TABLE dream_tracked_items ADD COLUMN {column} {declaration}"
+                )
 
     # ------------------------------------------------------------------
     # Collections (one row per local date)
@@ -662,18 +664,29 @@ class DreamsDB(BaseDB):
             longer names the collection the caller claimed (or any).
         """
         with self.transaction() as conn:
-            return conn.execute(
-                "UPDATE dreams_collections SET"
-                " status = ?,"
-                " provider = COALESCE(?, provider),"
-                " model = COALESCE(?, model),"
-                " degradation_notes = COALESCE(?, degradation_notes),"
-                " completed_at = COALESCE(?, completed_at),"
-                " story_count = COALESCE(?, story_count)"
-                " WHERE id = ?" + self._CLAIM_SQL[claim is not None],
-                (status, provider, model, degradation_notes, completed_at,
-                 story_count, collection_id, *(claim or ())),
-            ).rowcount == 1
+            return (
+                conn.execute(
+                    "UPDATE dreams_collections SET"
+                    " status = ?,"
+                    " provider = COALESCE(?, provider),"
+                    " model = COALESCE(?, model),"
+                    " degradation_notes = COALESCE(?, degradation_notes),"
+                    " completed_at = COALESCE(?, completed_at),"
+                    " story_count = COALESCE(?, story_count)"
+                    " WHERE id = ?" + self._CLAIM_SQL[claim is not None],
+                    (
+                        status,
+                        provider,
+                        model,
+                        degradation_notes,
+                        completed_at,
+                        story_count,
+                        collection_id,
+                        *(claim or ()),
+                    ),
+                ).rowcount
+                == 1
+            )
 
     #: Appended to a write that must land in the collection its caller
     #: CLAIMED, not merely in whatever row carries that id now.
@@ -714,13 +727,16 @@ class DreamsDB(BaseDB):
             True when the row was removed.
         """
         with self.transaction() as conn:
-            return conn.execute(
-                "DELETE FROM dreams_collections"
-                " WHERE id = ? AND status IN ('generating', 'failed')"
-                " AND NOT EXISTS ("
-                "SELECT 1 FROM dream_stories WHERE collection_id = ?)",
-                (collection_id, collection_id),
-            ).rowcount == 1
+            return (
+                conn.execute(
+                    "DELETE FROM dreams_collections"
+                    " WHERE id = ? AND status IN ('generating', 'failed')"
+                    " AND NOT EXISTS ("
+                    "SELECT 1 FROM dream_stories WHERE collection_id = ?)",
+                    (collection_id, collection_id),
+                ).rowcount
+                == 1
+            )
 
     def fail_stale_generating(self, cutoff_iso: str) -> int:
         """Reclaim dates wedged by a crashed cycle (spec §idempotency).
@@ -819,19 +835,35 @@ class DreamsDB(BaseDB):
                 " kind, event_date, location, matched_topics, query, kept,"
                 " error, created_at, goal)"
                 " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?"
-                + (" WHERE EXISTS (SELECT 1 FROM dreams_collections"
-                   " WHERE id = ?" + self._CLAIM_SQL[1] + ")"
-                   if claim is not None else ""),
+                + (
+                    " WHERE EXISTS (SELECT 1 FROM dreams_collections"
+                    " WHERE id = ?" + self._CLAIM_SQL[1] + ")"
+                    if claim is not None
+                    else ""
+                ),
                 (
-                    collection_id, title, url, snippet, body, status, source,
-                    kind, event_date, location, json.dumps(matched_topics),
-                    query, error, _utc_now_iso(), goal,
+                    collection_id,
+                    title,
+                    url,
+                    snippet,
+                    body,
+                    status,
+                    source,
+                    kind,
+                    event_date,
+                    location,
+                    json.dumps(matched_topics),
+                    query,
+                    error,
+                    _utc_now_iso(),
+                    goal,
                     *((collection_id, *claim) if claim is not None else ()),
                 ),
             )
             if cursor.rowcount != 1:
                 raise sqlite3.IntegrityError(
-                    "dream collection is no longer the one this cycle claimed")
+                    "dream collection is no longer the one this cycle claimed"
+                )
             return int(cursor.lastrowid)
 
     @staticmethod
@@ -845,8 +877,7 @@ class DreamsDB(BaseDB):
         """Return a collection's stories in insert order."""
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM dream_stories WHERE collection_id = ?"
-                " ORDER BY id",
+                "SELECT * FROM dream_stories WHERE collection_id = ? ORDER BY id",
                 (collection_id,),
             ).fetchall()
         return [self._story_dict(row) for row in rows]
@@ -990,8 +1021,7 @@ class DreamsDB(BaseDB):
         """Return profile entries, heaviest weight first."""
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM dream_interest_profile"
-                " ORDER BY weight DESC, facet, text"
+                "SELECT * FROM dream_interest_profile ORDER BY weight DESC, facet, text"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1035,13 +1065,9 @@ class DreamsDB(BaseDB):
     def delete_profile_entry(self, entry_id: int) -> None:
         """Remove one profile entry by id."""
         with self.transaction() as conn:
-            conn.execute(
-                "DELETE FROM dream_interest_profile WHERE id = ?", (entry_id,)
-            )
+            conn.execute("DELETE FROM dream_interest_profile WHERE id = ?", (entry_id,))
 
-    def set_goal_query_angle(
-        self, facet: str, text: str, *, angle: str | None
-    ) -> None:
+    def set_goal_query_angle(self, facet: str, text: str, *, angle: str | None) -> None:
         """Write (or clear) a GOAL row's query angle (task-33165).
 
         The other feedback half: feedback on a goal-derived story steers that
@@ -1064,8 +1090,7 @@ class DreamsDB(BaseDB):
             ValueError: If ``facet`` is not ``"goal"``.
         """
         if facet != "goal":
-            raise ValueError(
-                f"query angles are goal-only; got facet {facet!r}")
+            raise ValueError(f"query angles are goal-only; got facet {facet!r}")
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE dream_interest_profile"
@@ -1104,13 +1129,17 @@ class DreamsDB(BaseDB):
     _USAGE_RESERVE_SQL: ClassVar[dict[str, tuple[str, str]]] = {
         "searches": (
             "SELECT searches FROM dream_daily_usage WHERE local_date = ?",
-            ("UPDATE dream_daily_usage SET searches = searches + ?"
-             " WHERE local_date = ?"),
+            (
+                "UPDATE dream_daily_usage SET searches = searches + ?"
+                " WHERE local_date = ?"
+            ),
         ),
         "llm_calls": (
             "SELECT llm_calls FROM dream_daily_usage WHERE local_date = ?",
-            ("UPDATE dream_daily_usage SET llm_calls = llm_calls + ?"
-             " WHERE local_date = ?"),
+            (
+                "UPDATE dream_daily_usage SET llm_calls = llm_calls + ?"
+                " WHERE local_date = ?"
+            ),
         ),
     }
 
@@ -1150,8 +1179,7 @@ class DreamsDB(BaseDB):
         read, write = statements
         with self.transaction() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO dream_daily_usage (local_date)"
-                " VALUES (?)",
+                "INSERT OR IGNORE INTO dream_daily_usage (local_date) VALUES (?)",
                 (local_date,),
             )
             spent = int(conn.execute(read, (local_date,)).fetchone()[0])
@@ -1224,10 +1252,18 @@ class DreamsDB(BaseDB):
                 " created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
                 (
-                    origin_story_id, mechanism, intent, subscription_id,
-                    query_template, event_date, cadence_seconds,
-                    created_by_dreams, int(bool(egress_marked)),
-                    alert_rule_id, now, now,
+                    origin_story_id,
+                    mechanism,
+                    intent,
+                    subscription_id,
+                    query_template,
+                    event_date,
+                    cadence_seconds,
+                    created_by_dreams,
+                    int(bool(egress_marked)),
+                    alert_rule_id,
+                    now,
+                    now,
                 ),
             )
             return int(cursor.lastrowid)
@@ -1341,13 +1377,15 @@ class DreamsDB(BaseDB):
         """
         with self.transaction() as conn:
             conn.execute(
-                "UPDATE dream_tracked_items SET reminder_event_date = ?"
-                " WHERE id = ?",
+                "UPDATE dream_tracked_items SET reminder_event_date = ? WHERE id = ?",
                 (event_date, tracked_item_id),
             )
 
     def find_tracked_by_story(
-        self, origin_story_id: int, *, mechanism: str | None = None,
+        self,
+        origin_story_id: int,
+        *,
+        mechanism: str | None = None,
         include_paused: bool = False,
     ) -> dict | None:
         """Return the newest ACTIVE tracked item from a story, or None.
@@ -1392,8 +1430,7 @@ class DreamsDB(BaseDB):
                 " AND (? IS NULL OR mechanism = ?)"
                 " ORDER BY (status = 'active') DESC, created_at DESC,"
                 " id DESC LIMIT 1",
-                (origin_story_id, 1 if include_paused else 0,
-                 mechanism, mechanism),
+                (origin_story_id, 1 if include_paused else 0, mechanism, mechanism),
             ).fetchone()
         return dict(row) if row is not None else None
 
@@ -1425,12 +1462,18 @@ class DreamsDB(BaseDB):
                 " cadence_seconds = ?, event_date = ?, updated_at = ?"
                 " WHERE id = ? AND status = 'active'",
                 (
-                    cadence_seconds, event_date, _utc_now_iso(), tracked_item_id,
+                    cadence_seconds,
+                    event_date,
+                    _utc_now_iso(),
+                    tracked_item_id,
                 ),
             )
 
     def set_tracked_suspension(
-        self, tracked_item_id: int, record: str | None, *,
+        self,
+        tracked_item_id: int,
+        record: str | None,
+        *,
         only_live: bool = False,
     ) -> None:
         """Write (or clear) what the master switch stopped for one wrapper.
@@ -1492,9 +1535,7 @@ class DreamsDB(BaseDB):
             never appear.
         """
         with self.connection() as conn:
-            return [
-                row[0] for row in conn.execute(self._LIVE_SUSPENSIONS_SQL)
-            ]
+            return [row[0] for row in conn.execute(self._LIVE_SUSPENSIONS_SQL)]
 
     def list_tracked_for_subscription(self, subscription_id: int) -> list[dict]:
         """Every tracked item that rides one subscription, any status.
@@ -1588,10 +1629,14 @@ class DreamsDB(BaseDB):
         """
         # ponytail: unindexed, the same scan as ``_EGRESS_BACKLOG_SQL``.
         with self.connection() as conn:
-            return [int(row[0]) for row in conn.execute(
-                "SELECT DISTINCT subscription_id FROM dream_tracked_items"
-                " WHERE created_by_dreams = 1 AND subscription_id IS NOT NULL"
-                " ORDER BY subscription_id")]
+            return [
+                int(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT subscription_id FROM dream_tracked_items"
+                    " WHERE created_by_dreams = 1 AND subscription_id IS NOT NULL"
+                    " ORDER BY subscription_id"
+                )
+            ]
 
     def set_egress_marked(self, subscription_id: int) -> None:
         """Record that a Dreams-created subscription has been stamped.
@@ -1607,82 +1652,6 @@ class DreamsDB(BaseDB):
                 (subscription_id,),
             )
 
-    _BOOT_BACKLOG_SQL = (
-        "SELECT 1 FROM dream_tracked_items"
-        " WHERE created_by_dreams = 1 AND subscription_id IS NOT NULL"
-        " AND egress_marked = 0 LIMIT 1"
-    )
-
-    _LIVE_BOOT_ROWS_SQL = (
-        "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
-        " alert_rule_id, dream_tracked_items.event_date, suspension,"
-        " s.url AS story_url FROM dream_tracked_items"
-        " LEFT JOIN dream_stories AS s"
-        " ON s.id = dream_tracked_items.origin_story_id"
-        " WHERE dream_tracked_items.status IN ('active', 'paused')"
-    )
-
-    _RETIRED_BOOT_ROWS_SQL = (
-        "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
-        " alert_rule_id, dream_tracked_items.event_date, suspension,"
-        " s.url AS story_url FROM dream_tracked_items"
-        " LEFT JOIN dream_stories AS s"
-        " ON s.id = dream_tracked_items.origin_story_id"
-        " WHERE dream_tracked_items.status = 'retired'"
-        " AND dream_tracked_items.suspension IS NOT NULL"
-    )
-
-    def story_urls_for_subscription(self, subscription_id: int) -> list[str]:
-        """The story URLs of the watches Dreams made a subscription for.
-
-        Review of #3123, M1: the durable half of "is this subscription
-        still the source this Dreams watch created" -- Dreams writes the
-        story's URL into the source it creates. Stories are never deleted.
-
-        Args:
-            subscription_id: The watchlists subscription.
-
-        Returns:
-            The distinct URLs of the stories of its ``created_by_dreams``
-            wrappers, any status; empty for one with no story.
-        """
-        with self.connection() as conn:
-            return [str(row[0]) for row in conn.execute(
-                "SELECT DISTINCT s.url FROM dream_tracked_items AS t"
-                " JOIN dream_stories AS s ON s.id = t.origin_story_id"
-                " WHERE t.subscription_id = ? AND t.created_by_dreams = 1",
-                (subscription_id,))]
-
-    def tracking_boot_rows(
-        self, *, retired: bool = False,
-    ) -> tuple[list[dict], list[dict], bool]:
-        """:meth:`tracking_boot_state`, with each wrapper's row.
-
-        The start check of TASK-34924 needs, beside each live wrapper's
-        record, the source and rule it rides and whether Dreams created
-        that source -- and, with Dreams off, what a retired wrapper's
-        record says Dreams stopped when it retired.
-
-        Args:
-            retired: Also read the retired wrappers that carry a record.
-
-        Returns:
-            ``(live, retired_rows, egress_backlog)``: one dict per active or
-            paused wrapper (``id``, ``subscription_id``,
-            ``created_by_dreams``, ``alert_rule_id``, ``event_date``,
-            ``suspension``, and its story's URL as ``story_url``), the
-            same for each retired wrapper with a
-            record (empty unless asked for), and the backlog flag of
-            :meth:`tracking_boot_state`.
-        """
-        with self.connection() as conn:
-            live = [dict(row) for row in conn.execute(self._LIVE_BOOT_ROWS_SQL)]
-            gone = ([dict(row) for row in conn.execute(
-                self._RETIRED_BOOT_ROWS_SQL)] if retired else [])
-            backlog = conn.execute(
-                self._BOOT_BACKLOG_SQL).fetchone() is not None
-        return live, gone, backlog
-
     def tracking_boot_state(self) -> tuple[list[str | None], bool]:
         """Everything the startup reconcile asks, in one hop.
 
@@ -1693,8 +1662,7 @@ class DreamsDB(BaseDB):
             egress mark (see :meth:`subscriptions_awaiting_egress_mark`).
         """
         with self.connection() as conn:
-            records = [
-                row[0] for row in conn.execute(self._LIVE_SUSPENSIONS_SQL)]
+            records = [row[0] for row in conn.execute(self._LIVE_SUSPENSIONS_SQL)]
             # ponytail: unindexed -- on EVERY start, one scan of
             # ``dream_tracked_items`` (the status index above does not
             # help: ownership spans every status). The table holds one
@@ -1705,8 +1673,14 @@ class DreamsDB(BaseDB):
             # (created_by_dreams = 1 AND egress_marked = 0) if it ever
             # reaches thousands -- the same ceiling as
             # ``_EGRESS_BACKLOG_SQL``.
-            backlog = conn.execute(
-                self._BOOT_BACKLOG_SQL).fetchone() is not None
+            backlog = (
+                conn.execute(
+                    "SELECT 1 FROM dream_tracked_items"
+                    " WHERE created_by_dreams = 1 AND subscription_id IS NOT NULL"
+                    " AND egress_marked = 0 LIMIT 1"
+                ).fetchone()
+                is not None
+            )
         return records, backlog
 
     def set_tracked_status(
@@ -1838,8 +1812,12 @@ class DreamsDB(BaseDB):
                 " notified, created_at)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    tracked_item_id, status, digest_hash, verdict_note,
-                    notified, _utc_now_iso(),
+                    tracked_item_id,
+                    status,
+                    digest_hash,
+                    verdict_note,
+                    notified,
+                    _utc_now_iso(),
                 ),
             )
             return int(cursor.lastrowid)
@@ -1896,9 +1874,7 @@ class DreamsDB(BaseDB):
             return None
         return str(row["digest_hash"])
 
-    def consecutive_track_dispositions(
-        self, tracked_item_id: int, status: str
-    ) -> int:
+    def consecutive_track_dispositions(self, tracked_item_id: int, status: str) -> int:
         """Count the trailing run of one disposition, newest run backwards.
 
         The quiet-retire gate: N consecutive ``unchanged`` (or ``error``)

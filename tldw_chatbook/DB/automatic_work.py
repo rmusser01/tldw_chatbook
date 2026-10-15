@@ -209,9 +209,13 @@ class AutomaticWorkLedger:
         """Read immutable goal origin from the canonical allowance root."""
         with self._db.connection() as conn:
             root = self._allowance_chain(conn, chain_id)["id"]
-            return "goal_iteration" if conn.execute(
-                "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
-            ).fetchone() else "fleet_wake"
+            return (
+                "goal_iteration"
+                if conn.execute(
+                    "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
+                ).fetchone()
+                else "fleet_wake"
+            )
 
     def _check_admission(
         self,
@@ -1041,6 +1045,7 @@ class AutomaticWorkLedger:
                 raise ValueError("goal attempt link mismatch")
 
         return row
+
     def _attempt_view(self, row: sqlite3.Row) -> AutomaticWakeAttempt:
         return AutomaticWakeAttempt(
             row["id"],
@@ -1294,7 +1299,6 @@ class AutomaticWorkLedger:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
         return self._abort_attempt(attempt_id, owner_id=owner_id, kind="fleet_wake")
 
-
     def _abort_attempt(self, attempt_id: str, *, owner_id: str, kind: str) -> bool:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
         with self.transaction() as conn:
@@ -1317,8 +1321,14 @@ class AutomaticWorkLedger:
                 (self._wall_clock(), attempt_id),
             )
             if kind == "goal_iteration":
-                conn.execute("DELETE FROM goal_payload_reservations WHERE attempt_id=?", (attempt_id,))
-                conn.execute("UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?", (attempt_id,))
+                conn.execute(
+                    "DELETE FROM goal_payload_reservations WHERE attempt_id=?",
+                    (attempt_id,),
+                )
+                conn.execute(
+                    "UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?",
+                    (attempt_id,),
+                )
         with self._progress_claim_lock:
             for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
                 self._temporary_progress_claims.pop(message_id, None)
@@ -1401,14 +1411,21 @@ class AutomaticWorkLedger:
                 [(chain_id,) for chain_id in chains],
             )
             goals = tuple(
-                (row["id"], row["revision"],
-                 "recovery_required" if row["chain_id"] in chains or row["status"] == "recovery_required" else "paused")
+                (
+                    row["id"],
+                    row["revision"],
+                    "recovery_required"
+                    if row["chain_id"] in chains or row["status"] == "recovery_required"
+                    else "paused",
+                )
                 for row in conn.execute(
                     "SELECT g.* FROM goal_runs g WHERE g.status NOT IN ('completed','removed','closed','stopped','awaiting_result_review') "
                     "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
                 )
             )
-            audit = RuntimeRecoveryResult(current_owner_id, tuple(sorted(chains)), goals)
+            audit = RuntimeRecoveryResult(
+                current_owner_id, tuple(sorted(chains)), goals
+            )
             # Snapshot only the entries covered while this transaction owns
             # recovery. Later recoveries/setters may run before our return.
             with _UNCONFIRMED_STARTS_LOCK:
@@ -1424,7 +1441,6 @@ class AutomaticWorkLedger:
                     _UNCONFIRMED_STARTS.pop(key)
         self.recovery_result = audit
         return len(chains)
-
 
     def _create_chain(
         self,
@@ -1460,8 +1476,6 @@ class AutomaticWorkLedger:
         )
         return chain_id
 
-
-
     def read_goal_attempt(self, attempt_id: str, *, owner_id: str) -> GoalAttempt:
         """Read goal authority only when its immutable iteration link agrees."""
         with self._db.connection() as conn:
@@ -1480,8 +1494,6 @@ class AutomaticWorkLedger:
                 row["owner_id"],
                 row["state"],
             )
-
-
 
     def prepare_goal_iteration(self, goal_id: str, *, owner_id: str) -> GoalAttempt:
         """Reserve one generation and link it to real goal intent in FULL commit."""
@@ -1549,8 +1561,6 @@ class AutomaticWorkLedger:
                 self._db.goal_runs.reserve_result(conn, goal, attempt_id)
         return self.read_goal_attempt(attempt_id, owner_id=owner_id)
 
-
-
     def accept_goal_iteration(
         self,
         attempt_id: str,
@@ -1571,13 +1581,9 @@ class AutomaticWorkLedger:
             admission_guard=admission_guard,
         )
 
-
-
     def abort_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
         """Refund only an unaccepted goal generation reservation."""
         return self._abort_attempt(attempt_id, owner_id=owner_id, kind="goal_iteration")
-
-
 
     def _accept_attempt(
         self,

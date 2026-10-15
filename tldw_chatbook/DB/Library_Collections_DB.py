@@ -17,6 +17,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     _register_core_connection,
 )
 from .base_db import BaseDB
+from .transaction_helpers import flat_store_transaction
 
 
 class LibraryCollectionsSchemaError(RuntimeError):
@@ -650,36 +651,16 @@ class LibraryCollectionsDB(BaseDB):
     @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
+        """Yield a write connection inside an immediate transaction.
 
-        ``BEGIN IMMEDIATE`` takes the write lock up front. The MCP server
-        opens this same database file in its own process, so a deferred
-        transaction that read before writing could fail to upgrade; taking
-        the lock immediately removes that class of failure. Pure readers
-        must use ``read_transaction`` (or ``connection``) instead.
-
-        Nesting: this and ``read_transaction`` both issue an explicit BEGIN
-        on the ONE connection this thread holds, so nesting either inside
-        the other raises ``sqlite3.OperationalError: cannot start a
-        transaction within a transaction``. Pre-port each block had its own
-        connection and nesting silently "worked"; the outer block still
-        rolls back cleanly, because the failure propagates through its
-        ``except``.
-
-        Raises:
-            BaseException: Re-raised after rolling back, on any error or
-                interruption inside the ``with`` block. On clean exit the
-                transaction commits.
+        Uses ``BEGIN IMMEDIATE`` so the write lock is acquired up front;
+        rolls back on any error or interruption (``BaseException`` --
+        TASK-32801.5) and commits on clean exit. Delegates to the shared
+        flat-store helper (task-34905); nesting this inside another
+        transaction on the same thread raises, as before.
         """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with flat_store_transaction(self._held_connection()) as conn:
             yield conn
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
 
     def close(self) -> None:
         """Close the current thread's held connection, if any."""
@@ -706,8 +687,12 @@ class LibraryCollectionsDB(BaseDB):
             )
             current_version = 0
             if has_version_table:
-                versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
-                if not versions or any(type(version) is not int or version < 1 for version in versions):
+                versions = [
+                    row[0] for row in conn.execute("SELECT version FROM schema_version")
+                ]
+                if not versions or any(
+                    type(version) is not int or version < 1 for version in versions
+                ):
                     raise LibraryCollectionsSchemaError("unsupported_schema_version")
                 current_version = max(versions)
             elif conn.execute(
@@ -717,7 +702,12 @@ class LibraryCollectionsDB(BaseDB):
             if current_version > self._CURRENT_SCHEMA_VERSION:
                 raise LibraryCollectionsSchemaError("schema_too_new")
             if current_version == 5:
-                columns = {row[1] for row in conn.execute("PRAGMA table_info(collection_capture_items)")}
+                columns = {
+                    row[1]
+                    for row in conn.execute(
+                        "PRAGMA table_info(collection_capture_items)"
+                    )
+                }
                 if "url_provenance" not in columns:
                     raise LibraryCollectionsSchemaError("unsupported_hybrid_schema")
 
@@ -730,17 +720,18 @@ class LibraryCollectionsDB(BaseDB):
 
             if current_version in {2, 3, 4}:
                 columns = {
-                    str(row[1]) for row in conn.execute(
+                    str(row[1])
+                    for row in conn.execute(
                         "PRAGMA table_info(collection_capture_items)"
                     )
                 }
                 if "url_provenance" in columns:
                     raise LibraryCollectionsSchemaError("unsupported_hybrid_schema")
                 conn.execute(
-                    (Path(__file__).with_name("migrations")
-                     / "library_collections_v4_to_v5_url_provenance.sql").read_text(
-                        encoding="utf-8"
-                    )
+                    (
+                        Path(__file__).with_name("migrations")
+                        / "library_collections_v4_to_v5_url_provenance.sql"
+                    ).read_text(encoding="utf-8")
                 )
 
             for statement in self._CAPTURE_SCHEMA_DDL:

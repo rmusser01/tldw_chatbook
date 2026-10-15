@@ -265,6 +265,7 @@ _AGENT_RUNS_MIGRATION_18_21 = (
 class _AgentRunsAdapter(_SQLiteDeclaration):
     def _validate_connection(self, connection):
         from .recovery_goal_schema import validate_goal_rows
+
         return validate_goal_rows(connection)
 
     def schema_policy(self) -> SchemaPolicy:
@@ -982,7 +983,10 @@ def _briefing_relocation_authorizer(read_authorizer):
 
 class _SubscriptionsAdapter(_SQLiteDeclaration):
     def schema_policy(self) -> SchemaPolicy:
-        migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
+        migration = (
+            Path(__file__).with_name("migrations")
+            / "subscriptions_v2_to_v3_url_provenance.sql"
+        )
         statements = []
         pending = ""
         for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
@@ -992,7 +996,9 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                 pending = ""
         if pending.strip():
             raise ValueError("incomplete_provenance_migration")
-        return SchemaPolicy(self.owner_id, self.versions, self.schemas, ((2, 3, tuple(statements)),))
+        return SchemaPolicy(
+            self.owner_id, self.versions, self.schemas, ((2, 3, tuple(statements)),)
+        )
 
     def relocate_restore(
         self, item: StorageItem, candidate: Path, mapping: Mapping[str, Path]
@@ -1435,9 +1441,7 @@ _SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA.insert(
     ),
     "CREATE INDEX idx_subscriptions_source ON subscriptions(source)",
 )
-_SUBSCRIPTIONS_SCHEMA += (
-    (2, tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA)),
-)
+_SUBSCRIPTIONS_SCHEMA += ((2, tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA)),)
 
 
 def _subscriptions_chachanotes_stamps(schema):
@@ -1588,8 +1592,7 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 # ADR-216: v80 appends the browse-order indexes to every shared v79 catalog
 # (stamp 80).
 _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS = tuple(
-    _browse_order_catalog(schema)
-    for schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS
+    _browse_order_catalog(schema) for schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema) for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
@@ -1607,5 +1610,7 @@ _AGENT_RUNS_SCHEMA += tuple(
 
 # ADR-207: v3 is an atomic provenance data migration, with unchanged exact DDL.
 # Keep every previously qualified physical lineage at both supported versions.
-_SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
-                              if version == 2) + _SUBSCRIPTIONS_SCHEMA
+_SUBSCRIPTIONS_SCHEMA = (
+    tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA if version == 2)
+    + _SUBSCRIPTIONS_SCHEMA
+)
