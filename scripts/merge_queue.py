@@ -153,7 +153,8 @@ class Action:
         kind: `wait`, `rebase`, `start` (get a counted CI run going), `retry` or `evict`.
         reason: A human-readable cause, logged and quoted in comments.
         links: Run URLs quoted in the comment (the failed runs).
-        slug: An eviction's cause, used in its comment marker; `young` on the young-head wait.
+        slug: An eviction's cause, used in its comment marker; `young` on the young-head wait,
+            `green` on the wait for auto-merge.
         suite_id: For a retry, the failed check's check suite, which names the run to re-run;
             None when the failure has no check run (a broken run's stand-in).
     """
@@ -222,7 +223,7 @@ def decide_front(pr: PrState, now: datetime) -> Action:
             return Action(
                 "evict", "green for over 15 minutes but auto-merge did not fire; re-arm to retry", slug="stuck",
             )
-        return Action("wait", "green; auto-merge should fire")
+        return Action("wait", "green; auto-merge should fire", slug="green")
     return Action("wait", f"merge state {state}")
 
 
@@ -1361,7 +1362,15 @@ def _decide(gh: GhApi, pr: PrState, mode: str, now: Callable[[], datetime],
     runs = runs_on(gh, pr.head_sha)
     checks = counted(checks, runs)
     pr = replace(pr, checks=checks + required_run_stand_ins(gh, pr.head_sha, checks, runs))
-    return pr, decide_front(pr, now())
+    action = decide_front(pr, now())
+    if action.slug in ("stuck", "green"):
+        # Right after a merge, mergeStateStatus can still read up to date for the next PR in line
+        # (#3070 was evicted twice as stuck while a racing run rebased it). Auto-merge cannot fire on
+        # a head that is behind, so ask GitHub before waiting on a green head or evicting it.
+        compare = gh.rest("GET", f"repos/{REPO}/compare/{BASE}...{pr.head_sha}?per_page=1") or {}
+        if compare.get("behind_by", 0) > 0:
+            action = Action("rebase", "behind dev (its merge state had not caught up yet)")
+    return pr, action
 
 
 def run(

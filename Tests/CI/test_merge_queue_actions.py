@@ -77,8 +77,10 @@ class FakeGh:
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
                  reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False,
                  line_page_size=None, late_runs=None, dispatch_status=422, approve_error=None, rerun_error=None,
-                 run_status=None):
+                 run_status=None, behind_by=None):
         self.nodes = {n["number"]: n for n in nodes}
+        # behind_by[sha]: what a dev...sha compare answers (0 when absent); an exception is raised.
+        self.behind_by = behind_by or {}
         self.checks = checks or {}
         self.runs = runs or {}
         self.comments = comments or {}
@@ -178,6 +180,12 @@ class FakeGh:
             if self.runs_reads.get(sha, 0) >= 2 and "status=" not in path:
                 runs = runs + self.late_runs.get(sha, [])
             return {"total_count": len(runs), "workflow_runs": self._page(runs, path)}
+        if method == "GET" and "/compare/" in path:
+            self.reads += 1
+            behind = self.behind_by.get(path.split("...")[1].split("?")[0], 0)
+            if isinstance(behind, Exception):
+                raise behind
+            return {"behind_by": behind}
         if method == "POST" and path.endswith("/dispatches"):
             workflow = path.split("/workflows/")[1].split("/")[0]
             self._record(("dispatch", workflow, dict(fields or {})))
@@ -655,6 +663,52 @@ def test_blocked_green_evicts_only_with_unresolved_threads():
     assert decision.kind == "evict" and "unresolved conversations" in decision.reason
     gh = FakeGh([_node(1, state="BLOCKED", threads=(True,))], checks={OLD: [_check()]})
     assert _run(gh)[0][1].kind == "wait"
+    assert gh.calls == []
+
+
+HOURS_OLD_GREEN = "2026-10-03T04:00:00Z"
+
+
+def test_an_old_green_head_that_dev_has_moved_past_is_rebased_not_evicted_as_stuck():
+    """Right after a merge, mergeStateStatus can still read up to date for the next PR in line,
+    whose last green run is hours old. That is no stuck auto-merge: #3070 was evicted that way
+    twice on 2026-10-11 while a racing queue run rebased it. Ask GitHub whether the head is behind
+    dev before evicting."""
+    for state in ("CLEAN", "BLOCKED"):
+        gh = FakeGh([_node(1, state=state)], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]}, behind_by={OLD: 3})
+        decision = _run(gh)[0][1]
+        assert decision.kind == "rebase", state
+        assert gh.calls[0] == ("rebase", "PR_1", OLD)
+        assert not any(c[0] == "disarm" or (c[0] == "comment" and "evict" in c[2]) for c in gh.calls)
+
+
+def test_a_fresh_green_head_that_dev_has_moved_past_is_rebased_at_once():
+    """The same stale merge state hides a head whose green run is minutes old: auto-merge cannot fire
+    on a head that is behind, so waiting on it would hold the line until some unrelated event."""
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]}, behind_by={OLD: 2})
+    decision = _run(gh)[0][1]
+    assert decision.kind == "rebase" and gh.calls[0] == ("rebase", "PR_1", OLD)
+
+
+def test_dry_mode_proposes_the_rebase_of_a_green_head_behind_dev_without_making_it():
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]}, behind_by={OLD: 1})
+    assert _run(gh, "dry")[0][1].kind == "rebase"
+    assert gh.calls == []
+
+
+def test_an_old_green_head_up_to_date_with_dev_is_still_evicted_as_stuck():
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]})
+    decision = _run(gh)[0][1]
+    assert decision.kind == "evict" and decision.slug == "stuck"
+    assert [c[0] for c in gh.calls] == ["comment", "disarm"]
+    assert f"<!-- merge-queue:evict-stuck:{OLD} -->" in gh.calls[0][2]
+
+
+def test_a_failed_behind_check_never_disarms():
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check(completed=HOURS_OLD_GREEN)]},
+                behind_by={OLD: mq.GhError("gh: Server Error (HTTP 502)")})
+    with pytest.raises(mq.GhError):
+        _run(gh)
     assert gh.calls == []
 
 
