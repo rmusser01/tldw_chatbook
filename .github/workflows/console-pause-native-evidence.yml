@@ -1,0 +1,94 @@
+name: PR3023 Windows runtime source capture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-sources:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Verify isolated runtime-only snapshot
+        shell: python
+        run: |
+          import json, os, subprocess
+          from pathlib import Path
+          base = '3a4b08a99ebdff20a6d3078ab5448a913423023f'
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert head == os.environ['GITHUB_SHA']
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD^'], text=True).strip() == base
+          changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines()
+          assert changed == ['.github/workflows/console-pause-native-evidence.yml']
+          output = Path(os.environ['RUNNER_TEMP'], 'pr3023-windows-runtime-r1')
+          output.mkdir(exist_ok=False)
+          (output / 'checkout.json').write_text(json.dumps({
+              'base': base, 'head': head, 'changed_paths': changed,
+              'scope': 'Runtime library sources only; no product TEST/native/performance acceptance'
+          }, indent=2) + '\n', encoding='utf-8')
+      - name: Install the existing dev dependencies and recorded test versions
+        run: python -m pip install -e ".[dev]" pytest==8.4.2 textual==8.2.8
+      - name: Capture the genuine installed runtime files
+        shell: python
+        run: |
+          import hashlib, importlib, json, os, platform, sys
+          from importlib.metadata import version
+          from pathlib import Path
+          assert sys.version_info[:3] == (3, 12, 10)
+          assert sys.platform == 'win32'
+          assert version('pytest') == '8.4.2' and version('textual') == '8.2.8'
+          output = Path(os.environ['RUNNER_TEMP'], 'pr3023-windows-runtime-r1')
+          rows = []
+          modules = (
+              'contextlib', '_pytest.fixtures', '_pytest.assertion.rewrite',
+              'concurrent.futures._base', 'concurrent.futures.thread',
+              'textual.worker', 'textual.worker_manager', 'textual.dom', 'textual.timer',
+          )
+          for name in modules:
+              module = importlib.import_module(name)
+              actual = Path(module.__file__).resolve()
+              assert actual.is_file() and actual.suffix == '.py', str(actual)
+              data = actual.read_bytes()
+              target = output / (name.replace('.', '_') + '.py.txt')
+              with target.open('xb') as stream:
+                  stream.write(data)
+              assert target.read_bytes() == data
+              spec = module.__spec__
+              rows.append({
+                  'module': name, 'actual_path': str(actual),
+                  'spec_origin': spec.origin,
+                  'loader_type': type(spec.loader).__module__ + '.' + type(spec.loader).__qualname__,
+                  'snapshot': target.name, 'sha256': hashlib.sha256(data).hexdigest(),
+                  'bytes': len(data),
+              })
+          assert len(rows) == 9 and len({row['module'] for row in rows}) == 9
+          assert not any(name == 'tldw_chatbook' or name.startswith('tldw_chatbook.') for name in sys.modules)
+          receipt = {
+              'head': os.environ['GITHUB_SHA'], 'runner_os': os.environ['RUNNER_OS'],
+              'python': sys.version, 'executable': sys.executable, 'platform': platform.platform(),
+              'pytest': version('pytest'), 'textual': version('textual'), 'sources': rows,
+              'scope': 'Fresh runtime metadata/files only; no App, provider, TEST or product native call',
+          }
+          (output / 'runtime-sources.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
+      - name: Verify tracked source remains unchanged
+        if: always()
+        run: git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr3023-windows-runtime-r1
+          path: ${{ runner.temp }}/pr3023-windows-runtime-r1/
+          if-no-files-found: error
