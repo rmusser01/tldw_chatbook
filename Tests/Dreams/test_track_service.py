@@ -6896,3 +6896,32 @@ async def test_tracking_again_after_untracking_while_off_alerts_again(
         "the tracked page alerts again")
     if users_rule is not None:
         assert not rules[users_rule["rule_id"]], "the user's own rule stays off"
+
+
+@pytest.mark.asyncio
+async def test_tracking_again_leaves_off_a_rule_the_user_switched_off_after(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Review of #3123, N4. The rule a retired watch's record owes is the
+    one Dreams switched off; switched on and off again by the user after
+    the untrack, it is the user's, and tracking the page again leaves it
+    off -- and the record no longer owes it."""
+    _subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id = owned["tracked_item_id"]
+    dreams_rule = _rule_id_on_record(dreams_db, item_id)
+    settings["enabled"] = False
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await untrack(service, dreams_db, item_id,
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+    await service.update_alert_rule(dreams_rule, enabled=True)
+    await service.update_alert_rule(dreams_rule, enabled=False)
+    settings["enabled"] = True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    await _event_page(dreams_db, service, scheduling_db)
+
+    rules = {r["rule_id"]: r["enabled"] for r in await service.list_alert_rules(
+        job_id=owned["subscription_id"])}
+    assert not rules[dreams_rule], "the user's switch-off stands"
+    assert dreams_rule not in (_record(dreams_db, item_id) or {}).get(
+        "rules", []), "and is no longer owed"

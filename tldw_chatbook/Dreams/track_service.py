@@ -121,6 +121,7 @@ from .settings import (
 from .track_reconcile import (
     SETTLED_OFF,
     SETTLED_ON,
+    changed_after,
     is_dreams_source,
     settled_state,
 )
@@ -1303,6 +1304,13 @@ async def _restore_rules_left_off(
     back here, and the debt leaves the record. Only a rule a record owes is
     touched: one the user switched off themselves, or a user's own rule,
     never is.
+
+    Review of #3123, N4: an owed rule the user changed after the record
+    was written (its ``updated_at`` later than the record's ``at``) is
+    theirs and is left as it is; the debt still leaves the record. A
+    record from before ``at`` was written, or a rule row without
+    ``updated_at``, cannot tell the two apart, and the owed rule is
+    re-enabled as before.
     """
     riders = await asyncio.to_thread(
         dreams_db.list_tracked_for_subscription, subscription_id)
@@ -1315,7 +1323,10 @@ async def _restore_rules_left_off(
         if not owed:
             continue
         for rule_id in owed:
-            if not bool(dreams_rules[rule_id].get("enabled", True)):
+            rule = dreams_rules[rule_id]
+            if changed_after(rule.get("updated_at"), record.get("at")):
+                continue  # the user's change since; it stands
+            if not bool(rule.get("enabled", True)):
                 try:
                     await subs_service.update_alert_rule(rule_id, enabled=True)
                 except KeyError:

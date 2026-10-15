@@ -117,7 +117,9 @@ and Dreams notes on each watch exactly what it paused:
 
 Switching back on restores those things and nothing else. A
 subscription, alert or reminder you had switched off yourself stays off,
-and a reminder you moved to another time keeps your time. A watch whose
+and a reminder you moved to another time keeps your time. A page you
+untracked while Dreams was off gets Dreams' change alert back when you
+track it again, unless you changed that alert yourself since. A watch whose
 event passed while Dreams was off is retired instead of resumed, and a
 tracked page whose address is no longer public stays off (see
 [Tracking](#tracking)).

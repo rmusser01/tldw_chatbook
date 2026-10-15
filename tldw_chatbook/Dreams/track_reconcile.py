@@ -156,16 +156,29 @@ def _changed_before(changed: Any, at: Any) -> bool:
     unreadable (a record an earlier build wrote) is "cannot tell" -- not
     taken for a restore.
     """
+    changed_at, written_at = _moment(changed), _moment(at)
+    return changed_at is not None and written_at is not None and (
+        changed_at <= written_at)
+
+
+def changed_after(changed: Any, at: Any) -> bool:
+    """Whether a row demonstrably changed after a record was written.
+
+    Review of #3123, N4: the user's change, which a re-track must not undo.
+    Either time missing or unreadable is "cannot tell" -- False.
+    """
+    changed_at, written_at = _moment(changed), _moment(at)
+    return changed_at is not None and written_at is not None and (
+        changed_at > written_at)
+
+
+def _moment(value: Any) -> datetime | None:
+    """An ISO 8601 time as an aware UTC-assumed datetime, or None."""
     try:
-        changed_at = datetime.fromisoformat(str(changed))
-        written_at = datetime.fromisoformat(str(at))
+        moment = datetime.fromisoformat(str(value))
     except (TypeError, ValueError):
-        return False
-    if changed_at.tzinfo is None:
-        changed_at = changed_at.replace(tzinfo=UTC)
-    if written_at.tzinfo is None:
-        written_at = written_at.replace(tzinfo=UTC)
-    return changed_at <= written_at
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 class _StoreReadRefused(RuntimeError):
