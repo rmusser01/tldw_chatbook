@@ -596,3 +596,318 @@ async def test_owned_hook_registration_failure_settles_unlaunched_reservation(
         )
     finally:
         await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shared_connection_case", ["native_tools"], indirect=True)
+async def test_configuration_recovery_scopes_identical_tool_ids_to_installation_revision(
+    shared_connection_case, native_package
+):
+    import asyncio
+    import json
+    import shutil
+
+    from tldw_chatbook.MCP.credential_bindings import CredentialError
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+    from tldw_chatbook.Plugins.components import validate_mapping
+    from tldw_chatbook.Plugins.mcp_provider import PluginMCPProvider
+    from tldw_chatbook.Plugins.recovery import retained_inspections
+
+    case = shared_connection_case
+    case.release.touch()
+    assert (await case.pending).ok
+
+    async def configure(installation, profile_id):
+        review = await case.service.review_configuration(
+            installation,
+            connections={"mcp:shared": profile_id},
+            tools={"mcp:shared": ("echo",)},
+            component_tools={"agent:reader": {"search": "mcp:shared::echo"}},
+        )
+        assert (await case.service.commit(review, review.operation_id)).committed
+
+    await configure(case.installation, case.profile_id)
+    assert not any(
+        row.phase == "recovery_required"
+        for row in await case.service._call(case.service._coordinator.recover)
+    )
+    sibling = native_package()
+    shutil.copytree(case.package, sibling, dirs_exist_ok=True)
+    manifest = json.loads((sibling / "plugin.json").read_text())
+    manifest["name"] = "sibling-review-helper"
+    (sibling / "plugin.json").write_text(json.dumps(manifest))
+    review = await case.service.review_install(
+        sibling,
+        selection=("skill:review", "mcp:shared", "agent:reader"),
+        workspace_id="a",
+    )
+    assert (await case.service.commit(review, review.operation_id)).committed
+    second = review.installation_id
+    trust = await case.service.review_trust(second)
+    assert (await case.service.commit(trust, trust.operation_id)).committed
+    active = await case.service.review_activation(
+        second, workspace_id="a", intent="enabled"
+    )
+    assert (await case.service.commit(active, active.operation_id)).committed
+    data_review = await case.service.review_data_creation(second, workspace_id=None)
+    data_root = await case.service.create_data(data_review, data_review.operation_id)
+    snapshot = await case.service.capture_mcp_snapshot(second, "a", "sibling-discovery")
+    profile = case.local.save_owned_profile(
+        installation_id=second,
+        inspection=snapshot.inspection,
+        component_id="mcp:shared",
+        data_root=data_root,
+        session_isolation="request_independent",
+        protocol_version="2025-03-26",
+    )
+    connection = await case.service.review_configuration(
+        second, connections={"mcp:shared": profile["profile_id"]}
+    )
+    assert (await case.service.commit(connection, connection.operation_id)).committed
+    provider = PluginMCPProvider(
+        plugin_service=case.service,
+        ownership=case.ownership,
+        snapshot=await case.service.capture_mcp_snapshot(
+            second, "a", "sibling-discovery"
+        ),
+        service=case.unified,
+        main_loop=asyncio.get_running_loop(),
+    )
+    assert (await provider.connect("mcp:shared"))["tools"][0]["name"] == "echo"
+    await configure(second, profile["profile_id"])
+    authority = await case.service._call(case.service._coordinator.published_snapshot)
+    mappings = authority["mappings"]
+    targets = [row for row in mappings if row["kind"] == "tool"]
+    assert len(targets) == 2 and targets[0]["mapping_id"] == targets[1]["mapping_id"]
+    assert len({row["installation_id"] for row in targets}) == 2
+    assert len({row["revision_digest"] for row in targets}) == 2
+    assert not any(
+        row.phase == "recovery_required"
+        for row in await case.service._call(case.service._coordinator.recover)
+    )
+    assert (await case.service._call(case.service._coordinator.published_snapshot))[
+        "mappings"
+    ] == mappings
+    inspections = retained_inspections(authority)
+    constraints = {
+        row["installation_id"]: row
+        for row in mappings
+        if row["kind"] == "configuration"
+    }
+
+    async def validate(installation, candidates):
+        constraint = constraints[installation]
+        await case.service._call(
+            lambda: validate_mapping(
+                case.service._coordinator,
+                constraint,
+                inspections[(installation, constraint["revision_digest"])],
+                candidates,
+            )
+        )
+
+    own = next(row for row in targets if row["installation_id"] == case.installation)
+    foreign = next(row for row in targets if row["installation_id"] == second)
+    with pytest.raises(PluginUnavailable, match="plugin_tool_mapping_changed"):
+        await validate(case.installation, [foreign])
+    with pytest.raises(PluginUnavailable, match="plugin_tool_mapping_changed"):
+        await validate(
+            case.installation, [{**own, "revision_digest": foreign["revision_digest"]}]
+        )
+    original = case.local.store.get_discovery_snapshot(case.profile_id)
+    changed = json.loads(json.dumps(original))
+    changed["tools"][0]["description"] = "changed A only"
+    case.local.store.save_discovery_snapshot(case.profile_id, changed)
+    try:
+        with pytest.raises(CredentialError, match="credential_mapping_changed"):
+            await validate(case.installation, mappings)
+        await validate(second, mappings)
+        assert any(
+            row.phase == "recovery_required"
+            for row in await case.service._call(case.service._coordinator.recover)
+        )
+    finally:
+        case.local.store.save_discovery_snapshot(case.profile_id, original)
+        assert not any(
+            row.phase == "recovery_required"
+            for row in await case.service._call(case.service._coordinator.recover)
+        )
+
+
+@pytest.mark.asyncio
+async def test_combined_hooks_keep_distinct_installation_revision_process_owners(
+    native_console, native_package, monkeypatch
+):
+    import asyncio
+    import json
+    import threading
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Plugins.components import NativeHookProcessOwner, NativeHookSet
+
+    service = native_console.service
+    snapshots, roots = [], {}
+    code = "import json,sys,time;from pathlib import Path;e=json.load(sys.stdin);root=Path('${PLUGIN_DATA}');(root/e['runtime_session_id']).write_text('running');exec(\"while not (root/'release').exists(): time.sleep(.01)\");print('{\"version\":2,\"decision\":\"pass\"}')"
+    for name in ("a", "b"):
+        package = native_package(extension={"version": 1, "hooks": "hooks.json"})
+        manifest = json.loads((package / "plugin.json").read_text())
+        manifest["name"] = "owned-hook-" + name
+        (package / "plugin.json").write_text(json.dumps(manifest))
+        (package / "hooks.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "hooks": [
+                        {
+                            "id": "work",
+                            "type": "command",
+                            "event": "PreToolUse",
+                            "effects": [],
+                            "argv": child_argv(code),
+                            "timeout_seconds": 20,
+                        }
+                    ],
+                }
+            )
+        )
+        installed = await install_components(service, package, ("hook:work",))
+        review = await service.review_data_creation(
+            installed.installation_id, workspace_id=None
+        )
+        roots[installed.installation_id] = await service.create_data(
+            review, review.operation_id
+        )
+        snapshots.append(
+            await service.capture_mcp_snapshot(
+                installed.installation_id, "workspace-a", "pending-combined"
+            )
+        )
+    a, b = snapshots
+    assert (
+        a.installation_id != b.installation_id
+        and a.revision_digest != b.revision_digest
+    )
+    owner = NativeHookSet(service, snapshots)
+    assert len({handler.id for handler in owner.definitions}) == 2
+    engine = HookEngine(
+        owner.definitions,
+        owner.current,
+        HookBudgetOwner(),
+        process_owner_for=owner.process_owner,
+    )
+    entered, release_publish = threading.Event(), threading.Event()
+    publish = NativeHookProcessOwner.publish_process
+
+    def delayed(self, token, provenance):
+        if self.snapshot.installation_id == a.installation_id:
+            entered.set()
+            assert release_publish.wait(10)
+        return publish(self, token, provenance)
+
+    monkeypatch.setattr(NativeHookProcessOwner, "publish_process", delayed)
+    shared_event = event(runtime="combined")
+    assert engine.notify(shared_event)
+    try:
+        for _ in range(500):
+            if (
+                entered.is_set()
+                and (roots[b.installation_id].path / "combined").exists()
+            ):
+                break
+            await asyncio.sleep(0.01)
+        assert (
+            entered.is_set() and (roots[b.installation_id].path / "combined").exists()
+        )
+        jobs = {
+            job.owner.snapshot.installation_id: job
+            for job in engine.processes.records.values()
+        }
+        assert set(jobs) == {a.installation_id, b.installation_id}
+        original_owners = {key: job.owner for key, job in jobs.items()}
+        assert {
+            (row.installation_id, row.revision_digest) for row in service.live_runs()
+        } == {
+            (snapshot.installation_id, snapshot.revision_digest)
+            for snapshot in snapshots
+        }
+        process_rows = await service._call(
+            lambda: service._coordinator.owner.list_processes(limit=20, offset=0)
+        )
+        active = {
+            row["installation_id"]: row
+            for row in process_rows
+            if row["state"] != "settled"
+        }
+        assert set(active) == set(jobs)
+        assert {row["operation_id"] for row in active.values()} == {
+            shared_event.event_id
+        }
+        for snapshot in snapshots:
+            row = active[snapshot.installation_id]
+            assert row["revision_digest"] == snapshot.revision_digest
+            assert row["token"] == jobs[snapshot.installation_id].token
+            blockers = await service._call(
+                lambda snapshot=snapshot: service._coordinator.root_usage.blockers(
+                    (roots[snapshot.installation_id],)
+                )
+            )
+            assert any(
+                blocker.get("owner_token") == row["token"] for blocker in blockers
+            )
+        assert await service._call(lambda: service._coordinator.root_usage.dirty)
+        disabled = await service.review_activation(
+            a.installation_id, workspace_id="workspace-a", intent="disabled"
+        )
+        committed = asyncio.create_task(service.commit(disabled, disabled.operation_id))
+        for _ in range(100):
+            if jobs[a.installation_id].cancel.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert jobs[a.installation_id].cancel.is_set()
+        assert (
+            not jobs[b.installation_id].cancel.is_set()
+            and not jobs[b.installation_id].task.done()
+        )
+        assert not (roots[a.installation_id].path / "combined").exists()
+        release_publish.set()
+        assert (await asyncio.wait_for(jobs[a.installation_id].task, 10)).failure
+        assert (await asyncio.wait_for(committed, 10)).committed
+        assert {row.installation_id for row in service.live_runs()} == {
+            b.installation_id
+        }
+        assert not await service._call(
+            lambda: service._coordinator.root_usage.blockers(
+                (roots[a.installation_id],)
+            )
+        )
+        assert await service._call(
+            lambda: service._coordinator.root_usage.blockers(
+                (roots[b.installation_id],)
+            )
+        )
+        (roots[b.installation_id].path / "release").touch()
+        result = await asyncio.wait_for(jobs[b.installation_id].task, 10)
+        assert result.failure is None and result.result is not None
+        for _ in range(100):
+            if not engine.cleanup_pending:
+                break
+            await asyncio.sleep(0.01)
+        assert not engine.cleanup_pending and not service.live_runs()
+        assert all(job.owner is original_owners[key] for key, job in jobs.items())
+        assert all(
+            row["state"] == "settled"
+            for row in await service._call(
+                lambda: service._coordinator.owner.list_processes(limit=20, offset=0)
+            )
+        )
+        assert not await service._call(
+            lambda: service._coordinator.root_usage.blockers(tuple(roots.values()))
+        )
+    finally:
+        release_publish.set()
+        for root in roots.values():
+            (root.path / "release").touch()
+        await engine.close()

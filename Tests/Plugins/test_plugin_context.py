@@ -533,3 +533,78 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
     assert generated in payload
     assert payload.count("Check the change and explain actionable findings.") == 1
     assert reads == ["evidence.txt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paused", [False, True])
+@pytest.mark.parametrize("reference", [False, True])
+async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_send(
+    native_console, native_package, monkeypatch, paused, reference
+):
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Chat.console_chat_controller as controller_module
+    import tldw_chatbook.Chat.console_references as references
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+
+    rig = native_console
+    package = native_package(extension={"version": 1, "rules": ["rule.md", "other.md"]})
+    (package / "rule.md").write_text(
+        "---\nname: style\nmode: manual\n---\nMANUAL STYLE BODY."
+    )
+    (package / "other.md").write_text(
+        "---\nname: other\nmode: manual\n---\nUNSELECTED RULE BODY."
+    )
+    install = await install_components(
+        rig.service, package, ("rule:style", "rule:other", "skill:review")
+    )
+    generated = f"EVIDENCE @{install.alias}:other ${install.alias}:review"
+    reads = []
+
+    def resolve(token):
+        reads.append(token)
+        if token != "evidence.txt":
+            return None
+        return "file", generated, None
+
+    monkeypatch.setattr(references, "build_console_reference_resolver", lambda: resolve)
+    session = rig.store.create_session(ephemeral=paused, workspace_id="workspace-a")
+    if paused:
+        monkeypatch.setattr(
+            rig.gateway, "supports_durable_capture", True, raising=False
+        )
+        monkeypatch.setattr(
+            controller_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True, detail=CaptureDetail.SAFE, generation=7
+            ),
+        )
+        policy = rig.controller.capture_policy_snapshot(session.id)
+        rig.controller.set_next_trace_privacy(
+            session.id,
+            capture_enabled=True,
+            pii_redaction_enabled=True,
+            expected_policy_revision=policy.policy_revision,
+        )
+    remainder = "compare @evidence.txt" if reference else "compare literal evidence"
+    sent = await rig.controller.submit_draft(
+        f"@{install.alias}:style {remainder}", session_id=session.id
+    )
+    if paused:
+        preparation = rig.store.preparation_for_session(session.id)
+        assert not sent.accepted and preparation is not None
+        assert not rig.gateway.payloads
+        sent = await rig.controller.send_without_capture(preparation.preparation_id)
+    assert sent.accepted
+    payload = rig.gateway.payloads[-1]
+    text = "\n".join(
+        str(row.get("content", "")) for row in payload if row["role"] == "user"
+    )
+    assert text.count("MANUAL STYLE BODY.") == 1
+    assert "UNSELECTED RULE BODY." not in text
+    assert "Check the change and explain actionable findings." not in text
+    assert remainder in text
+    if reference:
+        assert generated in text
+    assert reads == (["evidence.txt"] if reference else [])

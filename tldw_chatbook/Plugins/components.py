@@ -243,6 +243,8 @@ def validate_mapping(
             for row in mappings
             if row["mapping_id"] == mapping["target_reference"]
             and row["kind"] == "tool"
+            and row["installation_id"] == mapping["installation_id"]
+            and row["revision_digest"] == mapping["revision_digest"]
         ]
         if (
             len(tokens) != 1

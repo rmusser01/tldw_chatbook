@@ -8928,6 +8928,22 @@ class ConsoleChatController:
                 )
 
                 candidates = find_reference_candidates(clean_draft)
+                if any(
+                    first_word == "@" + row["name"] and row["plugin_kind"] == "rule"
+                    for row in configuration.skill_context_maximum.get(
+                        "native_components", ()
+                    )
+                ):
+                    # The explicit native selector is not a file reference.
+                    selector_start = len(clean_draft) - len(clean_draft.lstrip())
+                    candidates = [
+                        candidate
+                        for candidate in candidates
+                        if not (
+                            candidate.start == selector_start
+                            and candidate.raw == first_word
+                        )
+                    ]
                 if candidates:
                     def _expand():
                         resolver = build_console_reference_resolver()
@@ -21940,8 +21956,11 @@ class ConsoleChatController:
                 )
                 if row not in automatic:
                     blocks.extend(await service.render_native(row, arguments=arguments))
-                if row["plugin_kind"] == "rule" and rest:
-                    blocks.append({"role": "user", "content": rest})
+                if row["plugin_kind"] == "rule":
+                    # Selection uses original input; its remainder retains evidence.
+                    _, expanded_rest = _split_skill_command_word(content.lstrip())
+                    if expanded_rest:
+                        blocks.append({"role": "user", "content": expanded_rest})
                 rendered = list(provider_messages)
                 rendered[final : final + 1] = blocks
                 result = rendered, None, (), (), ""
