@@ -172,6 +172,21 @@ def test_write_reorders_only_the_tail_of_the_census_it_is_given(tmp_path, capsys
     assert replay.CENSUS_PATH.read_bytes() == real_census
 
 
+def test_the_census_tail_block_keeps_the_shape_write_relies_on():
+    """--write keeps the PR block's header in place only because one blank line ends it.
+
+    A blank line inside the block would travel with the entry after it and
+    drift towards the header over repeated writes, so the block has none.
+    """
+    lines = (_SCRIPT.parent / "ui_pr_gate_census.txt").read_text(encoding="utf-8").splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith("# TASK-33007 (PR #3057"))
+    blank = next(i for i in range(header, len(lines)) if not lines[i].strip())
+    assert all(lines[i].lstrip().startswith("#") for i in range(header, blank))
+    block = lines[blank + 1 :]
+    assert block and block[0].lstrip().startswith("#")
+    assert all(line.strip() for line in block), "a blank line inside the tail block"
+
+
 def test_main_refuses_runs_that_timed_no_file(tmp_path, capsys):
     (tmp_path / "empty-run").mkdir()
     census = tmp_path / "census.txt"

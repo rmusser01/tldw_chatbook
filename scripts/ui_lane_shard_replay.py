@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import itertools
 import random
 import re
@@ -34,10 +35,15 @@ from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.check_ui_pr_gate_census import read_census
+# Loaded by path, as the other scripts load their siblings, so a `scripts`
+# package elsewhere on sys.path can never shadow the checker.
+_CHECKER_SPEC = importlib.util.spec_from_file_location(
+    "check_ui_pr_gate_census", REPO_ROOT / "scripts" / "check_ui_pr_gate_census.py"
+)
+_checker = importlib.util.module_from_spec(_CHECKER_SPEC)
+_CHECKER_SPEC.loader.exec_module(_checker)
+read_census = _checker.read_census
 
 CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #: Seconds charged to an entry no log has timed (a new file or node id).
