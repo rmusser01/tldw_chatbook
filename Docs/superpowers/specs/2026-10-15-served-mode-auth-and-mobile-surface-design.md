@@ -72,7 +72,10 @@ Grounding facts from the code:
 
 - Multi-user identity, accounts, or per-user isolation (single operator).
 - Replacing the terminal surface; the TUI remains the full application.
-- Live cross-surface sync in v1 (desktop activity is not pushed to the phone; see §5.3).
+- Live cross-surface **streaming mirroring** and **cross-process approval relay** in v1:
+  desktop in-flight deltas and desktop-initiated pending approvals are not pushed to the
+  phone. v1 does ship completion-level cross-surface sync via client polling (§4.4); the
+  relay that would carry deltas and approvals is Phase 2 (§5).
 - A service worker / offline mode for the mobile PWA in v1.
 - Making the terminal itself mobile-friendly beyond a discovery link (possible cheap
   follow-up, deliberately out of scope to keep this design tight).
@@ -251,6 +254,12 @@ v1 scope.
 - Auth expiry mid-stream → the socket closes with a redirect-to-login signal; the composer
   draft is preserved in `sessionStorage`.
 - Engine failure mid-stream → an error event; transcript state remains intact.
+- **Cross-surface completion sync (v1):** while a conversation view is open, the client
+  re-polls `GET /api/v1/mobile/conversations/{id}/messages?after=` on a modest interval
+  (e.g. 10–15 s) and immediately on `visibilitychange`/app foreground, so messages
+  completed on another surface (the desktop terminal) appear without reopening. In-flight
+  streaming deltas from another surface are not mirrored; the relay that would carry them
+  is Phase 2.
 
 ### 4.5 Configuration
 
@@ -263,8 +272,8 @@ the escape hatch). Part A adds the two `session_*_timeout_days` keys (§3.1).
    revocation, QR pairing (page + `--pair`), README incident-response update, auth ADR.
 2. **Phase 1b — mobile v1:** engine-binding spike (§4.3 — gates the API shape), then the
    `/m` surface, mobile API (conversations/messages/send/stream/cancel/approvals),
-   `MobileChatService` or headless-child binding per the spike, PWA manifest, discovery
-   link; mobile-surface ADR.
+   `MobileChatService` or headless-child binding per the spike, client polling for
+   cross-surface completion sync (§4.4), PWA manifest, discovery link; mobile-surface ADR.
 3. **Phase 2:** passkeys (§3.5); read-only notes/library on `/m`; parent↔child relay for
    desktop approvals and live cross-surface updates.
 
@@ -289,6 +298,9 @@ needs the token form again.
 
 ## 7. Self-review notes
 
+- Post-approval revision (2026-10-15): completion-level cross-surface sync (client
+  polling, §4.4) moved into v1 at operator request; streaming mirroring and the
+  cross-process approval relay remain Phase 2. Fixed a dangling §5.3 cross-reference.
 - Post-review revisions (2026-10-15, from the design review pass): wall-clock requirement
   for persistence (§3.1), cookie-max-age policy (§3.1), WebSocket auth clarification
   (§4.2), engine binding re-opened as a spike-gated decision with two candidate bindings
