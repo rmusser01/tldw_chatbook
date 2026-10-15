@@ -691,3 +691,134 @@ def test_receipt_retirement_protects_changed_or_extant_staging(
         acquire(plugin_stack, native_package(), "new-label")
     assert (leaf / "unknown").read_text() == "keep"
     assert acquisition._record_path(owner, "protected").exists()
+
+
+@pytest.mark.parametrize("bound", ["staging", "managed", "reserve"])
+@pytest.mark.parametrize("cross_limit", [False, True])
+def test_final_materialization_quota_acceptance(
+    plugin_stack, native_package, monkeypatch, bound, cross_limit
+):
+    from collections import namedtuple
+    from datetime import UTC, datetime, timedelta
+
+    from Tests.Plugins.test_coordinator import reviewed
+    from tldw_chatbook.Plugins import acquisition, retention
+
+    source = native_package()
+    review = reviewed(plugin_stack, source)
+    plugin_stack.call(
+        lambda: plugin_stack.coordinator.commit(review, review.operation_id)
+    )
+    before = plugin_stack.call(plugin_stack.authority.verify_current)
+    owner, authority = plugin_stack.owner, plugin_stack.authority
+    size = sum(path.stat().st_size for path in source.rglob("*") if path.is_file())
+    initial = retention.managed_usage(owner.root)
+    allowance = size + (-1 if cross_limit else 1)
+    # A controlled polling interval puts every small final write after the last
+    # real scan. The real F1 copy and real byte accounting remain active.
+    monkeypatch.setattr(acquisition, "POLL_SECONDS", 60)
+    if bound == "staging":
+        monkeypatch.setattr(acquisition, "MAX_STAGING_BYTES", allowance)
+    elif bound == "managed":
+        monkeypatch.setattr(retention, "MANAGED_BYTES", initial + allowance)
+    else:
+        usage = namedtuple("Usage", "total used free")
+        monkeypatch.setattr(
+            "shutil.disk_usage",
+            lambda _: usage(
+                10**12,
+                0,
+                retention.FREE_RESERVE_BYTES
+                + allowance
+                - (retention.managed_usage(owner.root) - initial),
+            ),
+        )
+    if cross_limit:
+        with pytest.raises((ValueError, OSError), match="staging_limit|quota|reserve"):
+            acquire(plugin_stack, source, "final-copy")
+    else:
+        result = acquire(plugin_stack, source, "final-copy")
+        assert result.inspection.content_digest
+    record = plugin_stack.call(lambda: acquisition._inventory(owner, authority))[0]
+    assert record["phase"] == "terminal"
+    assert record["recovery_referenced"] is (not cross_limit)
+    assert not owner.acquisition_tasks
+    assert plugin_stack.call(authority.verify_current) == before
+    if cross_limit:
+        assert owner.acquisition_destination("final-copy").exists()
+        assert (
+            plugin_stack.call(
+                lambda: acquisition.cleanup_acquisitions(owner, authority)
+            )
+            == ()
+        )
+        assert plugin_stack.call(
+            lambda: acquisition.cleanup_acquisitions(
+                owner, authority, now=datetime.now(UTC) + timedelta(hours=25)
+            )
+        ) == ("final-copy",)
+        assert not owner.acquisition_destination("final-copy").parent.exists()
+
+
+@pytest.mark.asyncio
+async def test_final_capacity_scan_retains_worker_after_waiter_cancel(
+    tmp_path, native_package, monkeypatch
+):
+    import asyncio
+    import json
+    import shutil
+    import threading
+
+    from tldw_chatbook.Plugins import acquisition
+    from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.service import PluginService, PluginUnavailable
+
+    service = PluginService(
+        tmp_path / "profile",
+        workspace_lookup=lambda _: None,
+        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        accept_reduced_protection=True,
+    )
+    await service.bootstrap("test passphrase")
+    destination = await service.acquisition_destination("final-scan")
+    entered, release = threading.Event(), threading.Event()
+    original = shutil.disk_usage
+
+    def blocked_usage(path):
+        if destination.exists():
+            entered.set()
+            assert release.wait(5)
+        return original(path)
+
+    monkeypatch.setattr(acquisition, "POLL_SECONDS", 60)
+    monkeypatch.setattr(shutil, "disk_usage", blocked_usage)
+    task = asyncio.create_task(
+        service.acquire_snapshot(
+            select_local_source(native_package()), "final-scan", destination
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert destination.exists()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        owner = service._coordinator.owner
+        assert owner.acquisition_tasks
+        receipt = acquisition._record_path(owner, "final-scan")
+        assert json.loads(receipt.read_text())["body"]["phase"] == "pending"
+        with pytest.raises(PluginUnavailable, match="not_drained"):
+            await service.aclose()
+        release.set()
+        for _ in range(500):
+            if not owner.acquisition_tasks:
+                break
+            await asyncio.sleep(0.01)
+        assert not owner.acquisition_tasks
+        record = json.loads(receipt.read_text())["body"]
+        assert record["phase"] == "terminal"
+        assert record["recovery_referenced"] is False
+    finally:
+        release.set()
+        await service.aclose()

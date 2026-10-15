@@ -330,10 +330,10 @@ class _Producer:
         if time.monotonic() >= self.deadline:
             raise AcquisitionError("acquisition_deadline_limit")
 
-    def quota(self):
+    def quota(self, *, force=False):
         self.checkpoint()
         now = time.monotonic()
-        if now - self.last_quota < POLL_SECONDS:
+        if not force and now - self.last_quota < POLL_SECONDS:
             return
         self.last_quota = now
         total = 0
@@ -919,6 +919,7 @@ class _Producer:
 
     async def acquire(self, source, destination):
         commit = tree = None
+        accepted = False
         try:
             self.checkpoint()
             root = Path(source.repository)
@@ -937,6 +938,7 @@ class _Producer:
                 destination,
                 checkpoint=self.quota,
             )
+            await self.worker(self.quota, force=True)
             self.checkpoint()
             if links:
                 inspection = inspection.model_copy(
@@ -952,7 +954,7 @@ class _Producer:
                         ).hexdigest(),
                     }
                 )
-            return AcquiredSnapshot(
+            snapshot = AcquiredSnapshot(
                 operation_id=self.record["operation_id"],
                 acquisition_nonce=self.record["nonce"],
                 transport=source.transport,
@@ -966,6 +968,8 @@ class _Producer:
                 inspection=inspection,
                 diagnostics=inspection.diagnostics,
             )
+            accepted = True
+            return snapshot
         finally:
             if self.workers:
                 self.cancelled.set()
@@ -983,7 +987,7 @@ class _Producer:
                     self.workers.discard(worker)
             _qualify(self.owner, self.record)
             self.record["phase"] = "terminal"
-            self.record["recovery_referenced"] = destination.exists()
+            self.record["recovery_referenced"] = accepted
             _save(self.owner, self.authority, self.record)
 
 
