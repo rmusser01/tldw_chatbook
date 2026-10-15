@@ -22804,3 +22804,9 @@ refresh defaulted to the old applied scope and reset that newer request. An
 independently gated real Input Enter test failed with query demo instead of
 newer; Retry must refresh the latest requested scope, since route and snapshot
 generation fences do not change when the user submits a filter.
+
+## A zero ticket count does not prove an observation has completed
+
+**TASK-32686, native plugin integration, 2026-10-15.** A frozen runtime run passed475 tests but failed the Stop MCP success control: the test saw counter1 instead of2. A postmortem initially showed a retired parent checkpoint. Tracing its retirement caller showed that this refusal happened in the test finally, after the failed counter assertion. A breakpoint before reading the counter captured tickets0, a retained MCP worker/job and cleanup_pending=True with no notification failure. The test had waited on ordinary tickets while the effect-free Interrupt used the observation lifetime.
+
+**What to do.** Observe the actual owner's completion proof before asserting an external effect; zero occupancy in another pool is not settlement. The test now waits on existing engine.cleanup_pending, adds a no-pending assertion and preserves its original deadlines and counter assertions. All three modes pass without debugger intervention, and the renewed full runtime group passes477 tests. Keep the initial failure and distinguish pre-assertion state from cleanup aftermath; a debugger-assisted pass does not qualify behavior.
