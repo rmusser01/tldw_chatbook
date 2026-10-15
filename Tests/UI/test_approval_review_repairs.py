@@ -487,3 +487,119 @@ async def test_admitted_raw_directory_metadata_is_literal_but_command_multiline(
             assert provider._runtime._executor.execute.call_count == 0
     finally:
         provider._runtime.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition",
+    [
+        "current",
+        "reopen",
+        "row",
+        "page",
+        "round",
+        "revision",
+        "settled",
+        "retired",
+        "unmount",
+    ],
+)
+async def test_queued_details_scroll_stays_with_exact_live_page(
+    monkeypatch, transition
+):
+    from Tests.UI.test_approval_details import _DetailsCardHarness
+
+    app = _DetailsCardHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = app.query_one(ChatApprovalCard)
+        calls = _sample_calls()
+        captured = replace(
+            view(),
+            rows=tuple(
+                replace(
+                    view().rows[0],
+                    verdict_key=call["llm_name"],
+                    call_count=1,
+                    argument_sets=(
+                        {f"field-{i}": "reading line" for i in range(1000)},
+                    ),
+                )
+                for call in calls
+            ),
+            call_count=len(calls),
+        )
+        state = {}
+
+        def set_batch(round_id="round", revision=1):
+            card.set_batch(
+                calls,
+                timeout_seconds=0,
+                round_id=round_id,
+                view=captured,
+                presentation_revision=revision,
+                presentation_state=state,
+            )
+
+        set_batch()
+        await pilot.pause()
+        card._open_details(card.query(".approval-details-open").first(Button))
+        await pilot.pause()
+        area = card.query_one("#approval-details-page", TextArea)
+        assert "field-0" in area.text and area.max_scroll_y > 5
+        assert card._current_details_identity() is not None
+        held = []
+        scroll_attempts = []
+        real_scroll_to = area.scroll_to
+        if transition == "settled":
+
+            def scroll_to(*args, **kwargs):
+                scroll_attempts.append((args, kwargs))
+                return real_scroll_to(*args, **kwargs)
+
+            monkeypatch.setattr(area, "scroll_to", scroll_to)
+        after_refresh = area.call_after_refresh
+        monkeypatch.setattr(
+            area,
+            "call_after_refresh",
+            lambda *args, **kwargs: held.append((args, kwargs)),
+        )
+        card._restore_details_scroll = (0, 5)
+        # Real current cached delivery queues the restore.
+        card._details.request_page(0)
+        callback_args, callback_kwargs = held[-1]
+        monkeypatch.setattr(area, "call_after_refresh", after_refresh)
+
+        if transition == "reopen":
+            card._close_details()
+            card._open_details(card.query(".approval-details-open").first(Button))
+        elif transition == "row":
+            card._open_details(list(card.query(".approval-details-open"))[1])
+        elif transition == "page":
+            card._details.request_page(1)
+        elif transition in {"round", "revision"}:
+            set_batch("replacement" if transition == "round" else "round", 2)
+            await pilot.pause()
+            card._open_details(card.query(".approval-details-open").first(Button))
+        elif transition == "settled":
+            card._commit_bulk("deny")
+            assert card._batch_submitted
+        elif transition == "retired":
+            state["retired"] = True
+        elif transition == "unmount":
+            await card.remove()
+        await pilot.pause()
+        if transition != "unmount":
+            assert area is card.query_one("#approval-details-page", TextArea)
+            if transition != "settled":
+                assert area.text and area.max_scroll_y > 5
+        real_scroll_to(y=1, animate=False, immediate=True)
+        before = area.scroll_y
+        assert before == (0 if transition == "settled" else 1)
+        scroll_attempts.clear()
+        callback_args[0](*callback_args[1:], **callback_kwargs)
+        assert area.scroll_y == (5 if transition == "current" else before), (
+            "queued restore crossed its Details page lifetime"
+        )
+        if transition == "settled":
+            assert app.decided and not area.text
+            assert not scroll_attempts, "settled disclosure received a stale scroll"
