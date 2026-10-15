@@ -1,4 +1,4 @@
-"""Read-only Windows7 operation on one reviewed permanent TEMP snapshot."""
+"""Read-only remaining Windows4 operation; native helper3 stays separate."""
 
 import argparse
 import hashlib
@@ -16,16 +16,16 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import xml.etree.ElementTree as ET
 
 
-PLAN_SHA = "b68d0060323128ce508683cbf1493d52b8934e3368ac3d0d103bc3a79aabd1cd"
+PLAN_SHA = "7e0ffe7bb56e668ec1681f57a8c7ebd69177d0a7081bc8be6f609795c27b1db2"
 MAP_SHA = "ea19572c66fb51dc37b574817c7f39e7c8a8cfd375ee2e429d15dceee396606b"
 PYTHON_ROWS = 8482
-PUBLICATION_PARENT = "abcb2c89553a9ff0a9738b1b701eebb8aff3efa6"
+PUBLICATION_PARENT = "63e7c04e971ecc564cc43f8ed0df7ee33f58328b"
 GOAL_ORIGIN = "593fc1cdf2baa1462917eb6e1ceaa1db439f3280"
 GOAL_MAP_SHA = "eca28b35e3db24fa9347f27452323768ac60c9e6d7e181d75d931d8aa8954597"
 NATIVE_THREE_REVIEW = "32f63c299f664110a70ec14e34e271ab50956706d7c9dbfdc21dddf5e40ab59b"
 WORKFLOW = ".github/workflows/console-pause-native-evidence.yml"
 PACKET_ZIP = ".github/qualification/pr3023-native7-r1/packet.zip"
-SCOPE = "Permanent TEMP component snapshot; source is read-only throughout. Seven native helper/posture/original37 bodies only. No whole Goal, global/native retirement, latency or Task completion."
+SCOPE = "Permanent TEMP component snapshot; source is read-only throughout. Four remaining posture/original37 bodies only; native helper3 belongs to separate prior run38782738214 and is not replayed. No whole Goal, global/native retirement, latency or Task completion."
 
 
 def sha(path):
@@ -99,7 +99,9 @@ def identity(root, binding):
     assert git(root, "rev-parse", "HEAD^") == PUBLICATION_PARENT
     changed = git(root, "diff", "--name-only", "HEAD^", "HEAD").splitlines()
     assert changed == binding["changed_paths"] and changed == sorted(set(changed))
-    assert WORKFLOW in changed and PACKET_ZIP in changed
+    assert changed == sorted([WORKFLOW, PACKET_ZIP,
+                              ".github/qualification/pr3023-native7-r1/binding.json",
+                              ".github/qualification/pr3023-native7-r1/outer.py.txt"])
     assert not git(root, "diff", "HEAD", "--name-only")
     non_python(root, binding)
     return {"head": os.environ["GITHUB_SHA"], "parent": PUBLICATION_PARENT,
@@ -127,7 +129,7 @@ def packet_check(packet, binding):
     assert "stage" not in plan and "products_staged" not in plan
     assert [(c["group"], c["mode"]) for c in plan["commands"]] == [("native_seven", "collection"), ("native_seven", "test")]
     nodes = plan["commands"][0]["expected_nodeids"]
-    assert len(nodes) == len(set(nodes)) == 7 and set(plan["xml_expected"]) == set(nodes)
+    assert len(nodes) == len(set(nodes)) == 4 and set(plan["xml_expected"]) == set(nodes)
     assert plan["commands"][1]["expected_nodeids"] == nodes
     assert plan["bounds"] == {"natural_pytest_seconds": 180, "direct_child_outer_seconds": 210,
                               "direct_terminate_wait_seconds": 30, "direct_kill_wait_seconds": 30}
@@ -236,7 +238,7 @@ def cases(path, expected, plan):
     assert [(c.get("classname"), c.get("name")) for c in result] == [
         (plan["xml_expected"][n]["classname"], plan["xml_expected"][n]["name"]) for n in expected]
     suites = list(document.iter("testsuite"))
-    assert len(suites) == 1 and int(suites[0].get("tests")) == len(result) == 7
+    assert len(suites) == 1 and int(suites[0].get("tests")) == len(result) == 4
     for attribute, tag in (("failures", "failure"), ("errors", "error"), ("skipped", "skipped")):
         assert int(suites[0].get(attribute)) == sum(len(c.findall(tag)) for c in result)
     return result
@@ -244,12 +246,12 @@ def cases(path, expected, plan):
 
 def assess(command, directory, receipt, plan):
     nodes = command["expected_nodeids"]
-    assert len(nodes) == 7
+    assert len(nodes) == 4
     if command["mode"] == "collection":
         found = [line.strip() for line in (directory / "stdout.log").read_text(encoding="utf-8").splitlines()
                  if line.strip().startswith("Tests/") and "::" in line]
         ok = found == nodes and receipt["returncode"] == 0
-        return {"ok": ok, "classification": "EXACT_SEVEN_COLLECTION" if ok else "NEGATIVE_COLLECTION",
+        return {"ok": ok, "classification": "EXACT_FOUR_COLLECTION" if ok else "NEGATIVE_COLLECTION",
                 "nodeids": found, "returncode": receipt["returncode"]}
     result = cases(directory / "pytest.xml", nodes, plan)
     outcomes = [{"nodeid": node, "failure": len(case.findall("failure")), "error": len(case.findall("error")),
@@ -257,7 +259,7 @@ def assess(command, directory, receipt, plan):
     gate_errors, gates = [], []
     expected = {directory / "gates" / hashlib.sha256(node.encode()).hexdigest()[:20] / "gate.json" for node in nodes}
     if set((directory / "gates").rglob("gate.json")) != expected:
-        gate_errors.append("gate receipt set differs from exact seven")
+        gate_errors.append("gate receipt set differs from exact four")
     for node in nodes:
         path = directory / "gates" / hashlib.sha256(node.encode()).hexdigest()[:20] / "gate.json"
         try:
@@ -270,8 +272,8 @@ def assess(command, directory, receipt, plan):
         except BaseException:
             gate_errors.append(node + ": " + traceback.format_exc())
     ok = receipt["returncode"] == 0 and all(not any(row[k] for k in ("failure", "error", "skipped")) for row in outcomes) and not gate_errors
-    return {"ok": ok, "classification": "SEVEN_PASS_PENDING_INDEPENDENT_ACTUAL_REVIEW" if ok else "NEGATIVE_BODY_OR_GATE",
-            "returncode": receipt["returncode"], "parent_cases": 7, "private_profile_children": 0,
+    return {"ok": ok, "classification": "FOUR_PASS_PENDING_INDEPENDENT_ACTUAL_REVIEW" if ok else "NEGATIVE_BODY_OR_GATE",
+            "returncode": receipt["returncode"], "parent_cases": 4, "private_profile_children": 0,
             "case_outcomes": outcomes, "gate_receipts": gates, "gate_errors": gate_errors,
             "scope": "Literal XML/receipt classification only; raw native facts and exact release relationships require independent actual audit."}
 
@@ -338,7 +340,7 @@ def child(command, root, packet, archive, plan, direct_memory):
                     primary = cleanup
                 else:
                     primary.add_note("direct-child final poll: " + repr(cleanup))
-            receipt["direct_child_handle_scope"] = "Actual Popen object/pid/wait/poll on Windows. Seven plain bodies declare no memo child; no POSIX ECHILD, arbitrary descendant or hard-cancellation claim."
+            receipt["direct_child_handle_scope"] = "Actual Popen object/pid/wait/poll on Windows. Four plain bodies declare no memo child; no POSIX ECHILD, arbitrary descendant or hard-cancellation claim."
         try:
             write(directory / "process.json", receipt)
         except BaseException as diagnostic:
@@ -455,7 +457,7 @@ def run(root, archive):
                 result = child(command, root, packet, archive, plan, direct_memory)
                 results.append(dict(group=command["group"], mode=command["mode"], **result))
                 if not result["ok"]:
-                    raise RuntimeError("literal Windows7 " + command["mode"] + " result is negative; inspect raw archive")
+                    raise RuntimeError("literal Windows4 " + command["mode"] + " result is negative; inspect raw archive")
             finally:
                 child_failure = sys.exc_info()[1]
                 try:
@@ -485,7 +487,7 @@ def run(root, archive):
                 primary.add_note("read-only final audit: " + repr(failure))
         complete = primary is None and final["ok"] and len(results) == 2 and all(row["ok"] for row in results)
         result = {"ordered_results": results, "errors": errors, "final_audit": final,
-                  "status": "SEVEN_PASS_PENDING_ARCHIVE_AND_INDEPENDENT_ACTUAL_REVIEW" if complete else "INCOMPLETE_OR_NEGATIVE_RESULT",
+                  "status": "FOUR_PASS_PENDING_ARCHIVE_AND_INDEPENDENT_ACTUAL_REVIEW" if complete else "INCOMPLETE_OR_NEGATIVE_RESULT",
                   "scope": SCOPE}
         for action in (lambda: write(archive / "result.json", result), lambda: artifacts(archive)):
             try:

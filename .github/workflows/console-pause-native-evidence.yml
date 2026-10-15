@@ -1,4 +1,4 @@
-name: PR3023 bounded Windows seven
+name: PR3023 bounded Windows four remaining
 
 on:
   workflow_dispatch:
@@ -14,12 +14,12 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       # Intentionally unrunnable until the distinct reviews and binding seal.
-      NATIVE_SEVEN_BINDING_SHA256: 'd49f925844f52a2cad8bebeda30633f7dfd77fc2cccc4114a9e44b29aeee49f5'
+      NATIVE_SEVEN_BINDING_SHA256: '01de6e0ac5a556d0b692cd7f298c36c9f29a4e46b17cf62bbc36f772f89ecfa8'
     steps:
       - name: Set LF checkout policy before checkout and create failure archive
         shell: pwsh
         run: |
-          $output = Join-Path $env:USERPROFILE ('.config/cb-native-seven-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT + '-r1')
+          $output = Join-Path $env:USERPROFILE ('.config/cb-native-four-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT + '-r1')
           New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
           "NATIVE_SEVEN_OUTPUT=$output" >> $env:GITHUB_ENV
           git config --global core.autocrlf false
@@ -54,11 +54,11 @@ jobs:
       - name: Select ordinary current-profile fixture temporary root
         shell: pwsh
         run: |
-          $fixture = Join-Path $env:USERPROFILE ('.config/pr3023-native-seven-r1-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          $fixture = Join-Path $env:USERPROFILE ('.config/pr3023-native-four-r1-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           New-Item -ItemType Directory -Path $fixture -ErrorAction Stop | Out-Null
           "TEMP=$fixture" >> $env:GITHUB_ENV
           "TMP=$fixture" >> $env:GITHUB_ENV
-      - name: Run exact seven with read-only final audit
+      - name: Run exact four remaining with read-only final audit
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
@@ -78,7 +78,7 @@ jobs:
             $auditCode = $LASTEXITCODE
             @{ shell_pid = $PID; foreground_outer_exit = $executionCode; read_only_audit_exit = $auditCode; scope = 'Foreground wait plus actual Python-owned direct-child Popen wait/poll receipts. Source remains permanent and unchanged; no PID adoption, rollback, POSIX ECHILD or hard-cancellation guarantee' } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $output 'shell-finally.json')
           }
-          if ($executionCode -ne 0 -or $auditCode -ne 0) { throw "Windows7 execution or audit requires review: outer=$executionCode audit=$auditCode" }
+          if ($executionCode -ne 0 -or $auditCode -ne 0) { throw "Windows4 execution or audit requires review: outer=$executionCode audit=$auditCode" }
       - name: Read-only final audit and archive manifest including early failure
         if: always()
         shell: pwsh
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pr3023-native-seven-r1-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr3023-native-four-r1-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.NATIVE_SEVEN_OUTPUT }}/
           include-hidden-files: true
           if-no-files-found: error
