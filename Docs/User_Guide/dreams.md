@@ -151,7 +151,10 @@ When they do not come back together, the next start puts your watches
 in line with the switch. With Dreams off, a tracked page's source,
 change alert or reminder that the restore switched back on is stopped
 again before anything runs -- and so is a source or reminder Dreams had
-switched off when you untracked its page. With Dreams on, the source of
+switched off when you untracked its page. A reminder or change alert you
+switched back on yourself after Dreams switched it off stays on: only
+one that last changed before then is taken for the restore's. With
+Dreams on, the source of
 a page you are tracking that the restore left off is switched back on
 (after the same public-address check as always). A change alert or
 reminder that a restore left off while Dreams is on stays off: Dreams

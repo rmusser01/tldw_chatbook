@@ -884,6 +884,7 @@ async def test_boot_suspend_settles_against_the_real_stores(
         (rule,) = await service.list_alert_rules(job_id=source_id)
         assert not rule["enabled"]
         record = json.loads(_suspension(path, item_id))
+        assert record.pop("at"), "when the switch-off settled it (#3123, M2)"
         assert record == {
             "subscription": True, "reminders": [reminder["id"]],
             "rules": [rule["rule_id"]], "settled": "off"}
@@ -1223,5 +1224,61 @@ async def test_the_switch_off_never_stops_a_users_source_on_a_reused_id(
         record = json.loads(_suspension(stores.dreams_path,
                                         tracked["tracked_item_id"]))
         assert record["settled"] == "off" and record["subscription"] is False
+    finally:
+        stores.close()
+
+
+# --- Review of #3123, M2: a reminder or rule the user re-arms is theirs --------
+#
+# With Dreams off, a reminder (or Dreams' change rule) the user switches back
+# on in Schedules or Watchlists was disarmed again at every start -- no
+# restore needed. Rows carry ``updated_at``; the records now carry when the
+# switch-off (or the retirement) wrote them, and only a row last changed
+# before that is taken for one a restore brought back.
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_and_rule_the_user_re_arms_while_off_stay_armed(
+        tmp_path, settings, egress_seams, monkeypatch):
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        await stores.switch(settings, on=False)
+        (reminder,) = stores.scheduling_db.list_reminder_tasks(owner_id="local")
+        (rule,) = await stores.service.list_alert_rules(job_id=source_id)
+        stores.scheduling_db.update_reminder_task(reminder["id"], enabled=True)
+        await stores.service.update_alert_rule(rule["rule_id"], enabled=True)
+
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert await stores.running(source_id) == (False, True, True), (
+            "the user's reminder and rule stand; the source stays off")
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_a_retired_watchs_reminder_the_user_re_arms_while_off_stays_armed(
+        tmp_path, settings, egress_seams, monkeypatch):
+    from tldw_chatbook.Dreams.track_service import untrack
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        db = DreamsDB(stores.dreams_path, "restore-test")
+        try:
+            await untrack(stores.service, db, tracked["tracked_item_id"],
+                          scheduling_db_getter=lambda: stores.scheduling_db)
+        finally:
+            db.close_all()
+        await stores.switch(settings, on=False)
+        (reminder,) = stores.scheduling_db.list_reminder_tasks(owner_id="local")
+        assert not reminder["enabled"], "fixture: untrack disarmed it"
+        stores.scheduling_db.update_reminder_task(reminder["id"], enabled=True)
+
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert stores.scheduling_db.get_reminder_task(reminder["id"])["enabled"]
     finally:
         stores.close()

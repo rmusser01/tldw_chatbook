@@ -33,6 +33,7 @@ import asyncio
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -143,6 +144,30 @@ def is_dreams_source(
     return not urls or any(_url_key(source_url) == _url_key(url) for url in urls)
 
 
+def _changed_before(changed: Any, at: Any) -> bool:
+    """Whether a row last changed no later than a record was written.
+
+    Review of #3123, M2. Users can switch a reminder or a change rule back
+    on themselves (Schedules, Watchlists) -- unlike a source -- and the
+    start check must not undo that. Both rows carry ``updated_at``, and a
+    record the switch-off or a retirement wrote carries ``at``: a row
+    changed after the record is the user's; one changed no later is as
+    Dreams left it, or as a restore put it back. Either time missing or
+    unreadable (a record an earlier build wrote) is "cannot tell" -- not
+    taken for a restore.
+    """
+    try:
+        changed_at = datetime.fromisoformat(str(changed))
+        written_at = datetime.fromisoformat(str(at))
+    except (TypeError, ValueError):
+        return False
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=UTC)
+    if written_at.tzinfo is None:
+        written_at = written_at.replace(tzinfo=UTC)
+    return changed_at <= written_at
+
+
 @dataclass
 class _Drift:
     """What a restore put out of step, as the work that brings it back.
@@ -205,8 +230,10 @@ def _restore_drift(
 
     Pure; the reads are the caller's.
     """
-    armed = {str(row.get("link_id")) for row in reminders
-             if row.get("enabled") and not row.get("last_run_at")}
+    armed: dict[str, list[dict]] = {}
+    for reminder in reminders:
+        if reminder.get("enabled") and not reminder.get("last_run_at"):
+            armed.setdefault(str(reminder.get("link_id")), []).append(reminder)
     drift = _Drift()
     def dreams_own(row: dict, state: dict | None) -> bool:
         # A source id Dreams no longer owns -- a restore handed it to the
@@ -224,10 +251,16 @@ def _restore_drift(
         if not enabled:
             if settled_state(row.get("suspension")) != SETTLED_OFF:
                 continue  # not settled: the pass takes it up anyway
+            # A rule or reminder counts only when it last changed before
+            # the switch-off wrote this record (M2): a later change is the
+            # user's.
+            at = (record or {}).get("at")
             rule = rule_states.get(int(row.get("alert_rule_id") or 0)) or {}
             if ((created and state["is_active"])
-                    or rule.get("enabled")
-                    or str(row["id"]) in armed):
+                    or (rule.get("enabled")
+                        and _changed_before(rule.get("updated_at"), at))
+                    or any(_changed_before(reminder.get("updated_at"), at)
+                           for reminder in armed.get(str(row["id"]), ()))):
                 unsettled = dict(record or {})
                 unsettled.pop("settled", None)
                 drift.records.append((int(row["id"]), json.dumps(unsettled)))
@@ -250,10 +283,9 @@ def _restore_drift(
             drift.sources.append(source_id)
         disarmed = {str(value) for value in record.get("reminders") or []}
         drift.reminders.extend(
-            str(reminder["id"]) for reminder in reminders
-            if str(reminder.get("link_id")) == str(row["id"])
-            and str(reminder["id"]) in disarmed
-            and reminder.get("enabled") and not reminder.get("last_run_at"))
+            str(reminder["id"]) for reminder in armed.get(str(row["id"]), ())
+            if str(reminder["id"]) in disarmed
+            and _changed_before(reminder.get("updated_at"), record.get("at")))
     return drift
 
 

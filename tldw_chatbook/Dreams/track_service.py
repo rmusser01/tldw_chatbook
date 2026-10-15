@@ -786,7 +786,7 @@ async def _forget_superseded_reminders(dreams_db: Any, wrapper: dict) -> None:
     if subscription or rules or settled == SETTLED_OFF:
         text = _record_text(
             subscription=subscription, reminders=[], rules=rules,
-            held=record.get("held"), settled=settled)
+            held=record.get("held"), settled=settled, at=record.get("at"))
     await asyncio.to_thread(
         dreams_db.set_tracked_suspension, int(wrapper["id"]), text)
 
@@ -869,7 +869,8 @@ def _retire_reminders_sync(
             dreams_db.set_tracked_suspension(int(heir["id"]), _record_text(
                 subscription=subscription, reminders=reminders + debt,
                 rules=rules, held=record.get("held"),
-                settled=SETTLED_OFF if still_off else None))
+                settled=SETTLED_OFF if still_off else None,
+                at=record.get("at") if still_off else None))
         except Exception as exc:  # noqa: BLE001 - stays owed where it is
             logger.warning(
                 "Dreams reminder hand-over to item {} failed: {}",
@@ -1056,7 +1057,7 @@ async def _record_retirement(
                 # tracking the page again re-enables them
                 # (:func:`_restore_rules_left_off`).
                 reminders=owed_reminders + reminders, rules=owed_rules,
-                settled=_SETTLED_RETIRED))
+                settled=_SETTLED_RETIRED, at=_now_iso()))
     except Exception as exc:  # noqa: BLE001 - the retirement stands
         logger.warning(
             "Dreams retire: recording item {} failed: {}",
@@ -1096,7 +1097,8 @@ async def _hand_on_source_debt(dreams_db: Any, item: dict) -> bool:
                 int(heir["id"]), _record_text(
                     subscription=True, reminders=reminders, rules=rules,
                     held=record.get("held"),
-                    settled=SETTLED_OFF if still_off else None))
+                    settled=SETTLED_OFF if still_off else None,
+                    at=record.get("at") if still_off else None))
         return True
     except Exception as exc:  # noqa: BLE001 - the debt stays on the retiree
         logger.warning(
@@ -1152,7 +1154,7 @@ async def _settle_source_restored(dreams_db: Any, riders: list[dict]) -> None:
         if retired:
             text = _record_text(
                 subscription=False, reminders=reminders, rules=rules,
-                settled=_SETTLED_RETIRED)
+                settled=_SETTLED_RETIRED, at=(record or {}).get("at"))
         elif reminders or rules:
             text = _record_text(
                 subscription=False, reminders=reminders, rules=rules)
@@ -1322,7 +1324,8 @@ async def _restore_rules_left_off(
             dreams_db.set_tracked_suspension, int(rider["id"]), _record_text(
                 subscription=subscription, reminders=reminders,
                 rules=[rule_id for rule_id in rules if rule_id not in owed],
-                held=record.get("held"), settled=_SETTLED_RETIRED))
+                held=record.get("held"), settled=_SETTLED_RETIRED,
+                at=record.get("at")))
 
 
 async def _still_dreams_source(
@@ -2447,8 +2450,15 @@ def _record_text(
     rules: list[int],
     held: str | None = None,
     settled: str | None = None,
+    at: str | None = None,
 ) -> str:
-    """Serialize a suspension record (see :func:`_suspension_record`)."""
+    """Serialize a suspension record (see :func:`_suspension_record`).
+
+    ``at`` is when the switch-off settled the record, or when the watch
+    retired (review of #3123, M2): a reminder or rule changed after it is
+    one the user changed, which the start check leaves alone. Rewrites
+    that keep a record's settled state keep its ``at``.
+    """
     record: dict[str, Any] = {
         "subscription": bool(subscription),
         "reminders": sorted(set(reminders)),
@@ -2458,7 +2468,14 @@ def _record_text(
         record["held"] = held
     if settled:
         record["settled"] = settled
+    if at:
+        record["at"] = at
     return json.dumps(record)
+
+
+def _now_iso() -> str:
+    """The ``at`` a record is written with: now, UTC, ISO 8601."""
+    return datetime.now(UTC).isoformat()
 
 
 def _enabled_linked_reminder_ids(scheduling_db: Any, item_id: int) -> list[str]:
@@ -2690,7 +2707,7 @@ async def _suspend_pass(
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 int(item["id"]),
                 _record_text(subscription=subscription, reminders=reminders,
-                             rules=rules, settled=SETTLED_OFF))
+                             rules=rules, settled=SETTLED_OFF, at=_now_iso()))
         except Exception as exc:  # noqa: BLE001 - stays unsettled
             logger.warning(
                 "Dreams suspend: switching tracked item {} failed: {}",
