@@ -607,3 +607,16 @@ R86 restores the shared native_console fixture to its canonical `marker` path,
 matching unchanged retained restart consumers. The five ordinary neighbor files
 and two recorded native fixture-consumer nodes qualify this one-line correction;
 missing-marker failures are distinct from native boot-probe restrictions.
+
+
+I3 accepted at initial `de3707eedd` plus reviewed Fix1 `9e2ddcaf9b`.
+Final acquisition verification passes78 cases, with232 targeted neighbor passes
+and2 native fixture-consumer controls; changed-file static checks and frozen
+source/provenance evidence pass. Fix1 adds an unthrottled retained-worker final
+staging/managed/reserve scan before success; failed or cancelled output has no
+success reference and remains subject to exact terminal/age-qualified cleanup.
+Independent initial/scoped reviews leave no open findings. I4 must still consume
+the complete acquired provenance and bind exact catalog/update origins through
+authenticated review/recovery. macOS/APFS-only qualification, conservative host
+auth support, polled disk/native containment and protected lost/reboot custody
+limits remain explicit; no broader platform/full-suite qualification is claimed.
