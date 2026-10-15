@@ -168,6 +168,19 @@ def _changed_before(changed: Any, at: Any) -> bool:
     return changed_at <= written_at
 
 
+class _StoreReadRefused(RuntimeError):
+    """A store refused the start check's read (review of #3123, N3).
+
+    For instance ``RecoveryRequired`` from a restored profile still
+    awaiting review. Carries the store and the type of the refusal only.
+    """
+
+    def __init__(self, store: str, cause: BaseException) -> None:
+        super().__init__(store)
+        self.store = store
+        self.reason = type(cause).__name__
+
+
 @dataclass
 class _Drift:
     """What a restore put out of step, as the work that brings it back.
@@ -312,6 +325,15 @@ def _read_drift(
     off (two) -- and nothing when there is no watch to look at. It runs
     before the first-dispatch gate opens, so the scheduler's first
     dispatch waits for it too.
+
+    A store that refuses the read -- ``RecoveryRequired`` on a restored
+    profile still awaiting review, say -- raises :class:`_StoreReadRefused`
+    (review of #3123, N3). The start does not fail and unrelated work runs,
+    but Dreams' work stays held for the whole session, as after any error
+    in the boot reconcile: a restored source or reminder the check could
+    not look at is not stopped either, though nothing dispatches it (a
+    manual "Check now" in Watchlists would still run it). The next start
+    asks again.
     """
     subscriptions_db = getattr(app, "subscriptions_db", None)
     scheduling_db = getattr(getattr(app, "scheduling_service", None), "db", None)
@@ -327,6 +349,8 @@ def _read_drift(
                  if row.get("subscription_id")],
                 () if enabled else [row["alert_rule_id"] for row in rows
                                     if row.get("alert_rule_id")])
+        except Exception as exc:  # noqa: BLE001 - re-raised, named
+            raise _StoreReadRefused("subscriptions", exc) from exc
         finally:
             # Its connections are per thread: this worker's goes now, as
             # ``Subscriptions.db_offload`` does for every off-loop call.
@@ -335,8 +359,11 @@ def _read_drift(
                     if (_parsed(row.get("suspension")) or {}).get("reminders")]
     if (scheduling_db is not None and not enabled
             and (any(row.get("event_date") for row in rows) or gone_listing)):
-        reminders = scheduling_db.list_reminder_tasks_by_link(
-            _REMINDER_LINK_TYPE, [row["id"] for row in rows + gone_listing])
+        try:
+            reminders = scheduling_db.list_reminder_tasks_by_link(
+                _REMINDER_LINK_TYPE, [row["id"] for row in rows + gone_listing])
+        except Exception as exc:  # noqa: BLE001 - re-raised, named
+            raise _StoreReadRefused("scheduled tasks", exc) from exc
     return _restore_drift(
         rows, gone, run_states, rule_states, reminders, enabled=enabled)
 
@@ -693,6 +720,13 @@ async def _boot_pass(
                 await asyncio.to_thread(dreams_db.close_all)
     except asyncio.CancelledError:
         raise
+    except _StoreReadRefused as refused:
+        # Review of #3123, N3: Dreams' work stays held until the next start
+        # (an error never authorizes); said once, store and reason type.
+        logger.warning(
+            "Dreams startup check: the {} store refused its read ({}); "
+            "Dreams work stays held until the next start",
+            refused.store, refused.reason)
     except Exception as exc:  # noqa: BLE001 - a worker body must not raise
         logger.warning(
             "Dreams startup reconcile failed: {}", type(exc).__name__)

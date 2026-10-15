@@ -153,7 +153,11 @@ change alert or reminder that the restore switched back on is stopped
 again before anything runs -- and so is a source or reminder Dreams had
 switched off when you untracked its page. A reminder or change alert you
 switched back on yourself after Dreams switched it off stays on: only
-one that last changed before then is taken for the restore's. With
+one that last changed before then is taken for the restore's. If a
+store cannot be read at that start (for example while a restored
+profile still waits for your review), nothing Dreams owns is started
+for the rest of the session -- the next start looks again -- but a
+**Check now** you press in Watchlists still runs. With
 Dreams on, the source of
 a page you are tracking that the restore left off is switched back on
 (after the same public-address check as always). A change alert or

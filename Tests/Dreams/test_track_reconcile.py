@@ -1282,3 +1282,45 @@ async def test_a_retired_watchs_reminder_the_user_re_arms_while_off_stays_armed(
         assert stores.scheduling_db.get_reminder_task(reminder["id"])["enabled"]
     finally:
         stores.close()
+
+
+# --- Review of #3123, N3: a store that refuses the start check's read ----------
+
+
+@pytest.mark.asyncio
+async def test_a_store_that_refuses_the_start_read_holds_dreams_work_and_says_so(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """The start does not fail and unrelated work runs, but Dreams' work
+    stays held until the next start (an error never authorizes), and one
+    warning names the store and the kind of refusal -- nothing else."""
+    from loguru import logger
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(str(message)),
+                      level="WARNING", format="{message}")
+    try:
+        await stores.track()
+
+        class Refused(RuntimeError):
+            pass
+
+        def refuse(*args, **kwargs):
+            raise Refused("restored profile awaiting review")
+
+        monkeypatch.setattr(stores.subs_db, "run_states", refuse)
+        gate = track_reconcile.DreamsDispatchGate()
+        dreams_db = DreamsDB(stores.dreams_path, "boot-app")
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(dreams_db), gate)
+        finally:
+            dreams_db.close_all()
+
+        assert gate.is_set() and not gate.dispatch_ready
+        refusals = [m for m in messages if "refused" in m]
+        assert len(refusals) == 1, messages
+        assert "subscriptions" in refusals[0] and "Refused" in refusals[0]
+        assert "awaiting review" not in refusals[0], "the reason type only"
+    finally:
+        logger.remove(sink)
+        stores.close()
