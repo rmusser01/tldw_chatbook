@@ -2231,10 +2231,6 @@ App.-wide-viewport #skills-recovery-review {
   width: $ds-percent-85;
   max-width: $ds-size-170;
 }
-App.-wide-viewport ChatbookCreationWindow > Container {
-  width: $ds-percent-85;
-  max-width: $ds-size-170;
-}
 App.-wide-viewport ChatbookExportManagementWindow > Container {
   width: $ds-percent-85;
   max-width: $ds-size-170;

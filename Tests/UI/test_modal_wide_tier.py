@@ -41,7 +41,6 @@ from tldw_chatbook.Library.library_prompts_state import (
 )
 from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
 from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
-from tldw_chatbook.UI.ChatbookCreationWindow import ChatbookCreationWindow
 from tldw_chatbook.UI.ChatbookExportManagementWindow import (
     ChatbookExportManagementWindow,
 )
@@ -49,7 +48,9 @@ from tldw_chatbook.UI.ChatbookTemplatesWindow import ChatbookTemplatesWindow
 from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
     PromptCollectionManagerModal,
 )
-from tldw_chatbook.UI.Screens.skills_screen import SkillRecoveryReviewModal
+from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+    SkillRecoveryReviewModal,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -100,10 +101,7 @@ def _wide_rules(text: str) -> dict[str, int]:
             return int(tokens[value])
         return int(value)
 
-    return {
-        anchor.strip(): resolve(cap)
-        for anchor, cap in WIDE_RULE_RE.findall(text)
-    }
+    return {anchor.strip(): resolve(cap) for anchor, cap in WIDE_RULE_RE.findall(text)}
 
 
 def test_wide_tier_block_exists_in_source_module() -> None:
@@ -131,9 +129,7 @@ def test_every_wide_tier_rule_is_registered() -> None:
 
 
 @pytest.mark.parametrize(["anchor", "cap", "owner"], MODAL_WIDE_TIER)
-def test_every_anchor_targets_real_code(
-    anchor: str, cap: int, owner: str
-) -> None:
+def test_every_anchor_targets_real_code(anchor: str, cap: int, owner: str) -> None:
     """Each registered anchor resolves inside its owner module.
 
     A renamed modal id (or a moved file) fails here naming the owner, so the
@@ -288,9 +284,7 @@ def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
     modals = sorted(name for name in classes if _is_modal(name, classes))
 
     uncovered = {
-        name: classes[name][0]
-        for name in modals
-        if not _is_anchored(name, classes)
+        name: classes[name][0] for name in modals if not _is_anchored(name, classes)
     }
 
     stale_class_skips = sorted(set(MODAL_WIDE_TIER_SKIPPED) - set(modals))
@@ -306,16 +300,14 @@ def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
     )
     assert not missing, (
         "ModalScreen subclasses outside the wide tier and absent from both "
-        "skip lists (register an anchor or document a skip):\n  "
-        + "\n  ".join(missing)
+        "skip lists (register an anchor or document a skip):\n  " + "\n  ".join(missing)
     )
 
     stale_module_skips = sorted(
         module
         for module in MODAL_WIDE_TIER_SKIPPED_MODULES
         if not any(
-            unanchored_module == module
-            for unanchored_module in uncovered.values()
+            unanchored_module == module for unanchored_module in uncovered.values()
         )
     )
     assert not stale_module_skips, (
@@ -335,7 +327,7 @@ try:  # The real toggle, from the app module (heavy import, done once).
 
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
-        # ChatbookCreationWindow.on_mount reads self.app.config_data (the
+        # The Chatbook modals' on_mount reads self.app.config_data (the
         # real TldwCli carries one); the empty dict is the no-user-name path.
         config_data: dict = {}  # noqa: RUF012 - class-level default is the point
 
@@ -417,38 +409,6 @@ def _build_prompt_collection_modal(_app: object) -> PromptCollectionManagerModal
     )
 
 
-def _build_chatbook_creation_modal(_app: object) -> ChatbookCreationWindow:
-    # Two constructor dependencies load the CLI config, which trips this
-    # machine's pre-existing ``RecoveryRequired: raw_source_selection_changed``
-    # profile condition when config first loads mid-test-session (see
-    # .superpowers/wide-tier-rollout-report.md, environment note). Both are
-    # stubbed just around __init__ and the window only stores the results:
-    # get_chatbook_database_paths -> paths that do not exist (the fresh-
-    # install empty-database branch on_mount reads from self.db_paths), and
-    # ChatbookCreator -> None (self.creator is only touched by the create
-    # button's action, never on the mount/geometry path).
-    # TASK-32829 removed the constructor's ``self.app`` assignment (and its
-    # ``app_instance`` parameter), so the shipped class mounts directly now;
-    # the ``_MountedCreationWindow`` subclass that used to shadow the
-    # read-only ``Widget.app`` property is gone.
-    import tldw_chatbook.UI.ChatbookCreationWindow as creation_module
-
-    empty_dir = Path(tempfile.mkdtemp(prefix="tldw-wide-tier-spot-"))
-    real_paths = creation_module.get_chatbook_database_paths
-    real_creator = creation_module.ChatbookCreator
-    creation_module.get_chatbook_database_paths = lambda: {
-        "ChaChaNotes": str(empty_dir / "chachanotes.db"),
-        "Prompts": str(empty_dir / "prompts.db"),
-        "Media": str(empty_dir / "media.db"),
-    }
-    creation_module.ChatbookCreator = lambda *_args, **_kwargs: None
-    try:
-        return ChatbookCreationWindow()
-    finally:
-        creation_module.get_chatbook_database_paths = real_paths
-        creation_module.ChatbookCreator = real_creator
-
-
 def _build_chatbook_export_modal(app: object) -> ChatbookExportManagementWindow:
     # app_instance is only stored; every mount-path read goes through
     # getattr-with-defaults, so the harness app exercises the empty-list
@@ -497,7 +457,6 @@ SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     "#buddy-management": (120, (78, 96)),
     "#notes-recovery-dialog": (170, (100, 85)),
     "#skills-recovery-review": (170, (110, 90)),
-    "ChatbookCreationWindow > Container": (170, (120, 90)),
     "ChatbookExportManagementWindow > Container": (170, (120, 90)),
     "ChatbookTemplatesWindow > Container": (170, (100, 80)),
     "#prompt-collection-manager": (150, (96, None)),
@@ -510,7 +469,6 @@ SPOT_BUILDERS = {
     "#buddy-management": _build_buddy_management_modal,
     "#notes-recovery-dialog": _build_notes_recovery_modal,
     "#skills-recovery-review": _build_skills_recovery_modal,
-    "ChatbookCreationWindow > Container": _build_chatbook_creation_modal,
     "ChatbookExportManagementWindow > Container": _build_chatbook_export_modal,
     "ChatbookTemplatesWindow > Container": _build_chatbook_templates_modal,
     "#prompt-collection-manager": _build_prompt_collection_modal,
@@ -529,18 +487,10 @@ def _expected_base_width(
 @pytest.mark.parametrize(
     ("anchor", "size"),
     (
-        *[
-            (anchor, (200, 50))
-            for anchor in SPOT_REPRESENTATIVES
-        ],
-        *[
-            (anchor, (120, 40))
-            for anchor in SPOT_REPRESENTATIVES
-        ],
+        *[(anchor, (200, 50)) for anchor in SPOT_REPRESENTATIVES],
+        *[(anchor, (120, 40)) for anchor in SPOT_REPRESENTATIVES],
     ),
-    ids=lambda value: (
-        value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}"
-    ),
+    ids=lambda value: value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}",
 )
 @pytest.mark.asyncio
 async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) -> None:

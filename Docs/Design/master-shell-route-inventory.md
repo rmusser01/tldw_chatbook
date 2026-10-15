@@ -20,7 +20,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | Workflows | workflow surfaces | `WorkflowsScreen` | Workflows | Wrapper owns what-runs and can launch live work in Console |
 | MCP | `tools_settings`, tools/MCP settings | `MCPScreen` | MCP | Wrapper owns MCP tool/server capability control; `tools_settings` is an MCP alias, not global Settings |
 | ACP | ACP surfaces | `ACPScreen` | ACP | Wrapper shows honest ACP runtime-unconfigured state and can follow agent work in Console |
-| Skills | skills services | `SkillsScreen` | Skills | Wrapper exposes Agent Skills pack boundaries, `SKILL.md`, local skills dir, and staged skill context |
+| Skills | skills services | `LibraryScreen` (Skills rail) | Library | Skill management lives entirely inside Library; the standalone `SkillsScreen` was retired (task-34893) and the legacy `skills` route aliases Library |
 | Settings | `settings`, `customize` | `SettingsScreen` plus `CustomizeScreen` | Settings | Settings owns global preferences, appearance, accounts/auth, storage, and app behavior |
 
 ## Shortcut And Command Palette Inventory

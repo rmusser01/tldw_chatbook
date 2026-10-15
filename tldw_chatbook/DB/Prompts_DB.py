@@ -4349,56 +4349,6 @@ class PromptsDatabase:
         """
         return self.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
 
-    def execute_query_with_retry(
-        self, query: str, params: tuple = None, *, commit: bool = False
-    ) -> sqlite3.Cursor:
-        """
-        Execute a query with retry logic for database lock errors.
-
-        Args:
-            query: SQL query to execute
-            params: Query parameters
-            commit: Whether to commit after execution
-
-        Returns:
-            Cursor object
-        """
-        max_retries = 5
-        retry_delay = 0.1  # Start with 100ms
-
-        for attempt in range(max_retries):
-            try:
-                return self.execute_query(query, params, commit=commit)
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
-                    logger.warning(
-                        f"Database locked on query attempt {attempt + 1}, retrying in {retry_delay}s"
-                    )
-                    import time
-
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    raise
-            except Exception:
-                raise
-
-    def export_keywords_to_csv(
-        self, file_path: Optional[str] = None
-    ) -> Tuple[str, str]:
-        """
-        Export keywords to CSV file.
-        This is a convenience method that calls the standalone function.
-
-        Args:
-            file_path: Optional path for the CSV file. If not provided, generates one.
-
-        Returns:
-            Tuple of (status_message, file_path)
-        """
-        # Call the standalone function directly
-        return export_prompt_keywords_to_csv(self, file_path)
-
     def update_prompt(self, prompt_id: int, **kwargs) -> bool:
         """
         Update a prompt by ID.

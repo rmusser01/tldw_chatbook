@@ -234,6 +234,10 @@
         background: $background 75%;
     }
 
+/* ===== WIDGET: SkillRecoveryReviewModal (UI/Library_Modules/skills_trust_modals.py) ===== */
+
+    SkillRecoveryReviewModal { align: center middle; }
+
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
     LogsWindow {
@@ -1004,10 +1008,6 @@
     GuardianRuleEditModal #grm-crisis-copy { color: $warning; margin-top: 1; }
     GuardianRuleEditModal #grm-status { color: $warning; margin-top: 1; }
     GuardianRuleEditModal #grm-buttons { margin-top: 1; height: auto; }
-
-/* ===== WIDGET: SkillRecoveryReviewModal (UI/Screens/skills_screen.py) ===== */
-
-    SkillRecoveryReviewModal { align: center middle; }
 
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
 

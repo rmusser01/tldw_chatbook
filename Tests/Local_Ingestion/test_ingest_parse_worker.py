@@ -559,9 +559,9 @@ def test_ingest_local_file_audio_returns_real_media_id(
     assert row["type"] == "audio"
     assert row["url"] == f"file://{source.absolute()}"
 
-    from tldw_chatbook.DB.Client_Media_DB_v2 import fetch_keywords_for_media
+    from tldw_chatbook.DB.Client_Media_DB_v2 import fetch_keywords_for_media_batch
 
-    assert fetch_keywords_for_media(db, media_id) == ["voices"]
+    assert fetch_keywords_for_media_batch(db, [media_id])[media_id] == ["voices"]
 
     # app.py's re-ingest recovery path must also resolve now.
     assert db.get_media_by_url(f"file://{source.absolute()}") is not None

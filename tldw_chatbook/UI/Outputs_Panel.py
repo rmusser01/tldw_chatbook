@@ -72,7 +72,14 @@ class OutputsPanel(ScrollableContainer):
     def __init__(self, app_instance: "TldwCli", **kwargs: Any):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.scope_service = getattr(app_instance, "server_outputs_scope_service", None)
+        # The wiring sets ``outputs_scope_service`` (Outputs_Interop); the
+        # legacy ``server_outputs_scope_service`` name is kept as a fallback
+        # for older app instances, mirroring Sharing_Panel's idiom.
+        self.scope_service = getattr(app_instance, "outputs_scope_service", None)
+        if self.scope_service is None:
+            self.scope_service = getattr(
+                app_instance, "server_outputs_scope_service", None
+            )
 
     def compose(self) -> ComposeResult:
         yield Static("Server Outputs require server mode.", id="outputs-disabled")
@@ -381,7 +388,7 @@ class OutputsPanel(ScrollableContainer):
     async def list_output_templates(self) -> None:
         await self._run_operation(
             "Output Templates",
-            "list_output_templates",
+            "list_templates",
             q=self._input_value("#outputs-template-query") or None,
             limit=self._int_input("#outputs-template-limit", default=50, required=False)
             or 50,
@@ -394,7 +401,7 @@ class OutputsPanel(ScrollableContainer):
     async def create_output_template(self) -> None:
         await self._run_operation(
             "Output Template Created",
-            "create_output_template",
+            "create_template",
             name=self._input_value("#outputs-template-name"),
             type=self._select_value("#outputs-template-type"),
             format=self._select_value("#outputs-template-format"),
@@ -406,14 +413,14 @@ class OutputsPanel(ScrollableContainer):
     async def get_output_template(self) -> None:
         await self._run_operation(
             "Output Template Detail",
-            "get_output_template",
+            "get_template",
             template_id=self._int_input("#outputs-template-id"),
         )
 
     async def update_output_template(self) -> None:
         await self._run_operation(
             "Output Template Updated",
-            "update_output_template",
+            "update_template",
             template_id=self._int_input("#outputs-template-id"),
             name=self._input_value("#outputs-template-name") or None,
             type=self._select_value("#outputs-template-type"),
@@ -426,14 +433,14 @@ class OutputsPanel(ScrollableContainer):
     async def delete_output_template(self) -> None:
         await self._run_operation(
             "Output Template Deleted",
-            "delete_output_template",
+            "delete_template",
             template_id=self._int_input("#outputs-template-id"),
         )
 
     async def preview_output_template(self) -> None:
         await self._run_operation(
             "Output Template Preview",
-            "preview_output_template",
+            "preview_template",
             template_id=self._int_input("#outputs-preview-template-id"),
             item_ids=self._csv_ints("#outputs-preview-item-ids"),
             limit=self._int_input("#outputs-preview-limit", default=50, required=False)
@@ -458,12 +465,12 @@ class OutputsPanel(ScrollableContainer):
         workspace_tag = self._input_value("#outputs-artifact-workspace-tag")
         if workspace_tag:
             kwargs["workspace_tag"] = workspace_tag
-        await self._run_operation("Output Artifacts", "list_outputs", **kwargs)
+        await self._run_operation("Output Artifacts", "list_artifacts", **kwargs)
 
     async def list_deleted_outputs(self) -> None:
         await self._run_operation(
             "Deleted Output Artifacts",
-            "list_deleted_outputs",
+            "list_deleted_artifacts",
             page=self._int_input("#outputs-artifact-page", default=1, required=False)
             or 1,
             size=self._int_input("#outputs-artifact-size", default=50, required=False)
@@ -473,14 +480,14 @@ class OutputsPanel(ScrollableContainer):
     async def get_output(self) -> None:
         await self._run_operation(
             "Output Detail",
-            "get_output",
+            "get_artifact",
             output_id=self._int_input("#outputs-artifact-id"),
         )
 
     async def create_output(self) -> None:
         await self._run_operation(
             "Output Created",
-            "create_output",
+            "create_artifact",
             template_id=self._int_input("#outputs-create-template-id"),
             item_ids=self._csv_ints("#outputs-create-item-ids"),
             title=self._input_value("#outputs-create-title") or None,
@@ -498,12 +505,12 @@ class OutputsPanel(ScrollableContainer):
         update_format = self._select_value("#outputs-update-format")
         if update_format:
             kwargs["format"] = update_format
-        await self._run_operation("Output Updated", "update_output", **kwargs)
+        await self._run_operation("Output Updated", "update_artifact", **kwargs)
 
     async def delete_output(self) -> None:
         await self._run_operation(
             "Output Deleted",
-            "delete_output",
+            "delete_artifact",
             output_id=self._int_input("#outputs-delete-output-id"),
             hard=self.query_one("#outputs-delete-hard", Checkbox).value,
             delete_file=self.query_one("#outputs-delete-file", Checkbox).value,

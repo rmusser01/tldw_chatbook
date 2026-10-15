@@ -74,6 +74,6 @@ ADR-031 (`031-bounded-evaluation-and-tool-worker-execution.md`). Specs: `Docs/su
 
 ## Verified gotchas
 
-1. `Event_Handlers/eval_db_operations.py` is schema-drifted legacy — its read/write calls don't match `EvalsDB`'s shapes and always hit the broad except; only its own test references it. The live path is `EvalsScreen` + `EvalsViewModel`.
+1. `Event_Handlers/eval_db_operations.py` was schema-drifted legacy and was deleted (task-34891); the live path is `EvalsScreen` + `EvalsViewModel`.
 2. Two different `BaseEvalRunner` classes exist (`eval_runner.py` is the production one; `base_runner.py` is the older ABC still imported by specialized runners).
 3. `EvalsScreen` replaced `EvalsWindowV3` because mounting a Textual Screen inside a plain Container renders at `Region(0,0,0,0)` — the Lab frame with region swaps is the fix; region swaps must step around frame-owned collapse headers.

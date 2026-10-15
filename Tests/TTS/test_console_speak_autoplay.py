@@ -13,8 +13,8 @@ The fix: when a successful completion's message id is not claimed by any
 mounted legacy widget, the handler now posts `TTSPlaybackEvent(action="play",
 ...)` itself so the existing `@on(TTSPlaybackEvent)` -> `handler.
 handle_tts_playback` pipeline (already used by the legacy play button) plays
-the audio immediately. The legacy widget-found path is unchanged (pinned by
-the second test below).
+the audio immediately. The legacy widget-found branch was removed together
+with the widget family (task-34890); this path is the only one.
 
 Test level: these tests call `TldwCli.handle_tts_complete_event` directly
 against a minimal duck-typed stand-in for `self` (exposing only `query`,
@@ -73,8 +73,6 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
-from tldw_chatbook.Widgets.Chat_Widgets import tts_widget_index
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -2764,38 +2762,6 @@ async def test_error_completion_clears_console_speaking_marker() -> None:
     # A screen speaking a DIFFERENT message keeps its own state untouched.
     assert other._console_speaking_message_id == "console-msg-2"
     assert other.sync_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_console_speak_autoplay_skipped_when_legacy_widget_claims_message(
-    tmp_path,
-):
-    """Regression pin: a legacy ChatMessage widget owning the message id
-    keeps the pre-existing "click play to listen" behavior and must NOT be
-    auto-played out from under the user."""
-    audio_file = tmp_path / "clip.mp3"
-    audio_file.write_bytes(b"fake-audio-bytes")
-
-    widget = ChatMessage(message="hello", role="AI", message_id="legacy-msg-1")
-    # task-14: the handler finds widgets through the TTS message-widget
-    # index (mount/unmount hooks), not the DOM scan this test used to lean
-    # on. A mounted widget registers itself in on_mount; this widget is
-    # deliberately app-less, so register it the same way here and undo it
-    # after -- this suite's fake-app stand-in never runs a mount cycle.
-    tts_widget_index.register_message_widget("legacy-msg-1", widget)
-    try:
-        fake_app = _FakeApp(widgets=[widget])
-        event = TTSCompleteEvent(message_id="legacy-msg-1", audio_file=audio_file)
-
-        await TldwCli.handle_tts_complete_event(fake_app, event)
-    finally:
-        tts_widget_index.unregister_message_widget("legacy-msg-1", widget)
-
-    playback_events = [m for m in fake_app.posted if isinstance(m, TTSPlaybackEvent)]
-    assert playback_events == []
-    fake_app.notify.assert_called_once_with(
-        "TTS audio ready - click play to listen", severity="information"
-    )
 
 
 @pytest.mark.asyncio

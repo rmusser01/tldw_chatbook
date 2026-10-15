@@ -167,25 +167,6 @@ def test_video_resolver_never_falls_back_for_recovered_reference(media, state):
     assert path != temporary
 
 
-def test_enhanced_image_widget_renders_known_deletion(media):
-    from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
-
-    store, source = media
-    asset = retain(store, source)
-    store.delete(asset)
-    widget = ChatMessageEnhanced(
-        "caption",
-        "assistant",
-        message_id="m",
-        image_data=b"unrelated",
-        image_mime_type="image/png",
-        recovered_root=store.root,
-        recovered_profile="p",
-    )
-    assert widget.image_data is None
-    assert widget.recovered_image_status == "deleted"
-
-
 def test_generated_id_collision_never_overwrites_existing_payload(media, monkeypatch):
     from types import SimpleNamespace
 
@@ -328,7 +309,9 @@ def test_inconsistent_delete_journal_never_retires_ready_payload(media):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["ready", "missing", "deleted", "failed", "corrupt"])
 @pytest.mark.parametrize("transient", [None, b"unrelated transient image"])
-async def test_actual_console_image_specs_override_stale_cache(media, state, transient, monkeypatch):
+async def test_actual_console_image_specs_override_stale_cache(
+    media, state, transient, monkeypatch
+):
     import inspect
     from io import BytesIO
     from types import SimpleNamespace
@@ -447,11 +430,18 @@ async def test_actual_console_image_specs_override_stale_cache(media, state, tra
         screen._image._build_console_image_specs([message])
         await asyncio.gather(*screen._image._recovered_image_tasks)
         screen._image._recovered_images_close_admission()
-        assert screen._image._build_console_image_specs([message])[message.id].recovered_status == "deleted"
+        assert (
+            screen._image._build_console_image_specs([message])[
+                message.id
+            ].recovered_status
+            == "deleted"
+        )
 
 
 @pytest.mark.asyncio
-async def test_recovered_image_cancel_keeps_worker_until_native_read_settles(media, monkeypatch):
+async def test_recovered_image_cancel_keeps_worker_until_native_read_settles(
+    media, monkeypatch
+):
     import asyncio
     import threading
     import time
@@ -474,9 +464,11 @@ async def test_recovered_image_cancel_keeps_worker_until_native_read_settles(med
     controller = object.__new__(ConsoleImageController)
     controller._recovered_image_tasks = set()
     controller._recovered_image_paused = False
-    task = asyncio.create_task(controller._load_recovered_images(
-        (store.root, "p", (("ui-id", "m", "pixels"),)), ConsoleImageRenderCache()
-    ))
+    task = asyncio.create_task(
+        controller._load_recovered_images(
+            (store.root, "p", (("ui-id", "m", "pixels"),)), ConsoleImageRenderCache()
+        )
+    )
     controller._recovered_image_tasks.add(task)
     task.add_done_callback(controller._recovered_image_tasks.discard)
     try:
