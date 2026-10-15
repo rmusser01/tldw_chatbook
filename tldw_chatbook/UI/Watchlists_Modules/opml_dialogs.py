@@ -65,7 +65,6 @@ def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
     return text
 
 
-
 class OpmlImportDialog(ModalScreen[str | None]):
     """Modal dialog that prompts the user for OPML XML to import."""
 
