@@ -1,0 +1,129 @@
+{
+  "artifact_name": "pr3023-native7-r1",
+  "baseline_python_source_map_sha256": "11c4741b7b544c89d30f2f2536558d3480f9fe968086d794fc6db2d0eb667b01",
+  "changed_paths": [
+    ".github/qualification/pr3023-native7-r1/binding.json",
+    ".github/qualification/pr3023-native7-r1/outer.py.txt",
+    ".github/qualification/pr3023-native7-r1/packet.zip",
+    ".github/workflows/console-pause-native-evidence.yml",
+    "Tests/Backup_Recovery/test_raw_lock_stream_parent_posture.py",
+    "Tests/Backup_Recovery/test_raw_native_retirement.py",
+    "Tests/Backup_Recovery/test_task37_original_hook_pin.py",
+    "Tests/Backup_Recovery/test_windows_acl_fixture.py",
+    "Tests/Backup_Recovery/windows_acl_fixture.py",
+    "Tests/conftest.py",
+    "Tests/private_profile.py",
+    "tldw_chatbook/Utils/config_encryption.py",
+    "tldw_chatbook/Utils/file_durability.py",
+    "tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook/Utils/private_paths.py",
+    "tldw_chatbook/config.py"
+  ],
+  "command_plan_sha256": "b68d0060323128ce508683cbf1493d52b8934e3368ac3d0d103bc3a79aabd1cd",
+  "current_goal_governance": [
+    {
+      "bytes": 130652,
+      "logical_path": "backlog/decisions/126-complete-local-backup-and-recovery.md",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/backlog/decisions/126-complete-local-backup-and-recovery.md",
+      "sha256": "4f71ea73eddc9e012213b421021fdfc7a296083d622e5c93eb9ce5b92a4ab208",
+      "snapshot": "governance/current-goal/backlog/decisions/126-complete-local-backup-and-recovery.md"
+    },
+    {
+      "bytes": 18424,
+      "logical_path": "backlog/decisions/230-console-send-preparation-and-io-ownership.md",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/backlog/decisions/230-console-send-preparation-and-io-ownership.md",
+      "sha256": "df370ebbfb9cdeabdc6e2bebe98404ab3d269514bf182649f77bf9b7298cae0d",
+      "snapshot": "governance/current-goal/backlog/decisions/230-console-send-preparation-and-io-ownership.md"
+    },
+    {
+      "bytes": 1724,
+      "logical_path": "tldw_chatbook/Backup_Recovery/native_qualification.json",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/tldw_chatbook/Backup_Recovery/native_qualification.json",
+      "sha256": "0aa458794127116a63dda7ccb61bcb26e41fe42534f83824b128a732d58c763d",
+      "snapshot": "governance/current-goal/tldw_chatbook/Backup_Recovery/native_qualification.json"
+    },
+    {
+      "bytes": 28633,
+      "logical_path": "pyproject.toml",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/pyproject.toml",
+      "sha256": "8b690bf220dbe4ef324363d7eb0beb0951f4513ff805673203c14a5e7ea64f26",
+      "snapshot": "governance/current-goal/pyproject.toml"
+    },
+    {
+      "bytes": 10168,
+      "logical_path": "backlog/tasks/task-34563.17 - Retire-owned-native-handles-without-repeated-path-preparation.md",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/backlog/tasks/task-34563.17 - Retire-owned-native-handles-without-repeated-path-preparation.md",
+      "sha256": "d6bb2b38ba0b0c9be4781f7c0c823e54e58813c862865edd862cbba7deb440b7",
+      "snapshot": "governance/current-goal/backlog/tasks/task-34563.17 - Retire-owned-native-handles-without-repeated-path-preparation.md"
+    },
+    {
+      "bytes": 16813,
+      "logical_path": "backlog/tasks/task-34563.28 - Batch-user-data-directory-posture-observations.md",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/backlog/tasks/task-34563.28 - Batch-user-data-directory-posture-observations.md",
+      "sha256": "9b3f4985ff2c03888304dc7dd2928f5e6d88c6def09f455fab5e071c226aa75f",
+      "snapshot": "governance/current-goal/backlog/tasks/task-34563.28 - Batch-user-data-directory-posture-observations.md"
+    },
+    {
+      "bytes": 13093,
+      "logical_path": "backlog/tasks/task-34563.36 - Avoid-repeated-Windows-path-component-validation-during-Console-Send.md",
+      "read_path": "/Users/macbook-dev/.codex/worktrees/sequential-pr-review-wave2/tldw_chatbook/backlog/tasks/task-34563.36 - Avoid-repeated-Windows-path-component-validation-during-Console-Send.md",
+      "sha256": "00e1ee5be88c9bf7052df1da49355d8573db4876b618ecf7094f235e855786e4",
+      "snapshot": "governance/current-goal/backlog/tasks/task-34563.36 - Avoid-repeated-Windows-path-component-validation-during-Console-Send.md"
+    }
+  ],
+  "goal_snapshot_origin_commit": "593fc1cdf2baa1462917eb6e1ceaa1db439f3280",
+  "goal_snapshot_source_map_sha256": "eca28b35e3db24fa9347f27452323768ac60c9e6d7e181d75d931d8aa8954597",
+  "native_asset_inventory_review_sha256": "2b660d2a0b1a96cf3b9e856585570d9283e5369077ccbe5d1353ed3b8a231c91",
+  "native_three_manifest_sha256": "82c18c6288749d0aae0b1a621c17cbe1363a293c0d7f486f2caa39c104c61abf",
+  "native_three_source_review_sha256": "32f63c299f664110a70ec14e34e271ab50956706d7c9dbfdc21dddf5e40ab59b",
+  "non_python_guards": [
+    {
+      "logical_path": "backlog/decisions/126-complete-local-backup-and-recovery.md",
+      "sha256": "467a0e2f12332cc13ee5193128f5c2c783255c9db5603cf0fa3479d4abffdd43"
+    },
+    {
+      "logical_path": "backlog/decisions/230-console-send-preparation-and-io-ownership.md",
+      "sha256": "df370ebbfb9cdeabdc6e2bebe98404ab3d269514bf182649f77bf9b7298cae0d"
+    },
+    {
+      "logical_path": "tldw_chatbook/Backup_Recovery/native_qualification.json",
+      "sha256": "0aa458794127116a63dda7ccb61bcb26e41fe42534f83824b128a732d58c763d"
+    },
+    {
+      "logical_path": "pyproject.toml",
+      "sha256": "8b690bf220dbe4ef324363d7eb0beb0951f4513ff805673203c14a5e7ea64f26"
+    },
+    {
+      "logical_path": "backlog/tasks/task-34563.17 - Retire-owned-native-handles-without-repeated-path-preparation.md",
+      "sha256": "bc8192eba6aacbe7851af54d27e829ca279501251662ee6ab9aed94f7b64ad7f"
+    },
+    {
+      "logical_path": "backlog/tasks/task-34563.28 - Batch-user-data-directory-posture-observations.md",
+      "sha256": "e89882ebdebaa46fdae0332184abd79132e31a2f74b07f5a700aeb795b599abe"
+    },
+    {
+      "logical_path": "backlog/tasks/task-34563.36 - Avoid-repeated-Windows-path-component-validation-during-Console-Send.md",
+      "sha256": "a1235a6edec22dc08acf8ab75c37a0e2fd5c48437fa85ccd063dbc1cb575164f"
+    }
+  ],
+  "operation_design_sha256": "4f1678b924eade8ac5a6eb262648167518de95792b15fa8b17a5d6d2722f23bb",
+  "operational_review_sha256": "e945f0dd83d48a8e2c9f9b44938ed1fa17a58770aa0b50bff4ac8d674808c983",
+  "outer_sha256": "7628a03cf735b08c78cdae7ae6fed03565f12bcdae1bac27f867057a42277bc6",
+  "packet_asset_count": 62,
+  "packet_manifest_sha256": "1aa30e053b8a59594be47a102d87e057c626ec598d99cafe641492a5762a1e99",
+  "packet_zip_path": ".github/qualification/pr3023-native7-r1/packet.zip",
+  "packet_zip_sha256": "6fb477252de2e860dcb1910ed38eedb5b20251462ff6a6e4b7b70dee735811bf",
+  "plugin_sha256": "1a3f9f30d3997010735bc377c057ed728c4ad412416cf145bf832697320b58af",
+  "publication_parent": "abcb2c89553a9ff0a9738b1b701eebb8aff3efa6",
+  "python_source_map_sha256": "ea19572c66fb51dc37b574817c7f39e7c8a8cfd375ee2e429d15dceee396606b",
+  "python_source_rows": 8482,
+  "reader_sha256": "b6d8371674e72ae711581920f9ac3569b41be255df4051455198815780db6470",
+  "reader_test_review_sha256": "87e2f9a3bc8c32ef71a887cbf583256dd67c8dbb744d20c6dcf35232d12449d3",
+  "required_root_attestation": "Exactly12 source paths plus4 operational paths on parentabcb, permanent TEMP8482 snapshot. Goal593fc/mapeca is source/governance origin only. No source staging, source rollback/restoration or selection in Goal. Only seven natural Windows bodies; no platform/global/native/performance/TaskDone transfer.",
+  "source_map_status": "Root actual local 8482 enumeration prepared; supported Windows invariance unrun",
+  "source_snapshot_review_sha256": "5def41fb23132e7dba206625c2906e9347c1f7dc7960b1d74b775984915a3c8c",
+  "status": "ROOT_BOUND_AND_INDEPENDENTLY_REVIEWED",
+  "triage_review_sha256": "078e379b7c6c38216e24ab5f0e425d88cb0e7188a92e214d813a2898f3db356b",
+  "workflow_path": ".github/workflows/console-pause-native-evidence.yml",
+  "workflow_template_sha256": "ca8261d93ee47ab96ad4f27fd308f249fbd1a9a111573c8e3516ea6dd9f8fa6c"
+}

@@ -9,6 +9,7 @@ import base64
 import os
 import secrets
 import sys
+from functools import lru_cache
 from typing import Dict, Any
 
 from Cryptodome.Cipher import AES
@@ -16,6 +17,17 @@ from Cryptodome.Protocol.KDF import scrypt
 from loguru import logger
 
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+
+# scrypt is deliberately expensive, and decrypt re-derives the same per-value
+# key on every config load/save cycle (the salt is embedded in the ciphertext
+# and stable between saves). Memoize on the full derivation input; bounded so
+# per-value random salts cannot grow it without limit.
+@lru_cache(maxsize=128)
+def _derive_key_cached(
+    password: str, salt: bytes, n: int, key_len: int, r: int, p: int
+) -> bytes:
+    return scrypt(password.encode("utf-8"), salt, key_len=key_len, N=n, r=r, p=p)
 
 
 def unlock_recovery_value(value: str) -> str:
@@ -157,14 +169,19 @@ class ConfigEncryption:
 
     def _derive_key(self, *, password: str, salt: bytes, version: int) -> bytes:
         n = self.LEGACY_SCRYPT_N if version == self.LEGACY_VERSION else self.SCRYPT_N
-        return scrypt(
-            password.encode("utf-8"),
+        return _derive_key_cached(
+            password,
             salt,
-            key_len=self.KEY_SIZE,
-            N=n,
-            r=self.SCRYPT_R,
-            p=self.SCRYPT_P,
+            n,
+            self.KEY_SIZE,
+            self.SCRYPT_R,
+            self.SCRYPT_P,
         )
+
+    @staticmethod
+    def clear_derived_key_cache() -> None:
+        """Drop memoized scrypt keys; call when the master password changes."""
+        _derive_key_cached.cache_clear()
 
     def is_encrypted(self, value: str) -> bool:
         """Check if a value is encrypted based on its prefix."""

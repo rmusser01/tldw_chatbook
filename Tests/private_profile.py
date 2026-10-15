@@ -1,13 +1,17 @@
 """Opt-in full-app tests whose selected profile owns one interpreter lifetime."""
 
 import asyncio
+import contextlib
 import inspect
 import os
+import signal
 import sys
+import threading
+import traceback
 
 # The XML comes only from the selected pytest child in its private directory.
 import xml.etree.ElementTree as ET  # nosec B405
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -15,9 +19,35 @@ import pytest
 from pytest_timeout import get_env_settings
 
 _CHILD_NODE = "TLDW_TEST_PRIVATE_PROFILE_NODE"
+_CHILD_STACKS = "TLDW_TEST_PRIVATE_PROFILE_STACKS"
 _NO_CHILD_FAILURE = (
     "(the child's JUnit report records no failure or error; see the log tail)"
 )
+#: How much later the parent's own pytest-timeout fires, so that the child's
+#: fires first (TASK-34789). They used to be equal and the parent's clock starts
+#: first, so a hung child was only ever a bare parent timeout with the child's
+#: log unread. The child keeps the whole budget the test had (a little more:
+#: its start-up no longer counts against it), so this takes nothing from a
+#: passing test; the slowest passing private-profile test in 189 CI logs took
+#: 127.1 s of its 180 s. A hung test is reported up to this much later than the
+#: lane's --timeout, by the child's own timeout, which names what was left of
+#: the parent's armed timer (the lane's value less the parent's own setup:
+#: about ">179.98s" in a 180 s lane, not rounded down). The lead covers the
+#: child's start-up (5-7 s in CI) and its report, and is kept short because a
+#: hung child that cannot exit costs its CI job about budget + lead (UI shard 3
+#: runs within 2 minutes of its 20-minute cap). Should the parent's own timeout
+#: still fire, it names the lane's value.
+_CHILD_LEAD_SECONDS = 20.0
+#: What the parent keeps of its own limit to end a child that is still running
+#: and report it, before the parent's pytest-timeout would fire instead.
+_PARENT_RESERVE_SECONDS = 5.0
+#: The child's test coroutine while it runs, for ``_note_stacks``.
+_awaiting = None
+#: Characters one stack dump may take; a child writes at most two (its own
+#: timeout, then the parent's ask), so the parent's message stays bounded.
+_DUMP_LIMIT = 16_000
+#: Innermost frames kept of one thread's stack.
+_STACK_FRAMES = 60
 
 
 def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
@@ -48,15 +78,159 @@ def _child_failure_report(report: Path) -> str:
     return quoted or _NO_CHILD_FAILURE
 
 
+def _extend_own_alarm(armed: float) -> float:
+    """Move the parent's own pytest-timeout ``_CHILD_LEAD_SECONDS`` later.
+
+    pytest-timeout's signal method keeps its deadline only in ITIMER_REAL, and
+    cancels the timer whatever its value when the test ends. Its thread method
+    (Windows; a test off the main thread) arms no itimer and is left alone.
+
+    Args:
+        armed: Seconds left on ITIMER_REAL; 0 when it is not armed.
+
+    Returns:
+        The lead given, or 0.0 when the parent's limit did not move.
+    """
+    if armed <= 0 or not callable(signal.getsignal(signal.SIGALRM)):
+        return 0.0
+    signal.setitimer(signal.ITIMER_REAL, armed + _CHILD_LEAD_SECONDS)
+    return _CHILD_LEAD_SECONDS
+
+
+def _child_deadlines(budget: float, lead: float) -> tuple[float, float | None]:
+    """The child's ``--timeout`` and how long the parent waits for the child.
+
+    Args:
+        budget: Seconds left of the test's own timeout; 0 for none.
+        lead: How far the parent's own limit moved later; 0 for not at all.
+
+    Returns:
+        The child keeps the whole budget. Where the parent's limit moved, the
+        parent waits until ``_PARENT_RESERVE_SECONDS`` before the moved limit;
+        where it did not, it waits as it always did (``None``: no limit).
+    """
+    if budget <= 0:
+        return 0.0, None
+    if not lead:
+        return budget, budget
+    return budget, budget + lead - _PARENT_RESERVE_SECONDS
+
+
+def _stacks_text(reason: str) -> str:
+    """Every thread's stack and the test's chain of awaits, bounded.
+
+    The main thread and the await chain come first; threads with the same
+    stack share one header naming them all. Past ``_DUMP_LIMIT`` the rest is
+    cut, with a note saying how much.
+
+    Args:
+        reason: Why the stacks are taken, for the dump's header.
+
+    Returns:
+        The dump.
+    """
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    main = threading.main_thread().ident
+    groups: dict[str, list[str]] = {}
+    for ident, frame in sorted(
+        sys._current_frames().items(), key=lambda item: item[0] != main
+    ):
+        stack = "".join(traceback.format_stack(frame, _STACK_FRAMES))
+        groups.setdefault(stack, []).append(names.get(ident, str(ident)))
+    chain = []
+    awaiting = _awaiting
+    while awaiting is not None:
+        frame = getattr(awaiting, "cr_frame", None)
+        if frame is not None:
+            chain.extend(traceback.format_stack(frame))
+        awaiting = getattr(awaiting, "cr_await", None)
+    parts = [f"--- stacks {reason}\n"]
+    for index, (stack, threads) in enumerate(groups.items()):
+        if len(threads) == 1:
+            parts.append(f"--- thread {threads[0]}\n")
+        else:
+            parts.append(f"--- {len(threads)} threads: {', '.join(threads)}\n")
+        parts.append(stack)
+        if index == 0:  # the main thread
+            parts.append("--- the test, outermost await first\n")
+            parts.extend(chain)
+    text = "".join(parts)
+    if len(text) <= _DUMP_LIMIT:
+        return text
+    cut = len(text) - _DUMP_LIMIT
+    return f"{text[:_DUMP_LIMIT]}\n--- {cut} more characters of this dump cut\n"
+
+
+def _note_stacks(path: str, reason: str) -> None:
+    """In the child: append ``_stacks_text`` to the file the parent quotes.
+
+    Runs when the child's own pytest-timeout fires and when the parent asks
+    (SIGUSR1). pytest-timeout raises into the event loop, so its report cannot
+    say where an async test was waiting, and its thread dump goes through
+    pytest's capture, where a child that then cannot finish loses it.
+    """
+    with open(path, "a", encoding="utf-8", errors="replace") as output:
+        output.write(_stacks_text(reason))
+
+
+def _answer_the_parent(path: str, *_signal) -> None:
+    """SIGUSR1 in a child: the parent is about to end it; say where it is."""
+    with contextlib.suppress(Exception):
+        _note_stacks(path, "when the parent asked")
+
+
+#: The child's stacks file, read once at import: a test may replace os.environ.
+_STACKS_PATH = os.environ.get(_CHILD_STACKS) if _CHILD_NODE in os.environ else None
+if (
+    _STACKS_PATH
+    and hasattr(signal, "SIGUSR1")
+    and threading.current_thread() is threading.main_thread()
+):
+    # From import, during collection: a child asked while a fixture hangs, or
+    # one under pytest-timeout's thread method, answers instead of dying of
+    # the signal's default action.
+    signal.signal(signal.SIGUSR1, partial(_answer_the_parent, _STACKS_PATH))
+
+
+async def _exited_within(process, seconds: float | None) -> bool:
+    """Whether the child exits by itself within ``seconds`` (``None``: wait)."""
+    try:
+        await asyncio.wait_for(process.wait(), seconds)
+    except TimeoutError:
+        return False
+    return True
+
+
 def private_profile_test(function):
     """Run the original case under pytest after selecting a fresh profile."""
 
     @wraps(function)
     async def wrapped(*args, **kwargs):
+        global _awaiting
         request = kwargs["request"]
         if is_private_profile_child(request):
+            # pytest-timeout's signal method, where there is one (not Windows).
+            own_timeout = (
+                signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+            )
+            if _STACKS_PATH and callable(own_timeout):
+
+                def note_then_time_out(signum, frame):
+                    __tracebackhide__ = True
+                    with contextlib.suppress(Exception):
+                        _note_stacks(_STACKS_PATH, "when its own timeout fired")
+                    own_timeout(signum, frame)
+
+                # pytest-timeout resets SIGALRM itself when the test ends.
+                signal.signal(signal.SIGALRM, note_then_time_out)
             result = function(*args, **kwargs)
-            return await result if inspect.isawaitable(result) else result
+            if not inspect.isawaitable(result):
+                return result
+            _awaiting = result
+            try:
+                return await result
+            finally:
+                _awaiting = None
         if _CHILD_NODE in os.environ:
             pytest.fail("private profile child node changed")
         work = request.getfixturevalue("tmp_path") / "private-profile-process"
@@ -88,8 +262,22 @@ def private_profile_test(function):
         if timeout is None:
             timeout = get_env_settings(request.config).timeout
         timeout = float(timeout or 0)
+        # The signal method arms ITIMER_REAL for this test: what is left of it
+        # is the real budget, setup already having spent some.
+        armed = (
+            signal.getitimer(signal.ITIMER_REAL)[0]
+            if hasattr(signal, "getitimer")
+            else 0.0
+        )
+        child_timeout, wait = _child_deadlines(
+            min(armed or timeout, timeout),
+            # A test with no timeout of its own leaves any armed timer alone.
+            _extend_own_alarm(armed) if timeout > 0 else 0.0,
+        )
         report = work / "pytest.xml"
         log = work / "pytest.log"
+        stacks = work / "stacks.txt"
+        environment[_CHILD_STACKS] = str(stacks)
         coverage_plugin = request.config.pluginmanager.getplugin("_cov")
         coverage_controller = getattr(coverage_plugin, "cov_controller", None)
         coverage_args = []
@@ -130,7 +318,7 @@ def private_profile_test(function):
                 "-p",
                 "pytest_timeout",
                 "-q",
-                f"--timeout={timeout}",
+                f"--timeout={child_timeout}",
                 f"--basetemp={work / 'pytest'}",
                 f"--junitxml={report}",
                 *coverage_args,
@@ -140,9 +328,19 @@ def private_profile_test(function):
                 stderr=asyncio.subprocess.STDOUT,
             )
             try:
-                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+                exited = await _exited_within(process, wait)
+                asked = not exited and hasattr(signal, "SIGUSR1")
+                if asked:
+                    # Past its own limit and still running (a teardown or an
+                    # exit that cannot finish): ask where before ending it.
+                    # Half the reserve for its dump leaves half for the kill
+                    # and this report, before the parent's own limit.
+                    with contextlib.suppress(ProcessLookupError):
+                        process.send_signal(signal.SIGUSR1)
+                    await _exited_within(process, _PARENT_RESERVE_SECONDS / 2)
             finally:
-                if process.returncode is None:
+                killed = process.returncode is None
+                if killed:
                     process.kill()
                     await process.wait()
         if coverage_controller is not None and coverage_file.is_file():
@@ -155,9 +353,40 @@ def private_profile_test(function):
             ) as output:
                 output.write(coverage_file.read_bytes())
         if process.returncode:
+            if exited:
+                ending = ""
+            elif killed:
+                ending = f"(killed: still running after {wait:.0f}s"
+                ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif asked and process.returncode == -signal.SIGUSR1:
+                # No handler yet (still starting up, or the module imported
+                # off the main thread): the signal's default action ended it.
+                ending = (
+                    f"(still running after {wait:.0f}s; ended by the ask for "
+                    "its stacks before it could answer)\n"
+                )
+            elif asked:
+                ending = (
+                    f"(still running after {wait:.0f}s; asked for its stacks, "
+                    "it then exited by itself)\n"
+                )
+            else:
+                # Exited by itself just as the wait ended, before any ask
+                # (and always so where there is no SIGUSR1, e.g. Windows).
+                ending = f"(exited by itself just after the {wait:.0f}s wait ended)\n"
+            dumps = (
+                stacks.read_text(encoding="utf-8", errors="replace")
+                if stacks.is_file()
+                else ""
+            )
             pytest.fail(
-                f"{log}\n{_child_failure_report(report)}\n"
-                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+                f"{log}\n"
+                + ending
+                + f"{_child_failure_report(report)}\n"
+                + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
+                + "--- child log tail ---\n"
+                # A kill can land between two writes of one character.
+                + log.read_text(encoding="utf-8", errors="replace")[-16000:]
             )
         if coverage_controller is not None and not coverage_file.is_file():
             pytest.fail(f"private profile child did not produce coverage: {log}")

@@ -2784,6 +2784,3 @@ def verify_trusted_directory(
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         close(current_fd)
-
-
-

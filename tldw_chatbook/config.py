@@ -1080,6 +1080,7 @@ def set_encryption_password(password: str):
     _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password set for current session")
 
 
@@ -1093,6 +1094,7 @@ def clear_encryption_password():
     global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
     _STARTUP_UNLOCK_PENDING = False
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password cleared from memory")
 
 
@@ -2371,6 +2373,9 @@ def _load_settings_uncached(
     # the ingest template resolution order (``[chunking] default_template``).
     # Distinct from the legacy CamelCase "Chunking" server section above.
     final_chunking_settings_cli = get_toml_section("chunking")
+    # (task-34389, ADR-229) The [sync] table -- the sync-journal retention
+    # window the startup maintenance pass reads.
+    final_sync_settings_cli = get_toml_section("sync")
     final_image_generation_settings_cli = get_toml_section("image_generation")
     final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
@@ -2769,6 +2774,7 @@ def _load_settings_uncached(
         "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
+        "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
@@ -5549,11 +5555,14 @@ default = "pixels"
 
 [web_security]
 # Egress guard (SSRF protection) for web scraping / ingestion / subscription
-# fetches. When enabled, content-derived URLs (redirects, sitemap/crawl
-# discoveries, feed items) must resolve to public IPs; URLs you explicitly
-# configure (feed sources, Confluence base_url, ingest URLs) may be private.
-# Cloud metadata endpoints (169.254.169.254 etc.) are always blocked unless
-# the exact host is listed in allowed_hosts.
+# fetches. When enabled, a URL must resolve to public IPs unless you typed it
+# into the app (Watchlists New source / Add several, Library Capture, an
+# ingest URL, a Confluence base_url); a redirect back to that URL's own host
+# keeps its trust. Crawl discoveries, feed items, a redirect to any other
+# host, and watch sources from an older version or an OPML/bundle import
+# never count. allowed_hosts admits each listed host (exact name, no port,
+# IPv6 without brackets) for every fetch, unchecked, cloud metadata
+# endpoints included (otherwise always blocked).
 enabled = true
 allowed_hosts = []
 # Default (connect, read) timeout applied by `Utils/egress.py`'s
@@ -6013,6 +6022,22 @@ llm_context_document_limit = 10
 # an unresolvable name fails the import with a named error rather than
 # silently falling back to different chunking.
 default_template = ""
+
+
+# ==========================================================
+# Sync Journal Retention
+# ==========================================================
+[sync]
+# Retention window, in days, for the local sync journals (`sync_log` in the
+# ChaChaNotes and media databases). Every conversation/message/note/media
+# mutation leaves a full-copy JSON event there, so without a bound the table
+# grows with total mutations forever. A background pass after startup (and
+# then once a day) deletes rows older than this many days; the number of
+# pruned rows is logged. Rows within the window are never touched, so sync
+# consumers reading by change_id cursor still see every unpruned change.
+# Set 0 (or any negative number) to disable pruning entirely.
+# (TASK-34389; ADR-229.)
+sync_log_retention_days = 90
 
 
 # --- Model Capabilities Configuration ---
@@ -10936,19 +10961,172 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
     return key, tuple(dict.fromkeys(paths))
 
 
-def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
-    """Posture-stamp every path, or None if one cannot be observed.
+def _bind_user_data_dir_stamps():
+    """Keep one finite optional Windows source capture; acquire no native state."""
+    close_errors = ()
+    batch = source_current = None
+    if os.name == "nt":
+        import inspect
+        import stat
+        from pathlib import WindowsPath
+        from types import FunctionType, MethodType, ModuleType
 
-    A path that is not a directory, or sits under one the user cannot search,
-    raises here; the memo then steps aside so the resolution reports it as it
-    always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
-    """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Utils import platform_files, windows_files
 
-    try:
-        return tuple(_posture(path) for path in paths)
-    except OSError:
-        return None
+        facade, owner = platform_files.os, windows_files.WindowsOS
+        native = windows_files._Native
+        close_error = windows_files._AdmissionMetadataCloseError
+        close_errors = (close_error,)
+        original_posture = storage._posture
+        projection = (stat.S_IFMT, stat.S_IMODE)
+        modules = tuple(
+            (module, vars(module), module.__file__, module.__spec__, module.__spec__.origin)
+            for module in (storage, platform_files, windows_files)
+        )
+        bindings = (
+            (vars(storage), "_posture", original_posture),
+            (vars(storage), "os", facade),
+            (vars(storage), "stat", stat),
+            (vars(platform_files), "os", facade),
+            (vars(platform_files), "WindowsOS", owner),
+            (vars(windows_files), "WindowsOS", owner),
+            (vars(windows_files), "_Native", native),
+            (vars(windows_files), "_AdmissionMetadataCloseError", close_error),
+            *((vars(stat), name, value) for name, value in zip(("S_IFMT", "S_IMODE"), projection)),
+            *((vars(windows_files), name, vars(windows_files)[name]) for name in (
+                "_os", "_stat", "Path", "ntpath", "contextlib", "functools",
+                "_parent", "_component", "_native", "_acl_mode", "_AdmissionMetadataHandle",
+            )),
+            *((vars(owner), name, vars(owner)[name]) for name in (
+                "__getattr__", "stat", "_stat_handle", "stat_many_for_admission",
+            )),
+            *((vars(native), name, vars(native)[name]) for name in (
+                "__init__", "_user_sid", "reopen", "open_handle", "info", "ntfs",
+                "security", "_decoded_security", "_decode_security", "sid_string", "check", "ntcheck",
+            )),
+            (vars(close_error), "__init__", close_error.__init__),
+            (vars(windows_files._AdmissionMetadataHandle), "__init__", windows_files._AdmissionMetadataHandle.__init__),
+        )
+        wrappers = (
+            windows_files._parent, windows_files._native,
+            native.reopen, native._decoded_security,
+        )
+        functions = (
+            original_posture, owner.__getattr__, owner.stat, owner._stat_handle,
+            owner.stat_many_for_admission, windows_files._component, windows_files._acl_mode,
+            native.__init__, native._user_sid, native.open_handle, native.info, native.ntfs,
+            native.security, native._decode_security, native.sid_string, native.check, native.ntcheck,
+            close_error.__init__, windows_files._AdmissionMetadataHandle.__init__,
+            windows_files._parent, windows_files._parent.__wrapped__,
+            windows_files._native.__wrapped__, native.reopen, native.reopen.__wrapped__,
+            native._decoded_security.__wrapped__,
+        )
+        records = tuple(
+            (function, function.__code__, function.__globals__, function.__defaults__,
+             function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+             function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+             vars(function).get("__wrapped__"))
+            for function in functions
+        )
+        wrapped = tuple((wrapper, vars(wrapper).get("__wrapped__")) for wrapper in wrappers)
+        lookup = tuple((cls, name, inspect.getattr_static(cls, name, None))
+                       for cls in (owner, native) for name in ("__getattribute__", "__getattr__", "__dict__"))
+        cached = tuple((name, vars(facade).get(name), vars(owner)[name])
+                       for name in ("stat", "_stat_handle", "stat_many_for_admission"))
+        batch = cached[-1][1]
+
+        def source_current(posture):
+            # Direct custom slots decline before any facade lookup or producer.
+            if posture is not original_posture or storage.os is not facade or storage.stat is not stat:
+                return False
+            if any(namespace.get(name) is not value for namespace, name, value in bindings):
+                return False
+            if (
+                type(facade) is not owner or type(owner) is not type or type(native) is not type
+                or owner.__bases__ != (object,) or native.__bases__ != (object,)
+                or inspect.getattr_static(owner, "__getattribute__") is not object.__getattribute__
+                or inspect.getattr_static(native, "__getattribute__") is not object.__getattribute__
+                or any(inspect.getattr_static(cls, name, None) is not value for cls, name, value in lookup)
+            ):
+                return False
+            for module, namespace, path, spec, origin in modules:
+                if (type(module) is not ModuleType or sys.modules.get(namespace["__name__"]) is not module
+                    or vars(module) is not namespace or namespace.get("__file__") != path
+                    or namespace.get("__spec__") is not spec or spec.origin != origin):
+                    return False
+            fields = vars(facade)
+            if any(type(bound) is not MethodType or fields.get(name) is not bound
+                   or bound.__self__ is not facade or bound.__func__ is not function
+                   for name, bound, function in cached):
+                return False
+            for function, code, namespace, defaults, keywords, items, closure, cells, body in records:
+                if (type(function) is not FunctionType or function.__code__ is not code
+                    or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords
+                    or len(function.__kwdefaults__ or {}) != len(items)
+                    or any((function.__kwdefaults__ or {}).get(key) is not value for key, value in items)
+                    or function.__closure__ is not closure
+                    or vars(function).get("__wrapped__") is not body):
+                    return False
+                try:
+                    if any(cell.cell_contents is not value for cell, value in cells):
+                        return False
+                except ValueError:  # An emptied captured cell is nonstock too.
+                    return False
+            return all(vars(wrapper).get("__wrapped__") is body for wrapper, body in wrapped)
+
+    def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
+        """Observe ordered five-field postures; preserve retained-close custody.
+
+        The stock Windows route performs one fresh metadata batch. Customized
+        sources retain the original scalar calls, and ordinary OSError leaves
+        resolution to report the original private-path error.
+        """
+        from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+
+        try:
+            if type(paths) is tuple and not paths:
+                return ()
+            if (source_current is not None and source_current(_posture)
+                and type(paths) is tuple and all(type(path) is WindowsPath and path.is_absolute()
+                    and len(path.drive) == 2 and path.drive[1] == ":" and path.drive[0].isalpha()
+                    for path in paths) and source_current(_posture)):
+                try:
+                    observed = batch(paths)
+                except close_errors:
+                    raise
+                except OSError as error:
+                    # The call has unwound its native finally before selection.
+                    current = source_current(_posture)
+                    if not current or type(error) is not PermissionError or error.errno != 13 or error.strerror != "windows_admission_descriptor_unavailable":
+                        return None
+                else:
+                    # Any observed drift discards the whole sample permanently.
+                    current = source_current(_posture)
+                    if not current or type(observed) is not dict:
+                        return None
+                    result = []
+                    for path in paths:
+                        value = observed[path]
+                        if value is None:
+                            result.append(None)
+                        else:
+                            info = value[0]
+                            result.append((info.st_dev, info.st_ino, projection[0](info.st_mode),
+                                           projection[1](info.st_mode), info.st_uid))
+                    return tuple(result) if source_current(_posture) else None
+            return tuple(_posture(path) for path in paths)
+        except close_errors:
+            raise
+        except OSError:
+            return None
+
+    return _user_data_dir_stamps
+
+
+_user_data_dir_stamps = _bind_user_data_dir_stamps()
+del _bind_user_data_dir_stamps
 
 
 @_config_participants.guarded

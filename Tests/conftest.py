@@ -1558,6 +1558,18 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # and rationale as test_chunker_v2.py above.
             "test_golden_parity.py",
 
+            # The token-fallback offsets property suite constructs the real
+            # engine Chunker per max_size×overlap node, and the Chunk_Lib shim
+            # contract suite drives improved_chunking_process/Chunker, whose
+            # ChunkerConfig reads chatbook's [Chunking] TOML through the
+            # _shims/config.py guarded config loader under the per-test
+            # redirect (same admission signature as test_chunker_v2.py above:
+            # RecoveryRequired("raw_source_selection_changed") before any
+            # assertion runs). Neither suite re-selects a config itself, so
+            # they keep the bootstrap profile.
+            "test_tokens_fallback_offsets.py",
+            "test_chunk_lib_shim.py",
+
             # TASK-19642.11: the managed model-artifact transfer suites drive
             # the real fetch hot path against loopback fixture servers
             # (stream_fetch -> check_url_or_raise_async -> egress
@@ -1627,6 +1639,19 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_library_notes_riders_r_file_notes.py",
             "test_library_notes_wave_file_notes.py",
 
+            # task-34387 review: the provider call-defect and mocked-API
+            # suites fake the transport (requests.Session.post / the session
+            # factories), but the real handler prelude around those fakes
+            # builds sessions via create_owned_default_session/
+            # create_pooled_default_session, whose timeout/TLS reads go
+            # through the guarded config loader under the per-test redirect
+            # (same admission signature as test_hosted_chat.py above:
+            # RecoveryRequired("raw_source_selection_changed") before any
+            # assertion runs). None of the three re-selects a config itself,
+            # so they keep the bootstrap profile.
+            "test_anthropic_caching_degrade.py",
+            "test_chat_mocked_apis.py",
+            "test_provider_call_defects.py",
             # TASK-2760..2765 (Home dashboard cluster, 2026-10-11): the
             # three Home suites that mount the production app through
             # _build_test_app -> load_settings hit the same ADR-126
@@ -1641,6 +1666,18 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_home_screen.py",
             "test_home_triage_rail.py",
             "test_home_dashboard_seams.py",
+            # TASK-34991 (2026-10-14): the layout-cost A/B suite hit the same
+            # admission signature -- its `_disable_model_catalog_refresh`
+            # fixture (Tests/UI/conftest.py) monkeypatches
+            # `tldw_chatbook.app.TldwCli`, which imports the app AFTER the
+            # per-test redirect, and every node in the file errored in setup
+            # with RecoveryRequired("raw_source_selection_changed") on a
+            # clean tree. The suite never re-selects a config itself, and its
+            # mounts DO read config (SplashScreen reads [splash_screen]), so
+            # rebinding the module (install_config_source) breaks the splash
+            # mounts instead -- keeping the bootstrap profile is the fit, as
+            # for the Home cluster above.
+            "test_timer_path_layout_cost.py",
         }
     )
     test_data_dir = (

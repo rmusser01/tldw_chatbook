@@ -1827,16 +1827,37 @@ def validate_text_input(
     return True
 
 
-#: Bound for one user-typed Dreams phrase (a topic, a goal, the region),
-#: in Unicode code points of the stored (NFC) form. The text is embedded
-#: in the query-synthesis prompt and, on the deterministic fallback, in an
-#: outbound search query.
+#: Bound for one user-typed Dreams phrase (a topic, a goal, the region):
+#: this many code points that are NOT combining marks. The text is
+#: embedded in the query-synthesis prompt and, on the deterministic
+#: fallback, in an outbound search query.
+#:
+#: Marks are left out of the count because the count has to be the same
+#: every time the text is read (review of #2921, round 5, F3): NFC writes
+#: some single letters as a letter and a mark (the Devanagari nukta
+#: letters) and some letter-and-mark pairs as one letter, so a measure in
+#: plain code points depends on which form it is taken of -- and the
+#: typed form is gone once the text is stored. Round 4 took the shorter
+#: of the two, stored text that was longer than 200, and then refused
+#: its own stored form.
 DREAMS_PROFILE_TEXT_MAX_LENGTH = 200
 
-#: Input longer than this is refused before any Unicode work is done on
-#: it. NFC composition can shorten text (a letter and its combining mark
-#: become one code point), so the exact bound is applied after it; this
-#: one only keeps a multi-megabyte paste from being normalised and scanned.
+#: Bound on the stored form as a whole, marks included: no phrase is
+#: longer than this however its letters are decorated.
+_DREAMS_TEXT_MAX_STORED_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 3
+
+#: Raw input longer than this is refused before anything is done with
+#: it: it only keeps a multi-megabyte paste from being copied, normalised
+#: and scanned. Generous on purpose -- it runs BEFORE the invisible
+#: characters are removed, and text that is short once they are gone is
+#: not refused for them (round 5, N6: 800 zero width spaces and an "x"
+#: were "longer than 200 characters").
+_DREAMS_TEXT_RAW_LENGTH_CAP = 20_000
+
+#: Text still longer than this once the invisible characters are removed
+#: is refused before any per-character Unicode work. NFC composition can
+#: shorten text, so the exact bound is applied after it; this one only
+#: bounds the work.
 _DREAMS_TEXT_PRECHECK_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 4
 
 #: General categories that end a line or are raw controls: every C0/C1
@@ -1873,9 +1894,11 @@ _DREAMS_TEXT_ALLOWED_FORMAT = frozenset(
 #: Thai and Khmer are typed with zero width spaces between words, pasted
 #: text carries soft hyphens and a leading byte order mark, and none of
 #: them is part of what the user means. Zero width space, soft hyphen,
-#: word joiner, byte order mark, object replacement character.
+#: word joiner, byte order mark, object replacement character -- and the
+#: invisible maths operators (function application, invisible times,
+#: separator and plus) that pasted formulas carry (round 5, N6).
 _DREAMS_TEXT_REMOVED = dict.fromkeys(
-    map(ord, "\u200b\u00ad\u2060\ufeff\ufffc"))
+    map(ord, "\u200b\u00ad\u2060\ufeff\ufffc\u2061\u2062\u2063\u2064"))
 
 #: Blanks that take up room: braille's own space and the Hangul fillers
 #: people use as an "invisible letter". Written as a plain space, so
@@ -1894,6 +1917,31 @@ _DREAMS_TEXT_BLANK = frozenset("\u115f\u1160\U0001d159")
 #: characters are legitimate inside one and nowhere else (round 4, C4).
 _DREAMS_TEXT_FLAG_SEQUENCE_RE = re.compile(
     "\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]+\U000e007f")
+
+#: An emoji Unicode writes as punctuation or a maths sign with a selector
+#: after it (round 5, N4): a keycap -- 0-9, ``#`` or ``*``, optionally
+#: U+FE0F, then the combining enclosing keycap U+20E3 -- or one of the
+#: few emoji presentation sequences on such a base (the double
+#: exclamation and exclamation-question marks, the left-right arrow, the
+#: medium and small squares, the curved arrows, the wavy dash, the part
+#: alternation mark). Alone each base is not readable; the emoji is.
+#:
+#: Only the sequences Unicode DEFINES (round 6, G2). Round 5 accepted any
+#: character in front of a selector, and so a zero width joiner, a
+#: direction mark, a combining mark or a filler with U+FE0F after it was
+#: a topic. ``+\ufe0f`` and ``-\u20e3`` are not emoji either: they are
+#: what ``+`` and ``-`` are, maths signs, which alone are refused.
+#:
+#: The selector is OPTIONAL on these bases, and the five skin-tone
+#: swatches (category Sk) count on their own too (round 7, H4): the
+#: medium small squares and the swatches show as emoji by default, so an
+#: emoji keyboard produces them without U+FE0F, and the rest are emoji
+#: whichever way they were typed. Every entry of rich's emoji table is
+#: readable with and without its selectors (pinned by a test).
+_DREAMS_TEXT_EMOJI_PRESENTATION_RE = re.compile(
+    "[#*0-9]\ufe0f?\u20e3"
+    "|[\u203c\u2049\u2194\u25fb-\u25fe\u2934\u2935\u3030\u303d"
+    "\U0001f3fb-\U0001f3ff]")
 
 # One refusal per thing that can be wrong (round 4, C4): the caller shows
 # it after "Topic not added: " / "Goal not added: " / "Region not saved: ".
@@ -1927,9 +1975,13 @@ def validate_dreams_profile_text(value: object) -> str:
     rule is about what the text IS, not about what it mentions:
 
     * one line: no control character, no line or paragraph separator;
-    * something to read: a letter or a number in any script, or an emoji
-      or symbol; punctuation alone, combining marks alone and characters
-      that render as nothing are not a topic (round 4, I3);
+    * something to read: a letter or a number in any script, an emoji
+      (including one written as punctuation or a sign with the emoji
+      selector or the keycap, round 5, N4), or a symbol of the "other"
+      or currency kind (heart, euro, copyright); punctuation, maths signs
+      (+, infinity, arrows), modifier symbols, combining marks and
+      characters that render as nothing alone are not a topic (round 4,
+      I3);
     * nothing hidden that changes what the text is: no bidirectional
       embedding/override/isolate control, and no other invisible format
       character except the joiners, directional marks and visible format
@@ -1937,10 +1989,12 @@ def validate_dreams_profile_text(value: object) -> str:
       tag characters inside a subdivision flag;
     * no noncharacter and no lone surrogate (which cannot even be written
       to SQLite or TOML);
-    * at most ``DREAMS_PROFILE_TEXT_MAX_LENGTH`` Unicode code points --
-      of the text as typed or of the stored form, whichever is shorter,
-      so an emoji counts once, a decomposed accent composes away, and a
-      letter NFC writes as two code points still counts once.
+    * at most ``DREAMS_PROFILE_TEXT_MAX_LENGTH`` Unicode code points that
+      are not combining marks, and three times that in all -- measured on
+      the stored form, in a way normalisation cannot change, so that the
+      stored form always passes this rule again (round 5, F3). An emoji
+      counts once per code point, an accent never counts apart from its
+      letter, and a letter NFC writes as a letter and a mark counts once.
 
     Text people type is not refused for what this interpreter's Unicode
     tables happen to know (round 4, C4): private-use code points (the
@@ -1975,8 +2029,9 @@ def validate_dreams_profile_text(value: object) -> str:
 
     Returns:
         The text to store: trimmed, without the removable invisible
-        characters, in NFC -- so a composed and a decomposed spelling of
-        the same phrase are one stored value.
+        characters, every run of spaces written as one space, in NFC --
+        so a composed and a decomposed spelling, and two spacings, of the
+        same phrase are one stored value.
 
     Raises:
         ValueError: If the value is not text, has nothing readable in it,
@@ -1987,11 +2042,17 @@ def validate_dreams_profile_text(value: object) -> str:
     typed = value.strip() if isinstance(value, str) else ""
     if not typed:
         raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
-    # Length first: nothing below may run on an unbounded paste.
-    if len(typed) > _DREAMS_TEXT_PRECHECK_LENGTH:
+    # Length first: nothing below may run on an unbounded paste. The raw
+    # bound is generous, the real one is taken once the characters that
+    # are removed anyway are gone (round 5, N6).
+    if len(typed) > _DREAMS_TEXT_RAW_LENGTH_CAP:
         raise ValueError(_DREAMS_TEXT_TOO_LONG)
     typed = typed.translate(_DREAMS_TEXT_REMOVED).translate(
         _DREAMS_TEXT_BLANK_AS_SPACE).strip()
+    if not typed:
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    if len(typed) > _DREAMS_TEXT_PRECHECK_LENGTH:
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
     text = unicodedata.normalize("NFC", typed)
     # Tag characters count only inside a well-formed flag: scan the text
     # with every such flag reduced to its base emoji.
@@ -2016,9 +2077,19 @@ def validate_dreams_profile_text(value: object) -> str:
             category[0] in "LN" or category in ("So", "Sc", "Cn", "Co")
         ):
             readable = True
-    if not readable:
+    if not readable and not _DREAMS_TEXT_EMOJI_PRESENTATION_RE.search(text):
         raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
-    if min(len(typed), len(text)) > DREAMS_PROFILE_TEXT_MAX_LENGTH:
+    # One spacing, one topic (round 5, N5): every run of spaces -- a
+    # no-break, ideographic or em space, or what is left where an
+    # invisible character was removed -- is stored as ONE ASCII space;
+    # "rust  tui" and "rust tui" were two topics under the exact key.
+    # Safe here: line breaks and controls were refused above, so only
+    # spaces are whitespace now.
+    text = " ".join(text.split())
+    letters = sum(
+        1 for char in text if not unicodedata.category(char).startswith("M"))
+    if (letters > DREAMS_PROFILE_TEXT_MAX_LENGTH
+            or len(text) > _DREAMS_TEXT_MAX_STORED_LENGTH):
         raise ValueError(_DREAMS_TEXT_TOO_LONG)
     return text
 
