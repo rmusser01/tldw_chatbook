@@ -145,7 +145,7 @@ def is_dreams_source(
     return not urls or any(_url_key(source_url) == _url_key(url) for url in urls)
 
 
-def _changed_before(changed: Any, at: Any) -> bool:
+def changed_before(changed: Any, at: Any) -> bool:
     """Whether a row last changed before a record was written.
 
     Review of #3123, M2. Users can switch a reminder or a change rule back
@@ -293,8 +293,8 @@ def _restore_drift(
             rule = rule_states.get(int(row.get("alert_rule_id") or 0)) or {}
             if ((created and state["is_active"])
                     or (rule.get("enabled")
-                        and _changed_before(rule.get("updated_at"), at))
-                    or any(_changed_before(reminder.get("updated_at"), at)
+                        and changed_before(rule.get("updated_at"), at))
+                    or any(changed_before(reminder.get("updated_at"), at)
                            for reminder in armed.get(str(row["id"]), ()))):
                 unsettled = dict(record or {})
                 unsettled.pop("settled", None)
@@ -320,7 +320,7 @@ def _restore_drift(
         drift.reminders.extend(
             str(reminder["id"]) for reminder in armed.get(str(row["id"]), ())
             if str(reminder["id"]) in disarmed
-            and _changed_before(reminder.get("updated_at"), record.get("at")))
+            and changed_before(reminder.get("updated_at"), record.get("at")))
     return drift
 
 
@@ -715,6 +715,10 @@ async def _boot_pass(
                 await reconcile_tracking(
                     subs_service,
                     dreams_db,
+                    # The watches this check un-settled (round 2, P2): the
+                    # pass leaves what their users changed since, as the
+                    # check did.
+                    restored=frozenset(item_id for item_id, _ in drift.records),
                     scheduling_db_getter=lambda: getattr(
                         getattr(app, "scheduling_service", None), "db", None),
                     on_settled=getattr(
