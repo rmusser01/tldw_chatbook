@@ -741,13 +741,6 @@ class LifecycleMixin:
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
-        # Pooled egress sessions are closed LAST among resource owners:
-        # every durable shutdown above may still issue a final network
-        # call (receipts, notices) through the shared pool (review
-        # follow-up: the pool previously lived until process exit).
-        from .Utils.egress import close_pooled_default_sessions
-
-        close_pooled_default_sessions()
         await self._shutdown_collections_capture_runtime()
         await self._shutdown_notes_sync_runtime()
         await self._shutdown_actor_pack_import()
@@ -778,12 +771,17 @@ class LifecycleMixin:
             await asyncio.to_thread(meeting_session_owner.shutdown)
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
-        if recovery_cancellation is not None:
-            raise recovery_cancellation
-        if lab_error is not None:
-            raise lab_error
-        if workflow_error is not None:
-            raise workflow_error
+        # Live owners may use shared sessions until their drains finish.
+        from .Utils.egress import close_pooled_default_sessions
+
+        pool_error = None
+        try:
+            close_pooled_default_sessions()
+        except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
+            pool_error = exc
+        for error in (recovery_cancellation, lab_error, workflow_error, pool_error):
+            if error is not None:
+                raise error
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""

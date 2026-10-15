@@ -1550,10 +1550,17 @@ def create_pooled_default_session(
 
 def close_pooled_default_sessions() -> None:
     """Close and drop every pooled session (tests, app shutdown)."""
+    first_error = None
     with _SESSION_POOL_LOCK:
         while _SESSION_POOL:
             _, session = _SESSION_POOL.popitem()
-            requests.Session.close(session)
+            try:
+                requests.Session.close(session)
+            except Exception as exc:  # noqa: BLE001 - drain the other owned sessions.
+                if first_error is None:
+                    first_error = exc
+    if first_error is not None:
+        raise first_error
 
 
 def guarded_fetch_requests(
