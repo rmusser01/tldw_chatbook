@@ -49,6 +49,7 @@ from loguru import logger as logging
 #
 # Local Imports
 from .keyword_store import KeywordStore, KeywordStoreSpec
+from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
 from tldw_chatbook.Backup_Recovery.participants import (
@@ -335,6 +336,41 @@ class PromptsDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
+        # TASK-34904: shared library page-search engine.
+        self._library_search_spec = LibrarySearchSpec(
+            table="Prompts",
+            base_filter="deleted = 0",
+            exact_column="name",
+            substring_branches=(
+                ("name LIKE ? ESCAPE '\\'", "name"),
+                ("coalesce(details, '') LIKE ? ESCAPE '\\'", "details"),
+                ("coalesce(system_prompt, '') LIKE ? ESCAPE '\\'", "system_prompt"),
+                ("coalesce(user_prompt, '') LIKE ? ESCAPE '\\'", "user_prompt"),
+                (
+                    "coalesce(prompt_definition, '') LIKE ? ESCAPE '\\'",
+                    "prompt_definition",
+                ),
+            ),
+            fts_branches=(
+                (
+                    "id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)",
+                    None,
+                ),
+            ),
+            keyword_branch=(
+                "id IN (SELECT pkl.prompt_id FROM PromptKeywordLinks pkl "
+                "JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id "
+                "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            ),
+            page_columns=self._library_prompt_page_columns(),
+            tiebreaker="id DESC",
+            fetch_keywords=self._library_keywords_for_prompts,
+            make_item=self._library_prompt_item,
+            make_database_error=lambda message: DatabaseError(message),
+            error_prefix="Failed to search library prompts: ",
+            fts_attribution=self._library_prompt_fts_fields,
+            log_label="library prompts search",
+        )
         # TASK-34903: shared keyword write path. The spec's callables close
         # over ``self`` because normalization/canonicalization are instance
         # methods here; conflict construction preserves the original
@@ -3087,7 +3123,6 @@ class PromptsDatabase:
 
     _LIBRARY_PROMPT_PREVIEW_CHARS = 241
     _LIBRARY_PROMPT_KEYWORD_CAP = 20
-    _LIBRARY_PROMPT_FTS_TOKEN_LIMIT = 20
     _LIBRARY_PROMPT_SECTIONS = (
         "details",
         "system_prompt",
@@ -3099,20 +3134,6 @@ class PromptsDatabase:
     def _escape_library_prompt_like(value: str) -> str:
         """Escape LIKE metacharacters so user input matches literally."""
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @classmethod
-    def _library_prompt_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text (operators inert).
-
-        The AND-of-quoted-tokens form, not a phrase: each token is
-        double-quoted and they are space-joined, which is FTS5's implicit
-        AND. Returns None when the input contains no usable tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_PROMPT_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_prompts(
         self, conn: sqlite3.Connection, prompt_ids: List[int]
@@ -3246,125 +3267,14 @@ class PromptsDatabase:
         user_prompt/prompt_definition, tokenized safe FTS over the same
         fields, and keyword substring via PromptKeywordLinks. Exact-name hits
         rank first, then recency, then id.
-
-        Args:
-            query: Raw user search text.
-            limit: Maximum number of items to return.
-            offset: Number of items to skip.
-
-        Returns:
-            Dict with ``items`` (library projections plus ``matched_fields``
-            and ``matched_keywords``) and ``total``.
-
-        Raises:
-            DatabaseError: If a database error occurs.
         """
-        like_pattern = f"%{self._escape_library_prompt_like(query)}%"
-        fts_query = self._library_prompt_fts_query(query)
-        keyword_branch = (
-            "id IN (SELECT pkl.prompt_id FROM PromptKeywordLinks pkl "
-            "JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        return library_search_page(
+            self,
+            self._library_search_spec,
+            query=query,
+            limit=limit,
+            offset=offset,
         )
-        section_columns = (
-            ("details", 2),
-            ("system_prompt", 3),
-            ("user_prompt", 4),
-            ("prompt_definition", 5),
-        )
-
-        branches = [
-            "LOWER(name) = LOWER(?)",
-            "name LIKE ? ESCAPE '\\'",
-        ]
-        params: List[Any] = [query, like_pattern]
-        for column, _index in section_columns:
-            branches.append(f"coalesce({column}, '') LIKE ? ESCAPE '\\'")
-            params.append(like_pattern)
-        fts_index: Optional[int] = None
-        if fts_query is not None:
-            fts_index = len(branches)
-            branches.append(
-                "id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
-            )
-            params.append(fts_query)
-        keyword_index = len(branches)
-        branches.append(keyword_branch)
-        params.append(like_pattern)
-
-        where_clause = " OR ".join(f"({branch})" for branch in branches)
-        hit_selects = ", ".join(
-            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
-        )
-        hit_params = list(params)
-
-        try:
-            with self.transaction() as conn:
-                total = conn.execute(
-                    f"SELECT COUNT(*) AS count FROM Prompts "
-                    f"WHERE deleted = 0 AND ({where_clause})",
-                    tuple(params),
-                ).fetchone()["count"]
-                cursor = conn.execute(
-                    f"""
-                    SELECT {self._library_prompt_page_columns()},
-                           {hit_selects}
-                    FROM Prompts
-                    WHERE deleted = 0 AND ({where_clause})
-                    ORDER BY (LOWER(name) = LOWER(?)) DESC,
-                             last_modified DESC, id DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    tuple(hit_params + params + [query, limit, offset]),
-                )
-                rows = cursor.fetchall()
-                keywords_by_prompt = self._library_keywords_for_prompts(
-                    conn, [row["id"] for row in rows]
-                )
-                # FTS can hit across token boundaries where no LIKE branch
-                # fires; attribute those rows honestly with per-column probes.
-                fts_only_fields: Dict[int, List[str]] = {}
-                if fts_index is not None and fts_query is not None:
-                    for row in rows:
-                        literal_hit = any(
-                            row[f"hit_{index}"]
-                            for index in range(len(branches))
-                            if index != fts_index
-                        )
-                        if row[f"hit_{fts_index}"] and not literal_hit:
-                            fts_only_fields[row["id"]] = (
-                                self._library_prompt_fts_fields(
-                                    conn, row["id"], fts_query
-                                )
-                            )
-            lowered_query = query.lower()
-            items = []
-            for row in rows:
-                item = self._library_prompt_item(row, keywords_by_prompt)
-                matched_fields = set()
-                if row["hit_0"] or row["hit_1"]:
-                    matched_fields.add("name")
-                for column, index in section_columns:
-                    if row[f"hit_{index}"]:
-                        matched_fields.add(column)
-                if fts_index is not None and row[f"hit_{fts_index}"]:
-                    matched_fields.update(fts_only_fields.get(row["id"], []))
-                if row[f"hit_{keyword_index}"]:
-                    matched_fields.add("keywords")
-                item["matched_fields"] = sorted(matched_fields)
-                item["matched_keywords"] = [
-                    keyword
-                    for keyword in keywords_by_prompt.get(row["id"], [])
-                    if lowered_query in keyword.lower()
-                ][: self._LIBRARY_PROMPT_KEYWORD_CAP]
-                items.append(item)
-            return {"items": items, "total": total}
-        except sqlite3.Error as e:
-            logger.error(
-                "Error searching library prompts "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
-            )
-            raise DatabaseError(f"Failed to search library prompts: {e}") from e
 
     def get_library_prompt_overview(self, prompt_uuid: str) -> Optional[Dict[str, Any]]:
         """Return a bounded overview of one active prompt.
@@ -4481,7 +4391,6 @@ def export_prompt_keywords_to_csv(
     import csv
     import tempfile
     import os
-    from datetime import datetime
 
     if not isinstance(db_instance, PromptsDatabase):
         raise TypeError("db_instance must be a PromptsDatabase object.")
