@@ -1,11 +1,11 @@
 ---
 id: TASK-32686
 title: Register all native plugin capability types
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:29'
-updated_date: '2026-10-15 19:41'
+updated_date: '2026-10-15 20:04'
 labels:
   - plugins
   - implementation
@@ -29,10 +29,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Namespaced manual commands, always/manual rules, validated agent presets and owned hooks join the same immutable run snapshot with explicit component selection.
-- [ ] #2 Instruction content remains attributed untrusted context through inline/forked skills and agents; required context overflow refuses whole selected material.
-- [ ] #3 Tool inheritance, empty allowlists, model mappings, alias collisions and dependency closure preserve their declared semantics across composer/catalog/agent paths.
-- [ ] #4 New enablement never adds capability midway through an existing run, and disabled or missing requirements remain visible without degrading unrelated selected components.
+- [x] #1 Namespaced manual commands, always/manual rules, validated agent presets and owned hooks join the same immutable run snapshot with explicit component selection.
+- [x] #2 Instruction content remains attributed untrusted context through inline/forked skills and agents; required context overflow refuses whole selected material.
+- [x] #3 Tool inheritance, empty allowlists, model mappings, alias collisions and dependency closure preserve their declared semantics across composer/catalog/agent paths.
+- [x] #4 New enablement never adds capability midway through an existing run, and disabled or missing requirements remain visible without degrading unrelated selected components.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,3 +86,17 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 
 24. Fix round1/5 at reviewed HEAD b6c4baa69335c3da911a057cfc852dc211bf62c8 after initial review0Critical/2Important/2Minor. Read task-19-fix1-findings.md with I1/I2 verbatim plus confirmed G1 requirement. I1: scope configuration tool target candidates by installation/revision plus existing kind/mapping ID before exact owner validation; preserve persisted IDs/schema and valid sibling mappings, refuse changed/foreign-only references. I2: use original source only for explicit manual-rule selector identity and remove that corresponding span from retained expanded text, preserving expanded evidence on initial and paused/resumed final provider sends, generated selectors opaque and one reference read; ordinary two-argument substitution remains compatible. G1: qualify real concurrent distinct-installation/revision native handlers, original per-job root/process ownership and scoped A revoke/independent B success through actual owners, preserving event/producer identity. Authorize only components.py, console_chat_controller.py and existing test_native_components.py, test_plugin_context.py, conftest.py, test_owned_mcp_tools.py for this fix; all72 source/test/doc BASE snapshots are saved before code. No new files/permission/runtime owner or model/mapping format changes. Record meaningful RED/unchanged positives, then fix root causes once. Freeze before final seven full explicit files/two selected groups and ordinary exact-three in task-19-fix1-covering-tests.json, with exact command/output, affected static R10 parity and source/provenance hashes. Append full Fix1 report to task-19-report.md; root owns commit/scoped re-review. Minor app-import headroom M1 and initial POSIX timing M2 remain deferred for I7/final review, along with prior H6 FD+418. Existing ADR162/163 govern; routine bug/coverage fixes require no new ADR.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Native commands, always/manual rules, child agent presets, complete skill metadata and owned hooks now project through the existing immutable plugin snapshot, Console composer/catalog and AgentService. Explicit empty/inherit tools remain distinct; canonical tool IDs only narrow eligible parent rights, exact MCP restrictions and models recapture existing owners at review/commit/recovery/use, and unknown/disabled dependencies remain visible while independent components stay usable.
+
+Each native command job retains its exact process/root owner and cancellation registration through terminal proof. The production lazy app factory supplies the existing MCP/model owners. Plugin and hook prose remain separately attributed user context under shared whole-block limits. Reference expansion and paused sends preserve original invocation provenance, including manual-rule expanded remainders; generated text stays literal and current disablement refuses resumed use. Standalone definitions/serialization and preparation schema remain unchanged.
+
+Changes are concentrated in Plugins/components.py, commands.py and agent_presets.py with existing admission/coordinator/recovery/service, Console/AgentService and per-job hook integration; the report lists exact scope. Existing ADR162/163 govern (backlog/decisions/162-managed-agent-plugins.md and 163-expanded-console-hook-runtime.md), including R74–76. No new runtime, permission store, dependency or persisted component schema. Fix1 qualifies exact installation/revision mapping recovery and real same-event multi-installation command custody.
+
+Validation: final Fix1 ordinary feature75/affected neighbors114/controller17/owned-MCP7 tests passed, with source-identical earlier477runtime/70agent-runtime and recorded app/preparation coverage retained; counts overlap. Syntax34 Python files, no added Ruff diagnostics, whitespace and explicit R10 baseline-format evidence passed. App-import controls passed at643/660 modules with an unsuppressed headroom warning. The retained initial POSIX marker failure is not cause- or baseline-attributed; prior H6 FD+418 remains unresolved for I7/final review. Full suite, UI/end-to-end management, external servers and other platforms were not qualified.
+
+Independent review: initial findings I1/I2 and missing G1 qualification are addressed by Fix1 bc1817cd70; fresh scoped re-review accepts all three with no new findings. Initial implementation b6c4baa693. Added the actual observation-lifetime incident to backlog/docs/lessons-testing-evidence.md. Final report, immutable evidence and Cannot-verify dispositions remain preserved in the plan workspace.
+<!-- SECTION:NOTES:END -->
