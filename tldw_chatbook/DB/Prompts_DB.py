@@ -3123,7 +3123,6 @@ class PromptsDatabase:
 
     _LIBRARY_PROMPT_PREVIEW_CHARS = 241
     _LIBRARY_PROMPT_KEYWORD_CAP = 20
-    _LIBRARY_PROMPT_FTS_TOKEN_LIMIT = 20
     _LIBRARY_PROMPT_SECTIONS = (
         "details",
         "system_prompt",
@@ -3135,20 +3134,6 @@ class PromptsDatabase:
     def _escape_library_prompt_like(value: str) -> str:
         """Escape LIKE metacharacters so user input matches literally."""
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @classmethod
-    def _library_prompt_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text (operators inert).
-
-        The AND-of-quoted-tokens form, not a phrase: each token is
-        double-quoted and they are space-joined, which is FTS5's implicit
-        AND. Returns None when the input contains no usable tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_PROMPT_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_prompts(
         self, conn: sqlite3.Connection, prompt_ids: List[int]
@@ -4406,7 +4391,6 @@ def export_prompt_keywords_to_csv(
     import csv
     import tempfile
     import os
-    from datetime import datetime
 
     if not isinstance(db_instance, PromptsDatabase):
         raise TypeError("db_instance must be a PromptsDatabase object.")

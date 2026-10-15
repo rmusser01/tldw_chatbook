@@ -27,7 +27,7 @@
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -210,6 +210,7 @@ def library_search_page(
         if part
     )
 
+    fts_indexes = _fts_indexes(spec, library_fts_query(query))
     try:
         with db.transaction() as conn:
             count_cursor = conn.execute(
@@ -242,7 +243,6 @@ def library_search_page(
                 item = spec.make_item(row, keywords_by_id)
                 item["matched_fields"] = matched_fields_from_hits(row, hit_fields)
                 if spec.fts_attribution is not None and fts_query is not None:
-                    fts_indexes = _fts_indexes(spec, fts_query)
                     fts_only = any(
                         row[f"hit_{index}"] for index in fts_indexes
                     ) and not any(

@@ -8016,29 +8016,11 @@ class MediaDatabase:
 
     _LIBRARY_PREVIEW_CHARS = 241
     _LIBRARY_KEYWORD_CAP = 20
-    _LIBRARY_FTS_TOKEN_LIMIT = 20
 
     @staticmethod
     def _escape_library_like(value: str) -> str:
         """Escape LIKE metacharacters so user input matches literally."""
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @classmethod
-    def _library_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text.
-
-        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
-        with a word-character regex, each is double-quoted (so FTS operators
-        in the raw input are inert) and they are space-joined, which is
-        FTS5's implicit AND -- every token must appear, in any order and not
-        necessarily adjacent. Returns None when the input contains no usable
-        tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_media(
         self, conn: sqlite3.Connection, media_ids: List[int]
