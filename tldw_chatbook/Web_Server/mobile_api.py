@@ -1,13 +1,18 @@
-"""Mobile companion REST API under ``/api/v1/mobile`` (ADR-234, task 4).
+"""Mobile companion REST API + event stream under ``/api/v1/mobile``.
 
-Thin authed HTTP wrappers over the Task-3 ``MobileChatService``
-(:mod:`tldw_chatbook.Web_Server.mobile_service`): every handler parses one
-bounded JSON body (or query parameter), makes exactly one service call,
-and answers with ``web.json_response`` plus ``Cache-Control: no-store``.
-Authentication and CSRF are NOT handled here — the routes are registered
-among the authed serve routes (never in ``_public_auth_paths``), so the
-Phase-1a middleware enforces the session cookie on every method and the
-CSRF header on every POST before any handler runs.
+ADR-234, Phase 1b: task 4's thin authed HTTP wrappers and task 5's
+``GET /api/v1/mobile/stream`` WebSocket over the Task-3
+``MobileChatService``
+(:mod:`tldw_chatbook.Web_Server.mobile_service`): every REST handler
+parses one bounded JSON body (or query parameter), makes exactly one
+service call, and answers with ``web.json_response`` plus
+``Cache-Control: no-store``. Authentication and CSRF are NOT handled
+here — the routes are registered among the authed serve routes (never in
+``_public_auth_paths``), so the Phase-1a middleware enforces the session
+cookie on every method and the CSRF header on every POST before any
+handler runs; the stream route receives the middleware's websocket
+treatment (GET upgrade + BOTH subprotocols ``csrf.<token>`` and
+``chatbook-v1``) before ``handle_mobile_stream`` runs.
 
 Error contract: an unknown session answers ``404 {"error":
 "unknown_session"}`` and an unknown approval round answers ``200
@@ -19,21 +24,45 @@ owns logging, and it logs session ids and statuses only.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Mapping
 from functools import partial
 from typing import Any
 
+from ..Canvas.web_auth import WEBSOCKET_PROTOCOL
 from ..config import get_cli_setting
 
 __all__ = [
+    "CLOSE_AUTH_EXPIRED",
+    "CLOSE_ENGINE_ERROR",
+    "IDLE_PING_SECONDS",
     "MAX_SEND_TEXT_CHARS",
     "MOBILE_MAX_BODY_BYTES",
+    "MOBILE_STREAM_PATH",
     "build_mobile_routes",
     "mobile_surface_enabled",
 ]
 
 #: Send-route text bound (characters): non-empty, at most 32 KiB of text.
 MAX_SEND_TEXT_CHARS = 32768
+
+#: Authed WebSocket path for the mobile event stream — registered, like
+#: the REST table, only while the ``mobile_surface`` gate is on.
+MOBILE_STREAM_PATH = "/api/v1/mobile/stream"
+
+#: Seconds without an outbound frame before the stream sends one JSON
+#: ``{"type": "ping"}`` idle frame. v1 ignores missing ``pong`` replies
+#: — no liveness kill (ADR-234).
+IDLE_PING_SECONDS = 30.0
+
+#: Stream close code for an expired/revoked session: the client redirects
+#: to ``/auth/login``, preserving the composer draft in sessionStorage.
+CLOSE_AUTH_EXPIRED = 4401
+
+#: Stream close code for an engine-side failure (the event subscription
+#: itself broke — never a caller mistake).
+CLOSE_ENGINE_ERROR = 1011
 
 #: Largest accepted mobile JSON body (bytes). The send route allows up to
 #: 32,768 CHARS of text, and a JSON encoder may spend six bytes per
@@ -113,6 +142,11 @@ def build_mobile_routes(server: Any) -> list:
             "/api/v1/mobile/approvals/{round_id}",
             partial(handle_decide, server),
             name="mobile_decide",
+        ),
+        web.get(
+            MOBILE_STREAM_PATH,
+            partial(handle_mobile_stream, server),
+            name="mobile_stream",
         ),
     ]
 
@@ -262,3 +296,130 @@ async def handle_decide(server: Any, request) -> Any:
     except KeyError:
         delivered = False
     return web.json_response({"ok": bool(delivered)}, headers=_NO_STORE)
+
+
+class _StreamEngineError(Exception):
+    """Internal marker: the service's event subscription failed (1011)."""
+
+
+async def handle_mobile_stream(server: Any, request) -> Any:
+    """Stream the service's events to one authenticated browser socket.
+
+    The auth middleware has already authenticated the upgrade against
+    BOTH subprotocols (``csrf.<session-csrf>`` proof + ``chatbook-v1``);
+    this handler drains one ``service.events()`` subscription per socket,
+    interleaved with the client's ``{"type": "ping"}`` frames (answered
+    with a JSON ``pong``) and one ``{"type": "ping"}`` idle frame per
+    ``IDLE_PING_SECONDS`` without outbound traffic. Inbound frames other
+    than a ping are ignored in v1. Close codes: ``4401`` when the session
+    is revoked mid-stream (the client redirects to ``/auth/login``),
+    ``1011`` when the event subscription itself fails.
+    """
+    from aiohttp import WSMsgType, web
+
+    # Receive-loop message types that end the stream (client close or a
+    # broken transport); everything else is either a TEXT frame handled
+    # below or a protocol frame aiohttp's autoping already consumed.
+    close_types = {
+        WSMsgType.CLOSE,
+        WSMsgType.CLOSING,
+        WSMsgType.CLOSED,
+        WSMsgType.ERROR,
+    }
+    websocket = web.WebSocketResponse(
+        heartbeat=15,
+        protocols=(WEBSOCKET_PROTOCOL,),
+    )
+    await websocket.prepare(request)
+    session = request.get("chatbook_browser_session")
+    unregister_channel = (
+        server._web_auth.register_channel(
+            session,
+            lambda: asyncio.create_task(
+                websocket.close(code=CLOSE_AUTH_EXPIRED)
+            ),
+        )
+        if session is not None
+        else (lambda: None)
+    )
+    expiry_task = (
+        asyncio.create_task(server._expire_websocket_session(session))
+        if session is not None
+        else None
+    )
+    events = None
+    receive_task: asyncio.Task | None = None
+    event_task: asyncio.Task | None = None
+    close_code: int | None = None
+    try:
+        events = server._get_mobile_service().events()
+        loop = asyncio.get_running_loop()
+        last_send = loop.time()
+        receive_task = asyncio.create_task(websocket.receive())
+        while True:
+            if event_task is None:
+                event_task = asyncio.create_task(events.__anext__())
+            idle_for = loop.time() - last_send
+            done, _pending = await asyncio.wait(
+                (receive_task, event_task),
+                timeout=max(0.0, IDLE_PING_SECONDS - idle_for),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                await websocket.send_json({"type": "ping"})
+                last_send = loop.time()
+                continue
+            if receive_task in done:
+                message = receive_task.result()
+                if message.type in close_types:
+                    break
+                if message.type == WSMsgType.TEXT:
+                    if session is not None:
+                        server._web_auth.touch_session(session)
+                    try:
+                        frame = message.json()
+                    except ValueError:
+                        frame = None
+                    if isinstance(frame, dict) and frame.get("type") == "ping":
+                        await websocket.send_json({"type": "pong"})
+                        last_send = loop.time()
+                receive_task = asyncio.create_task(websocket.receive())
+            if event_task in done:
+                try:
+                    event = event_task.result()
+                except StopAsyncIteration:
+                    event_task = None
+                    break  # service closed the stream; end politely
+                except Exception as error:
+                    raise _StreamEngineError() from error
+                event_task = None
+                await websocket.send_json(event.to_wire())
+                last_send = loop.time()
+    except asyncio.CancelledError:
+        pass  # server shutdown: drain the subscriber below
+    except _StreamEngineError:
+        close_code = CLOSE_ENGINE_ERROR
+    except Exception:  # noqa: BLE001 - transport failure; the socket is gone
+        pass
+    finally:
+        for task in (receive_task, event_task, expiry_task):
+            if task is not None:
+                task.cancel()
+        pending_tasks = [
+            task
+            for task in (receive_task, event_task, expiry_task)
+            if task is not None
+        ]
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        if events is not None:
+            # Runs Task 3's generator finally: ``_subscribers.discard``.
+            with contextlib.suppress(Exception):
+                await events.aclose()
+        unregister_channel()
+        with contextlib.suppress(Exception):
+            if close_code is None:
+                await websocket.close()
+            else:
+                await websocket.close(code=close_code)
+    return websocket
