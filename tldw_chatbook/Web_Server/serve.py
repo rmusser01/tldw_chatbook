@@ -142,6 +142,7 @@ _SERVED_SHELL_ASSETS = {
     "served-shell.css": ("text/css", "served_shell.css"),
     "served-shell.js": ("application/javascript", "served_shell.js"),
     "devices.js": ("application/javascript", "devices.js"),
+    "qrcodegen.js": ("application/javascript", "qrcodegen.js"),
 }
 
 
@@ -753,6 +754,11 @@ class ChatbookWebServerMixin:
                 self.handle_devices_rename,
                 name="devices_rename",
             ),
+            web.post(
+                "/auth/devices/pair",
+                self.handle_devices_pair,
+                name="devices_pair",
+            ),
             web.get("/", self.handle_index, name="index"),
             web.get("/ws", self.handle_websocket, name="websocket"),
             web.get(
@@ -935,7 +941,12 @@ class ChatbookWebServerMixin:
                     "<title>Chatbook sign in</title></head><body>"
                     '<main><h1>Chatbook</h1><form method="post" action="/auth/login">'
                     '<label>Access token <input type="password" name="access_token" '
-                    'autocomplete="current-password" required></label>'
+                    'autocomplete="current-password" required></label> '
+                    '<label><input type="checkbox" name="remember" value="1" checked> '
+                    "Remember this device — checked signs in a persistent 30-day "
+                    "device session; unchecked uses a short-lived in-memory "
+                    "session that ends when the server stops (safest on shared "
+                    "machines)</label>"
                     '<button type="submit">Sign in</button></form></main></body></html>'
                 ),
                 content_type="text/html",
@@ -1046,8 +1057,17 @@ class ChatbookWebServerMixin:
             f'<meta name="chatbook-csrf" content="{csrf}">'
             "<title>Chatbook devices</title></head><body>"
             "<main><h1>Your devices</h1>"
+            '<section class="device-pairing"><h2>Add a device</h2>'
+            '<button type="button" class="device-pair">Add a device</button>'
+            '<canvas class="device-pair-qr" hidden></canvas>'
+            '<p class="device-pair-hint" hidden>Scan with the other device, or '
+            "open the link below. A fresh link is fetched automatically every "
+            "100&nbsp;seconds (each link works once and expires 2 minutes "
+            "after issue).</p>"
+            '<p class="device-pair-url"></p></section>'
             + "".join(sections)
             + "</main>"
+            '<script src="/static/chatbook/qrcodegen.js" defer></script>'
             '<script src="/static/chatbook/devices.js" defer></script>'
             "</body></html>"
         )
@@ -1098,6 +1118,24 @@ class ChatbookWebServerMixin:
         )
         return web.json_response(
             {"ok": renamed}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_devices_pair(self, request):
+        """Issue a one-use pairing URL a new device can scan (ADR-233).
+
+        The route is an authenticated POST, so the shared middleware has
+        already enforced the CSRF header; the body is read only to keep the
+        bounded-shape guard consistent with the sibling device endpoints.
+        The returned URL embeds a single-use nonce that expires with the
+        manager's bootstrap TTL (120 s), so the response is never cacheable.
+        """
+
+        from aiohttp import web
+
+        await _read_device_json(request)
+        return web.json_response(
+            {"url": self.issue_browser_bootstrap_url()},
+            headers={"Cache-Control": "no-store"},
         )
 
     def issue_browser_bootstrap_url(self) -> str:

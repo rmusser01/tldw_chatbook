@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from contextlib import asynccontextmanager
 from http.cookies import SimpleCookie
+from urllib.parse import urlsplit
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -398,12 +399,13 @@ def _device_manager_server(tmp_path, policy):
 
 
 @asynccontextmanager
-async def _logged_in_client(tmp_path, *, remember: str = "1"):
+async def _logged_in_client(tmp_path, *, remember: str | None = "1"):
     """Yield one token-authenticated TestClient against a fresh server.
 
     The client carries the forwarded routing headers by default and has
-    posted the login form with ``remember`` (default ``"1"``), so Task 5 can
-    flip the checkbox value and assert on ``web_sessions.json``.
+    posted the login form with ``remember`` (default ``"1"``); ``None``
+    omits the field entirely — the unchecked-checkbox submission — so tests
+    can assert on ``web_sessions.json``.
     """
 
     policy = build_web_auth_policy(
@@ -421,9 +423,12 @@ async def _logged_in_client(tmp_path, *, remember: str = "1"):
     )
     client.chatbook_test_server = server
     async with client:
+        form = {"access_token": _DEVICES_ACCESS_TOKEN}
+        if remember is not None:
+            form["remember"] = remember
         login = await client.post(
             "/auth/login",
-            data={"access_token": _DEVICES_ACCESS_TOKEN, "remember": remember},
+            data=form,
             allow_redirects=False,
         )
         assert login.status == 303
@@ -572,6 +577,82 @@ async def test_rename_updates_and_escapes_the_devices_page(tmp_path) -> None:
         body = await (await client.get("/auth/devices")).text()
         assert "Kitchen &lt;tablet&gt;" in body
         assert "Kitchen <tablet>" not in body
+
+
+# --- QR pairing and remember checkbox (task 5, ADR-233) -------------------
+
+
+@pytest.mark.asyncio
+async def test_pair_issues_one_use_bootstrap_url(tmp_path) -> None:
+    async with _logged_in_client(tmp_path) as client:
+        resp = await client.post(
+            "/auth/devices/pair",
+            headers={CSRF_HEADER_NAME: await _csrf(client)},
+        )
+        assert resp.status == 200
+        assert resp.headers["Cache-Control"] == "no-store"
+        url = (await resp.json())["url"]
+        assert "/auth/bootstrap?nonce=" in url
+
+        # The devices page wires the vendored QR runtime before its driver.
+        page = await client.get("/auth/devices")
+        body = await page.text()
+        assert page.status == 200
+        assert body.index("qrcodegen.js") < body.index("devices.js")
+        asset = await client.get("/static/chatbook/qrcodegen.js")
+        assert asset.status == 200
+
+        # A second device (fresh cookie jar, same server) exchanges the URL
+        # once: 303 into the app with a session cookie; the nonce is
+        # single-use, so a replay is denied.
+        phone = await _fresh_client(client.chatbook_test_server)
+        async with phone:
+            bootstrap_path = f"{urlsplit(url).path}?{urlsplit(url).query}"
+            first = await phone.get(bootstrap_path, allow_redirects=False)
+            assert first.status == 303
+            assert SESSION_COOKIE_NAME in SimpleCookie(first.headers["Set-Cookie"])
+            second = await phone.get(bootstrap_path, allow_redirects=False)
+            assert second.status == 401
+
+
+@pytest.mark.asyncio
+async def test_login_without_remember_stays_short_lived(tmp_path) -> None:
+    async with _logged_in_client(tmp_path, remember=None) as client:
+        assert (await client.get("/auth/devices")).status == 200
+
+    # The unchecked box leaves the session in memory only: nothing that
+    # would survive a restart reaches the disk store.
+    assert WebSessionStore(tmp_path / "web_sessions.json").load() == {}
+
+
+@pytest.mark.asyncio
+async def test_login_form_offers_remember_checkbox_with_accurate_copy(
+    tmp_path,
+) -> None:
+    policy = build_web_auth_policy(
+        host="127.0.0.1",
+        port=8000,
+        access_token=_DEVICES_ACCESS_TOKEN,
+        public_url=_DEVICES_PUBLIC_ORIGIN,
+        allow_insecure_remote_http=True,
+        trusted_proxy_addresses=["127.0.0.1"],
+    )
+    server = _device_manager_server(tmp_path, policy)
+    async with TestClient(
+        TestServer(await _app_without_control_broker(server)),
+        headers=dict(_DEVICE_REQUEST_HEADERS),
+    ) as client:
+        page = await client.get("/auth/login")
+        body = await page.text()
+
+    assert page.status == 200
+    assert '<input type="checkbox" name="remember" value="1" checked' in body
+    # The copy must describe both states accurately (task-3 review ruling):
+    # checked = persistent 30-day device session; unchecked = short-lived
+    # in-memory session that ends when the server stops.
+    assert "persistent 30-day" in body
+    assert "short-lived in-memory session" in body
+    assert "ends when the server stops" in body
 
 
 def test_device_label_from_user_agent_platform_and_browser_markers() -> None:
