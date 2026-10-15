@@ -496,7 +496,7 @@ class PluginService:
         catalog, details = {}, []
         try:
             authority = self._coordinator.published_snapshot()
-            inspections = retained_inspections(authority)
+            inspections = retained_inspections(authority, coordinator=self._coordinator)
             for installation in authority["installations"]:
                 identity = installation["installation_id"]
                 inspection = inspections[(identity, installation["revision_digest"])]
@@ -825,7 +825,7 @@ class PluginService:
             from .recovery import retained_inspections
 
             authority = self._coordinator.published_snapshot()
-            inspections = retained_inspections(authority)
+            inspections = retained_inspections(authority, coordinator=self._coordinator)
             for installed in authority["installations"]:
                 identity = installed["installation_id"]
                 inspection = inspections[(identity, installed["revision_digest"])]

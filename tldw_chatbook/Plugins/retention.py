@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 MANAGED_BYTES = 2 * 1024 * 1024 * 1024
 FREE_RESERVE_BYTES = 100 * 1024 * 1024
@@ -123,36 +124,63 @@ def prune_transition_history(coordinator) -> None:
         count -= 1
 
 
-def managed_usage(root) -> int:
-    """Count every package/cache/staging byte; unknown ownership never frees quota."""
+def managed_usage(root: Path, *, transient_root: Path | None = None) -> int:
+    """Count managed bytes, allowing vanished children only in a qualified producer leaf."""
     import os
     import stat
-    from pathlib import Path
+
+    if transient_root is not None and transient_root.parent != root / "staging":
+        raise ValueError("invalid transient staging root")
+
+    def require_transient_directory():
+        if transient_root is not None and not stat.S_ISDIR(
+            transient_root.lstat().st_mode
+        ):
+            raise OSError("unqualified transient staging root")
+
+    require_transient_directory()
 
     def size(path):
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            raise OSError("unqualified managed storage link")
-        if stat.S_ISREG(info.st_mode):
-            return info.st_size
-        if not stat.S_ISDIR(info.st_mode):
-            raise OSError("unqualified managed storage type")
-        return sum(size(Path(entry.path)) for entry in os.scandir(path))
+        try:
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise OSError("unqualified managed storage link")
+            if stat.S_ISREG(info.st_mode):
+                return info.st_size
+            if not stat.S_ISDIR(info.st_mode):
+                raise OSError("unqualified managed storage type")
+            with os.scandir(path) as entries:
+                return sum(size(Path(entry.path)) for entry in entries)
+        except FileNotFoundError:
+            if (
+                transient_root is not None
+                and path != transient_root
+                and path.is_relative_to(transient_root)
+            ):
+                return 0
+            raise
 
-    return sum(
+    total = sum(
         size(root / name)
         for name in ("packages", "packages-revisions", "cache", "staging")
         if os.path.lexists(root / name)
     )
+    require_transient_directory()
+    return total
 
 
-def require_capacity(root, additional_bytes: int) -> None:
+def require_capacity(
+    root: Path, additional_bytes: int, *, transient_root: Path | None = None
+) -> None:
     """Refuse quota/reserve pressure without deleting protected material."""
     import shutil
 
     if type(additional_bytes) is not int or additional_bytes < 0:
         raise ValueError("invalid managed allocation")
-    if managed_usage(root) + additional_bytes > MANAGED_BYTES:
+    if (
+        managed_usage(root, transient_root=transient_root) + additional_bytes
+        > MANAGED_BYTES
+    ):
         raise OSError("managed plugin quota exceeded")
     if shutil.disk_usage(root).free < additional_bytes + FREE_RESERVE_BYTES:
         raise OSError("insufficient plugin storage reserve")

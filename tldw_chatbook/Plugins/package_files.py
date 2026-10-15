@@ -406,6 +406,7 @@ def materialize_package(
     destination: Path,
     *,
     checkpoint: Callable[[], None] | None = None,
+    allow_catalog: bool = False,
 ) -> PackageInspection:
     """Validate and copy into an absent child of a canonical directory.
 
@@ -420,7 +421,11 @@ def materialize_package(
     if capture.errors:
         raise PackageFileError(capture.errors[0].code)
     inspection = inspect_capture(capture)
-    if inspection.rejected:
+    from .catalogs import CATALOG_PATHS
+
+    if inspection.rejected and not (
+        allow_catalog and any(path in capture.files for path in CATALOG_PATHS)
+    ):
         raise PackageFileError("package_inspection_rejected")
     try:
         parent = validate_canonical_directory(destination.parent)

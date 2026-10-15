@@ -75,9 +75,22 @@ def reinspect(inspection: PackageInspection, root: Path) -> PackageInspection:
         dialect=inspection.dialect,
         catalog_overlay=catalog_overlay_from(inspection.overlay_identities),
     )
+    if (
+        inspection.catalog_binding is not None
+        or inspection.acquisition_reference is not None
+    ):
+        from .source_service import bind_source_inspection
+
+        observed = bind_source_inspection(
+            observed,
+            catalog_binding=inspection.catalog_binding,
+            acquisition_reference=inspection.acquisition_reference,
+        )
     observed = observed.model_copy(
         update={
             "source_identity": inspection.source_identity,
+            "catalog_binding": inspection.catalog_binding,
+            "acquisition_reference": inspection.acquisition_reference,
             "source_digest": inspection.source_digest,
             "materialized_identity": inspection.materialized_identity,
             "link_targets": dict(inspection.link_targets),

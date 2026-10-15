@@ -309,9 +309,9 @@ class PluginCoordinator:
         """Rollback reviews retained bytes against today's authority, never old grants."""
         from .recovery import retained_inspections
 
-        inspection = retained_inspections(self.published_snapshot()).get(
-            (installation_id, revision_digest)
-        )
+        inspection = retained_inspections(
+            self.published_snapshot(), coordinator=self
+        ).get((installation_id, revision_digest))
         if inspection is None:
             raise ValueError("rollback revision unavailable")
         return self.review_revision(installation_id, inspection, rollback=True)
@@ -431,7 +431,7 @@ class PluginCoordinator:
         )
         if installed is None:
             raise ValueError("installation unavailable")
-        inspection = retained_inspections(baseline)[
+        inspection = retained_inspections(baseline, coordinator=self)[
             (installation_id, installed["revision_digest"])
         ]
         review = PluginReview(
@@ -485,7 +485,7 @@ class PluginCoordinator:
             for row in snapshot["installations"]
             if row["installation_id"] == installation_id
         )
-        inspection = retained_inspections(snapshot)[
+        inspection = retained_inspections(snapshot, coordinator=self)[
             (installation_id, installed["revision_digest"])
         ]
         selection = {
@@ -598,7 +598,7 @@ class PluginCoordinator:
         candidates = eligible_revisions(self, installation_id)[:1000]
         if not candidates:
             return prior_result or OperationReceipt(None, "nothing_eligible", False)
-        inspections = retained_inspections(baseline)
+        inspections = retained_inspections(baseline, coordinator=self)
         rows = []
         root_info = self.owner.root.lstat()
         for digest in candidates:
@@ -798,8 +798,14 @@ class PluginCoordinator:
             (review.installation_id, scope, workspace),
         )
 
-    @staticmethod
-    def _verify_reviewed_package(inspection: PackageInspection) -> None:
+    def _verify_reviewed_package(self, inspection: PackageInspection) -> None:
+        if (
+            inspection.catalog_binding is not None
+            or inspection.acquisition_reference is not None
+        ):
+            from .source_service import validate_inspection_source
+
+            validate_inspection_source(self, inspection)
         if inspection.materialized_identity:
             reinspect(inspection, Path(inspection.materialized_identity))
         else:

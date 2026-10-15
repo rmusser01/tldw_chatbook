@@ -602,7 +602,7 @@ Never execute the foreign app or its plugins to discover installation state.
 Local copies receive their own fingerprint and installation identity.
 Binding a copied package to an upstream update source is a separate review.
 Partial import failures are reported per item; successful copies remain
-installed but never inherit foreign grants or activation.
+available for separate installation review and never inherit foreign grants or activation.
 
 ## 7. Activation and run ownership
 
@@ -1662,3 +1662,76 @@ helpers, and controlled SSH transport with actual installed `ssh -G` projection.
 The SSH transport fixture proves generated configuration/argv and immutable Git
 fetch, not a real remote account login or every TLS/client-certificate option.
 Other platforms and SHA-256 repositories are not qualified by this evidence.
+
+
+## I4 delivered source and import contract (TASK-32689)
+
+`SourceService(plugin_service)` uses the original PluginService storage worker.
+Every mutation and disk read is async; `search(query, offset=..., limit=50)` and
+`list_sources()` read immutable memory only. Call `await load_cached()` on opening
+the browser, including while locked. It returns valid CatalogSnapshots and also
+populates SourceSummary rows for all configured sources, including never-refreshed,
+failed and unusable caches. Display metadata is untrusted; it grants no source,
+host authentication, installation or activation authority.
+
+- `await add(locator, catalog_path=None)` creates an immutable selected source ID.
+  A different origin requires a new source. `await refresh(source_id)` fetches that
+  signed source, retaining the last good listing/error when refresh fails. A first
+  failed refresh has no successful cache; a successful empty catalog does.
+- `await review_entry(source_id, entry_identity, selection=..., workspace_id=...,
+  selected_locator=...)` acquires the actual retained entry and returns an ordinary
+  install review. For remote entries the UI must pass the exact displayed normalized
+  locator; mutable names never select an alternate authentication context. Submit
+  the returned review through `PluginService.commit`.
+- For direct repository/local installs, use `PluginService.acquire_snapshot`, then
+  `await SourceService.review_acquired(snapshot, selection=..., workspace_id=...)`.
+  This verifies the full producer result and binds compact origin/ref/commit/tree
+  and byte provenance. Passing a materialized Path to `review_install` does not
+  provide this direct-source update contract.
+- `await check_updates(installation_id)` returns candidates only from the exact
+  retained original locator. `await review_update(installation_id, candidate)`
+  returns an ordinary revision review; `PluginService.apply_revision` performs the
+  existing drain and mutation. `await remove(source_id)` pauses catalog updates
+  without uninstalling. Explicit `await review_rebind(installation_id, source_id,
+  entry_identity, selected_locator=...)` reviews a newly selected source; applying
+  it preserves old immutable provenance even when package bytes are unchanged.
+- `await discard_candidate(snapshot_or_inspection)` invalidates candidate reviews
+  and releases only unshared producer references. Use this facade for its candidates,
+  including after commit; installed/history references remain protected. Original
+  I3 low-level release remains caller-controlled and is not a source-aware discard.
+- `inspect_app_import(app, selected_root)` reads only known catalog paths and one
+  explicitly selected complete package root. Cursor uses `.cursor-plugin`, Codex
+  uses `.agents/plugins` / `.claude-plugin` catalogs and supported package manifests.
+  It does not scan vendor profile/cache layouts or infer undocumented configuration.
+  `await commit_import(preview)` returns copied source IDs, AcquiredSnapshot package
+  candidates, exclusions and bounded per-item failures. Copies have local managed
+  provenance; review/install and upstream rebinding are separate explicit actions.
+  Root/preview mutation, acquisition, authority, quota and storage failures remain
+  hard refusals. Only local allowlisted preparation/copy failures are per-item.
+
+Schema5 adds independent marketplace_sources; historical migrations are unchanged.
+Compact optional catalog_binding/acquisition_reference fields are mutually exclusive
+and omitted for legacy records through serialization, projection and reconstruction.
+New source-bound revision digests include stable selected provenance, excluding
+operation/nonce/staging identities. Repeated acquisition is stable; explicit source
+rebinding creates a distinct immutable revision without changing old unbound digests.
+
+Retained interpretation verifies signed successful producer references, exact physical
+incarnation and actual bytes without requiring boot equality. Cleanup retains its
+original same-boot destructive qualification and 24-hour age. Signed current and
+retained authority, sources, reviews and persisted candidate dependencies protect
+catalog/import bases across restart; unknown or pending custody refuses cleanup.
+Registry loss can reconstruct installed provenance but cannot invent lost discovery
+sources; catalog updates remain paused until explicit reviewed rebinding.
+
+Qualification uses independently authored temporary packages, real SQLite, private
+profiles, controlled Git repositories/loopback TLS, actual worker/coordinator/recovery
+and existing pinned inert I2 vendor fixtures. Changed-boot evidence is a simulation,
+not a real reboot or cross-platform qualification. No foreign grants are imported.
+
+Update candidates are bound to the requested installation identity; a candidate for
+one installation cannot be submitted as another installation's update. Explicit
+rebinding remains a separate reviewed action. During active acquisition only,
+quota monitoring tolerates a vanished descendant inside its physically qualified
+staging leaf. Final acceptance and all non-acquisition capacity scans remain strict;
+this exception does not grant deletion authority or suppress other storage errors.

@@ -27,7 +27,9 @@ def recovery_action(
     return "review_required" if registry_new else "abort_prepared"
 
 
-def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspection]:
+def retained_inspections(
+    snapshot: dict, *, coordinator=None
+) -> dict[tuple[str, str], PackageInspection]:
     """Reinspect immutable references; never fetch, execute or invent overlays."""
     from pathlib import Path
 
@@ -49,6 +51,34 @@ def retained_inspections(snapshot: dict) -> dict[tuple[str, str], PackageInspect
             dialect=revision["dialect"],
             catalog_overlay=catalog_overlay_from(revision["overlay_identities"]),
         )
+        if (
+            revision.get("catalog_binding") is not None
+            or revision.get("acquisition_reference") is not None
+        ):
+            if coordinator is None:
+                raise ValueError("catalog owner required")
+            from .models import AcquisitionReference, CatalogBinding
+            from .source_service import (
+                bind_source_inspection,
+                validate_inspection_source,
+            )
+
+            inspection = bind_source_inspection(
+                inspection,
+                catalog_binding=(
+                    CatalogBinding.model_validate(revision["catalog_binding"])
+                    if revision.get("catalog_binding")
+                    else None
+                ),
+                acquisition_reference=(
+                    AcquisitionReference.model_validate(
+                        revision["acquisition_reference"]
+                    )
+                    if revision.get("acquisition_reference")
+                    else None
+                ),
+            ).model_copy(update={"source_digest": revision["source_digest"]})
+            validate_inspection_source(coordinator, inspection)
         data = inspection.model_dump(mode="json")
         for key in (
             "dialect",
@@ -252,7 +282,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
             if target["operation_result"]
             else "bootstrap"
         )
-        inspections = retained_inspections(target)
+        inspections = retained_inspections(target, coordinator=coordinator)
         projection = registry.authority_projection(
             operation_result=target["operation_result"]
         )

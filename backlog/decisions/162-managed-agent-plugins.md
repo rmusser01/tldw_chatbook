@@ -536,3 +536,121 @@ using an expired label. The new candidate still requires ordinary fresh review.
 Installed operation idempotence, trust/activation generations and all execution
 permission rules are unchanged. This qualification replaces permanent arbitrary
 acquisition-label nonreuse, which cannot coexist with finite exact history.
+
+### I4 independent source discovery and retained catalog authority (R87–R89)
+
+Schema5 adds only `marketplace_sources`, independent of installations. Source
+identity, selected locator/catalog path and current producer reference are MAC
+bound with the existing authority key and `marketplace-source-v1` purpose.
+Changing an origin requires a new explicit source selection. Display cache is
+untrusted; refresh verifies the selected binding before any host authentication.
+Source removal preserves installed provenance and pauses updates until explicit
+reviewed rebinding. All mutations, including removal, use the existing async
+PluginService worker; search uses an immutable memory view. Locked browsing does
+not unlock, fetch, authenticate, install or enable anything.
+
+Acquisition terminal publication authenticates the full result digest and a
+bounded nonrecursive AcquisitionReference. CatalogBinding (at most16KiB) retains
+source ID, catalog/package references, artifact path/digest, selected entry
+identity/digest and exact update locator. Existing complete revision authority
+preserves absent legacy fields through serialization, projection and recovery.
+Nonce custody alone never authenticates arbitrary caller-supplied origin fields.
+Review/commit/recovery verify retained producer custody, physical lifetime,
+actual bytes, exact entry and effective overlays without following mutable
+catalogs during recovery. Unknown, lost or reboot custody requires recovery;
+no permission, credential or execution ownership is created by these records.
+
+I4 cache material uses existing owned acquisition staging and managed quota.
+Cleanup protects current sources, all retained revision/transition references,
+issued reviews and explicitly held candidates; only purpose-marked I4 results
+outside that verified union can be released into existing24-hour cleanup.
+Ordinary I3 caller-held results remain untouched. Invalid evidence protects
+bytes instead of inferring abandonment from age or an empty lease count.
+
+Selected Cursor/Codex imports read documented allowlisted catalog fields and
+explicit contained package roots only, with preview physical identity and
+reviewed digest checked again at commit. The copied snapshot is bounded and
+sanitized; its provenance is local. Upstream rebinding requires separate review.
+Do not acquire whole foreign profiles, recursively scan caches, infer a Cursor
+settings schema, import grants/credentials/trust/enablement, execute vendor code
+or connect automatically. Partial or ambiguous runtime overlays require a clean
+source. This extends existing owners rather than adding a second runtime.
+
+R90 clarifies retained terminal artifacts versus destructive cleanup: an
+installed catalog/package reference remains interpretable after a reboot when
+its signed successful terminal result, nonce/namespace, exact physical
+incarnation and content bytes still verify. No producer boot equality is needed
+for that read-only interpretation. Reservations may non-destructively qualify
+these terminal references when counting existing operations. Unknown/lost/pending
+custody and destructive cleanup keep the original boot-qualified reconciliation
+gates. This does not authorize deleting an old artifact or adopting a live
+producer merely because its bytes exist; the broad reboot sentence above applies
+to unresolved custody/cleanup, not authenticated immutable interpretation.
+
+R92: catalog discovery must copy a repository that has no installable package
+manifest at its root. `materialize_package(..., allow_catalog=False)` retains its
+normal rejection by default; the I4 catalog/cache/import producer may explicitly
+permit a rejected package interpretation only when a supported marketplace file
+was captured. Every existing capture, path, byte, checkpoint, physical copy and
+revalidation gate remains. Discovery still parses and validates the selected
+catalog, and this switch never permits an installation of a rejected inspection.
+
+R91: qualify native acquisition with its actual Darwin boot probe. The I4 sandbox
+probe returned errno1; the tool-reviewed normal-host probe returned the expected
+UUID shape without printing its value. Only actual native source/commit-import
+and affected native neighbors use that context with private profiles and network
+guards. Pure parsing remains ordinary. This is verification context, not a
+production bypass or a platform-equivalence claim.
+
+R93 extends the same compact provenance contract to directly selected Git/local
+packages. An optional acquisition_reference is mutually exclusive with a catalog
+binding in inspection/revision authority, and absent fields preserve historical
+bytes. Public review_acquired verifies the complete real producer result before
+issuing the existing review; direct update checks retain the original locator,
+return candidates only, and cannot follow a mutable source record. Recovery and
+admission validate the same retained reference/bytes through the existing owner.
+Imported package copies retain local provenance. Explicit candidate discard
+invalidates its outstanding review and releases only unreferenced artifacts;
+current/retained authority, source and other candidate references still protect
+material. This adds no owner, grant, schema version or synthetic catalog.
+
+R94 corrects source-bound revision identity before the explicit source-rebind API.
+The source facade derives SHA256 of canonical domain `plugin-source-revision-v1`,
+the actual raw inspector effective digest, and a stable provenance projection.
+Direct provenance retains original locator, commit/tree and content/source
+digests. Catalog provenance also retains source ID, catalog path/digest, selected
+entry identity/digest and exact update locator; local package locators use that
+original update locator instead of the transient acquired catalog path. Neither
+projection includes operation ID, nonce or materialized staging path. Review and
+recovery recompute through this same helper from raw inspection; they never copy
+a caller's claimed effective digest. Existing unbound bytes/digests are unchanged.
+Repeated acquisition from one source is stable; an explicitly selected new source
+ID creates a distinct immutable revision even for identical package bytes.
+
+`SourceService.review_rebind(installation_id, source_id, entry_identity,
+selected_locator=...)` authenticates the chosen source and acquires its selected
+entry, then uses the existing revision review/drain/application. The review keeps
+old authority and new provenance visible. Removal pauses updates until this
+explicit reviewed application; it never silently restores a source ID. Existing
+duplicate guards and immutable revision history remain intact.
+
+R95 extends eligible I4 release to sanitized `import-copy` bases as well as
+superseded `catalog-cache` artifacts. Cleanup first checks bounded actual staging
+against signed custody and refuses unknown, pending, missing or changed evidence.
+All still-referenced terminal producer records contribute local locator roots,
+including ordinary I3 and package/catalog candidates surviving a lost UI session.
+Verified current/retained authority, sources, reviews and explicit candidates also
+protect their operation IDs. A base containing any such locator remains protected.
+Explicit discard cannot release installed/history or other candidate dependencies.
+Only the original boot-qualified terminal/24-hour cleanup performs deletion; empty
+in-memory maps after restart never establish abandonment.
+
+R96 qualifies quota monitoring during an actual producer's file replacement.
+Only a non-forced acquisition scan may omit ENOENT descendants of its currently
+physically qualified direct staging leaf. The managed-capacity helper accepts
+that explicit transient root; its default and every final forced scan remain
+strict. Missing roots/leaf, unrelated paths, permission failures, links and
+special files still refuse. This fixes independently demonstrated enumeration/
+stat deletion races without relaxing quota limits or cleanup ownership. An earlier
+native OS failure was not reproduced with errno capture and remains unclassified;
+the controlled race evidence does not establish that failure's cause.
