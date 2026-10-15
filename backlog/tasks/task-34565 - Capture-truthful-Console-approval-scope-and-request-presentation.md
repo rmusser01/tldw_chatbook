@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 21:37
+updated_date: 2026-10-15 22:38
 labels: []
 dependencies:
 - TASK-34564
@@ -65,6 +65,7 @@ PR3036 review remediation: reproduce the concrete source/CI findings, implement 
 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
+Review repair on rebased c91c1f2/public devb8c602: RED admitted MCP targets/action/profile/location/scope with newline/CR/ESC/format controls while original args/profile ID/options stay exact. Repair only existing captured display projection with the house visible unicode-escape pattern; raw command viewport remains complete/multiline. Correct scope-specific MCP Tools Remove/Revoke versus MCP Permissions copy and shared Agent stated reason label, preserving Default/raw-chat semantics. ADR required:no new; existing ADR235/security literal-display contract.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -85,6 +86,7 @@ Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More option
 
 PR3036 remediation: shared recursive URL/URI query/userinfo redaction preserves original matching inputs and harmless spelling, handles malformed and whitespace-prefixed URIs. Direct MCP fallback now captures the exact gate profile/server owner. URL/capture/Details144, provider90, scope journeys14, trace26 targeted checks passed. Independent review found no remaining actionable issue after its whitespace finding was fixed with RED/GREEN. ADR-235/220; no new ADR. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/Windows dispatch/full qualification remain open; In Progress.
 Current1c72 integration: captured presentation/targets/authority composed through current provider owners. Real admitted virtual-CLI -> captured view -> lazy Details privacy8RED/2positive then115GREEN; originals preserved. Shared redact_args display projection and existing redact_url fragment/nested URL boundary repaired once. No full intermediate pre-repair source snapshot was saved; exact retained binding limit is explicit in Task1 report. Current core540passed84.15s includes real scope/owner checks. ADR235; external qualification remains open.
+Review repair on released c91c1f2/public b8c602: actual admitted MCP controls and admitted raw directory newline/Cf REDs now pass through the shared display projection; parameter Cs preview escapes before UTF8 budgeting. Original invocation/matching arguments, profile IDs and legal decisions remain unchanged; raw full command stays multiline. Agent stated reason now labels fresh/reused advisory text. MCP Tools selected-tool Revoke/Remove and MCP Permissions policy routes match existing controls. Existing ADR235; no new redactor/policy/authority. Exact RED/setup distinctions and source hashes: SDD task-1-report.md and E/pr3036-review-repairs-r1. Task remains In Progress; external qualification open.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 

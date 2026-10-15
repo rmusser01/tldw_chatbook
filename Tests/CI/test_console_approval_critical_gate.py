@@ -7,11 +7,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 UI_TARGETS = {
+    "Tests/UI/test_approval_review_repairs.py",
     "Tests/UI/test_approval_details_privacy.py",
     "Tests/UI/test_approval_details.py::test_page_from_old_revision_is_ignored",
     "Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement",
 }
 OWNER_TARGETS = {
+    "Tests/Chat/test_approval_display_controls.py",
     "Tests/Chat/test_console_approval_scope_journeys.py",
     "Tests/Chat/test_console_approval_feedback.py::test_host_final_arbitration_wins_after_controller_receipt",
 }

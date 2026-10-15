@@ -273,3 +273,6 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 Tests/UI/test_approval_details_privacy.py
 Tests/UI/test_approval_details.py::test_page_from_old_revision_is_ignored
 Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement
+
+# TASK-34569 review repairs: held facts, actual retirement and shipping recreation.
+Tests/UI/test_approval_review_repairs.py

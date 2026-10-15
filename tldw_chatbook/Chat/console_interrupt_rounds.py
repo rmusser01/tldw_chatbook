@@ -108,6 +108,14 @@ def head_payload_locked(
     return None
 
 
+def _retire_presentation(payload: dict[str, Any]) -> None:
+    """Prevent a detached old card from rewriting a settled round's draft."""
+    state = payload.get("presentation_state")
+    if isinstance(state, dict):
+        state.clear()
+        state["retired"] = True
+
+
 def park_round_payload(
     lock: threading.Lock,
     store: dict[str, dict[str, Any]],
@@ -126,6 +134,11 @@ def park_round_payload(
         True when ``payload`` is now its session's head.
     """
     with lock:
+        previous = store.get(round_id)
+        if previous is not None and previous.get(
+            "presentation_state"
+        ) is not payload.get("presentation_state"):
+            _retire_presentation(previous)
         store[round_id] = payload
         head = head_payload_locked(store, payload.get("session_id"))
     return head is payload
@@ -193,7 +206,9 @@ def unpark_round_payload(
         round_id: The round to forget.
     """
     with lock:
-        store.pop(round_id, None)
+        payload = store.pop(round_id, None)
+        if payload is not None:
+            _retire_presentation(payload)
 
 
 @dataclass

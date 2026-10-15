@@ -402,6 +402,12 @@ with an explicit continuation label. It uses the captured data without new file
 reads or network calls. Raw shell retains its separate complete-command viewport
 and danger warnings.
 
+Identifying fields show line breaks and terminal formatting as visible escapes,
+such as `\n`. **Agent stated reason** labels the agent's advisory explanation.
+While a round remains pending, revisiting Console preserves your staged choices,
+deliberate raw-command review, open disclosures and Details page/scroll position.
+Returning to the card requires a fresh decision gesture.
+
 For one call, **Allow once** and **Deny** answer immediately. **More options**
 reveals supported broader choices and their scope; the selected broader choice
 requires an explicit Apply. The available choices depend on the provider and

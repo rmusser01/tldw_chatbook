@@ -50,6 +50,18 @@ class ApprovalDraft:
         """Return the complete map only when all choices are reviewable."""
         return dict(self._choices) if self.can_apply() else {}
 
+    def snapshot(self) -> dict[str, object]:
+        """Retain only choices and deliberate review in the pending round."""
+        return {"choices": dict(self._choices), "reviewed": sorted(self._reviewed)}
+
+    def restore(self, snapshot: dict[str, object]) -> None:
+        """Restore legal choices without treating defaults as new gestures."""
+        choices = snapshot.get("choices", {})
+        reviewed = snapshot.get("reviewed", [])
+        if isinstance(choices, dict) and isinstance(reviewed, list):
+            for key, decision in choices.items():
+                self.stage(key, decision, deliberate=key in reviewed)
+
     def summary(self, *, compact: bool = False) -> str:
         """Describe complete captured counts and selected scopes."""
         from dataclasses import replace

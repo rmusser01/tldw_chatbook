@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 21:37
+updated_date: 2026-10-15 22:38
 labels: []
 dependencies:
 - TASK-34565
@@ -63,6 +63,7 @@ PR3036 review remediation: reproduce the concrete source/CI findings, implement 
 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
+Review repair: hold real row/action mounts, reproduce enabled commits before facts, then gate single/bulk/staged commits and controls on current round/revision/generation mount+layout readiness without timers/sleeps or authority changes. Reject stale readiness and queued gestures. Preserve ephemeral choices/review/disclosure/page/scroll through the existing retained pending payload and shipping ChatTaskCards recreation, with fresh widget fences, clear on settlement/replacement, no retained card/worker/args/pages. Add actual recreation/held scheduling RED before production repair. ADR required:no new; existing ADR235.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -75,6 +76,7 @@ Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More option
 
 PR3036 remediation: captured withheld_scope_copy renders literally beneath affected choices under More options and refreshes/clears on reuse. Existing geometry regression now exercises both closed/disclosed states via real click with overlap, containment, token width28, hit-testing, focus and staged Escape assertions. Interaction28, geometry1, action ownership25, compact3 passed. Independent review found no remaining actionable issue. ADR-235/150/161. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/full matrix and full DoD remain open; In Progress.
 Current1c72 integration: immediate single/counted bulk and explicit mixed/raw review controls integrated into the existing card, with neutral focus, snapshot/generation fences and current FIFO. Added view-hook registration error was caught by exact custody inventories and corrected as a distinct disposable slot; current custody/viewless checks pass. Root exact unchanged1c72 nav control reproduces no-row first-open precondition failure, retained as open current remount qualification. ADR235; no caps or assertions relaxed, In Progress.
+Review repair: all committing controls and fast/bulk/staged seams wait for matching actual row/action mounts plus generation-bound layout refresh. Old readiness and detached gestures cannot unlock replacement cards. Existing Textual callable work seam avoids cancelled-before-start coroutine retention; actual Worker lifetime RED then GREEN retained. Pending-round scalar choices/review survive actual shipping clear/remove/recreation; no verdict is submitted by restoration. Final affected boundary run141PASS/no warnings/0profile+network guards. Existing ADR235; no permission/FIFO/deadline change. Task remains In Progress, physical presented-frame qualification belongs to Root.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 

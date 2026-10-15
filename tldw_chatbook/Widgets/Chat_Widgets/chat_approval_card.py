@@ -228,12 +228,14 @@ def _captured_row_header(row: ApprovalRowView, entry: Mapping[str, Any]) -> str:
 
 def _raw_shell_metadata(entry: Mapping[str, Any]) -> str:
     """Render the validated shell selector, directory, and timeout literally."""
+    from tldw_chatbook.Chat.approval_presentation import display_literal
+
     arguments = entry.get("arguments")
     args = arguments if isinstance(arguments, Mapping) else {}
     return (
-        f"Shell: {args.get('shell', 'auto')}\n"
-        f"Directory: {args.get('initial_directory', '')}\n"
-        f"Timeout: {args.get('timeout_seconds', '')} seconds"
+        f"Shell: {display_literal(str(args.get('shell', 'auto')))}\n"
+        f"Directory: {display_literal(str(args.get('initial_directory', '')))}\n"
+        f"Timeout: {display_literal(str(args.get('timeout_seconds', '')))} seconds"
     )
 
 
@@ -419,7 +421,7 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 
 #: ADR-090: display cap for one advisory line (tail-biased).
 RATIONALE_DISPLAY_CAP = 240
-CONTEXT_LABEL = "Model context:"
+CONTEXT_LABEL = "Agent stated reason:"
 SUMMARY_LABEL = "Summary:"
 
 #: ADR-090 (Qodo review #7): single named cap for tool-description capture
@@ -765,6 +767,8 @@ class ChatApprovalCard(Container):
         self._details_identity: DetailsIdentity | None = None
         self._details_buttons: dict[ApprovalActionButton, ApprovalRowView] = {}
         self._details_page_index = 0
+        self._details_area: TextArea | None = None
+        self._rows_area: Vertical | None = None
         self._details_opener: ApprovalActionButton | None = None
         self._details = ApprovalDetailsController(
             current_identity=lambda: self._current_details_identity(),
@@ -781,6 +785,10 @@ class ChatApprovalCard(Container):
             paint_page=lambda page: self._paint_details_page(page),
             paint_loading=lambda: self._paint_details_loading(),
         )
+        self._information_ready = False
+        self._view_retired = False
+        self._presentation_state: dict[str, Any] | None = None
+        self._restore_details_scroll: tuple[float, float] | None = None
         self._batch_view: ApprovalBatchView | None = None
         self._draft: ApprovalDraft | None = None
         self._presentation_revision: int | None = None
@@ -944,7 +952,13 @@ class ChatApprovalCard(Container):
 
     def _current_details_identity(self) -> DetailsIdentity | None:
         identity = self._details_identity
-        if identity is None or self._batch_submitted or self._batch_view is None:
+        if (
+            identity is None
+            or self._batch_submitted
+            or self._batch_view is None
+            or self._view_retired
+            or not self.is_attached
+        ):
             return None
         if identity[:3] != (
             self._batch_round_id,
@@ -954,11 +968,14 @@ class ChatApprovalCard(Container):
             return None
         return identity
 
-    def _open_details(self, opener: ApprovalActionButton) -> None:
+    def _open_details(
+        self, opener: ApprovalActionButton, *, scroll_into_view: bool = True
+    ) -> None:
         if self._batch_view is None or self._batch_round_id is None:
             return
         row = self._details_buttons[opener]
         self._details_opener = opener
+        self._details_area = self.query_one("#approval-details-page", TextArea)
         self._details_page_index = 0
         self._details_identity = (
             self._batch_round_id,
@@ -972,7 +989,8 @@ class ChatApprovalCard(Container):
             button.details_page_index = 0
             button.display = True
         self.query_one("#approval-details-panel").display = True
-        self.query_one("#approval-details-panel").scroll_visible()
+        if scroll_into_view:
+            self.query_one("#approval-details-panel").scroll_visible()
         self._details.open(
             row,
             round_id=self._details_identity[0],
@@ -991,7 +1009,13 @@ class ChatApprovalCard(Container):
         for button in self.query("#approval-details-navigation Button"):
             button.details_identity = self._details_identity
             button.details_page_index = page.index
-        self.query_one("#approval-details-page", TextArea).load_text(page.text)
+        area = self.query_one("#approval-details-page", TextArea)
+        area.load_text(page.text)
+        if self._restore_details_scroll is not None:
+            x, y = self._restore_details_scroll
+            self._restore_details_scroll = None
+            area.call_after_refresh(area.scroll_to, x, y, animate=False, immediate=True)
+            self._restore_rows_scroll()
         continuation = (
             " · More content available" if page.has_more else " · End of arguments"
         )
@@ -1004,6 +1028,7 @@ class ChatApprovalCard(Container):
     def _close_details(self, *, restore_focus: bool = False) -> None:
         self._details.close()
         self._details_identity = None
+        self._restore_details_scroll = None
         for button in self.query("#approval-details-navigation Button"):
             button.display = False
         try:
@@ -1022,6 +1047,148 @@ class ChatApprovalCard(Container):
                 opener.focus()
             else:
                 self.focus_first_decision()
+
+    def _defer_decisions(self, mounts: list[Any]) -> None:
+        """Enable decisions only after this generation's facts mount and lay out."""
+        generation = self._batch_generation
+        controls = [*self._batch_fast_buttons, *self._batch_selects]
+        controls.extend(self.query_one("#approval-batch-actions").query(Button))
+        disabled = [(control, control.disabled) for control in controls]
+        for control, _ in disabled:
+            control.disabled = True
+
+        def ready() -> None:
+            if (
+                generation != self._batch_generation
+                or self._batch_submitted
+                or self._view_retired
+                or not self.is_attached
+                or (
+                    self._presentation_state is not None
+                    and self._presentation_state.get("retired")
+                )
+            ):
+                return
+            self._information_ready = True
+            for control, was_disabled in disabled:
+                control.disabled = was_disabled
+            self._restore_presentation()
+            self._sync_control_layout()
+
+        async def after_mount() -> None:
+            for mount in mounts:
+                await mount
+            if generation == self._batch_generation and not self._view_retired:
+                self.call_after_refresh(ready)
+
+        self.run_worker(after_mount, group="approval-layout", exclusive=True)
+
+    def _presentation_identity(self) -> tuple[str, str, str, int] | None:
+        view = self._batch_view
+        return (
+            (view.session_id, view.run_id, view.round_id, view.revision)
+            if view
+            else None
+        )
+
+    def _save_presentation(self) -> None:
+        state = self._presentation_state
+        if (
+            state is None
+            or state.get("retired")
+            or self._batch_submitted
+            or not self._batch_view
+            or not self._information_ready
+        ):
+            return
+        area = self._details_area
+        state.update(
+            identity=self._presentation_identity(),
+            draft=self._draft.snapshot() if self._draft else {},
+            raw_reviewed=[self._batch_names[index] for index in self._raw_reviewed],
+            options_open=self._options_open,
+            details_key=self._details_identity[3] if self._details_identity else None,
+            details_page=self._details_page_index,
+            details_scroll=(area.scroll_x, area.scroll_y) if area else (0, 0),
+            scroll=(self._rows_area.scroll_x, self._rows_area.scroll_y)
+            if self._rows_area
+            else (0, 0),
+        )
+
+    def _restore_presentation(self) -> None:
+        state = self._presentation_state
+        if not state or state.get("retired"):
+            return
+        if state.get("identity") != self._presentation_identity():
+            state.clear()
+            return
+        if self._draft:
+            self._draft.restore(state.get("draft", {}))
+            choices = self._draft.snapshot()["choices"]
+            for name, select in zip(self._batch_names, self._batch_selects):
+                select.value = choices[name]
+        self._raw_reviewed = {
+            index
+            for index, name in enumerate(self._batch_names)
+            if name in state.get("raw_reviewed", [])
+        }
+        self._set_options_open(bool(state.get("options_open")))
+        key = state.get("details_key")
+        opener = next(
+            (
+                button
+                for button, row in self._details_buttons.items()
+                if row.verdict_key == key
+            ),
+            None,
+        )
+        if opener is not None:
+            self._open_details(opener, scroll_into_view=False)
+            self._restore_details_scroll = state.get("details_scroll", (0, 0))
+            self._details.request_page(state.get("details_page", 0))
+        else:
+            self._restore_rows_scroll()
+
+    def _restore_rows_scroll(self) -> None:
+        state = self._presentation_state
+        rows = self._rows_area
+        generation = self._batch_generation
+
+        def restore() -> None:
+            if (
+                rows is not None
+                and rows.is_attached
+                and not self._view_retired
+                and generation == self._batch_generation
+                and state is self._presentation_state
+                and state is not None
+                and not state.get("retired")
+            ):
+                rows.scroll_to(
+                    *state.get("scroll", (0, 0)), animate=False, immediate=True
+                )
+
+        if rows is not None:
+            rows.call_after_refresh(restore)
+
+    def on_unmount(self) -> None:
+        """Retain scalar presentation, then retire all detached preparation."""
+        self._save_presentation()
+        self._view_retired = True
+        self._information_ready = False
+        self._details.close()
+        self._details_identity = None
+        self._details_opener = None
+        self._details_buttons.clear()
+        self._details_area = None
+        self._rows_area = None
+        self._batch_view = None
+        self._draft = None
+        self._batch_calls_snapshot = []
+        self._presentation_state = None
+        self._options_opener = None
+        self._restore_details_scroll = None
+        self._stop_deadline_timer()
 
     def on_resize(self, event: Resize) -> None:
         """Reflow existing decision controls when the card changes size.
@@ -1134,6 +1301,7 @@ class ChatApprovalCard(Container):
         summary: str | None = None,
         view: ApprovalBatchView | None = None,
         presentation_revision: int | None = None,
+        presentation_state: dict[str, Any] | None = None,
     ) -> None:
         """Render one row per unique ``llm_name`` in ``calls``.
 
@@ -1190,6 +1358,10 @@ class ChatApprovalCard(Container):
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         single_actions = self.query_one("#approval-single-actions", Horizontal)
+        self._save_presentation()
+        self._rows_area = rows_container
+        self._presentation_state = presentation_state
+        self._information_ready = False
         self._close_details()
         self._details_buttons = {}
         self._batch_view = view if normalized_phase != "finishing" else None
@@ -1572,11 +1744,13 @@ class ChatApprovalCard(Container):
         self._batch_is_raw_shell = is_raw_shell
         self._batch_base_headers = base_headers
 
+        mounts = []
         if single_call:
-            single_actions.mount(*fast_buttons)
+            mounts.append(single_actions.mount(*fast_buttons))
         rows_container.remove_children(".approval-row")
         if rows:
-            rows_container.mount(*rows, before="#approval-details-panel")
+            mounts.append(rows_container.mount(*rows, before="#approval-details-panel"))
+        self._defer_decisions(mounts)
 
     @staticmethod
     def _new_reason_input(*, finishing: bool) -> Input:
@@ -1741,8 +1915,9 @@ class ChatApprovalCard(Container):
         openers = self._new_details_opener(
             str(entry.get("call_id", "") or entry.get("llm_name", "")), generation, 0
         )
+        mounts = []
         if openers:
-            row.mount(*openers, before=scope_static)
+            mounts.append(row.mount(*openers, before=scope_static))
 
         fast_approve = ApprovalActionButton(
             _APPROVE_ONCE_LABEL,
@@ -1778,24 +1953,28 @@ class ChatApprovalCard(Container):
         for old_controls in controls:
             old_controls.remove()
         self._batch_fast_buttons = [fast_approve, fast_deny, more]
-        self.query_one("#approval-single-actions", Horizontal).mount(
-            *self._batch_fast_buttons
+        mounts.append(
+            self.query_one("#approval-single-actions", Horizontal).mount(
+                *self._batch_fast_buttons
+            )
         )
         # task-32278: `mount` appends by default, which would leave the scope
         # line ABOVE the controls it annotates on every reused row.
-        row.mount(replacement_controls, before=scope_static)
+        mounts.append(row.mount(replacement_controls, before=scope_static))
 
         self._batch_names = [str(entry.get("call_id", "") or entry.get("llm_name", ""))]
         self._batch_selects = [select]
         for old_details in row.query(".deny-reason"):
             old_details.remove()
         reason_input = self._new_reason_input(finishing=finishing)
-        row.mount(
-            Collapsible(
-                reason_input,
-                title="Reason if denied (optional)",
-                collapsed=True,
-                classes="deny-reason",
+        mounts.append(
+            row.mount(
+                Collapsible(
+                    reason_input,
+                    title="Reason if denied (optional)",
+                    collapsed=True,
+                    classes="deny-reason",
+                )
             )
         )
         self._batch_reason_inputs = [reason_input]
@@ -1807,6 +1986,7 @@ class ChatApprovalCard(Container):
         # flag is always False here.
         self._batch_is_raw_shell = [False]
         self._batch_base_headers = [base_header]
+        self._defer_decisions(mounts)
         return True
 
     def _render_summary_line(self) -> None:
@@ -1853,6 +2033,7 @@ class ChatApprovalCard(Container):
         event.stop()
         if (
             event.batch_generation != self._batch_generation
+            or self not in event.button.ancestors
             or self._batch_submitted
             or self._batch_phase == "finishing"
             or not self._batch_names
@@ -1949,6 +2130,8 @@ class ChatApprovalCard(Container):
         self._sync_control_layout()
 
     def _commit_bulk(self, decision: str) -> None:
+        if not self._information_ready or self._view_retired or not self.is_attached:
+            return
         if decision == "approve_once" and (
             any(self._batch_is_raw_shell)
             or any(decision not in values for values in self._batch_legal_values)
@@ -1970,6 +2153,7 @@ class ChatApprovalCard(Container):
     def _review_choice(self, event: ApprovalChoice.Deliberate) -> None:
         if (
             event.generation != self._batch_generation
+            or not self._information_ready
             or event.select not in self._batch_selects
             or self._batch_submitted
             or self._batch_phase == "finishing"
@@ -2108,6 +2292,9 @@ class ChatApprovalCard(Container):
         start of every new round, so this is never a permanent lockout.
         """
         self._batch_submitted = True
+        if self._presentation_state is not None:
+            self._presentation_state.clear()
+            self._presentation_state["retired"] = True
         self._close_details()
         for opener in self._details_buttons:
             opener.disabled = True
@@ -2134,6 +2321,9 @@ class ChatApprovalCard(Container):
     def _submit_batch_decisions(self) -> None:
         if (
             self._batch_submitted
+            or not self._information_ready
+            or self._view_retired
+            or not self.is_attached
             or self._batch_phase == "finishing"
             or not self._batch_names
         ):
@@ -2202,6 +2392,9 @@ class ChatApprovalCard(Container):
         """
         if (
             self._batch_submitted
+            or not self._information_ready
+            or self._view_retired
+            or not self.is_attached
             or self._batch_phase == "finishing"
             or not self._batch_names
         ):
