@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:42
-updated_date: 2026-10-15 20:46
+updated_date: 2026-10-15 21:48
 labels: []
 dependencies:
 - TASK-34565
@@ -70,7 +70,7 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Task5 adds optional owner observations, a monotonic session-only feedback store, and retained tool feedback after cards clear. Controller receipt follows Event release; final settlement uses the existing interrupt-host arbitration seam. Actual service writes report their own applied scope; missing writers, failed writes and raw Disarm remain honest. No permission returns, stamp keys, None presence, refusal precedence or trace counts were changed. Legacy name groups project only to observed invocation members; group completion/exact-input save success remains unknown when not proven.
 
 Compatible display-only additions: publish_grant_application(actual_scope=...), ApprovalDecisions observational attributes outside dict entries, ApprovalFeedback.confirmed_backend_start=False, member projection lookup, and nested provider observation scopes. Confirmed start survives late/reordered failed results. Early dispatch remains Starting; actual tool/raw output is Running evidence. Full feedback wraps below the existing tool header using central tokens; CSS rebuilt.
@@ -80,8 +80,9 @@ ADR235/067/195/210 applies. Evidence: Docs/superpowers/qa/2026-10-05-console-app
 Independent Task5 fix1 review at d28deef7b91d9ddfd9fa0b1c4c9aa60d9ce794b8 verified all five findings addressed: hook audit writes, exact call attribution, conservative grouped starts, virtual grant writers, completed child retirement. No new Critical/Important issue in the fix range. Owners34/feedback29/MCP90/trace26/host29/UI9 and marker2 receipts verified. Native dispatch and presented-frame qualification remain open. ADR-235; explicit legacy fallback metadata is observational only.
 
 PR3036 remediation: later actual grouped grant success corrects failure and later failures cannot regress an applied fact. Terminal collapsed and expanded notices retain grants without shared Starting while pending siblings preserve it. Reducer31, UIfeedback15, scope14, host12, toolactivity12 and hook inventory selection1 passed; independent review found no remaining actionable issue. Existing ADR235/220. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native latency/full qualification remains open; In Progress.
-<!-- SECTION:NOTES:END -->
-
+Current1c72 integration: optional content-free observation and feedback integrated through current grant writers, host settlement, bridge projection and disposable runtime hooks. Receipt stays after Event release; final owner arbitration and actual grant/execution observations stay separate. Current core540passed84.15s includes late cancellation/settlement, coalescing, writer/no-op, real scope journeys and actual required-lane membership checks. No permission/observation authority merge, cap increase or model call. ADR235, external qualification open.
+Final current-owner compatibility check reproduced an AttributeError when an existing atomicity seam supplies a plain Mapping without denial_reasons. Retained exact RED source/hash; host now reads optional metadata with the existing getattr default, preserving verdict/lock/cancellation behavior. Exact snapshot atomicity and scope/feedback checks pass after the one-line repair. No new authority or display delay. Final core540passed47.70s and provider/security544passed29.12s on final product bytes; ADR235.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 Originally TASK-34415 in the reviewed approval checkout. Renumbered to TASK-34568 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.

@@ -980,8 +980,11 @@ def test_invoke_ask_callback_approve_once_executes_and_records_approved(running_
 
     assert result.ok is True
     assert len(captured["pending"]) == 1
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
     assert captured["pending"][0] == MCPPendingCall(
         llm_name=tool_id,
+        presentation_authority=profile_authority("mcp", "default", "srv", "tool_name"),
         server_key="local:srv",
         tool_name="run",
         server_label="srv",
@@ -2397,3 +2400,27 @@ def test_none_stamp_preserves_fresh_gate_selection(running_loop, state, none_sta
     else:
         assert json.loads(result.content) == service.execute_result
         assert result.outcome is None
+
+
+def test_pending_display_authority_preserves_mcp_owner_and_provider_serialization(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    entry = provider.list_catalog()[0]
+    schema = provider.load_schema(entry.id)
+    row = provider.pending_gate_for(
+        entry.id, {"nested": {"secret": "verbatim"}}, "call-a"
+    )
+    assert row.presentation_authority.profile_id == "default"
+    assert row.presentation_authority.profile_label == "Default"
+    assert row.presentation_authority.stamp_domain == "tool_name"
+    assert provider.load_schema(entry.id) == schema
+    provider.apply_batch_decisions(RUN, {entry.id: "allow_matching"})
+    result = provider.invoke(entry.id, row.arguments)
+    assert result.ok
+    assert service.add_arg_rule_calls[0][2] == row.arguments
+    assert row.reason == "ask" and row.options == ()

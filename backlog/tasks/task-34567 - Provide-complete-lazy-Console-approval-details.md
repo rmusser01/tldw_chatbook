@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 20:46
+updated_date: 2026-10-15 21:37
 labels: []
 dependencies:
 - TASK-34565
@@ -60,15 +60,15 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented snapshot-only lazy redacted Details with4096-character pages, two-page cache, cooperative cancellation and round/revision/generation/verdict-key/latest-page fences. Neutral Details focus and Escape preserve decisions/deadline; maximum raw command retains its primary viewport. Tokens/bundle retained. ADR235/090/150.
 Verification: Details15, argument28, row12, ownership25, interaction21, real Console4-variant journey1, tokens3, bundle5; owned Ruff/format and diff-check pass. Component preparation receipt is unqualified for native latency.
 Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-4/README.md and component.json. Changed card, Console_Modules/approval_details.py, feature CSS/bundle, targeted tests, private launcher and testing lesson.
 Task remains In Progress: full live matrix/native-browser qualification and independent review open; preserve existing Windows dispatch/governance limitations. Cache misses replay from capture; no authority, storage or policy changes.
 
 Independent review found eager generic captured-body formatting and unowned navigation. Actual-card RED3 then Details18/ownership25/interaction21/Console1 GREEN. Captured rows skip eager generic formatting; nav events capture row identity and page index. Source hashes refreshed. Re-review pending; native/full matrix limits retained.
-<!-- SECTION:NOTES:END -->
-
+Current1c72 integration: bounded lazy Details/cache/cancellation and identity fences use existing collaborators. Actual admitted argv/OAuth privacy regressions fail before repairs and pass through existing shared redactors afterward; captured matching arguments remain untouched. Required UI census now enrolls privacy plus stale-page/stale-options nodes without dropping190 existing entries. Current core540passed84.15s; browser/native physical qualification stays open. ADR235, In Progress.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 Originally TASK-34414 in the reviewed approval checkout. Renumbered to TASK-34567 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.

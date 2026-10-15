@@ -19766,3 +19766,7 @@ mounted/visible/enabled geometry and hit target before issuing one real click.
 Assert that click succeeded. Data-ready or a pause alone is not a mouse-target
 fence; do not retry clicks, press the Button directly, manually open a modal or
 replace the real composition-readiness check to obtain a passing route test.
+
+### 2026-10-15 — Unique receipt directories preserve prerequisite evidence (TASK-34564)
+
+During current-dev integration of PR3036, an adapted focused runner reused the pre-edit control's destination and overwrote three original launch/result/XML receipts. The original hash inventory and independent review survived, but no genuine alternate bytes were found. We retained the overwritten files and expected/actual hashes as an incident, explicitly recorded the original retention gap, and ran the unchanged25-case original control into a new unique directory as fresh verification. It did not recreate the original receipt or timing. Runners now require a unique run identifier and fail if its destination exists; bind actual selected-test/source hashes and keep setup/collection failures separate from behavioral RED.

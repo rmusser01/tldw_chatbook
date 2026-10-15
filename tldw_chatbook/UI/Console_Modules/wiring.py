@@ -895,6 +895,17 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    from .approval_feedback import ApprovalFeedbackController
+
+    screen._approval_feedback = ApprovalFeedbackController(
+        read_snapshot=lambda session_id, run_id: screen._ensure_console_chat_controller().approval_feedback.snapshot(session_id, run_id),
+        active_session=lambda: screen._ensure_console_chat_controller().store.active_session_id or "",
+        card_identity=lambda: screen.query_one(ChatApprovalCard).feedback_identity() if screen.query(ChatApprovalCard) else None,
+        paint_card=lambda text: screen.query_one(ChatApprovalCard).paint_feedback(text),
+        refresh_status=lambda: screen._sync_console_mode_bar(),
+    )
     screen._change_review_projection = ConsoleChangeReviewProjection(
         runtime_accessor=lambda: screen._console_runtime(),
         conversation_id_accessor=lambda: screen._current_console_conversation_id(),
@@ -2613,3 +2624,96 @@ def build_console_controllers(
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
     )
+
+
+def console_view_hooks(screen) -> dict[str, Any]:
+    """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+
+    task-15860. The runtime outlives this screen, so every callable it
+    holds that closes over `self` has to be re-bindable and, more
+    importantly, CLEARABLE -- Task 0's P3 found five such slots still
+    pointing at a dead `ChatScreen` after a real unmount, none of them
+    raising, and a silent wrong answer from `wake_conversation_in_view`
+    decides whether the unseen `◈` mark survives.
+
+    Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
+    cleared) or are reached through a stable runtime projection router.
+    A test inventories both sets so neither path can retain this view.
+
+    Returns:
+        dict[str, Any]: slot name -> this view's value.
+    """
+    from functools import partial
+
+    from .approval_feedback import ApprovalFeedbackChanged
+    from .response_rules import refresh_rule_controls
+
+    skill = getattr(screen, "_skill", None)
+    return {
+        "response_rules_changed": partial(refresh_rule_controls, screen),
+        "set_pending_decision": screen._set_console_pending_decision,
+        "follow_watchlists_operations": screen._follow_console_watchlists_operations,
+        "set_pending_approval": screen._set_console_pending_approval,
+        "approval_feedback_changed": lambda session_id, run_id: screen.post_message(ApprovalFeedbackChanged(session_id, run_id)),
+        # ADR-090: UI-thread bridge to patch a mounted approval card's
+        # advisory summary line in place (never re-runs set_batch).
+        "update_pending_approval_summary": screen._update_console_approval_summary,
+        # Task 9 (parked background approvals): UI-thread bridge target
+        # for a NON-active session's approval round -- badge + one
+        # toast, never the mounted-card path above.
+        "park_pending_approval": screen._park_console_approval,
+        # Task 10 (background completion toasts): UI-thread bridge
+        # target for a NON-active session's run finishing/failing -- the
+        # one-per-run toast, invoked directly (never via
+        # `call_from_thread`) from `_set_run_state`'s once-guarded
+        # non-active terminal branch.
+        "notify_run_outcome": screen._notify_console_run_outcome,
+        # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+        # one error toast carrying the run's visible copy.
+        "notify_run_failure": screen._notify_console_run_failure,
+        "set_pending_skill_install": getattr(
+            skill, "_set_console_pending_skill_install", None
+        ),
+        "set_pending_skill_script": getattr(
+            skill, "_set_console_pending_skill_script", None
+        ),
+        "set_pending_chat_create": getattr(
+            skill, "_set_console_pending_chat_create", None
+        ),
+        # TASK-32482 Task 7: UI-thread completion for a confirmed
+        # agent-created chat (fork_chat/new_chat) -- the executor's
+        # marshal target. Wired here (not at construction) because it
+        # closes over THIS screen, exactly like its sibling bridges.
+        "complete_agent_chat_create": screen._complete_agent_chat_create,
+        # PRD Feature B: the pinned task panel above the transcript.
+        "set_task_panel": screen._set_console_task_panel,
+        # PRD Feature A: the ask_user question card.
+        "set_pending_question": screen._set_console_pending_question,
+        "set_pending_worktree_merge": screen._set_console_pending_worktree_merge,
+        # PR3a-2 Task 5, user-wins-ties.
+        "wake_user_priority_probe": screen._fleet._console_wake_user_priority,
+        # task-15971: the delivery COMMIT's visibility probe -- a wake
+        # completing while this conversation is not displayed-and-active
+        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+        # learns an off-view delivery landed).
+        "wake_conversation_in_view": (
+            screen._fleet._console_wake_conversation_in_view
+        ),
+        # the store's one screen-owned callback
+        "on_scope_flushed": screen._on_console_scope_flushed,
+        # task-15862: a wake turn enters through the coordinator, never
+        # the user-send worker that arms the 0.2s transcript poll --
+        # without this hook nothing repaints the wake turn's streamed
+        # reply, its terminal tab glyph, or the composer state (the live
+        # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+        "delivery_ui_hook": screen._fleet._on_console_wake_delivery_started,
+        "project_project_instruction_binding": (
+            screen._session._project_project_instruction_binding
+        ),
+        "project_project_instruction_dispatch": (
+            screen._session._project_project_instruction_dispatch
+        ),
+        "dismiss_project_instruction_decision": (
+            screen._session._dismiss_project_instruction_decision_projection
+        ),
+    }

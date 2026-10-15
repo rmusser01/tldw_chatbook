@@ -29,6 +29,15 @@ def make_interrupt_host(seams):
         read_controller__answerable_decision_by_session=lambda: getattr(
             seams, "_answerable_decision_by_session", None
         ),
+        read_controller_approval_feedback=lambda: getattr(
+            seams, "approval_feedback", None
+        ),
+        read_controller__publish_approval_observation=lambda: getattr(
+            seams, "_publish_approval_observation", None
+        ),
+        read_controller__notify_approval_feedback=lambda: getattr(
+            seams, "_notify_approval_feedback", None
+        ),
         read_controller__approval_view_is_detached=lambda: getattr(
             seams, "_approval_view_is_detached", None
         ),

@@ -1,26 +1,25 @@
 """Chat screen implementation with comprehensive state management."""
 
+import asyncio
+import contextlib
+import inspect
+import json
+import os
+import re
+import threading
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-import asyncio
-import contextlib
 from functools import partial
-import inspect
-import json
-import os
 from pathlib import Path
-import re
-import threading
-import time
-from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
 from uuid import uuid4
 
 import toml
 from loguru import logger
-from tldw_chatbook.Utils.input_validation import escape_markup
 
 # The narrow rich escape is kept for the call sites below whose value
 # reaches a markup-OFF sink, where any escape shows the reader a literal
@@ -33,7 +32,6 @@ from textual.app import ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.message import Message
 from textual.events import (
     Click,
     DescendantBlur,
@@ -44,24 +42,616 @@ from textual.events import (
     Paste,
     Resize,
 )
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
+from textual.widgets import Button, Collapsible, Input, Select, Static
 from textual.worker import Worker
-from textual.widgets import Button, Static, Select, Collapsible, Input
 
-from ..Navigation.base_app_screen import BaseAppScreen
-from ..Navigation.main_navigation import NavigateToScreen
-from ..Navigation.pending_handoff_store import (
-    HandoffChannel,
-    HandoffClaim,
-    PendingHandoffStore,
+from tldw_chatbook.UI.Console_Modules.approval_feedback import ApprovalFeedbackChanged
+from tldw_chatbook.Utils.input_validation import escape_markup
+
+from ...Backup_Recovery import raw_participants as raw
+from ...Backup_Recovery.async_file_participants import _FileJob
+from ...Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
 )
+from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.citation_trace_repository import ActiveCitationTraceState
+from ...Chat.console_chat_controller import (
+    ConsoleChatController,
+    ConsoleSubmitResult,
+    build_console_provider_selection_from_settings,
+)
+from ...Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
+    ConsoleChatMessage,
+    ConsoleContextSnapshot,
+    ConsoleMessageRole,
+    ConsoleProviderSelection,
+    ConsoleRunMarker,
+    ConsoleRunStatus,
+    ConsoleWorkspaceContext,
+    MessageAttachment,
+    console_pending_round_copy_for,
+    derive_console_session_title,
+)
+from ...Chat.console_chat_store import (
+    MAX_PENDING_ATTACHMENTS,
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleRoleplayProjectionPersistencePlan,
+    ConsoleRoleplayProjectionPersistenceResult,
+    ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
+)
+from ...Chat.console_command_grammar import (
+    COMMAND_PREFIX,
+    CONSOLE_ACTION_COMMAND_HANDLER_ID,
+    CONSOLE_ACTION_COMMANDS,
+    DOCTOR_COMMAND_HANDLER_ID,
+    EMERGENCY_STOP_COMMAND_HANDLER_ID,
+    FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
+    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+    GENERATE_VIDEO_COMMAND_HANDLER_ID,
+    GOAL_COMMAND_HANDLER_ID,
+    HELP_COMMAND_HANDLER_ID,
+    KIND_COMMAND,
+    KIND_NOT_COMMAND,
+    KIND_UNKNOWN,
+    PREFILL_COMMAND_HANDLER_ID,
+    REDIRECT_COMMAND_HANDLER_ID,
+    RESEARCH_COMMAND_HANDLER_ID,
+    REWIND_COMMAND_HANDLER_ID,
+    REWIND_COMMAND_NAME,
+    SKILLS_COMMAND_HANDLER_ID,
+    SKILLS_COMMAND_NAME,
+    STEER_COMMAND_HANDLER_ID,
+    STOP_COMMAND_HANDLER_ID,
+    STREAM_VIDEO_COMMAND_HANDLER_ID,
+    STREAM_VIDEO_COMMAND_NAME,
+    SYSTEM_COMMAND_HANDLER_ID,
+    SYSTEM_COMMAND_NAME,
+    CommandParse,
+    ConsoleCommandRegistry,
+    default_console_registry,
+)
+from ...Chat.console_command_suggestions import (
+    _COMMAND_DESCRIPTIONS,
+    CommandSuggestion,
+    completion_context_for_draft,
+    count_suggestion_usage,
+    rank_suggestions_by_usage,
+    suggestions_for_draft,
+)
+from ...Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    complete_durable_units,
+)
+from ...Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+)
+from ...Chat.console_cost_tracker import (
+    ConsoleCacheState,
+    ConsoleCostRow,
+    ConsoleCostRowTotals,
+    ConsoleCostState,
+    TokenEstimateCache,
+    build_cost_rows,
+    build_cost_rows_totals,
+    build_cost_snapshot,
+    fingerprint_break_reason,
+    token_estimate_signature,
+)
+from ...Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+    CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+    ConsoleControlState,
+    ConsoleDisplayRow,
+    ConsoleInspectorState,
+    ConsoleProjectInstructionState,
+    ConsoleRetrievalScopeState,
+    ConsoleStagedContextState,
+    ConsoleStagedEvidenceStripState,
+    build_console_evidence_display_state,
+    build_console_staged_evidence_strip_state,
+    coerce_non_negative_int,
+    console_prompted_evidence_text,
+    console_prompted_source_count,
+    console_staged_source_count,
+    estimate_console_next_send_tokens,
+)
+from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
+from ...Chat.console_exchange_capture import ExchangeCapture
+from ...Chat.console_generate_image import insert_style_token_into_draft
+
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_help imports inside _console_command_help.)
+from ...Chat.console_image_view import (
+    ConsoleImageRenderCache,
+    ConsoleImageViewState,
+    fit_image_cell_size,
+    resolve_default_mode,
+    resolve_show_character_avatar,
+)
+from ...Chat.console_live_work import (
+    ACP_READINESS_ROW_ID,
+    PENDING_LAUNCH_CARD_ID,
+    SOURCE_READINESS_CARD_ID,
+    ConsoleLiveWorkLaunch,
+    ConsoleLiveWorkSourceReadinessState,
+    ConsoleLiveWorkStatusCardState,
+    console_setup_staged_receipt,
+    launch_targets_chatbook_artifact,
+)
+from ...Chat.console_onboarding_state import (
+    ConsoleSetupCardState,
+    build_console_detected_server_action,
+    build_console_setup_card_state,
+    coerce_console_first_send_completed,
+)
+from ...Chat.console_paste_attach import (
+    extract_dropped_path,
+    grab_clipboard_image,
+    looks_attachable,
+)
+from ...Chat.console_prefill import (
+    ACTION_CLEAR,
+    ACTION_ERROR,
+    ACTION_ONE_SHOT,
+    ACTION_PIN,
+    ACTION_STATUS,
+    armed_prefill_row_value,
+    describe_prefill_preview,
+    parse_prefill_args,
+)
+from ...Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
+from ...Chat.console_provider_gateway import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    AuxiliaryCompletionRequest,
+    normalize_llamacpp_base_url,
+)
+from ...Chat.console_rail_state import (
+    CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
+    CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
+    CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
+    CONSOLE_RAIL_SECTION_IDS,
+    CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+    CONSOLE_SINGLE_PANE_COLUMNS,
+    ENVIRONMENT_SECTION_ID,
+    TASKS_SECTION_ID,
+    ConsoleRailPreferenceKey,
+    ConsoleRailState,
+    build_console_rail_preference_key,
+    build_console_rail_state,
+    coerce_console_rail_preferences,
+    collect_prunable_console_rail_keys,
+    console_auto_open_would_evict_context,
+    console_badge_inspector_rows,
+    console_context_reveal_preferences,
+    console_rail_right_open_explicit,
+    console_rail_width_band,
+    normalize_console_rail_layout_scope,
+    resolve_console_rail_priority,
+    serialize_console_rail_stored_preferences,
+    serialize_console_rail_updated_preferences,
+)
+from ...Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
+    ConsoleTranscriptStyle,
+    normalize_chat_display_name,
+    normalize_console_transcript_style,
+    resolve_console_message_presentation,
+)
+from ...Chat.console_runtime import ensure_console_runtime
+from ...Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
+    ConsoleSettingsSummaryState,
+    _estimate_tokens_locally,
+    build_console_context_estimate,
+    build_console_rail_system_line,
+    build_console_settings_readiness,
+    build_console_settings_summary_state,
+    build_default_console_session_settings,
+    build_target_default_console_session_settings,
+    unsaved_console_endpoint_warning,
+    validate_console_session_settings,
+)
+from ...Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsSurface,
+    ConsoleSettingsTransfer,
+)
+from ...Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultMutationOutcome,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultRuntimePublicationClaim,
+    ConsoleDefaultSavePhase,
+    abort_console_default_runtime_publication,
+    apply_console_default_intent,
+    build_console_default_intent,
+    complete_console_default_runtime_publication,
+    next_console_default_intent_generation,
+    prepare_console_default_intent_reservation,
+    prepare_console_default_runtime_publication,
+    refresh_console_runtime_after_saved_default,
+)
+from ...Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
+)
+from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
+from ...Chat.console_switcher_state import (
+    ConsoleSwitcherCharacterResult,
+    SwitcherMode,
+)
+from ...Chat.console_trace_projection import ProjectedTraceCall
+from ...Chat.custom_endpoint_registry import provider_identity_key
+from ...Chat.local_server_discovery import (
+    DiscoveredLocalServer,
+    discover_local_servers,
+)
+from ...Chat.message_metadata import terminal_receipt_id_for_message
+from ...Chat.prompt_history import PromptHistory
+from ...Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
+from ...Chat.provider_test_evidence import (
+    ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
+    ProviderGenerationProbeResult,
+    ProviderProbeResult,
+    shared_connection_evidence,
+)
+
+# Reused rather than duplicated (task-6): the same conversation-scope
+# resolution the native-Console chat entry point uses (task-5) -- session
+# identity via `persisted_conversation_id`, `SessionScopeHolder` for
+# unpersisted sessions, `EffectiveScope` state.
+from ...Chat.rag_scope import RagScope
+from ...config import (
+    DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
+    MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    coerce_bool_setting,
+    coerce_int_setting,
+    delete_settings_from_cli_config,
+    get_cli_providers_and_models,
+    get_cli_setting,
+    load_settings,
+    save_setting_to_cli_config,
+    save_settings_to_cli_config,
+)
+from ...config import (
+    _get_effective_config_path as _get_effective_config_path,  # noqa: PLC0414 - raw owner selector re-export
+)
+from ...Constants import (
+    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+    CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET,
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    TAB_LIBRARY,
+    TAB_SETTINGS,
+    TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
+)
+from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
+    console_attachable_dictionaries,
+    console_attached_dictionaries,
+    handle_console_dictionary_attach,
+    handle_console_dictionary_detach,
+)
+from ...Library.library_rag_service import LibraryRagSearchRequest
+from ...Library.library_rag_state import (
+    LIBRARY_RAG_FALLBACK_TOP_K,
+    library_rag_profile_top_k,
+)
+from ...LLM_Calls.pricing_catalog import get_pricing_catalog
+from ...MCP.permission_prompt_reducer import format_permission_prompt_report
+from ...state.ui_state import UIState
+from ...UI.character_display_text import sanitize_character_display_label
+from ...UI.Workbench import (
+    CommandStrip,
+    DestinationHeader,
+    ModeStrip,
+    RecoveryCallout,
+    WorkbenchActionRequested,
+    WorkbenchHelpPanel,
+    WorkbenchHelpState,
+)
+from ...UI.Workbench.focus import WorkbenchFocusRegistry
+from ...Utils.console_background_effects import (
+    ConsoleBackgroundEffectSettings,
+    normalize_console_background_effects,
+)
+from ...Utils.input_validation import validate_console_character_query
+from ...Utils.token_counter import estimate_tokens
+from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
+from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
+from ...Widgets.Chat_Widgets.watchlists_operation_card import (
+    WatchlistsOperationCard,
+)
+from ...Widgets.compact_model_bar import CompactModelBar
+from ...Widgets.Console import (
+    ConsoleBoundedSection,
+    ConsoleCitationSourcesModal,
+    ConsoleComposerBar,
+    ConsoleComposerUndoHistory,
+    ConsoleControlBar,
+    ConsoleDraftStash,
+    ConsoleRailHandle,
+    ConsoleRetrievalScopeRow,
+    ConsoleRunInspector,
+    ConsoleSendAuthoritySummary,
+    ConsoleSessionSurface,
+    ConsoleSettingsSummary,
+    ConsoleSetupModal,
+    ConsoleSpeechControls,
+    ConsoleStagedContextTray,
+    ConsoleStagedEvidenceStrip,
+    ConsoleTranscript,
+    ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
+    WorkspaceTreeConversationSelected,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeRetryRequested,
+    WorkspaceTreeStarRequested,
+    WorkspaceTreeWorkspaceSelected,
+    dismiss_message_more_menus,
+    message_more_menus_on_screen,
+)
+from ...Widgets.Console import console_project_instructions as project_instruction_ui
+from ...Widgets.Console.console_agent_steering_bar import (
+    ConsoleAgentSteeringBar,
+    ConsoleAgentSteeringState,
+)
+from ...Widgets.Console.console_canvas_card import (
+    ConsoleCanvasCardOpenRequested,
+    ConsoleCanvasOpenRecoveryCard,
+    ConsoleCanvasOpenRetryRequested,
+    open_canvas_with_textual,
+)
+from ...Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterChoice,
+    ConsoleCharacterPickerModal,
+)
+from ...Widgets.Console.console_citation_sources_modal import (
+    selected_valid_evidence_ordinals,
+)
+from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
+from ...Widgets.Console.console_composer_menu_modal import (
+    ACTION_ATTACH_CONTEXT,
+    ACTION_BUDDY,
+    ACTION_GENERATE_CAPTION,
+    ACTION_GENERATE_IMAGE,
+    ACTION_IMPERSONATE,
+    ACTION_IMPROVE_CURRENT_DRAFT,
+    ACTION_PROMPTS,
+    ACTION_SAVE_CHATBOOK,
+    ACTION_SAVE_PROMPT_DRAFT,
+    ACTION_UNDO_PROMPT_IMPROVEMENT,
+    ConsoleComposerMenuModal,
+)
+from ...Widgets.Console.console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
+)
+from ...Widgets.Console.console_control_bar import (
+    ConsoleAutoSpeakResumeRequested,
+    ConsoleAutoSpeakRetryRequested,
+)
+from ...Widgets.Console.console_generation_card import generation_card_signature
+from ...Widgets.Console.console_image_viewer_modal import (
+    AvatarViewRequested,
+    ConsoleImageViewerModal,
+)
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionRow,
+    ConsoleInspectorSectionState,
+)
+from ...Widgets.Console.console_library_search_modal import (
+    CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+    normalize_console_rag_source_types,
+)
+from ...Widgets.Console.console_prompt_comparison_modal import (
+    ConsolePromptComparisonModal,
+    PromptComparisonResult,
+)
+from ...Widgets.Console.console_retrieval_scope_row import (
+    ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
+)
+from ...Widgets.Console.console_rewind_modal import (
+    KIND_RESTORE,
+    KIND_SUMMARIZE_FROM,
+    KIND_SUMMARIZE_UP_TO,
+    ConsoleRewindChoice,
+    ConsoleRewindModal,
+    RewindPromptRow,
+)
+from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionMenu,
+    ConsoleSelectionNoteRequested,
+    ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
+    selection_menus_on_screen,
+)
+from ...Widgets.Console.console_settings_summary import (
+    build_console_readiness_presentation,
+)
+from ...Widgets.Console.console_setup_modal import (
+    CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
+    CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION,
+)
+from ...Widgets.Console.console_speech_controls import (
+    ConsoleAutoSpeakChanged,
+    ConsoleHandsFreeToggleRequested,
+)
+from ...Widgets.Console.console_status_chips import (
+    ConsoleAssistantChip,
+    ConsoleCostChip,
+    ConsoleLibraryChip,
+    ConsoleModelChip,
+    ConsoleRunChip,
+    ConsoleScopeChip,
+    ConsoleSourcesChip,
+    ConsoleStatusChips,
+    ConsoleSystemPromptChip,
+    ConsoleTemporaryChip,
+    ConsoleToolsChip,
+)
+from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
+from ...Widgets.Console.console_terminal_messages import (
+    ConsoleTerminalActionRequested,
+    ConsoleTerminalInputRequested,
+    ConsoleTerminalResizeRequested,
+)
+from ...Widgets.Console.console_transcript import (
+    ConsoleReviewNotesRequested,
+    ConsoleThinkingEditRequested,
+    console_transcripts_on_screen,
+    derive_console_memory_banner_presentation,
+)
+from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
+from ...Widgets.Console.console_video_card import video_card_signature
+
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (the summarize-preview modal imports where it is pushed.)
+from ...Widgets.Console.console_workbench_state import build_console_workbench_state
+from ...Widgets.destination_rail import (
+    DestinationRailSectionHeader,
+)
+from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+from ...Workspaces.display_state import (
+    ConsoleWorkspaceContextState,
+    ConsoleWorkspaceConversationRow,
+)
+from ..Console_Modules import composer_run_controls as run_controls
+from ..Console_Modules import console_spend_projection as spend
+from ..Console_Modules import raw_cli as raw_cli_ui
+from ..Console_Modules.agent import (
+    CONSOLE_AGENT_CANCEL_ALL_ID,
+    CONSOLE_AGENT_FLEET_SECTION_ID,
+    apply_console_agent_status_state,
+)
+
+# The Console controller classes themselves are deliberately NOT imported
+# here: `..Console_Modules.wiring.build_console_controllers` constructs every
+# one of them, so this module needs only the handful of helper symbols its own
+# body actually uses. Tests that steer a controller patch it on the module
+# that defines it (`..Console_Modules.dictation` and friends) rather than
+# through this module's namespace -- see task-3023, which repointed them.
+from ..Console_Modules.character_avatar_layout import (
+    CharacterAvatarPrerender,
+    build_character_avatar_prerender_job,
+    fit_character_avatar_cell_box,
+)
+from ..Console_Modules.dictation import (
+    _VOICE_ACK_NOT_SENT,
+    _VOICE_ACK_SESSION_CHANGED,
+    ConsoleDictationEvent,
+    ConsoleDictationLimitSignal,
+)
+from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
+from ..Console_Modules.frame import (
+    frame_console_region,
+    sync_console_focus_paint,
+)
+from ..Console_Modules.hands_free import (
+    ConsoleHandsFreeSession,
+    ConsoleSpeculativeHandsFreeSession,
+)
+from ..Console_Modules.left_rail import (
+    CONSOLE_DISCARD_DEFAULT_RETRY_ID,
+    CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
+    CONSOLE_REFRESH_RUNNING_APP_ID,
+    CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+    CONSOLE_RETRY_DEFAULT_SAVE_ID,
+    CONSOLE_RETRY_GENERATION_SETTINGS_ID,
+    ConsoleLeftRail,
+)
+from ..Console_Modules.message import ConsoleMessageController
+from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
+from ..Console_Modules.provider_continuation_recovery import (
+    ProviderContinuationRecoveryCallout,
+    TraceCallRecoveryCallout,
+    blocked_turn_reason,
+    dispatch_trace_call_recovery_action,
+    trace_call_recovery_state,
+)
+from ..Console_Modules.provider_continuation_recovery import (
+    ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
+)
+from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
+from ..Console_Modules.retrieval import (
+    sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
+)
+from ..Console_Modules.retrieval import (
+    source_mentions_rag as _source_mentions_rag,
+)
+from ..Console_Modules.right_rail import ConsoleInspectorRail
+from ..Console_Modules.session import (
+    _has_selected_text,
+    _is_empty_select_value,
+)
+from ..Console_Modules.status_row import (
+    STATUS_CHIPS_POSITION_ABOVE,
+    apply_status_chips_position,
+    persist_status_chips_collapsed,
+    poke_console_setting,
+    resolve_status_chips_collapsed,
+    resolve_status_chips_position,
+)
+from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
+from ..Console_Modules.wiring import (
+    _commit_captured_console_draft,
+    build_console_controllers,
+)
+from ..Console_Modules.workspace import (
+    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+)
+from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.conversation_settings_navigation import (
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
+)
+from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffClaim,
+    PendingHandoffStore,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
@@ -91,590 +681,6 @@ from .provider_model_resolution import (
     resolve_provider_model_options,
 )
 from .settings_config_models import SettingsCategoryId
-from ..Console_Modules.frame import (
-    frame_console_region,
-    sync_console_focus_paint,
-)
-from ..Console_Modules.status_row import (
-    STATUS_CHIPS_POSITION_ABOVE,
-    apply_status_chips_position,
-    persist_status_chips_collapsed,
-    poke_console_setting,
-    resolve_status_chips_collapsed,
-    resolve_status_chips_position,
-)
-
-# The Console controller classes themselves are deliberately NOT imported
-# here: `..Console_Modules.wiring.build_console_controllers` constructs every
-# one of them, so this module needs only the handful of helper symbols its own
-# body actually uses. Tests that steer a controller patch it on the module
-# that defines it (`..Console_Modules.dictation` and friends) rather than
-# through this module's namespace -- see task-3023, which repointed them.
-from ..Console_Modules.character_avatar_layout import (
-    CharacterAvatarPrerender,
-    build_character_avatar_prerender_job,
-    fit_character_avatar_cell_box,
-)
-from ..Console_Modules.dictation import (
-    ConsoleDictationEvent,
-    ConsoleDictationLimitSignal,
-    _VOICE_ACK_NOT_SENT,
-    _VOICE_ACK_SESSION_CHANGED,
-)
-from ..Console_Modules.hands_free import (
-    ConsoleHandsFreeSession,
-    ConsoleSpeculativeHandsFreeSession,
-)
-from ..Console_Modules.agent import (
-    CONSOLE_AGENT_CANCEL_ALL_ID,
-    CONSOLE_AGENT_FLEET_SECTION_ID,
-    apply_console_agent_status_state,
-)
-from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
-from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
-from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
-from ..Console_Modules.left_rail import (
-    CONSOLE_DISCARD_DEFAULT_RETRY_ID,
-    CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
-    CONSOLE_REFRESH_RUNNING_APP_ID,
-    CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
-    CONSOLE_RETRY_DEFAULT_SAVE_ID,
-    CONSOLE_RETRY_GENERATION_SETTINGS_ID,
-    ConsoleLeftRail,
-)
-from ..Console_Modules.workspace import (
-    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
-)
-from ..Console_Modules.message import ConsoleMessageController
-from ..Console_Modules.right_rail import ConsoleInspectorRail
-from ..Console_Modules.provider_continuation_recovery import (
-    ProviderContinuationRecoveryCallout,
-    ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
-    TraceCallRecoveryCallout,
-    blocked_turn_reason,
-    dispatch_trace_call_recovery_action,
-    trace_call_recovery_state,
-)
-from ..Console_Modules.retrieval import (
-    sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
-    source_mentions_rag as _source_mentions_rag,
-)
-from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
-from ..Console_Modules import console_spend_projection as spend
-from ..Console_Modules.wiring import (
-    _commit_captured_console_draft,
-    build_console_controllers,
-)
-from ..Console_Modules import raw_cli as raw_cli_ui
-from ..Console_Modules import composer_run_controls as run_controls
-from ..Console_Modules.session import (
-    _has_selected_text,
-    _is_empty_select_value,
-)
-from ...Chat.citation_trace_repository import ActiveCitationTraceState
-from ...Chat.console_chat_controller import (
-    ConsoleChatController,
-    ConsoleSubmitResult,
-    build_console_provider_selection_from_settings,
-)
-from ...Chat.console_context_compaction import (
-    EffectiveMemoryKind,
-    complete_durable_units,
-)
-from ...Chat.console_runtime import ensure_console_runtime
-from ...Widgets.Console.console_canvas_card import (
-    ConsoleCanvasCardOpenRequested,
-    ConsoleCanvasOpenRecoveryCard,
-    ConsoleCanvasOpenRetryRequested,
-    open_canvas_with_textual,
-)
-from ...Chat.console_switcher_state import (
-    ConsoleSwitcherCharacterResult,
-    SwitcherMode,
-)
-from ...Chat.console_context_policy import (
-    ConsoleContextPolicyOverrides,
-)
-from ...Chat.console_settings_apply import (
-    FULL_MODEL_DEFAULT_FIELDS,
-    ConsoleSettingsAction,
-    ConsoleSettingsCommittedSubmission,
-    ConsoleSettingsDraftState,
-    ConsoleSettingsFieldDraft,
-    ConsoleSettingsFieldProvenance,
-    ConsoleSettingsSurface,
-    ConsoleSettingsSubmission,
-    ConsoleSettingsTransfer,
-)
-from ...Chat.console_settings_durability import (
-    ConsoleSettingsDurabilityOwner,
-)
-from ...Chat.console_settings_defaults import (
-    ConsoleDefaultDurabilityState,
-    ConsoleDefaultMutationIntent,
-    ConsoleDefaultMutationOutcome,
-    ConsoleDefaultRecoveryAction,
-    ConsoleDefaultRecoveryRequest,
-    ConsoleDefaultRuntimePublicationClaim,
-    ConsoleDefaultSavePhase,
-    abort_console_default_runtime_publication,
-    apply_console_default_intent,
-    build_console_default_intent,
-    complete_console_default_runtime_publication,
-    next_console_default_intent_generation,
-    prepare_console_default_intent_reservation,
-    prepare_console_default_runtime_publication,
-    refresh_console_runtime_after_saved_default,
-)
-from ...Chat.console_roleplay_identity import (
-    ChatDisplayNameError,
-    ConsoleMessagePresentation,
-    ConsolePresentationContext,
-    ConsoleTranscriptStyle,
-    normalize_chat_display_name,
-    normalize_console_transcript_style,
-    resolve_console_message_presentation,
-)
-from ...Chat.prompt_history import PromptHistory
-from ...Backup_Recovery import raw_participants as raw
-from ...Backup_Recovery.async_file_participants import _FileJob
-from ...Chat.console_cost_tracker import (
-    ConsoleCacheState,
-    ConsoleCostRow,
-    ConsoleCostRowTotals,
-    ConsoleCostState,
-    TokenEstimateCache,
-    build_cost_rows,
-    build_cost_rows_totals,
-    build_cost_snapshot,
-    fingerprint_break_reason,
-    token_estimate_signature,
-)
-from ...Chat.console_exchange_capture import ExchangeCapture
-from ...Chat.console_trace_projection import ProjectedTraceCall
-from ...Chat.message_metadata import terminal_receipt_id_for_message
-from ...LLM_Calls.pricing_catalog import get_pricing_catalog
-from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
-    console_attachable_dictionaries,
-    console_attached_dictionaries,
-    handle_console_dictionary_attach,
-    handle_console_dictionary_detach,
-)
-
-# Reused rather than duplicated (task-6): the same conversation-scope
-# resolution the native-Console chat entry point uses (task-5) -- session
-# identity via `persisted_conversation_id`, `SessionScopeHolder` for
-# unpersisted sessions, `EffectiveScope` state.
-from ...Chat.rag_scope import RagScope
-from ...Chat.console_command_grammar import (
-    FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
-    GENERATE_IMAGE_COMMAND_HANDLER_ID,
-    GENERATE_VIDEO_COMMAND_HANDLER_ID,
-    KIND_COMMAND,
-    KIND_NOT_COMMAND,
-    KIND_UNKNOWN,
-    PREFILL_COMMAND_HANDLER_ID,
-    GOAL_COMMAND_HANDLER_ID,
-    RESEARCH_COMMAND_HANDLER_ID,
-    HELP_COMMAND_HANDLER_ID,
-    CONSOLE_ACTION_COMMAND_HANDLER_ID,
-    CONSOLE_ACTION_COMMANDS,
-    DOCTOR_COMMAND_HANDLER_ID,
-    REWIND_COMMAND_HANDLER_ID,
-    EMERGENCY_STOP_COMMAND_HANDLER_ID,
-    REDIRECT_COMMAND_HANDLER_ID,
-    STEER_COMMAND_HANDLER_ID,
-    STOP_COMMAND_HANDLER_ID,
-    REWIND_COMMAND_NAME,
-    SKILLS_COMMAND_HANDLER_ID,
-    SKILLS_COMMAND_NAME,
-    STREAM_VIDEO_COMMAND_HANDLER_ID,
-    STREAM_VIDEO_COMMAND_NAME,
-    SYSTEM_COMMAND_HANDLER_ID,
-    SYSTEM_COMMAND_NAME,
-    COMMAND_PREFIX,
-    CommandParse,
-    ConsoleCommandRegistry,
-    default_console_registry,
-)
-from ...MCP.permission_prompt_reducer import format_permission_prompt_report
-from ...Chat.console_prefill import (
-    armed_prefill_row_value,
-    ACTION_CLEAR,
-    ACTION_ERROR,
-    ACTION_ONE_SHOT,
-    ACTION_PIN,
-    ACTION_STATUS,
-    describe_prefill_preview,
-    parse_prefill_args,
-)
-from ...Chat.console_generate_image import insert_style_token_into_draft
-from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
-from ...Chat.console_chat_models import (
-    ConsoleChatMessage,
-    ConsoleContextSnapshot,
-    ConsoleMessageRole,
-    ConsoleProviderSelection,
-    ConsoleRunMarker,
-    ConsoleRunStatus,
-    FEEDBACK_ACTIVE_RUN_STATUSES,
-    MessageAttachment,
-    ConsoleWorkspaceContext,
-    console_pending_round_copy_for,
-    derive_console_session_title,
-)
-from ...UI.character_display_text import sanitize_character_display_label
-from ...Chat.console_session_settings import (
-    ConsoleSessionSettings,
-    ConsoleSettingsContextEstimate,
-    ConsoleSettingsReadiness,
-    ConsoleSettingsSummaryState,
-    _estimate_tokens_locally,
-    build_console_context_estimate,
-    build_console_rail_system_line,
-    build_default_console_session_settings,
-    build_console_settings_readiness,
-    build_console_settings_summary_state,
-    build_target_default_console_session_settings,
-    unsaved_console_endpoint_warning,
-    validate_console_session_settings,
-)
-from ...Chat.console_chat_store import (
-    MAX_PENDING_ATTACHMENTS,
-    ConsoleChatSession,
-    ConsoleChatStore,
-    ConsoleRoleplayProjectionPersistencePlan,
-    ConsoleRoleplayProjectionPersistenceResult,
-    ConsoleSettingsComponent,
-    ConsoleSettingsPolicyFailureLabel,
-)
-from ...Chat.console_provider_gateway import (
-    AuxiliaryCompletionRequest,
-    DEFAULT_LLAMACPP_BASE_URL,
-    normalize_llamacpp_base_url,
-)
-from ...Chat.Chat_Deps import (
-    ChatAuthenticationError,
-    ChatBadRequestError,
-    ChatConfigurationError,
-    ChatProviderError,
-    ChatRateLimitError,
-)
-from ...Chat.console_provider_endpoints import (
-    first_configured_endpoint,
-    normalize_generic_endpoint_for_compare,
-    safe_endpoint_display,
-)
-from ...Chat.console_display_state import (
-    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
-    CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
-    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
-    ConsoleControlState,
-    ConsoleDisplayRow,
-    ConsoleInspectorState,
-    ConsoleProjectInstructionState,
-    ConsoleRetrievalScopeState,
-    ConsoleStagedContextState,
-    ConsoleStagedEvidenceStripState,
-    build_console_evidence_display_state,
-    build_console_staged_evidence_strip_state,
-    coerce_non_negative_int,
-    console_prompted_evidence_text,
-    console_prompted_source_count,
-    console_staged_source_count,
-    estimate_console_next_send_tokens,
-)
-from ...Chat.console_onboarding_state import (
-    ConsoleSetupCardState,
-    build_console_detected_server_action,
-    build_console_setup_card_state,
-    coerce_console_first_send_completed,
-)
-from ...Chat.local_server_discovery import (
-    DiscoveredLocalServer,
-    discover_local_servers,
-)
-from ...Chat.custom_endpoint_registry import provider_identity_key
-from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Chat.provider_readiness import (
-    get_provider_readiness,
-    provider_config_key,
-)
-from ...Chat.provider_test_evidence import (
-    ConsoleGenerationTestRequest,
-    ProviderDraftIdentity,
-    ProviderGenerationProbeResult,
-    ProviderProbeResult,
-    shared_connection_evidence,
-)
-from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
-from ...Chat.console_live_work import (
-    ACP_READINESS_ROW_ID,
-    PENDING_LAUNCH_CARD_ID,
-    SOURCE_READINESS_CARD_ID,
-    ConsoleLiveWorkLaunch,
-    ConsoleLiveWorkSourceReadinessState,
-    ConsoleLiveWorkStatusCardState,
-    console_setup_staged_receipt,
-    launch_targets_chatbook_artifact,
-)
-from ...Chat.console_command_suggestions import (
-    CommandSuggestion,
-    completion_context_for_draft,
-    count_suggestion_usage,
-    rank_suggestions_by_usage,
-    suggestions_for_draft,
-    _COMMAND_DESCRIPTIONS,
-)
-
-# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_help imports inside _console_command_help.)
-from ...Chat.console_image_view import (
-    ConsoleImageRenderCache,
-    ConsoleImageViewState,
-    fit_image_cell_size,
-    resolve_default_mode,
-    resolve_show_character_avatar,
-)
-from ...Chat.console_paste_attach import (
-    extract_dropped_path,
-    grab_clipboard_image,
-    looks_attachable,
-)
-from ...Chat.console_rail_state import (
-    ENVIRONMENT_SECTION_ID,
-    TASKS_SECTION_ID,
-    CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
-    CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
-    console_auto_open_would_evict_context,
-    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
-    CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
-    CONSOLE_RAIL_SECTION_IDS,
-    CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
-    CONSOLE_SINGLE_PANE_COLUMNS,
-    ConsoleRailPreferenceKey,
-    ConsoleRailState,
-    build_console_rail_preference_key,
-    build_console_rail_state,
-    coerce_console_rail_preferences,
-    collect_prunable_console_rail_keys,
-    console_badge_inspector_rows,
-    console_context_reveal_preferences,
-    console_rail_width_band,
-    normalize_console_rail_layout_scope,
-    resolve_console_rail_priority,
-    serialize_console_rail_stored_preferences,
-    serialize_console_rail_updated_preferences,
-    console_rail_right_open_explicit,
-)
-from ...config import (
-    DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
-    MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    _get_effective_config_path as _get_effective_config_path,  # noqa: PLC0414 - raw owner selector re-export
-    coerce_bool_setting,
-    coerce_int_setting,
-    delete_settings_from_cli_config,
-    get_cli_providers_and_models,
-    get_cli_setting,
-    load_settings,
-    save_setting_to_cli_config,
-    save_settings_to_cli_config,
-)
-from ...Library.library_rag_service import LibraryRagSearchRequest
-from ...Library.library_rag_state import (
-    LIBRARY_RAG_FALLBACK_TOP_K,
-    library_rag_profile_top_k,
-)
-from ...Constants import (
-    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
-    CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET,
-    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
-    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
-    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
-    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
-    TAB_LIBRARY,
-    TAB_SETTINGS,
-    TAB_WATCHLISTS_COLLECTIONS,
-    WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
-)
-from ...Utils.console_background_effects import (
-    ConsoleBackgroundEffectSettings,
-    normalize_console_background_effects,
-)
-from ...Utils.input_validation import validate_console_character_query
-from ...Utils.token_counter import estimate_tokens
-from ...UI.Workbench import (
-    CommandStrip,
-    DestinationHeader,
-    ModeStrip,
-    RecoveryCallout,
-    WorkbenchActionRequested,
-    WorkbenchHelpPanel,
-    WorkbenchHelpState,
-)
-from ...UI.Workbench.focus import WorkbenchFocusRegistry
-from ...state.ui_state import UIState
-from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
-from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
-from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
-from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
-from ...Widgets.Chat_Widgets.watchlists_operation_card import (
-    WatchlistsOperationCard,
-)
-from ...Widgets.Console import (
-    ConsoleBoundedSection,
-    ConsoleCitationSourcesModal,
-    ConsoleComposerBar,
-    ConsoleComposerUndoHistory,
-    ConsoleDraftStash,
-    ConsoleControlBar,
-    ConsoleSpeechControls,
-    ConsoleRailHandle,
-    ConsoleRetrievalScopeRow,
-    ConsoleRunInspector,
-    ConsoleSendAuthoritySummary,
-    ConsoleSessionSurface,
-    ConsoleSettingsSummary,
-    ConsoleSetupModal,
-    ConsoleStagedContextTray,
-    ConsoleStagedEvidenceStrip,
-    ConsoleTranscript,
-    ConsoleWorkspaceContextTray,
-    ConsoleWorkspaceTree,
-    dismiss_message_more_menus,
-    message_more_menus_on_screen,
-    WorkspaceTreeConversationSelected,
-    WorkspaceTreeExpansionChanged,
-    WorkspaceTreeLoadMoreRequested,
-    WorkspaceTreeRetryRequested,
-    WorkspaceTreeStarRequested,
-    WorkspaceTreeWorkspaceSelected,
-)
-from ...Widgets.Console.console_transcript import (
-    derive_console_memory_banner_presentation,
-)
-from ...Widgets.Console.console_settings_summary import (
-    build_console_readiness_presentation,
-)
-from ...Widgets.Console.console_control_bar import (
-    ConsoleAutoSpeakRetryRequested,
-    ConsoleAutoSpeakResumeRequested,
-)
-from ...Widgets.Console.console_speech_controls import (
-    ConsoleAutoSpeakChanged,
-    ConsoleHandsFreeToggleRequested,
-)
-from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
-from ...Widgets.Console.console_terminal_messages import (
-    ConsoleTerminalActionRequested,
-    ConsoleTerminalInputRequested,
-    ConsoleTerminalResizeRequested,
-)
-from ...Widgets.Console.console_context_controls import (
-    ConsoleContextControlState,
-    build_console_context_control_state,
-)
-from ...Widgets.Console.console_image_viewer_modal import (
-    AvatarViewRequested,
-    ConsoleImageViewerModal,
-)
-from ...Widgets.Console.console_agent_steering_bar import (
-    ConsoleAgentSteeringBar,
-    ConsoleAgentSteeringState,
-)
-from ...Widgets.Console.console_inspector_section import (
-    ConsoleInspectorSection,
-    ConsoleInspectorSectionRow,
-    ConsoleInspectorSectionState,
-)
-from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
-from ...Widgets.Console.console_transcript import (
-    ConsoleReviewNotesRequested,
-    ConsoleThinkingEditRequested,
-    console_transcripts_on_screen,
-)
-from ...Widgets.Console.console_selection_menu import (
-    ConsoleSelectionFeedbackRequested,
-    ConsoleSelectionNoteRequested,
-    ConsoleSelectionMenu,
-    ConsoleSelectionQuoteRequested,
-    ConsoleSideChatRequested,
-    selection_menus_on_screen,
-)
-from ...Widgets.Console import console_project_instructions as project_instruction_ui
-from ...Widgets.Console.console_citation_sources_modal import (
-    selected_valid_evidence_ordinals,
-)
-from ...Widgets.Console.console_generation_card import generation_card_signature
-from ...Widgets.Console.console_video_card import video_card_signature
-from ...Widgets.Console.console_library_search_modal import (
-    CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-    normalize_console_rag_source_types,
-)
-from ...Widgets.Console.console_status_chips import (
-    ConsoleModelChip,
-    ConsoleAssistantChip,
-    ConsoleCostChip,
-    ConsoleLibraryChip,
-    ConsoleRunChip,
-    ConsoleScopeChip,
-    ConsoleSourcesChip,
-    ConsoleStatusChips,
-    ConsoleSystemPromptChip,
-    ConsoleTemporaryChip,
-    ConsoleToolsChip,
-)
-from ...Widgets.Console.console_retrieval_scope_row import (
-    ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
-)
-from ...Widgets.Console.console_character_picker_modal import (
-    ConsoleCharacterChoice,
-    ConsoleCharacterPickerModal,
-)
-from ...Widgets.Console.console_composer_menu_modal import (
-    ACTION_GENERATE_CAPTION,
-    ACTION_GENERATE_IMAGE,
-    ACTION_ATTACH_CONTEXT,
-    ACTION_IMPERSONATE,
-    ACTION_BUDDY,
-    ACTION_IMPROVE_CURRENT_DRAFT,
-    ACTION_PROMPTS,
-    ACTION_SAVE_PROMPT_DRAFT,
-    ACTION_SAVE_CHATBOOK,
-    ACTION_UNDO_PROMPT_IMPROVEMENT,
-    ConsoleComposerMenuModal,
-)
-from ...Widgets.Console.console_prompt_comparison_modal import (
-    ConsolePromptComparisonModal,
-    PromptComparisonResult,
-)
-from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
-from ...Widgets.Console.console_setup_modal import (
-    CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
-    CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION,
-)
-from ...Widgets.destination_rail import (
-    DestinationRailSectionHeader,
-)
-from ...Widgets.Console.console_rewind_modal import (
-    ConsoleRewindChoice,
-    ConsoleRewindModal,
-    KIND_RESTORE,
-    KIND_SUMMARIZE_FROM,
-    KIND_SUMMARIZE_UP_TO,
-    RewindPromptRow,
-)
-
-# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (the summarize-preview modal imports where it is pushed.)
-from ...Widgets.Console.console_workbench_state import build_console_workbench_state
-from ...Workspaces.display_state import (
-    ConsoleWorkspaceConversationRow,
-    ConsoleWorkspaceContextState,
-)
-from ...Widgets.compact_model_bar import CompactModelBar
-from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 
 FeedbackRequested = ConsoleSelectionFeedbackRequested
 NoteRequested = ConsoleSelectionNoteRequested
@@ -683,10 +689,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
     from ...Widgets.Console.console_next_send_selection import (
         ConsoleNextSendSelectionResult,
-    )
-    from ...Chat.console_conversation_activation import (
-        CharacterConversationActivationRequest,
-        ConsoleConversationActivationResult,
     )
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
@@ -9747,92 +9749,10 @@ class ChatScreen(BaseAppScreen):
         return self._console_chat_controller
 
     def console_view_hooks(self) -> dict[str, Any]:
-        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+        """Return this view's detachable hooks from the composition root."""
+        from tldw_chatbook.UI.Console_Modules.wiring import console_view_hooks
 
-        task-15860. The runtime outlives this screen, so every callable it
-        holds that closes over `self` has to be re-bindable and, more
-        importantly, CLEARABLE -- Task 0's P3 found five such slots still
-        pointing at a dead `ChatScreen` after a real unmount, none of them
-        raising, and a silent wrong answer from `wake_conversation_in_view`
-        decides whether the unseen `◈` mark survives.
-
-        Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
-        cleared) or are reached through a stable runtime projection router.
-        A test inventories both sets so neither path can retain this view.
-
-        Returns:
-            dict[str, Any]: slot name -> this view's value.
-        """
-        from tldw_chatbook.UI.Console_Modules.response_rules import refresh_rule_controls
-
-        skill = getattr(self, "_skill", None)
-        return {
-            "response_rules_changed": partial(refresh_rule_controls, self),
-            "set_pending_decision": self._set_console_pending_decision,
-            "follow_watchlists_operations": self._follow_console_watchlists_operations,
-            "set_pending_approval": self._set_console_pending_approval,
-            # ADR-090: UI-thread bridge to patch a mounted approval card's
-            # advisory summary line in place (never re-runs set_batch).
-            "update_pending_approval_summary": self._update_console_approval_summary,
-            # Task 9 (parked background approvals): UI-thread bridge target
-            # for a NON-active session's approval round -- badge + one
-            # toast, never the mounted-card path above.
-            "park_pending_approval": self._park_console_approval,
-            # Task 10 (background completion toasts): UI-thread bridge
-            # target for a NON-active session's run finishing/failing -- the
-            # one-per-run toast, invoked directly (never via
-            # `call_from_thread`) from `_set_run_state`'s once-guarded
-            # non-active terminal branch.
-            "notify_run_outcome": self._notify_console_run_outcome,
-            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
-            # one error toast carrying the run's visible copy.
-            "notify_run_failure": self._notify_console_run_failure,
-            "set_pending_skill_install": getattr(
-                skill, "_set_console_pending_skill_install", None
-            ),
-            "set_pending_skill_script": getattr(
-                skill, "_set_console_pending_skill_script", None
-            ),
-            "set_pending_chat_create": getattr(
-                skill, "_set_console_pending_chat_create", None
-            ),
-            # TASK-32482 Task 7: UI-thread completion for a confirmed
-            # agent-created chat (fork_chat/new_chat) -- the executor's
-            # marshal target. Wired here (not at construction) because it
-            # closes over THIS screen, exactly like its sibling bridges.
-            "complete_agent_chat_create": self._complete_agent_chat_create,
-            # PRD Feature B: the pinned task panel above the transcript.
-            "set_task_panel": self._set_console_task_panel,
-            # PRD Feature A: the ask_user question card.
-            "set_pending_question": self._set_console_pending_question,
-            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
-            # PR3a-2 Task 5, user-wins-ties.
-            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
-            # task-15971: the delivery COMMIT's visibility probe -- a wake
-            # completing while this conversation is not displayed-and-active
-            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
-            # learns an off-view delivery landed).
-            "wake_conversation_in_view": (
-                self._fleet._console_wake_conversation_in_view
-            ),
-            # the store's one screen-owned callback
-            "on_scope_flushed": self._on_console_scope_flushed,
-            # task-15862: a wake turn enters through the coordinator, never
-            # the user-send worker that arms the 0.2s transcript poll --
-            # without this hook nothing repaints the wake turn's streamed
-            # reply, its terminal tab glyph, or the composer state (the live
-            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
-            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
-            "project_project_instruction_binding": (
-                self._session._project_project_instruction_binding
-            ),
-            "project_project_instruction_dispatch": (
-                self._session._project_project_instruction_dispatch
-            ),
-            "dismiss_project_instruction_decision": (
-                self._session._dismiss_project_instruction_decision_projection
-            ),
-        }
+        return console_view_hooks(self)
 
     def _release_consumed_console_launch(
         self,
@@ -24427,6 +24347,7 @@ class ChatScreen(BaseAppScreen):
         """
         self.app_instance.notify(visible_copy, severity="error")
 
+    @on(ApprovalFeedbackChanged)
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -24440,6 +24361,9 @@ class ChatScreen(BaseAppScreen):
         actually showing, never "whichever session is active right now".
         """
         event.stop()
+        if isinstance(event, ApprovalFeedbackChanged):
+            self._approval_feedback.refresh(event.session_id, event.run_id)
+            return
         controller = self._console_chat_controller
         if controller is not None:
             controller.resolve_pending_approval(

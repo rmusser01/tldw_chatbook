@@ -926,6 +926,12 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "app-wide, and the 120s clock it runs against, are plan Task 5.)",
     ),
     ConsoleViewHookSlot(
+        "approval_feedback_changed",
+        "controller",
+        why="Optional display notification; `_notify_approval_feedback` guards the "
+        "callback while app-owned feedback facts remain available after detach.",
+    ),
+    ConsoleViewHookSlot(
         "update_pending_approval_summary",
         "controller",
         why="ADR-090: `_deliver_permission_summary` guards with `is not "

@@ -268,3 +268,8 @@ Tests/UI/test_library_dreams_reader.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
+
+# TASK-34569: bounded approval privacy and stale snapshot/disclosure contracts.
+Tests/UI/test_approval_details_privacy.py
+Tests/UI/test_approval_details.py::test_page_from_old_revision_is_ignored
+Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement

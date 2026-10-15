@@ -15,20 +15,24 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
 
-from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-
+from tldw_chatbook.Agents.approval_observation import (
+    observe_grant_errors,
+    publish_grant_application,
+)
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
     producer_call,
 )
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 from .activation import action_guard, guarded, server_branch_guard
 from .execution_log import (
     KILL_SWITCH_DENIED_DECISION,
-    MCPExecutionLog,
     POLICY_DENIED_DECISION,
     UNRESOLVED_DENIED_DECISION,
+    MCPExecutionLog,
     build_record,
 )
 from .hub_tool_catalog import (
@@ -38,15 +42,6 @@ from .hub_tool_catalog import (
     schema_argument_names,
 )
 from .local_control_service import MCPGovernanceDenied
-from .tool_results import (
-    DispatchState,
-    MCPDispatchObservation,
-    MCPToolResult,
-    current_dispatch,
-    observe_dispatch,
-    project_tool_result,
-    transport_failure,
-)
 from .local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
@@ -60,11 +55,11 @@ from .permission_prompt_reducer import (
     build_permission_prompt_report,
 )
 from .permission_store import (
-    EffectiveToolState,
-    arg_rule_allows,
     HASH_FREE_SERVER_KEYS,
+    EffectiveToolState,
     MCPPermissionStore,
     ProfileMutationError,
+    arg_rule_allows,
     definition_hash,
     profile_lifecycle_disposition,
     profile_policy_digest,
@@ -73,9 +68,17 @@ from .permission_store import (
 )
 from .redaction import is_secret_key, redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
+from .tool_results import (
+    DispatchState,
+    MCPDispatchObservation,
+    MCPToolResult,
+    current_dispatch,
+    observe_dispatch,
+    project_tool_result,
+    transport_failure,
+)
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
-from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 if TYPE_CHECKING:
     from .hub_test_execution import (
@@ -3382,6 +3385,7 @@ class UnifiedMCPControlPlaneService:
         """Construct, invoke, sanitize, and close one local provider in-worker."""
         from tldw_chatbook.Agents.agent_models import ToolResult
         from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
         from . import local_server_tools
         from .hub_test_execution import (
             LocalHubExecutionOutcome,
@@ -5075,6 +5079,7 @@ class UnifiedMCPControlPlaneService:
         except (TypeError, ValueError):
             return 0.0
 
+    @observe_grant_errors
     def approve_for_session(
         self,
         server_key: str,
@@ -5105,6 +5110,7 @@ class UnifiedMCPControlPlaneService:
             # always supply the digest (and imported revision) below.
             with self._session_approvals_lock:
                 self._session_approvals.add((profile_id, server_key, tool_name))
+            publish_grant_application("applied", actual_scope="approve_session")
             return
         store = self.permission_store
         if store is None:
@@ -5112,6 +5118,7 @@ class UnifiedMCPControlPlaneService:
                 raise ProfileMutationError("stale_profile")
             with self._session_approvals_lock:
                 self._session_approvals.add((profile_id, server_key, tool_name))
+            publish_grant_application("applied", actual_scope="approve_session")
             return
         with store.mutation_fence():
             snapshot = store.read_snapshot_strict()
@@ -5136,6 +5143,7 @@ class UnifiedMCPControlPlaneService:
                 raise ProfileMutationError("stale_revision")
             with self._session_approvals_lock:
                 self._session_approvals.add((profile_id, server_key, tool_name))
+        publish_grant_application("applied", actual_scope="approve_session")
 
     def is_session_approved(
         self,
@@ -5469,6 +5477,7 @@ class UnifiedMCPControlPlaneService:
                 type(exc).__name__,
             )
 
+    @observe_grant_errors
     def set_tool_state(
         self,
         server_key: str,
@@ -5506,6 +5515,7 @@ class UnifiedMCPControlPlaneService:
         """
         store = self.permission_store
         if store is None:
+            publish_grant_application("not_applied", error_code="writer_unavailable")
             return
         hash_value: str | None = None
         if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
@@ -5523,6 +5533,8 @@ class UnifiedMCPControlPlaneService:
             expected_profile_digest=expected_profile_digest,
             expected_revision=expected_revision,
         )
+        if ui_state == "allow":
+            publish_grant_application("applied", actual_scope="always_allow")
 
     def set_server_default(
         self,
@@ -5574,6 +5586,7 @@ class UnifiedMCPControlPlaneService:
             return
         store.set_kill_switch(value)
 
+    @observe_grant_errors
     def add_tool_arg_rule(
         self,
         server_key: str,
@@ -5595,6 +5608,7 @@ class UnifiedMCPControlPlaneService:
         """
         store = self.permission_store
         if store is None:
+            publish_grant_application("not_applied", error_code="writer_unavailable")
             return
         hash_value: str | None = None
         if server_key not in HASH_FREE_SERVER_KEYS:
@@ -5608,6 +5622,7 @@ class UnifiedMCPControlPlaneService:
             definition_hash=hash_value,
             profile_id=profile_id,
         )
+        publish_grant_application("applied", actual_scope="allow_matching")
 
     def arg_rule_allows_call(
         self,

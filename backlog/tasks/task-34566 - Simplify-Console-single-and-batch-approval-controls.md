@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 20:46
+updated_date: 2026-10-15 21:37
 labels: []
 dependencies:
 - TASK-34565
@@ -66,7 +66,7 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented explicit single and counted bulk controls, deliberate raw review and exact complete maps, neutral Alt+A focus with Enter consumed, captured action/target/profile/location/scope, and token-governed responsive action layout. Independent review round1 fixes display redaction while preserving canonical originals, captured/reused path-precheck warnings, named broader Apply and complete mixed count/tool/scope summaries, complete distinguishing path/URL/command targets versus explicitly marked parameter excerpts, distinct narrow bulk actions, UTF8 and fenced Escape opener focus. Preserved all stale/replacement/clear/finishing/duplicate and denial/round assertions. Task3-added private artifacts removed from index only; local files retained. Durable QA/report: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-3/task-3-report.md. Targeted interaction20/presentation18/card32/ownership25 and focused captured painted checks pass; bundle/token and owned static checks pass. Exact BASE worker/first-open/governance failures, native timing and actual Windows virtual dispatch remain open. Subsequent reused metadata is inspected via an explicit Home gesture; no production scroll reset or initial-reused visibility claim. ADR-235 with150/161/031 applies. Status remains In Progress pending independent re-review and existing DoD limits.
 
 Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-235.
@@ -74,8 +74,8 @@ Functional AC1–3 supported by reviewed captured-view/interaction and integrati
 Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-235.
 
 PR3036 remediation: captured withheld_scope_copy renders literally beneath affected choices under More options and refreshes/clears on reuse. Existing geometry regression now exercises both closed/disclosed states via real click with overlap, containment, token width28, hit-testing, focus and staged Escape assertions. Interaction28, geometry1, action ownership25, compact3 passed. Independent review found no remaining actionable issue. ADR-235/150/161. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/full matrix and full DoD remain open; In Progress.
-<!-- SECTION:NOTES:END -->
-
+Current1c72 integration: immediate single/counted bulk and explicit mixed/raw review controls integrated into the existing card, with neutral focus, snapshot/generation fences and current FIFO. Added view-hook registration error was caught by exact custody inventories and corrected as a distinct disposable slot; current custody/viewless checks pass. Root exact unchanged1c72 nav control reproduces no-row first-open precondition failure, retained as open current remount qualification. ADR235; no caps or assertions relaxed, In Progress.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 Originally TASK-34413 in the reviewed approval checkout. Renumbered to TASK-34566 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.

@@ -1140,3 +1140,33 @@ def test_session_approval_opt_out_leaves_ordinary_behavior_unchanged(strict_auth
         ordinary.check_detailed(_Mutating(), RUN, allow_session_approvals=False).refusal
         is not None
     )
+
+
+def test_review_row_captures_builtin_gate_profile_and_preserves_session_owner():
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    service = _FakeService(
+        payload={
+            "profiles": {
+                "default": {"global_default": "allow", "servers": {}},
+                "research": {"servers": {"agent:builtin": {"default": "ask"}}},
+            }
+        }
+    )
+    gate = BuiltinToolGate(service, profile_id="research")
+    rows = []
+
+    def request(pending):
+        rows.extend(pending)
+        return {"call-a": "approve_session"}
+
+    hook = build_tool_review_hook(
+        gate, SimpleNamespace(tool_for=lambda name: CalculatorTool()), None, request
+    )
+    hook([ToolCall("calculator", {}, "call-a")], RUN)
+    assert rows[0].presentation_authority.profile_id == "research"
+    assert rows[0].presentation_authority.profile_label == "research"
+    assert rows[0].presentation_authority.grant_domain == "profile"
+    assert service.session_approved == [("calculator", "research")]
+    assert rows[0].options == ("approve_once", "approve_session", "deny")

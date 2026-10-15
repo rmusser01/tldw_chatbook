@@ -4,6 +4,9 @@ from pathlib import Path
 import threading
 from typing import Any
 
+import pytest
+
+
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.builtin_tool_gate import user_denial_refusal
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -14,6 +17,8 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import RawCliRequest, RawCliResult
 from Tests.console_provider_doubles import persisted_console_store
 
+
+pytestmark = pytest.mark.bootstrap_profile
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
 

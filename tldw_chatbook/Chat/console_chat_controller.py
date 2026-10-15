@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
-from contextlib import contextmanager
-from contextvars import ContextVar
 import functools
 import hashlib
 import inspect
@@ -13,13 +12,14 @@ import json
 import os
 import re
 import stat
-import contextlib
 import threading
 import time
 import traceback
-from contextlib import nullcontext
+import weakref
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -36,19 +36,23 @@ from typing import (
     TypedDict,
 )
 from uuid import uuid4
-import weakref
 
 from loguru import logger
-from tldw_chatbook.Utils.input_validation import escape_markup
 
+from tldw_chatbook.Agents.agent_models import (
+    ApprovalDecision,
+    ToolReviewDecision,
+    ToolReviewValue,
+    WorkOrigin,
+)
+
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
+from tldw_chatbook.Agents.agent_service import append_personal_context
 from tldw_chatbook.Agents.approval_provenance import (
     ApprovalDecisions,
     append_denial_reason,
     approval_key_unanswered,
     selected_approval_key,
-)
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-    TOOL_DESCRIPTION_CAPTURE_CAP,
 )
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
@@ -56,52 +60,17 @@ from tldw_chatbook.Character_Chat.emote_directives import (
     append_character_emote_prompt_instruction,
     project_character_emote_assets,
 )
+from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
+from tldw_chatbook.Chat.assistant_generation_state import (
+    assistant_state_allows_provider_history,
+)
 from tldw_chatbook.Chat.attachment_core import (
     PendingAttachment,
     image_url_part,
     max_history_images,
     vision_block_reason,
 )
-from tldw_chatbook.Chat.console_chat_models import (
-    CONSOLE_PENDING_APPROVAL_KIND,
-    CONSOLE_PENDING_CHAT_CREATE_KIND,
-    FEEDBACK_ACTIVE_RUN_STATUSES,
-    CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
-    CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
-    CONSOLE_DISPATCH_DISCARDED_COPY,
-    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
-    CONSOLE_GLOBAL_WORKSPACE_ID,
-    ConsoleChatMessage,
-    ConsoleControllerActivity,
-    ConsoleLifecycleImpact,
-    ConsoleLifecycleRevisionChanged,
-    ConsoleNextSendHistoryProjection,
-    ConsoleCitationNoticeCode,
-    ConsoleCitationPhase,
-    ConsoleCitationPresentation,
-    ConsoleContextSnapshot,
-    ProjectInstructionActivationEvent,
-    ProjectInstructionPreview,
-    ConsoleMessageRole,
-    ConsoleDispatchRecoveryActionId,
-    ConsoleDispatchRecoveryKind,
-    ConsoleProviderSelection,
-    ConsoleRunMarker,
-    ConsoleRunState,
-    ConsoleRunStatus,
-    ConsoleSessionCloseTicket,
-    ConsoleQueuedAcceptanceEvent,
-    ConsoleSubmissionOrigin,
-    ConsoleStagedSource,
-    ConsoleWorkspaceContext,
-    MessageAttachment,
-    derive_console_session_title,
-    fold_greeting_into_system_prompt,
-    is_default_console_session_title,
-)
-from tldw_chatbook.Chat.console_endpoint_provenance import (
-    ConsoleEndpointProvenance,
-)
+from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.citation_repair import (
     REPAIR_ANSWER_BODY_UTF8_BYTES_MAX,
     CitationRepairContract,
@@ -116,57 +85,68 @@ from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuildUnavailable,
 )
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
-from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
-from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
-from tldw_chatbook.Chat.console_chat_store import (
-    CapturePurgeStaleError,
-    CapturePolicyStaleError,
-    ConsoleChatSession,
-    ConsoleChatStore,
-    UNSPECIFIED_ASSISTANT,
-    ConsoleDispatchSettlementError,
-    ConsoleDurableAcceptanceRetired,
-    ConsoleDurableAcceptanceFingerprint,
-    ConsoleDurableTurnCommit,
-    ConsoleThinkingCompatibilityError,
-    TerminalCitationFinalizer,
-    require_thinking_persistence_support,
-)
-from tldw_chatbook.Chat.console_exchange_capture import (
-    CaptureDetail,
-    CapturePolicyResolution,
-    resolve_capture_policy,
-    resolve_scoped_boolean,
-)
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyReadStatus,
     CapturePolicyWriteStatus,
     ConsoleCapturePolicyRepository,
+)
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
+    CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
+    CONSOLE_DISPATCH_DISCARDED_COPY,
+    CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_PENDING_APPROVAL_KIND,
+    CONSOLE_PENDING_CHAT_CREATE_KIND,
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
+    FEEDBACK_ACTIVE_RUN_STATUSES,
+    ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleCitationPresentation,
+    ConsoleContextSnapshot,
+    ConsoleControllerActivity,
+    ConsoleDispatchRecoveryActionId,
+    ConsoleDispatchRecoveryKind,
+    ConsoleLifecycleImpact,
+    ConsoleLifecycleRevisionChanged,
+    ConsoleMessageRole,
+    ConsoleNextSendHistoryProjection,
+    ConsoleProviderSelection,
+    ConsoleQueuedAcceptanceEvent,
+    ConsoleRunMarker,
+    ConsoleRunState,
+    ConsoleRunStatus,
+    ConsoleSessionCloseTicket,
+    ConsoleStagedSource,
+    ConsoleSubmissionOrigin,
+    ConsoleWorkspaceContext,
+    MessageAttachment,
+    ProjectInstructionActivationEvent,
+    ProjectInstructionPreview,
+    derive_console_session_title,
+    fold_greeting_into_system_prompt,
+    is_default_console_session_title,
 )
 from tldw_chatbook.Chat.console_chat_start import (
     AgentChatStartAuthorization,
     AgentChatStartRequest,
     ConsoleChatStartCoordinator,
 )
-from tldw_chatbook.Chat.message_metadata import (
-    AgentChatStartMetadata,
-    format_provider_history_text,
-    handoff_speaker_label,
-    HANDOFF_LAUNCH_DRAFT,
-    HANDOFF_LAUNCH_NOT_STARTED,
-    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+from tldw_chatbook.Chat.console_chat_store import (
+    UNSPECIFIED_ASSISTANT,
+    CapturePolicyStaleError,
+    CapturePurgeStaleError,
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+    ConsoleDurableAcceptanceFingerprint,
+    ConsoleDurableAcceptanceRetired,
+    ConsoleDurableTurnCommit,
+    ConsoleThinkingCompatibilityError,
+    TerminalCitationFinalizer,
+    require_thinking_persistence_support,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
-from tldw_chatbook.Chat.console_history_budget import (
-    DEFAULT_RESPONSE_RESERVATION,
-    ProviderContinuationSidecar,
-    bound_messages_to_window,
-    count_console_messages_tokens,
-    provider_continuation_owner_groups,
-)
-
-# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
-from tldw_chatbook.Agents.agent_service import append_personal_context
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -183,18 +163,18 @@ from tldw_chatbook.Chat.console_context_compaction import (
     ManualMemoryPlan,
     compactable_units_after,
     compaction_retry_fence,
-    effective_memory_identity,
     complete_durable_units,
     decide_compaction,
-    plan_compaction,
+    effective_memory_identity,
     manual_summary_preview,
     micro_compaction_due,
-    resolve_micro_escalation,
-    sanitize_summary_focus,
+    plan_compaction,
     plan_manual_prefix,
     plan_manual_range,
     prefix_digest,
     project_effective_memory,
+    resolve_micro_escalation,
+    sanitize_summary_focus,
     select_effective_memory,
 )
 from tldw_chatbook.Chat.console_context_policy import (
@@ -222,9 +202,6 @@ from tldw_chatbook.Chat.console_context_repository import (
     may_hold_branch_memory,
     persisted_attachment_digest,
 )
-from tldw_chatbook.Chat.assistant_generation_state import (
-    assistant_state_allows_provider_history,
-)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
     ConsoleDispatchReconstructability,
@@ -237,13 +214,32 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
 )
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    ConsoleEndpointProvenance,
+)
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureDetail,
+    CapturePolicyResolution,
+    resolve_capture_policy,
+    resolve_scoped_boolean,
+)
+from tldw_chatbook.Chat.console_fleet_wake import (
+    AgentWakeAuthorization,
+    ConsoleFleetWakeCoordinator,
+)
+from tldw_chatbook.Chat.console_history_budget import (
+    DEFAULT_RESPONSE_RESERVATION,
+    ProviderContinuationSidecar,
+    bound_messages_to_window,
+    count_console_messages_tokens,
+    provider_continuation_owner_groups,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
 )
-from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     MEMORY_OWNER_KEY,
@@ -254,115 +250,11 @@ from tldw_chatbook.Chat.console_prepared_request import (
     tagged_memory_message,
     tagged_visual_memory_message,
 )
-from tldw_chatbook.Chat.console_trace_provenance import (
-    ConsoleRequestRoute,
-    ConsoleTraceCaptureMode,
-    DerivedTraceProvenance,
-    ProviderArtifactTraceProvenance,
-    SavedRevisionTraceProvenance,
-    TraceProvenance,
-    request_route_provenance,
-    TraceProvenancePersistenceError,
-    TraceProvenanceSource,
-    TraceTransformKind,
-    admit_message_provenance,
-    compaction_transform_provenance,
-    frozen_policy_from_provenance,
-)
-from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
-from tldw_chatbook.Chat.console_trace_custom_pii import (
-    redact_pii_value_for_ruleset_revision,
-)
-from tldw_chatbook.Chat.console_trace_redaction import (
-    BUILTIN_PII_RULESET_REVISION_ID,
-    CREDENTIAL_FILTER_VERSION,
-    CREDENTIAL_SANITIZER_UNAVAILABLE,
-    PII_DETECTOR_UNAVAILABLE,
-    PIIRedactionSpan,
-    CredentialSanitizer,
-)
-
-# `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported
-# inside `_apply_conversation_memory_preflight`, its only user, so it stays
-# off the UI-ready module census (ADR-097): task-31384 spends that slot on
-# `Chat.console_interrupt_rounds`, which the controller constructs at boot.
-from tldw_chatbook.Chat.console_session_settings import (
-    ConsoleSessionSettings,
-    configured_provider_model,
-    console_provider_settings,
-    build_target_default_console_session_settings,
-    normalize_llamacpp_base_url,
-    normalize_console_model_value,
-    normalized_console_model_profile_overrides,
-)
-from tldw_chatbook.Chat.console_provider_support import supported_generation_fields
-from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
-from tldw_chatbook.Chat.console_settings_apply import (
-    FULL_MODEL_DEFAULT_FIELDS,
-    QUICK_MODEL_DEFAULT_FIELDS,
-    ConsoleEndpointDraft,
-    ConsoleSettingsDraftState,
-    ConsoleSettingsFieldDraft,
-    ConsoleSettingsFieldProvenance,
-    quick_blank_field_default,
-)
-from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     fingerprint_canonical_locator,
     project_instruction_notice_key,
     sanitized_destination_label,
-)
-from tldw_chatbook.Chat.provider_continuation import (
-    ContinuationConflictError,
-    ContinuationRestoreTarget,
-    ProviderContinuationCheckpoint,
-    validate_continuation_restore,
-)
-from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Chat.console_roleplay_identity import (
-    ConsoleMessagePresentation,
-    ConsolePresentationContext,
-    expand_character_template,
-    resolve_console_message_presentation,
-    session_send_system_prompt,
-)
-from tldw_chatbook.Chat.console_turn_context import (
-    capture_change_review_admission,
-    resolve_turn_persona_policy_rules,
-    resolve_turn_tool_policy_profile_id,
-    ConsoleCharacterAuthoritySnapshot,
-    ConsoleProjectAuthoritySnapshot,
-    ConsoleProjectBindingSnapshot,
-    ConsoleTurnCustodyRequest,
-    ConsoleTurnConfigurationSnapshot,
-    ConsoleTurnExecutionContext,
-)
-from tldw_chatbook.Chat.console_turn_preparation import (
-    ConsolePreparationPauseKind,
-    ConsolePreparationTransition,
-    ContextCompactionHold,
-    ConsoleTurnPreparation,
-    ConsoleTurnPreparationState,
-    admit_one_shot_capture_off,
-    pause_temporary_capture_on,
-    initial_preparation_state,
-    build_console_request_for_preparation,
-    pause_for_trace_call_failure,
-)
-from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
-    TraceCallPersistenceError,
-)
-from tldw_chatbook.Chat.library_preparation import (
-    LibraryPreparationContribution,
-    library_preparation_event_for_outcome,
-)
-from tldw_chatbook.Chat.rag_scope import EffectiveScope
-from tldw_chatbook.Agents.agent_models import (
-    ApprovalDecision,
-    ToolReviewDecision,
-    ToolReviewValue,
-    WorkOrigin,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
@@ -374,13 +266,38 @@ from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     ConsolePromptQueueCoordinator,
     QueueGenerationAuthorization,
 )
-from tldw_chatbook.Chat.console_fleet_wake import (
-    AgentWakeAuthorization,
-    ConsoleFleetWakeCoordinator,
+from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+from tldw_chatbook.Chat.console_provider_support import supported_generation_fields
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
+    expand_character_template,
+    resolve_console_message_presentation,
+    session_send_system_prompt,
 )
-from tldw_chatbook.Chat.message_metadata import (
-    MESSAGE_ORIGIN_HOOK,
-    MessageMetadata,
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+
+# `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported
+# inside `_apply_conversation_memory_preflight`, its only user, so it stays
+# off the UI-ready module census (ADR-097): task-31384 spends that slot on
+# `Chat.console_interrupt_rounds`, which the controller constructs at boot.
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_target_default_console_session_settings,
+    configured_provider_model,
+    console_provider_settings,
+    normalize_console_model_value,
+    normalize_llamacpp_base_url,
+    normalized_console_model_profile_overrides,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_MODEL_DEFAULT_FIELDS,
+    ConsoleEndpointDraft,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    quick_blank_field_default,
 )
 from tldw_chatbook.Chat.console_skill_resolver import (
     MENTION_SIGIL,
@@ -391,7 +308,87 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     find_embedded_mentions,
     resolve_skill_command,
 )
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    redact_pii_value_for_ruleset_revision,
+)
+from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
+    TraceCallPersistenceError,
+)
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    DerivedTraceProvenance,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenance,
+    TraceProvenancePersistenceError,
+    TraceProvenanceSource,
+    TraceTransformKind,
+    admit_message_provenance,
+    compaction_transform_provenance,
+    frozen_policy_from_provenance,
+    request_route_provenance,
+)
+from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
+    CREDENTIAL_FILTER_VERSION,
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    PII_DETECTOR_UNAVAILABLE,
+    CredentialSanitizer,
+    PIIRedactionSpan,
+)
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleCharacterAuthoritySnapshot,
+    ConsoleProjectAuthoritySnapshot,
+    ConsoleProjectBindingSnapshot,
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnCustodyRequest,
+    ConsoleTurnExecutionContext,
+    capture_change_review_admission,
+    resolve_turn_persona_policy_rules,
+    resolve_turn_tool_policy_profile_id,
+)
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsolePreparationTransition,
+    ConsoleTurnPreparation,
+    ConsoleTurnPreparationState,
+    ContextCompactionHold,
+    admit_one_shot_capture_off,
+    build_console_request_for_preparation,
+    initial_preparation_state,
+    pause_for_trace_call_failure,
+    pause_temporary_capture_on,
+)
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+from tldw_chatbook.Chat.library_preparation import (
+    LibraryPreparationContribution,
+    library_preparation_event_for_outcome,
+)
+from tldw_chatbook.Chat.message_metadata import (
+    HANDOFF_LAUNCH_DRAFT,
+    HANDOFF_LAUNCH_NOT_STARTED,
+    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+    MESSAGE_ORIGIN_HOOK,
+    AgentChatStartMetadata,
+    MessageMetadata,
+    format_provider_history_text,
+    handoff_speaker_label,
+)
 from tldw_chatbook.Chat.prompt_history import PromptHistory
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    validate_continuation_restore,
+)
+from tldw_chatbook.Chat.rag_scope import EffectiveScope
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Utils.input_validation import escape_markup
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    TOOL_DESCRIPTION_CAPTURE_CAP,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.response_rules.runtime import ResponseRuleRuntime
@@ -443,17 +440,17 @@ def _bool_or_none(value: object) -> bool | None:
 # task-24458: same deferral as the raw-shell/virtual-CLI providers below --
 # `LocalToolProvider` is the third entry point into the workspace
 # tool-execution cluster, and it is only needed when a run composes it.
-from tldw_chatbook.Agents.project_instruction_resolver import (
-    InstructionSnapshot,
-    ProjectInstructionResolver,
-    StartupInstructionCandidate,
-)
 from tldw_chatbook.Agents.mcp_tool_provider import (
     TIMEOUT_REFUSAL,
     UNRESOLVED_REFUSAL,
     MCPPendingCall,
     MCPToolProvider,
     approval_effects_for_tool,
+)
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionSnapshot,
+    ProjectInstructionResolver,
+    StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 
@@ -467,52 +464,6 @@ from tldw_chatbook.Agents.session_todo_store import (
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
 from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
-
-# task-24458: these two providers pull the whole workspace tool-execution
-# cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
-# virtual_cli}_tool_impls`, `Tools.workspace_root_pin`,
-# `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) and they were
-# resident by `_ui_ready` purely because this controller imports them at module
-# scope. Nothing needs them until a session actually composes a provider, so
-# they are imported at their three runtime use sites instead. Every annotation
-# in this module is a string (`from __future__ import annotations` above), so
-# no type reference here evaluates at runtime.
-from tldw_chatbook.config import (
-    ConfigMutationResult,
-    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    coerce_bool_setting,
-    coerce_int_setting,
-    get_cli_setting,
-    apply_console_capture_settings,
-    runtime_capture_policy,
-    get_runtime_config_snapshot,
-)
-from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
-from tldw_chatbook.Library.library_rag_service import (
-    LibraryRagSearchRequest,
-    _outcome_from_service_result,
-)
-from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
-    build_library_rag_evidence_bundle,
-)
-from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
-from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
-from tldw_chatbook.runtime_policy.bootstrap import (
-    load_default_runtime_source_state,
-)
-from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
-from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
-from tldw_chatbook.Tools.remote_root_types import RemoteRoot, is_remote
-from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
-from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
-from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
-from tldw_chatbook.Utils.input_validation import validate_console_draft
-from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
-    describe_console_stream_failure,
-    describe_stream_failure,
-)
 from tldw_chatbook.Chat.console_cost_tracker import (
     PayloadFingerprint,
     fingerprint_payload,
@@ -531,6 +482,12 @@ from tldw_chatbook.Chat.console_thinking_history import (
     effective_thinking_history_policy,
     resolve_thinking_history,
 )
+from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
+    describe_console_stream_failure,
+    describe_stream_failure,
+)
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.thinking_blocks import (
     THINKING_ENVELOPE_VERSION,
     ThinkingEnvelope,
@@ -538,12 +495,52 @@ from tldw_chatbook.Chat.thinking_blocks import (
     normalize_thinking_history_policy,
     parse_thinking_blocks_json,
 )
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+# task-24458: these two providers pull the whole workspace tool-execution
+# cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
+# virtual_cli}_tool_impls`, `Tools.workspace_root_pin`,
+# `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) and they were
+# resident by `_ui_ready` purely because this controller imports them at module
+# scope. Nothing needs them until a session actually composes a provider, so
+# they are imported at their three runtime use sites instead. Every annotation
+# in this module is a string (`from __future__ import annotations` above), so
+# no type reference here evaluates at runtime.
+from tldw_chatbook.config import (
+    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    ConfigMutationResult,
+    apply_console_capture_settings,
+    coerce_bool_setting,
+    coerce_int_setting,
+    get_cli_setting,
+    get_runtime_config_snapshot,
+    runtime_capture_policy,
+)
+from tldw_chatbook.Library.library_rag_service import (
+    LibraryRagSearchRequest,
+    _outcome_from_service_result,
+)
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
+from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.model_capabilities import (
     is_vision_capable,
     moonshot_model_returns_reasoning_content,
 )
+from tldw_chatbook.runtime_policy.bootstrap import (
+    load_default_runtime_source_state,
+)
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot, is_remote
+from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
+from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
+    build_library_rag_evidence_bundle,
+)
+from tldw_chatbook.Utils.input_validation import validate_console_draft
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
@@ -2956,6 +2953,8 @@ def _build_approval_payload(
     pending: "list[MCPPendingCall]",
     timeout_seconds: float,
     deadline: float | None,
+    *,
+    revision: int = 1,
 ) -> dict[str, Any]:
     """Forward to the documented console_interrupt_rounds implementation."""
     from tldw_chatbook.Chat.console_interrupt_rounds import (
@@ -2970,6 +2969,7 @@ def _build_approval_payload(
         timeout_seconds,
         deadline,
         read_global_ToolExecutionPolicy=lambda: ToolExecutionPolicy,
+        revision=revision,
     )
 
 
@@ -4219,6 +4219,12 @@ class ConsoleChatController:
 
         from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
+        from .console_approval_feedback import ApprovalFeedbackStore
+
+        self.approval_feedback = ApprovalFeedbackStore()
+        self.approval_feedback_changed = None
+        if self._agent_bridge is not None:
+            self._agent_bridge.approval_feedback_store = self.approval_feedback
         self._interrupt_host = InterruptRoundHost(
             read_controller__active_assistant_message_ids=lambda: (
                 self._active_assistant_message_ids
@@ -4239,6 +4245,11 @@ class ConsoleChatController:
             read_controller__answerable_decision_by_session=lambda: (
                 self._answerable_decision_by_session
             ),
+            read_controller_approval_feedback=lambda: self.approval_feedback,
+            read_controller__publish_approval_observation=lambda: (
+                self._publish_approval_observation
+            ),
+            read_controller__notify_approval_feedback=lambda: self._notify_approval_feedback,
             read_controller__approval_view_is_detached=lambda: (
                 self._approval_view_is_detached
             ),
@@ -14514,6 +14525,8 @@ class ConsoleChatController:
         """
         self._agent_runtime_enabled = enabled
         self._agent_bridge = bridge
+        if bridge is not None:
+            bridge.approval_feedback_store = self.approval_feedback
         # PR3a-2 Task 3: a refreshed bridge is a fresh fan-out registry --
         # re-register the usage fold on it (replace-by-name makes calling
         # this with the SAME bridge a safe no-op).
@@ -16168,7 +16181,12 @@ class ConsoleChatController:
                 state = service.gate_tool_test_for_profile(hub, profile_id)
             return persona_floor_state(state, persona_policy, hub.name)
 
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
+
         provider = LocalToolProvider(
+            presentation_authority=profile_authority(
+                "local", profile_id, str(root), "call"
+            ),
             workspace_root=root,
             allow_write=allow_write,
             authority_scope=authority_scope,
@@ -16316,8 +16334,12 @@ class ConsoleChatController:
             return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
 
         from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
 
         provider = VirtualCliProvider(
+            presentation_authority=profile_authority(
+                "virtual_cli", profile_id, str(root), "call"
+            ),
             workspace_root=root,
             resolve_state=resolve_state,
             local_tools_enabled=lambda: coerce_bool_setting(
@@ -16594,6 +16616,26 @@ class ConsoleChatController:
             assistant_access=library_authority.policy.assistant_access,
         )
         return provider, authority
+
+    def _notify_approval_feedback(self, session_id: str, run_id: str) -> None:
+        callback = getattr(self, "approval_feedback_changed", None)
+        if callable(callback):
+            try:
+                callback(session_id, run_id)
+            except Exception:  # noqa: BLE001, S110 - optional display notification
+                pass
+
+    def _publish_approval_observation(self, observation) -> None:
+        from tldw_chatbook.UI.Console_Modules.approval_feedback import (
+            publish_approval_observation,
+        )
+
+        publish_approval_observation(
+            observation,
+            feedback=self.approval_feedback,
+            project=getattr(getattr(self, "_agent_bridge", None), "project_approval_feedback", None),
+            notify=self._notify_approval_feedback,
+        )
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None
