@@ -318,6 +318,33 @@ async def test_mobile_app_assets_are_served(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mobile_css_keeps_the_hidden_attribute_authoritative(
+    tmp_path,
+) -> None:
+    """View switching relies on the ``hidden`` attribute (re-review r2).
+
+    ``showView`` toggles only ``hidden``; author-origin ``display`` rules
+    (``#view-chat { display: flex }``, ``.badge { display: inline-block }``)
+    override the UA stylesheet's ``[hidden] { display: none }`` unless the
+    stylesheet carries an explicit guard — the round-2 breakage stacked the
+    chat view (and its composer) under the session list. No wire test can
+    catch a CSS-vs-attribute interaction, so the served CSS is pinned.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.css")
+        assert response.status == 200
+        body = await response.text()
+
+    # The guard itself…
+    assert "[hidden]" in body
+    assert "display: none !important" in body
+    # …against the two author-origin display rules that defeated the
+    # attribute in the wild.
+    assert "#view-chat" in body and "display: flex" in body
+    assert ".badge" in body and "display: inline-block" in body
+
+
+@pytest.mark.asyncio
 async def test_unknown_mobile_asset_is_404(tmp_path) -> None:
     async with _logged_in_client(tmp_path) as client:
         response = await client.get("/static/mobile/not-an-asset.js")
