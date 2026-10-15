@@ -6,7 +6,7 @@ import asyncio
 import difflib
 import re
 from dataclasses import dataclass, replace
-from functools import lru_cache
+from functools import lru_cache, partial
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping
 from weakref import WeakSet

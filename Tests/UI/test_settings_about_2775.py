@@ -6,6 +6,7 @@ Troubleshooting: it shows the installed version, renders the real-markdown
 About text, and opens http(s) links in the system browser with a notify.
 """
 
+import asyncio
 import webbrowser
 from types import SimpleNamespace
 
@@ -16,6 +17,8 @@ from Tests.UI.test_destination_shells import DestinationHarness, _build_test_app
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_about_category_registered_read_only():
@@ -68,18 +71,23 @@ async def test_about_link_policy(monkeypatch):
     opened = []
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
     app = DestinationHarness(_build_test_app(), "settings")
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         screen = app.screen_stack[-1]
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
 
         notices = []
         monkeypatch.setattr(
             screen, "notify", lambda msg, **kw: notices.append((msg, kw))
         )
+        before = set(app.workers)
         screen._handle_about_link(
             SimpleNamespace(href="https://github.com/rmusser01/tldw", stop=lambda: None)
         )
+        issued = [worker for worker in app.workers if worker not in before]
+        assert len(issued) == 1
+        worker = issued[0]
+        assert worker.node is screen
+        assert worker.name == "open-link"
+        await asyncio.wait_for(asyncio.shield(worker.wait()), timeout=5.0)
         assert opened == ["https://github.com/rmusser01/tldw"]
         assert any("Opened in browser" in n[0] for n in notices)
 

@@ -1558,4 +1558,3 @@ _CONSOLE_PENDING_COPY_KIND_SOURCE = (
         for cell in console_pending_round_copy.__closure__ or ()
     ),
 )
-

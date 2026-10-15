@@ -6516,4 +6516,3 @@ _CONSOLE_PENDING_RUNTIME_PROPERTIES = (
         for descriptor in (inspect.getattr_static(ConsoleRuntime, name),)
     ),
 )
-

@@ -4240,8 +4240,7 @@ class LibraryMediaController:
         if url.startswith(("http://", "https://")):
             # TASK-34937: OS spawn off the UI thread.
             self.run_worker(
-                webbrowser.open,
-                url,
+                partial(webbrowser.open, url),
                 thread=True,
                 exit_on_error=False,
                 name="open-link",

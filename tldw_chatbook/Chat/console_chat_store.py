@@ -22361,4 +22361,3 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         if role is ConsoleMessageRole.ASSISTANT and not content:
             return "pending"
         return "complete"
-

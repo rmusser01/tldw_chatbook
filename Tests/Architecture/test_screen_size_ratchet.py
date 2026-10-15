@@ -96,7 +96,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: `on_button_pressed`, a byte-identical second copy of
     #: `_restore_collapsible_states`, four uncalled methods) and two moved
     #: helpers. Lowered to the exact measurement: 24985/754.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24985, 754),
+    #: PR3023 current-dev integration measured 24369/740 after rebase;
+    #: lower both ceilings to retain the decomposition gain.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24369, 740),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

@@ -126,6 +126,16 @@ def _stock_default_probe(bridge: object) -> bool:
         is not registry_service.LocalWorkspaceRegistryService
     ):
         return False
+    workspace_type = Workspace_DB.WorkspaceDB
+    if (
+        workspace_type.__bases__ is not Workspace_DB._RUN_LOG_PROBE_WORKSPACE_BASES
+        or any(
+            name in vars(workspace_type)
+            for name in (*Workspace_DB._RUN_LOG_PROBE_INHERITED, "is_memory_db")
+        )
+        or inspect.getattr_static(workspace_type, "is_memory_db", _MISSING) is not False
+    ):
+        return False
     database = fields.get("_db")
     if not _plain(
         database,
@@ -153,7 +163,7 @@ def _stock_default_probe(bridge: object) -> bool:
             workspace,
             Workspace_DB.WorkspaceDB,
             Workspace_DB._RUN_LOG_PROBE_SOURCE,
-            ("is_memory_db", "_thread_local"),
+            ("_thread_local",),
         )
         and vars(workspace).get("is_memory_db") is False
         and type(vars(workspace).get("_thread_local")) is _local

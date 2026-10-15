@@ -275,4 +275,3 @@ async def await_finite_read[_Result](
         if not worker.cancelled():
             worker.exception()
         raise
-

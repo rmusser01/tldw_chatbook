@@ -51,19 +51,34 @@ async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change
         assert "_console_runtime_fallback" not in vars(console)
         assert not runtime._disposed and not console._closing
         first = owner._active_native_session()
-        second = store.create_session(settings=store.session_settings(first_id), ephemeral=True, activate=False)
+        second = store.create_session(
+            settings=store.session_settings(first_id), ephemeral=True, activate=False
+        )
         previous_state = owner._last_console_cost_state
-        previous_display = (owner._console_cost_cache_state, owner._console_settled_spend_cache,
-                            owner._console_cost_projection_tokens_cache)
+        previous_display = (
+            owner._console_cost_cache_state,
+            owner._console_settled_spend_cache,
+            owner._console_cost_projection_tokens_cache,
+        )
         timer = owner._console_cost_ttl_timer
         timer_task = None if timer is None else timer._task
-        assert previous_state is not None and timer is not None and timer._interval == 10.0
+        assert (
+            previous_state is not None and timer is not None and timer._interval == 10.0
+        )
         assert timer_task is not None and not timer_task.done()
         assert owner._last_console_context_control_state is not None
         original_composer = owner._console_composer_or_none
         previous_profile = sys.getprofile()
         phase = "refusal"
-        native_rows, presentation_rows, operation_rows, derives, replays, builds, callback_rows = [], [], [], [], [], [], []
+        (
+            native_rows,
+            presentation_rows,
+            operation_rows,
+            derives,
+            replays,
+            builds,
+            callback_rows,
+        ) = [], [], [], [], [], [], []
         build_code = ConsoleContextSpendController._build_console_cost_state.__code__
         derive_code = ConsoleContextSpendController._build_console_cost_state_under_config.__code__
         native_code = sync_module.run_console_config_sync.__code__
@@ -73,13 +88,16 @@ async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change
 
         def profile(frame, event, value):
             if not (
-                (event == "call" and (
-                    frame.f_code is native_code
-                    or frame.f_code is presentation_code
-                    or frame.f_code is operation_code
-                    or frame.f_code is derive_code
-                    or frame.f_code is replay_code
-                ))
+                (
+                    event == "call"
+                    and (
+                        frame.f_code is native_code
+                        or frame.f_code is presentation_code
+                        or frame.f_code is operation_code
+                        or frame.f_code is derive_code
+                        or frame.f_code is replay_code
+                    )
+                )
                 or (event == "return" and frame.f_code is build_code)
             ):
                 if previous_profile is not None:
@@ -94,30 +112,60 @@ async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change
                 parent = parent.f_back
             if event == "call":
                 if frame.f_code is native_code and build_frame is not None:
-                    native_rows.append((phase, build_frame.f_locals.get("native_key") is not None))
-                if frame.f_code is presentation_code and frame.f_locals.get("screen") is console:
+                    native_rows.append(
+                        (phase, build_frame.f_locals.get("native_key") is not None)
+                    )
+                if (
+                    frame.f_code is presentation_code
+                    and frame.f_locals.get("screen") is console
+                ):
                     presentation_rows.append(phase)
                 if frame.f_code is operation_code and build_frame is not None:
-                    operation_rows.append((phase, frame.f_locals.get("source") is config))
+                    operation_rows.append(
+                        (phase, frame.f_locals.get("source") is config)
+                    )
                 if frame.f_code is derive_code and frame.f_locals.get("self") is owner:
-                    derives.append((phase, frame.f_locals["session"], frame.f_locals["store"]))
-                if frame.f_code is replay_code and frame.f_locals.get("self") is console:
+                    derives.append(
+                        (phase, frame.f_locals["session"], frame.f_locals["store"])
+                    )
+                if (
+                    frame.f_code is replay_code
+                    and frame.f_locals.get("self") is console
+                ):
                     replays.append(phase)
-            if event == "return" and frame.f_code is build_code and frame.f_locals.get("self") is owner:
-                builds.append((phase, frame.f_locals.get("native_key"),
-                               frame.f_locals.get("native_current"), frame.f_locals.get("accepted"), value))
+            if (
+                event == "return"
+                and frame.f_code is build_code
+                and frame.f_locals.get("self") is owner
+            ):
+                builds.append(
+                    (
+                        phase,
+                        frame.f_locals.get("native_key"),
+                        frame.f_locals.get("native_current"),
+                        frame.f_locals.get("accepted"),
+                        value,
+                    )
+                )
             if previous_profile is not None:
                 previous_profile(frame, event, value)
 
         def mutate_after_real_derivation():
             result = original_composer()
             if not callback_rows:
-                callback_rows.append((owner._console_settled_spend_cache is not previous_display[1],
-                                      owner._console_cost_projection_tokens_cache is not previous_display[2]))
+                callback_rows.append(
+                    (
+                        owner._console_settled_spend_cache is not previous_display[1],
+                        owner._console_cost_projection_tokens_cache
+                        is not previous_display[2],
+                    )
+                )
                 if change == "owner":
                     store.switch_session(second.id)
                 elif change == "source":
-                    _configure_anthropic_ready_console(app, model="pr3023-current-retry-model")
+                    _configure_anthropic_ready_console(
+                        app, model="pr3023-current-retry-model"
+                    )
                     store.switch_session(second.id)
                 else:
                     delattr(app, runtime_attr)
@@ -127,12 +175,20 @@ async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change
         try:
             # Both mutations are genuine Store APIs; only settings revision
             # changes the published projection key. No proof/key is installed.
-            message = next(m for m in store.messages_for_session(first_id) if m.role is fixture.ConsoleMessageRole.USER)
+            message = next(
+                m
+                for m in store.messages_for_session(first_id)
+                if m.role is fixture.ConsoleMessageRole.USER
+            )
             store.update_message_content(message.id, "EDITED EARLIER HISTORY")
-            updated, persisted = store.set_session_system_prompt(first_id, "Cost native revision " * 8)
+            updated, persisted = store.set_session_system_prompt(
+                first_id, "Cost native revision " * 8
+            )
             assert updated is first and persisted
             native_key = projection._key()
-            assert spend._same_readiness_key(native_key, projection.key, ignore_settings=True)
+            assert spend._same_readiness_key(
+                native_key, projection.key, ignore_settings=True
+            )
             assert not spend._same_readiness_key(native_key, projection.key)
             previous_source = config.current_config_identity()
             owner._console_composer_or_none = mutate_after_real_derivation
@@ -150,13 +206,23 @@ async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change
             assert any(p == "refusal" and stock for p, stock in operation_rows)
             assert callback_rows == [(True, True)]
             assert ("refusal", first, store) in derives
-            assert any(p == "refusal" and key is not None and current is False and accepted is True
-                       and value is previous_state for p, key, current, accepted, value in builds)
+            assert any(
+                p == "refusal"
+                and key is not None
+                and current is False
+                and accepted is True
+                and value is previous_state
+                for p, key, current, accepted, value in builds
+            )
             assert owner._last_console_cost_state is previous_state
             assert owner._console_cost_cache_state is previous_display[0]
             assert owner._console_settled_spend_cache is previous_display[1]
             assert owner._console_cost_projection_tokens_cache is previous_display[2]
-            assert owner._console_cost_ttl_timer is timer and timer._task is timer_task and not timer_task.done()
+            assert (
+                owner._console_cost_ttl_timer is timer
+                and timer._task is timer_task
+                and not timer_task.done()
+            )
             assert spend._readiness_runtime(console) is runtime
             current_source = config.current_config_identity()
             assert (current_source != previous_source) == (change == "source")
@@ -164,13 +230,23 @@ async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change
             phase = "retry"
             deadline = time.monotonic() + 4.0
             while time.monotonic() < deadline and not (
-                (phase, wanted, store) in derives and phase in replays
-                and any(p == phase and accepted is True and current is True for p, _, current, accepted, _ in builds)
+                (phase, wanted, store) in derives
+                and phase in replays
+                and any(
+                    p == phase and accepted is True and current is True
+                    for p, _, current, accepted, _ in builds
+                )
             ):
                 await pilot.pause(0.01)
             assert (phase, wanted, store) in derives and phase in replays
-            assert any(p == phase and accepted is True and current is True for p, _, current, accepted, _ in builds)
-            assert owner._active_native_session() is wanted and owner._current_chat_store() is store
+            assert any(
+                p == phase and accepted is True and current is True
+                for p, _, current, accepted, _ in builds
+            )
+            assert (
+                owner._active_native_session() is wanted
+                and owner._current_chat_store() is store
+            )
             assert projection.key[0] == current_source
             assert owner._last_console_cost_state is not None
             if change != "runtime":
