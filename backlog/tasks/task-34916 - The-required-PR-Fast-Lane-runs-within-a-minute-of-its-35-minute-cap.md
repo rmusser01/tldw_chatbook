@@ -9,7 +9,7 @@ labels:
 priority: high
 assignee:
 - '@claude'
-updated_date: 2026-10-14 19:51
+updated_date: 2026-10-15 15:34
 ---
 
 ## Description
@@ -20,7 +20,7 @@ The PR Fast Lane is one of the jobs behind the required check, and it has a 35-m
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The PR Fast Lane's slowest run over at least 20 pull-request runs leaves at least 5 minutes under its cap
+- [x] #1 The PR Fast Lane's slowest run over at least 20 pull-request runs leaves at least 5 minutes under its cap
 - [x] #2 No test is dropped from the required check to achieve it
 - [x] #3 The contract test that pins the lanes and their caps reflects the new layout
 - [ ] #4 The 20-run measurement also records each job's queue delay (job start minus run creation) and the required check's wall clock (run creation to the aggregate job's completion), and that wall clock is not worse than the pre-change baseline in the notes
@@ -56,6 +56,7 @@ First run of the new layout (review of #3106, W3): run 38588725796 (PR #3106, he
 
 Also seen on that run, outside this task: the Console P0 regression gate took 16m30s of its 20-min cap (it measured median 13.0 / max 18.7 over 89 runs before this PR). Neither TASK-34916 nor TASK-34917 covers it; the coordinator is filing a task.
 Interim measurement, 2026-10-14 19:48Z (TASK-34986 session): 12 completed pull_request runs of derived-artifacts.yml were created after #3106 merged (17:23:53Z), fewer than the 20 the ACs ask, so no AC is ticked. 11 of them finished every lane (one, 38606466442, was cancelled at 12.8 min). Queue delay of the lane jobs: median 2.0 / p90 21.9 / max 24.8 min after the run started, 3.8 / 22.0 / 40.2 after the run was created (one run, 38616567455, sat 35.9 min in a merge-queue approval hold). Required check wall clock (run created -> aggregate done): median 28.9 / p90 43.6 / max 57.7 min (11 runs), against the pre-change baseline of 39.0 / 66.8 / 256.1 (81 runs): better so far. PR Fast Lane: n=11, median 16.5 / p90 17.7 / max 22.5 min (<= 30 so far; the 22.5 is run 38611134368, 2169 passed in 21m15s, a slow runner, not a hang). PR Fast Lane (admission-sensitive): median 16.4 / max 18.0. Re-measure at 20 runs with the scratchpad's measure.py approach: gh run list --event pull_request + gh api .../runs/<id>/jobs, runs created after 17:23:53Z.
+20-run measurement, 2026-10-15 (review of #3117, item 2; supersedes the interim above). Data: 57 completed pull_request runs of derived-artifacts.yml created after #3106 merged (2026-10-14 17:23:53Z); 51 on the #3106 layout, 49 of them with six UI shards (two runs of a ten-shard branch excluded), 46 with every lane and the aggregate finished. Baseline: the 81 pre-#3106 runs (2026-10-12 19:39Z to 2026-10-14 14:26Z) with every lane and the aggregate finished. Percentiles: statistics.quantiles(n=10, method='inclusive'); figures checked against the reviewer's and identical. AC#1 met: PR Fast Lane n=47, median 16.6 / max 22.5 min (run 38611134368, green: 2169 passed in 21m15s on a slow runner), 12.5 min under the 35-min cap (the AC asks 5); PR Fast Lane (admission-sensitive) median 16.8 / max 20.3 (run 38687245721). AC#4 is NOT met: the required check's wall clock as recorded (run created -> aggregate done) went from median 39.0 / p90 66.8 / max 256.1 to 41.8 / p90 95.2 / max 290.7 min (46 runs). Without the approval hold (first lane job created -> aggregate done) it went from 36.4 / 40.1 / 50.7 to 26.0 / 57.2 / 71.2: the median improved, the tail got worse. Lane queue delay (job started - job created) went from median 0.1 / p90 6.5 / max 17.4 to 1.3 / 21.3 / 39.8 min (491 -> 461 jobs). The periods differ in load (more PR traffic, the merge queue on), so the comparison is confounded and does not isolate the fan-out; whether the tail is acceptable for the run-time headroom, or needs max-parallel / fewer runners, needs an owner decision. Task stays In Progress for that.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
