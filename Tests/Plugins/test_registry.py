@@ -777,3 +777,45 @@ def test_schema_four_upgrade_preserves_independent_discovery_on_reopen(tmp_path)
             assert registry.list_marketplace_sources()[0]["source_id"] == "selected"
     finally:
         owner.close()
+
+
+def test_source_publication_compares_binding_without_recreating_removed_row(tmp_path):
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owner = PluginRuntimeOwner(tmp_path / "plugins")
+    assert owner.try_acquire()
+    try:
+        with PluginRegistry(owner.root / "registry.sqlite3", owner=owner) as registry:
+            registry.write_marketplace_source("selected", "old", "a" * 64, None, None)
+            registry.write_marketplace_source(
+                "selected",
+                "new",
+                "b" * 64,
+                "cache",
+                None,
+                expected_binding=("old", "a" * 64),
+            )
+            with pytest.raises(ValueError, match="source_changed"):
+                registry.write_marketplace_source(
+                    "selected",
+                    "old",
+                    "a" * 64,
+                    "stale",
+                    "error",
+                    expected_binding=("old", "a" * 64),
+                )
+            assert registry.list_marketplace_sources()[0]["snapshot_json"] == "cache"
+            registry.remove_marketplace_source("selected")
+            with pytest.raises(ValueError, match="source_changed"):
+                registry.write_marketplace_source(
+                    "selected",
+                    "new",
+                    "b" * 64,
+                    "cache",
+                    None,
+                    expected_binding=("new", "b" * 64),
+                )
+            assert registry.list_marketplace_sources() == ()
+    finally:
+        owner.close()

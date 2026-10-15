@@ -1052,3 +1052,183 @@ async def test_catalog_executable_overlay_is_retained_for_review_update_and_reco
     assert (await service._call(service._coordinator.published_snapshot))[
         "revisions"
     ] == state["revisions"]
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+@pytest.mark.parametrize("change", ["remove", "supersede"])
+async def test_refresh_publication_refuses_removed_or_superseded_source(
+    source_stack, marketplace, monkeypatch, outcome, change
+):
+    import asyncio
+    import threading
+    from datetime import UTC, datetime, timedelta
+
+    from tldw_chatbook.Plugins.acquisition import cleanup_acquisitions
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    sources = SourceService(source_stack)
+    locator = select_local_source(marketplace)
+    identity = await sources.add(locator)
+    assert (await sources.refresh(identity)).digest
+    original = sources._acquire
+    entered, release = threading.Event(), threading.Event()
+    captured = []
+    first = True
+    hidden = marketplace.with_name("held-marketplace")
+    if outcome == "failure":
+        marketplace.rename(hidden)
+
+    async def held(*args, **kwargs):
+        nonlocal first
+        if not first:
+            return await original(*args, **kwargs)
+        first = False
+        try:
+            result = await original(*args, **kwargs)
+            captured.append(result[0])
+        except (ValueError, OSError):
+            entered.set()
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+            raise
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return result
+
+    monkeypatch.setattr(sources, "_acquire", held)
+    pending = asyncio.create_task(sources.refresh(identity))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        if outcome == "failure":
+            hidden.rename(marketplace)
+        if change == "remove":
+            await sources.remove(identity)
+            assert sources.list_sources() == ()
+            replacement = await sources.add(locator)
+            assert replacement != identity
+            assert (await sources.refresh(replacement)).digest
+        else:
+            assert (await sources.refresh(identity)).digest
+        expected = sources.list_sources()
+        rows = await source_stack._call(sources._rows)
+    finally:
+        release.set()
+        if hidden.exists():
+            hidden.rename(marketplace)
+    with pytest.raises(ValueError, match="source_changed"):
+        await pending
+    assert bool(captured) == (outcome == "success")
+    assert sources.list_sources() == expected
+    assert await source_stack._call(sources._rows) == rows
+    await source_stack._call(
+        lambda: cleanup_acquisitions(
+            source_stack._coordinator.owner,
+            source_stack._coordinator.authority,
+            now=datetime.now(UTC) + timedelta(hours=25),
+        )
+    )
+    assert all(not Path(item.materialized_identity).exists() for item in captured)
+
+
+@pytest.mark.parametrize("mutation", ["content", "excluded", "catalog"])
+async def test_import_refuses_changed_then_restored_captured_bytes(
+    source_stack, marketplace, monkeypatch, mutation
+):
+    from tldw_chatbook.Plugins import package_files, source_service
+    from tldw_chatbook.Plugins.imports import inspect_app_import
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    sources = SourceService(source_stack)
+    preview = inspect_app_import("codex", marketplace)
+    control = await sources.commit_import(preview)
+    assert len(control.source_ids) == 1
+    before = sources.list_sources()
+    staging = source_stack._coordinator.owner.root / "staging"
+    retained = set(staging.iterdir())
+    target = marketplace / "plugins/review"
+    skill = target / "skills/review/SKILL.md"
+    approved = skill.read_bytes()
+    original = package_files.capture_package
+    changed = []
+
+    def altered_capture(root, *args, **kwargs):
+        if Path(root) != target:
+            return original(root, *args, **kwargs)
+        excluded = target / "auth.json"
+        if mutation == "excluded":
+            excluded.write_bytes(b"owned excluded credential sentinel")
+        else:
+            skill.write_bytes(approved + b"\nUNREVIEWED-CAPTURE-SENTINEL\n")
+        try:
+            result = original(root, *args, **kwargs)
+            changed.append(result.digest)
+            return result
+        finally:
+            skill.write_bytes(approved)
+            excluded.unlink(missing_ok=True)
+
+    original_read = source_service.read_selected_file
+
+    def changed_catalog(root, path, **kwargs):
+        if root != marketplace:
+            return original_read(root, path, **kwargs)
+        catalog = root / path
+        approved_catalog = catalog.read_bytes()
+        document = json.loads(approved_catalog)
+        document["name"] = "unreviewed catalog metadata"
+        catalog.write_text(json.dumps(document))
+        try:
+            result = original_read(root, path, **kwargs)
+            changed.append(result)
+            return result
+        finally:
+            catalog.write_bytes(approved_catalog)
+
+    if mutation == "catalog":
+        monkeypatch.setattr(source_service, "read_selected_file", changed_catalog)
+    else:
+        monkeypatch.setattr(package_files, "capture_package", altered_capture)
+    with pytest.raises(ValueError, match="import_preview_changed"):
+        await sources.commit_import(preview)
+    assert changed and inspect_app_import("codex", marketplace) == preview
+    assert sources.list_sources() == before
+    assert set(staging.iterdir()) == retained
+
+
+async def test_import_local_read_failure_stays_per_item_when_preview_is_unchanged(
+    source_stack, marketplace, monkeypatch
+):
+    from tldw_chatbook.Plugins import source_service
+    from tldw_chatbook.Plugins.imports import inspect_app_import
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    sources = SourceService(source_stack)
+    preview = inspect_app_import("codex", marketplace)
+    assert len((await sources.commit_import(preview)).source_ids) == 1
+    before = sources.list_sources()
+    original = source_service.read_selected_file
+    failed = []
+
+    def unavailable_during_read(root, path, **kwargs):
+        if root != marketplace:
+            return original(root, path, **kwargs)
+        catalog = root / path
+        hidden = catalog.with_suffix(".held")
+        catalog.rename(hidden)
+        try:
+            return original(root, path, **kwargs)
+        except FileNotFoundError:
+            failed.append(path)
+            raise
+        finally:
+            hidden.rename(catalog)
+
+    monkeypatch.setattr(source_service, "read_selected_file", unavailable_during_read)
+    result = await sources.commit_import(preview)
+    assert failed and inspect_app_import("codex", marketplace) == preview
+    assert not result.source_ids and not result.packages
+    assert len(result.failures) == 1
+    assert result.failures[0].code == "import_item_unavailable"
+    assert sources.list_sources() == before

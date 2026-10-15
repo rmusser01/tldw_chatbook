@@ -93,8 +93,7 @@ def read_selected_file(
         return b"".join(chunks)
 
 
-def _package_digest(root):
-    capture = capture_package(root)
+def _capture_digest(capture):
     if capture.errors:
         raise ValueError("import_package_invalid")
     # Profile files are not package declarations; request a clean selected root.
@@ -105,6 +104,18 @@ def _package_digest(root):
     ):
         raise ValueError("import_profile_state")
     return capture.digest
+
+
+def _package_digest(root):
+    return _capture_digest(capture_package(root))
+
+
+def _catalog_digest(snapshot, package_digests):
+    return hashlib.sha256(
+        canonical_json(
+            {"catalog": snapshot.digest, "packages": package_digests}
+        ).encode()
+    ).hexdigest()
 
 
 def inspect_app_import(app: str, selected_root: Path) -> ImportPreview:
@@ -129,14 +140,14 @@ def inspect_app_import(app: str, selected_root: Path) -> ImportPreview:
             snapshot = parse_catalog(data, source_id="import", catalog_path=path)
             package_digests = {}
             for entry in snapshot.entries:
-                if entry.support == "supported" and entry.local_path is not None:
+                if (
+                    entry.support == "supported"
+                    and entry.local_path is not None
+                    and entry.local_path not in package_digests
+                ):
                     package = catalog_local_path(root, entry.local_path)
                     package_digests[entry.local_path] = _package_digest(package)
-            digest = hashlib.sha256(
-                canonical_json(
-                    {"catalog": snapshot.digest, "packages": package_digests}
-                ).encode()
-            ).hexdigest()
+            digest = _catalog_digest(snapshot, package_digests)
             candidates.append(
                 ImportCandidate(
                     kind="catalog",

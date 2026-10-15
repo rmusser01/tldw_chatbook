@@ -333,14 +333,19 @@ class SourceService:
             raise ValueError("source_removed")
         return row
 
-    def _write(self, binding, snapshot=None, error=None):
+    def _write(self, binding, snapshot=None, error=None, *, expected_binding=None):
         encoded = snapshot.model_dump_json() if snapshot is not None else None
         if encoded is not None and len(encoded.encode()) > MAX_CATALOG_BYTES:
             raise ValueError("catalog_cache_limit")
         payload = binding.model_dump(mode="json")
         mac = self._coordinator.authority.sign_marketplace_source(payload)
         self._coordinator.registry.write_marketplace_source(
-            binding.source_id, canonical_json(payload), mac, encoded, error
+            binding.source_id,
+            canonical_json(payload),
+            mac,
+            encoded,
+            error,
+            expected_binding=expected_binding,
         )
         self._load_cached()
 
@@ -460,18 +465,16 @@ class SourceService:
                     binding.catalog_path,
                     fetched_at=datetime.now(UTC).isoformat(),
                 )
-                self._write(
-                    binding.model_copy(
-                        update={"current": reference, "catalog_path": path}
-                    ),
-                    snapshot,
+                updated = binding.model_copy(
+                    update={"current": reference, "catalog_path": path}
                 )
-                return snapshot
+                error = None
             except (ValueError, OSError):
                 if result is not None:
                     release_snapshot(
                         self._coordinator.owner, self._coordinator.authority, result
                     )
+                    result = None
                 try:
                     previous = CatalogSnapshot.model_validate_json(row["snapshot_json"])
                     if previous.source_id != source_id:
@@ -484,11 +487,23 @@ class SourceService:
                         fetched_at="",
                         entries=(),
                     )
-                stale = previous.model_copy(
-                    update={"refresh_error": "catalog_refresh_failed"}
+                error = "catalog_refresh_failed"
+                snapshot = previous.model_copy(update={"refresh_error": error})
+                updated = binding
+            try:
+                self._write(
+                    updated,
+                    snapshot,
+                    error,
+                    expected_binding=(row["binding_json"], row["binding_mac"]),
                 )
-                self._write(binding, stale, "catalog_refresh_failed")
-                return stale
+            except ValueError as exc:
+                if result is not None and exc.args == ("source_changed",):
+                    release_snapshot(
+                        self._coordinator.owner, self._coordinator.authority, result
+                    )
+                raise
+            return snapshot
 
         return await self.plugins._call(operation)
 
@@ -880,7 +895,13 @@ class SourceService:
         async def operation():
             import tempfile
 
-            from .imports import ImportFailure, ImportResult, inspect_app_import
+            from .imports import (
+                ImportFailure,
+                ImportResult,
+                _capture_digest,
+                _catalog_digest,
+                inspect_app_import,
+            )
             from .package_files import MAX_PACKAGE_BYTES, capture_package
             from .retention import require_capacity
 
@@ -913,14 +934,18 @@ class SourceService:
                     )
                     files = {candidate.catalog_path: (data, 0)}
                     total = len(data)
+                    captures = {}
                     for entry in snapshot.entries:
-                        if entry.support != "supported" or entry.local_path is None:
+                        if (
+                            entry.support != "supported"
+                            or entry.local_path is None
+                            or entry.local_path in captures
+                        ):
                             continue
                         capture = capture_package(
                             catalog_local_path(root, entry.local_path)
                         )
-                        if capture.errors:
-                            raise ValueError("import_package_changed")
+                        captures[entry.local_path] = capture
                         for name, member in capture.files.items():
                             target = entry.local_path + "/" + name
                             if target not in files:
@@ -930,13 +955,26 @@ class SourceService:
                                 files[target] = (member.data, member.executable_mode)
                         await asyncio.sleep(0)
                 except (OSError, ValueError):
+                    if inspect_app_import(preview.app, root) != preview:
+                        raise ValueError("import_preview_changed") from None
                     failures.append(
                         ImportFailure(
                             path=candidate.catalog_path, code="import_item_unavailable"
                         )
                     )
                     continue
-                if inspect_app_import(preview.app, root) != preview:
+                try:
+                    package_digests = {
+                        path: _capture_digest(capture)
+                        for path, capture in captures.items()
+                    }
+                except ValueError:
+                    raise ValueError("import_preview_changed") from None
+                if (
+                    tuple(sorted(package_digests)) != candidate.package_paths
+                    or _catalog_digest(snapshot, package_digests) != candidate.digest
+                    or inspect_app_import(preview.app, root) != preview
+                ):
                     raise ValueError("import_preview_changed")
                 require_capacity(self._coordinator.owner.root, total)
                 with tempfile.TemporaryDirectory(

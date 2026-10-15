@@ -326,9 +326,34 @@ class PluginRegistry:
         binding_mac: str,
         snapshot_json: str | None,
         refresh_error: str | None,
+        *,
+        expected_binding: tuple[str, str] | None = None,
     ) -> None:
-        """Store one source independently of installed package authority."""
+        """Store discovery state, conditionally updating an exact existing binding.
+
+        Args:
+            expected_binding: Previously authenticated JSON/MAC pair. When set,
+                replacement is atomic and cannot insert a removed source.
+
+        Raises:
+            ValueError: The expected source was removed or superseded.
+        """
         with self.transaction() as cursor:
+            if expected_binding is not None:
+                cursor.execute(
+                    "UPDATE marketplace_sources SET binding_json=?, binding_mac=?, snapshot_json=?, refresh_error=? WHERE source_id=? AND binding_json=? AND binding_mac=?",
+                    (
+                        binding_json,
+                        binding_mac,
+                        snapshot_json,
+                        refresh_error,
+                        source_id,
+                        *expected_binding,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("source_changed")
+                return
             count = cursor.execute(
                 "SELECT count(*) FROM marketplace_sources"
             ).fetchone()[0]
