@@ -2603,7 +2603,7 @@ async def _plan_source_stop(
 
 async def _suspend_pass(
     subs_service: Any, dreams_db: Any, scheduling_db: Any, items: list[dict],
-    restored: frozenset[int] = frozenset(),
+    restored: Mapping[int, str] | None = None,
 ) -> int:
     """Stop the outside work of every live wrapper not settled "off".
 
@@ -2625,17 +2625,20 @@ async def _suspend_pass(
        one of its stops landed in this pass. Anything else leaves it
        unsettled, which is exactly what the startup check looks for.
 
-    ``restored`` names the watches the start check un-settled because a
-    restore brought something of theirs back (review of #3123, round 2,
-    P2). Their pass applies the check's rule: an armed reminder or an
-    enabled rule that did not change before the record's ``at`` is the
-    user's re-arm -- it is neither stopped nor recorded -- and so is every
-    one when the record has no ``at`` (an earlier build wrote it: cannot
-    tell). They settle with the ``at`` they had, so the next start reads
-    them the same way. A switch-off the user makes passes nothing here:
-    everything stops, as it always has. A pass cut short before it
-    settles them leaves them to the next start's ordinary pass, which
-    stops a re-arm too and records it, so switching Dreams on restores it.
+    ``restored`` maps the watches the start check un-settled, with Dreams
+    off, because a restore brought something of theirs back, to the
+    ``at`` their record had when the check read it settled "off"
+    (review of #3123, round 2, P2; round 3) -- the check's own reading,
+    never re-derived here from a record that may have changed since. Their
+    pass applies the check's rule: an armed reminder or an enabled rule
+    that did not change before that ``at`` is the user's re-arm -- it is
+    neither stopped nor recorded -- and they settle with that ``at``, so
+    the next start reads them the same way. Every other watch, a record
+    without an ``at`` included, has everything stopped and recorded
+    (switching Dreams on restores it). A switch-off the user makes passes
+    nothing here: everything stops, as it always has. A pass cut short
+    before it settles them leaves them to the next start's ordinary pass,
+    which stops a re-arm too and records it.
 
     Returns:
         How many wrappers the pass worked on (settled or not).
@@ -2657,10 +2660,9 @@ async def _suspend_pass(
     for item in pending:
         item_id = int(item["id"])
         plan = plans.get(int(item.get("subscription_id") or 0))
-        record = _suspension_record(item)
-        subscription, reminders, rules = _owed(record)
-        at = (record or {}).get("at")
-        keep = item_id in restored  # the user's changes since ``at`` stand
+        subscription, reminders, rules = _owed(_suspension_record(item))
+        at = (restored or {}).get(item_id)
+        keep = at is not None  # the user's changes since ``at`` stand
         try:
             if scheduling_db is not None:
                 armed = await asyncio.to_thread(run_finite_local_worker,
@@ -2691,7 +2693,7 @@ async def _suspend_pass(
                 item_id, type(exc).__name__)
             continue
         staged.append((item, subscription, reminders, rules,
-                       at if item_id in restored else utc_now_iso()))
+                       at if keep else utc_now_iso()))
 
     for subscription_id, plan in plans.items():
         if not plan.known or plan.applied:
@@ -3088,7 +3090,7 @@ async def set_tracking_suspended(
     suspended: bool,
     scheduling_db_getter: Any = None,
     now: datetime | None = None,
-    restored: frozenset[int] = frozenset(),
+    restored: Mapping[int, str] | None = None,
 ) -> int:
     """Suspend or resume the work Dreams scheduled outside its own loop.
 
@@ -3143,7 +3145,7 @@ async def set_tracking_suspended(
             later pass).
         now: Clock for the resume sweep (UTC-aware); defaults to the
             current time.
-        restored: The watches the start check un-settled; see
+        restored: ``{tracked_item_id: at}`` from the start check; see
             :func:`_suspend_pass`. Only the start passes any.
 
     Returns:
@@ -3250,7 +3252,7 @@ async def reconcile_tracking(
     scheduling_db_getter: Any = None,
     now: datetime | None = None,
     on_settled: Any = None,
-    restored: frozenset[int] = frozenset(),
+    restored: Mapping[int, str] | None = None,
 ) -> int:
     """Bring Dream-owned outside work in line with ``[dreams] enabled``.
 
@@ -3283,8 +3285,8 @@ async def reconcile_tracking(
             its scheduler queue to reload, so work already loaded for a
             suspended watch drops out). Called from the owned task, so it
             still runs when the caller was cancelled.
-        restored: The watches the start check un-settled (see
-            :func:`_suspend_pass`); the start passes them, nobody else.
+        restored: ``{tracked_item_id: at}`` from the start check (see
+            :func:`_suspend_pass`); the start passes it, nobody else.
             A request that coalesces over the start's carries its own.
 
     Returns:

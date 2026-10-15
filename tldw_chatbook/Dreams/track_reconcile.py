@@ -212,11 +212,16 @@ class _Drift:
             for the switch pass to take up.
         sources: Dreams-created sources of retired watches to switch off.
         reminders: Reminders of retired watches to disarm.
+        restored: ``{tracked_item_id: at}`` for each of ``records`` that
+            was settled "off" with an ``at`` when the check read it, Dreams
+            off (review of #3123, round 3): the switch-off pass leaves what
+            the user changed since that ``at``. Nothing else is in it.
     """
 
     records: list[tuple[int, str]] = field(default_factory=list)
     sources: list[int] = field(default_factory=list)
     reminders: list[str] = field(default_factory=list)
+    restored: dict[int, str] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.records or self.sources or self.reminders)
@@ -252,7 +257,11 @@ def _restore_drift(
       reminders are never taken for a restore's -- a user's choice is not
       undone on a guess, and the row's own ``updated_at`` is no stand-in
       (any later write of the row moves it past a re-arm) -- while their
-      sources still are. Switching Dreams on and off once gives them one.
+      sources still are; when a source is, the switch-off pass stops and
+      records the watch's rule and reminders with it (the pass keeps the
+      user's changes only on a record with an ``at``, round 3), and
+      switching Dreams on restores them. Switching Dreams on and off once
+      gives such records an ``at``.
     * Dreams off, a retired watch whose retirement record says Dreams
       switched its source off (and no live watch rides it) while that
       source runs, or lists a reminder Dreams disarmed that is armed
@@ -306,6 +315,8 @@ def _restore_drift(
                 unsettled = dict(record or {})
                 unsettled.pop("settled", None)
                 drift.records.append((int(row["id"]), json.dumps(unsettled)))
+                if at:
+                    drift.restored[int(row["id"])] = at
         elif (created and not state["is_active"]
                 and not (record or {}).get("subscription")):
             owed = {"reminders": [], "rules": [], **(record or {}),
@@ -722,10 +733,11 @@ async def _boot_pass(
                 await reconcile_tracking(
                     subs_service,
                     dreams_db,
-                    # The watches this check un-settled (round 2, P2): the
-                    # pass leaves what their users changed since, as the
-                    # check did.
-                    restored=frozenset(item_id for item_id, _ in drift.records),
+                    # The watches this check un-settled with Dreams off,
+                    # settled "off" with an ``at`` when it read them (round
+                    # 2, P2; round 3): the pass leaves what their users
+                    # changed since, as the check did.
+                    restored=drift.restored,
                     scheduling_db_getter=lambda: getattr(
                         getattr(app, "scheduling_service", None), "db", None),
                     on_settled=getattr(

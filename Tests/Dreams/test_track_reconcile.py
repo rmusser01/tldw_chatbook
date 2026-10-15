@@ -1417,18 +1417,22 @@ async def test_a_switch_off_the_user_makes_still_stops_everything(
 
 
 @pytest.mark.asyncio
-async def test_an_upgraded_profiles_record_stops_only_the_restored_source(
-        tmp_path, settings, egress_seams, monkeypatch):
-    """Review of #3123, round 2, P3. A record an earlier build wrote has no
-    ``at``: whether its rule and reminder were re-armed by the user or by
-    the restore cannot be told, and a user's choice is not undone on a
-    guess. The restored source is stopped; the rule and the reminder stay
-    as the restore left them, at this start and the next."""
+@pytest.mark.parametrize("restored", [("sched",), ("subs", "sched")])
+async def test_an_upgraded_profiles_record_is_never_kept_on_a_guess(
+        tmp_path, settings, egress_seams, monkeypatch, restored):
+    """Review of #3123, round 2, P3, and round 3. A record an earlier
+    build wrote has no ``at``: whether its rule and reminder were re-armed
+    by the user or by the restore cannot be told. Alone, they are not
+    taken for the restore's (a user's choice is not undone on a guess);
+    with a restored source the watch is un-settled, and its pass -- which
+    keeps the user's changes only on a record with an ``at`` -- stops and
+    records all three (switching Dreams on restores them). Either way the
+    next start reads it the same."""
     stores = _RealStores(tmp_path, monkeypatch)
     try:
         tracked = await stores.track()
         source_id = tracked["subscription_id"]
-        stores.backup("before")
+        stores.backup("before", keys=restored)
         await stores.switch(settings, on=False)
         item_id = tracked["tracked_item_id"]
         record = json.loads(_suspension(stores.dreams_path, item_id))
@@ -1438,12 +1442,62 @@ async def test_an_upgraded_profiles_record_stops_only_the_restored_source(
             db.set_tracked_suspension(item_id, json.dumps(record))
         finally:
             db.close_all()
-        stores.restore("before")
-        assert await stores.running(source_id) == (True, True, True), "fixture"
+        stores.restore("before", keys=restored)
+        with_source = "subs" in restored
+        assert await stores.running(source_id) == (
+            with_source, True, with_source), "fixture"
 
         for _start in range(2):
             await track_reconcile.reconcile_at_boot(stores.app())
-            assert await stores.running(source_id) == (False, True, True)
+            assert await stores.running(source_id) == (
+                False, not with_source, False)
+        record = json.loads(_suspension(stores.dreams_path, item_id))
+        assert record["settled"] == "off"
+        if with_source:
+            assert record["subscription"] and record["reminders"] and (
+                record["rules"]), "stopped and recorded"
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_a_switch_off_during_a_start_with_dreams_on_stops_everything(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """Review of #3123, round 3. With Dreams on, the check writes restart
+    debts (no ``at``); the start passed their ids to the pass as watches
+    to keep the user's changes on, so a switch-off landing while the start
+    worked left the armed reminder running, settled the watch "off" with
+    no ``at`` -- and no later start or switch-off looked at it again."""
+    from tldw_chatbook.Dreams import track_service
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        await stores.switch(settings, on=False)
+        stores.backup("off", keys=("subs",))
+        await stores.switch(settings, on=True)
+        stores.restore("off", keys=("subs",))
+        assert await stores.running(source_id) == (False, True, False), (
+            "fixture: source and rule off as backed up, the reminder armed")
+        real_backfill = track_service.backfill_egress_marks
+
+        async def switched_off_meanwhile(*args, **kwargs):
+            settings["enabled"] = False  # the user, while the start works
+            return await real_backfill(*args, **kwargs)
+
+        monkeypatch.setattr(
+            track_service, "backfill_egress_marks", switched_off_meanwhile)
+        db = DreamsDB(stores.dreams_path, "boot-app")
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(db))
+        finally:
+            db.close_all()
+
+        assert await stores.running(source_id) == (False, False, False)
+        record = json.loads(_suspension(stores.dreams_path,
+                                        tracked["tracked_item_id"]))
+        assert record["settled"] == "off" and record.get("at"), record
     finally:
         stores.close()
 

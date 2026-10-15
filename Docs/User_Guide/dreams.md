@@ -156,11 +156,12 @@ again before anything runs -- and so is a source or reminder Dreams had
 switched off when you untracked its page. A reminder or change alert you
 switched back on yourself after Dreams switched it off stays on: only
 one that last changed before then is taken for the restore's. A watch
-switched off by an earlier version of the app does not say when, so
-its reminder and change alert stay as the restore left them -- only its
-source is stopped again -- and tracking such a page again turns its
-change alert back on; switching Dreams on and off once records the
-time. If a
+switched off by an earlier version of the app does not say when, so a
+reminder or change alert of it that is on stays on -- unless the
+restore also switched its source back on: then all three are stopped
+again, and come back when you switch Dreams on. Tracking such a page
+again turns its change alert back on, and switching Dreams on and off
+once records the time. If a
 store cannot be read at that start (for example while a restored
 profile still waits for your review), nothing Dreams owns is started
 for the rest of the session -- the next start looks again -- but a
