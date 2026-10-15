@@ -1,11 +1,11 @@
 ---
 id: TASK-32688
 title: Acquire bounded Git and local plugin snapshots
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:31'
-updated_date: '2026-10-15 22:08'
+updated_date: '2026-10-15 22:18'
 labels:
   - plugins
   - implementation
@@ -28,10 +28,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 GitHub shorthand, explicit HTTPS/SSH origins, refs and subdirectories resolve to immutable commits with separate source and package provenance.
-- [ ] #2 Acquisition uses checked Git argv, restricted transports and host authentication, with repository hooks, filters, LFS, recursive submodules and build/install execution disabled.
-- [ ] #3 Fetch/materialization limits apply during work; traversal, remote local-file authority, escaping links, special files and cross-platform path collisions are rejected.
-- [ ] #4 Cancellation, missing Git, moving refs, quota and authentication errors preserve the installed revision and redact credentials without blocking startup.
+- [x] #1 GitHub shorthand, explicit HTTPS/SSH origins, refs and subdirectories resolve to immutable commits with separate source and package provenance.
+- [x] #2 Acquisition uses checked Git argv, restricted transports and host authentication, with repository hooks, filters, LFS, recursive submodules and build/install execution disabled.
+- [x] #3 Fetch/materialization limits apply during work; traversal, remote local-file authority, escaping links, special files and cross-platform path collisions are rejected.
+- [x] #4 Cancellation, missing Git, moving refs, quota and authentication errors preserve the installed revision and redact credentials without blocking startup.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,3 +70,15 @@ Verification handoff from H2 review F3: any child bootstrap/network/profile fixt
 18. Task21 initial independent review at de3707eedd7aeca0b0a16caf162fb138b88e536b:0Critical/1Important/0Minor, spec/quality need fixes. Fix round1 original implementer owns I1 only in Plugins/acquisition.py and Tests/Plugins/test_acquisition_limits.py. Force one retained-worker unthrottled staging+managed+free-reserve check after final materialization and before successful result publication; during-work polling remains bounded. Actual same-entry RED/within-limit control must exercise a final write inside the polling interval crossing staging/managed/reserve thresholds. Failure returns no snapshot, preserves installed state and actual process/thread/slot/cleanup custody; no unreviewed failed output may become an executable/review authority. No new source paths/ADR/schema/owner; existing accepted quota contract applies.
 19. Fix1 record exact reviewed HEAD baselines before changes; preserve initial report/frozen evidence/commands and append fix report. Run final exact-three after amended-source freeze using already-recorded narrow native context and actual private pytest roots; no repeat of unchanged neighbor/fixture groups absent a new demonstrated concern. Cover final capacity failure/cancellation/terminal custody and valid same-entry result. Static strict2current/2reviewedBASE plus frozen/readonly/hash/whitespace. Root commits, then fresh scoped I1/new-fix-breakage re-review; all3 initial CVs separately resolved as recorded owner/consumer/qualification handoffs, no whole-feature completeness claim.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented bounded immutable Git/local acquisition through the existing PluginService worker and runtime owner. Closed remote locators and explicit local selection remain distinct. Git plumbing verifies commit/tree/blob content without source-controlled checkout, hooks, filters, submodules, LFS or install execution. Supported host authentication is projected privately; unsupported policy and origin changes refuse.
+
+Existing authority signs exact preinstallation staging custody. Cancellation retains processes, threads and slots until terminal proof; native identity, references and24-hour age gate cleanup. R85 retires eligible cleaned receipts without a permanent lifetime cap. The reviewed Fix1 forces final staging/managed/free-reserve accounting before success and keeps failed output out of successful candidate references. R86 restores the shared fixture marker used by real restart consumers. Main additions: Plugins/acquisition.py, git_source.py, service/model/owner/materializer/authentication seams, three feature test files and repository-owned process fixtures.
+
+Validation:78 final feature tests;232 targeted neighbors;2 shared-fixture consumers;14 separate ordinary parser controls. Meaningful Fix1 RED3 failures/3 controls then7 focused passes; changed-file Ruff/Black/AST/whitespace pass. Independent full review and scoped Fix1 review accepted with no open findings; all frozen/provenance evidence verified. Native probe restrictions used narrowly recorded execution contexts; five marker-path failures were fixed in ordinary execution. No full suite or environment changes.
+
+ADR required: yes, existing backlog/decisions/162-managed-agent-plugins.md amended for R83–R85; linked spec/subplan and actual incident lesson updated. R86 needs no new ADR. Qualification is macOS/APFS with conservative URL/auth support; real remote SSH accounts, other OSes and every TLS variant are unqualified. Polled quota/native containment and protected lost/reboot custody limits remain explicit. Authenticated installation/catalog/update-origin persistence belongs to the separate catalog consumer increment; acquisition grants no activation or permission.
+<!-- SECTION:NOTES:END -->

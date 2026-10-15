@@ -20424,3 +20424,20 @@ failed drafts were valid or that any product input behavior was fixed.
 **TASK-32687, vendor adapter qualification, 2026-10-15.** The frozen component/context group returned2 failures,31 passes and5 errors. Both failures and three setup errors reached `data_cleanup.boot_identity` before any hook child launch; two later teardown errors reported retained root authority. The exact read-only `sysctlbyname("kern.bootsessionuuid", ...)` primitive returned EPERM4/4 in the tool sandbox and valid37-byte UUID-shaped output4/4 under approved normal host execution. UUID values were never logged. The unchanged36-test pair then passed in that approved context; the five hook files had already passed238 in their original context and were not repeated.
 
 **What to do.** Trace the first failed owner primitive and separate subsequent cleanup aftermath. Compare that same primitive in the proposed execution contexts before changing code or labeling a failure baseline/environmental. Preserve fail-closed production probes, frozen bytes, private test profiles and original errors; record any approved context change and rerun only the affected files. A successful retry alone is not cause evidence or a claim of wider platform support.
+
+
+## Shared fixture markers must match restart constructors (TASK-32688, 2026-10-15)
+
+Task21's six-file neighbor run produced five retention restart failures with
+`plugin authority marker missing`. Task19 had changed the shared `native_console`
+fixture from `tmp_path/marker` to `tmp_path/console-marker`; unchanged restart
+constructors still opened `profile_root.parent/marker`. Exact traces and blame
+identified that mismatch. Restoring the canonical fixture path gave35 ordinary
+retention passes and207 final ordinary neighbor passes.
+
+The same initial run separately hit the sandbox-denied native boot identity in
+surviving-process tests. Those25 cases passed in narrowly reviewed normal host
+execution. Trace the actual first exception before changing execution context:
+a context change cannot repair a wrong fixture marker, and missing-marker
+validation must remain strict. Shared fixture path changes need their real
+restart consumers as targeted evidence.
