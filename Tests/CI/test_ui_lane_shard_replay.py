@@ -179,7 +179,8 @@ def test_the_census_tail_block_keeps_the_shape_write_relies_on():
     A blank line among the block's own entries would travel with the entry
     after it and drift towards the header over repeated writes, so the block
     has none. Only the entries the header announces are checked: anything
-    appended after them is not this block and may be laid out as usual.
+    appended after them is not this block and may be laid out as usual,
+    unless --write is to re-order it with the block (then no blank lines).
     """
     census = _SCRIPT.parent / "ui_pr_gate_census.txt"
     lines = census.read_text(encoding="utf-8").splitlines()
@@ -198,7 +199,7 @@ def test_the_census_tail_block_keeps_the_shape_write_relies_on():
     blank = next((i for i in range(header, len(lines)) if not lines[i].strip()), None)
     assert blank is not None, "no blank line ends the block header"
     assert all(line.lstrip().startswith("#") for line in lines[header:blank]), (
-        "a non-comment line inside the block header"
+        "a non-comment line inside the block header (is the blank line that ends it missing?)"
     )
     assert blank + 1 < len(lines) and lines[blank + 1].strip(), (
         "more than one blank line ends the block header, or no entry follows it"

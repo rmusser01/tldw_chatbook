@@ -278,7 +278,8 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 # Each keeps the comment that names what it pins, which the replay's --write
 # moves with it; the blank line below ends this header, so it stays here.
 # Append new entries after them; one added above them moves every one of them
-# to another shard.
+# to another shard. Entries that --write will re-order with this block (its
+# --tail counts them too) must not be blank-separated from it.
 
 # TASK-33007.2: Connect's API key source words and Clear key, the Key check
 # row, an endpoint with no shipped default and the card's result line.

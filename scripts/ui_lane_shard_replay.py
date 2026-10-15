@@ -17,7 +17,8 @@ Usage:
     # one directory per CI run, one file per shard job; --shards is the UI
     # lane's matrix size, --tail the number of entries to re-order, counted
     # back from the end of the census (the block's announced count plus any
-    # entries appended after it):
+    # entries appended after it; such entries must not be blank-separated,
+    # or --write carries the blank into the block):
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
     python scripts/ui_lane_shard_replay.py --shards 10 run1 run2
     python scripts/ui_lane_shard_replay.py --shards 10 --tail 92 --write run1 run2
