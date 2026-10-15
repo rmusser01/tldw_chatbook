@@ -259,9 +259,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Console_Modules/session.py": {
         "Character swap: roleplay template seed failed": ("type(exc).__name__",),
         "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
-        "Console turn context: persona policy rules resolution failed": (
-            "type(exc).__name__",
-        ),
+        # The "Console turn context: persona policy rules resolution failed"
+        # row was removed: the persona posture now degrades to the identity
+        # posture silently (narrowing-only), so there is no resolution-failure
+        # diagnostic left to review.
         # The two "Console session startup: ..." diagnostics were removed by
         # 11150b849d (independent Buddy management), which retired the
         # startup persona/settings resolution they reported on.
