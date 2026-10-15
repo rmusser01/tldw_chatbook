@@ -366,7 +366,10 @@ jobs:
     #
     # TASK-34986: PR2921's two Dreams/Guardian steps took this job to max
     # 18.7 min of 20; they run in dreams-boundary now, and the two Console
-    # P0 steps replay at median 11.6 / max 13.9 min.
+    # P0 steps replay at median 11.6 / max 13.9 min over the 76 runs that
+    # finished. In the two runs cancelled at the cap they alone took ~17.5
+    # (a failing run) and ~16.1 min with setup: about 4 min of headroom at
+    # worst, not 6.
     name: Console P0 regression gate
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -467,7 +470,9 @@ jobs:
     # ~2 min of it), Dreams boundary 1.8 / 2.1, Dreams admission-sensitive
     # 2.6 / 3.9 (test_watchlists_bulk_source_authoring ~2 min). Replaying
     # the same 76 runs with each job's own setup: console-p0-gate median 11.6
-    # / max 13.9 min, this job median 5.2 / max 6.7. Not into dreams-tracking:
+    # / max 13.9 min, this job median 5.2 / max 6.7. The two runs cancelled
+    # at the cap are not in that replay; there the Console P0 steps alone took
+    # ~17.5 (a failing run) and ~16.1 min with setup. Not into dreams-tracking:
     # that job already varies 6.2-12.7 min (250 tests since #3108), and these
     # steps would take it to ~18.6. Each step is still its own pytest process,
     # the admission-sensitive one after the sandboxed one (TASK-32873).

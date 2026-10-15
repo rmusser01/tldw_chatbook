@@ -9,7 +9,7 @@ labels:
 priority: medium
 assignee:
 - '@claude'
-updated_date: 2026-10-14 19:50
+updated_date: 2026-10-15 15:32
 ---
 
 ## Description
@@ -42,7 +42,7 @@ Split the Console P0 regression gate along its two owners instead of raising the
 
 Measured (gh api jobs for 83 pull_request runs of derived-artifacts.yml, 2026-10-13 01:53Z to 2026-10-14 19:35Z; 76 with every step completed): the gate took median 16.1 / p90 17.4 / max 18.7 min, and 2 runs were cancelled at the 20-min cap (38493363303, 38500380448, 20.3 min). The 13 runs on the post-#3106 layout: median 16.3 / max 18.0. (The 13.0 median in the task description predates the Dreams steps landing in this job with #2921.) Per step over the 76 runs, median / max: sandboxed Console P0 2.94 / 3.48, admission-sensitive Console P0 7.79 / 9.65, Dreams boundary 1.83 / 2.05, Dreams admission-sensitive 2.57 / 3.90, setup ~0.8. Per file (12 green runs' logs, progress-line timestamps): the admission step is dominated by Tests/UI/test_console_row_menu_action_sweep.py (median 117 s), test_console_hook_review_send_freeze (50 s), test_response_rules_write_contention (49 s), test_deepseek_explicit_mode (37 s); the sandboxed step by test_app_keep_alive_dead_screen (46 s) and test_console_conversation_action_menu (43 s); the Dreams admission step by test_watchlists_bulk_source_authoring (123 s).
 
-Choice (replay of the same 76 runs: each half = the job's own setup + the steps it keeps): console-p0-gate with the two Console steps median 11.6 / p90 12.7 / max 13.9 min (6.1 min under the cap; AC#1 asks 4); dreams-boundary median 5.2 / p90 5.7 / max 6.7. A balanced split (admission alone 10.4 max, sandboxed + Dreams 9.8 max) was rejected: it splits the Console P0 sandboxed/admission pair across jobs and mixes owners for 3.5 min. Not into dreams-tracking: that job varies 6.2-12.7 min (250 tests since #3108; one run 685 s of tests), and these steps would take it to ~18.6.
+Choice (replay of the same 76 runs: each half = the job's own setup + the steps it keeps): console-p0-gate with the two Console steps median 11.6 / p90 12.7 / max 13.9 min on those 76 runs. That replay dropped the two runs cancelled at 20.3 min (review of #3117, item 1): there the two Console steps alone took 16.7 min (38493363303, a failing run: sandboxed 4.6 and admission-sensitive 12.1, both red) and 15.2 min (38500380448, both green), about 17.5 and 16.1 with setup. So the worst green case leaves about 4 min under the cap, AC#1's floor, not the 6.1 first quoted; dreams-boundary median 5.2 / p90 5.7 / max 6.7. A balanced split (admission alone 10.4 max, sandboxed + Dreams 9.8 max) was rejected: it splits the Console P0 sandboxed/admission pair across jobs and mixes owners for 3.5 min. Not into dreams-tracking: that job varies 6.2-12.7 min (250 tests since #3108; one run 685 s of tests), and these steps would take it to ~18.6.
 
 Change: both steps keep their targets, order, --timeout (180 / 300) and 'if: ${{ !cancelled() }}' (parsed comparison of every pytest step before/after: argv and if identical, only the job changed); same install line, 20-min cap (the one they had). Each step is still its own pytest process, the admission-sensitive one second (TASK-32873). The required aggregate needs dreams-boundary and has a 'Require successful Dreams and Guardian boundary contracts' verdict. console-p0-gate keeps 5 steps. One more runner per PR (ADR-103 note): eleven test runners.
 
@@ -55,6 +55,7 @@ AC#1 left unchecked: it needs 20 measured runs of the new layout. Verify with th
 Tests: Tests/CI + Tests/Packaging/test_python_runtime_floor.py 930 passed, 1 skipped; YAML parses; ruff findings on the four touched tests identical per file and message to HEAD.
 
 Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, Tests/CI/test_response_rules_critical_gate.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
+Review of #3117, item 1 (re-check on later data): over the 43 runs since #3106 merged in which the gate finished every step, the replay gives the two Console P0 steps plus setup median 11.4 / max 13.6 min. On dev the gate itself kept reaching for its cap meanwhile: median 16.0 / max 19.5 over 48 finished runs, and one more cancelled at 20.1 min (38671778432, whose Console steps took 13.0 min). Both figures checked with the scratchpad's measure2.py-style replay against gh api jobs data.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
