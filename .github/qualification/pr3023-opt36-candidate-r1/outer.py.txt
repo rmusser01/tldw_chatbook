@@ -1,8 +1,4 @@
-"""UNRUN operational draft. Root must bind/review the concrete publication first.
-
-Only stdlib orchestration here. TESTs, gate, reader and product execute solely in
-the four literal children from the separately reviewed candidate command plan.
-"""
+"""One-case Windows installation bridge; exact Root binding and reviews required."""
 
 import argparse
 import hashlib
@@ -14,18 +10,19 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import xml.etree.ElementTree as ET
 
 
-PLAN_SHA = "525ac556548ed30e62cc82f2ea0d6c3973af3bc3e4870f66ec8fdb9ac7854540"
+PLAN_SHA = "5c71b46663ff0b8088cb0df46a97f66ac0ff4b4c21c68d9346b415ddcbc94924"
 MAP_SHA = "11c4741b7b544c89d30f2f2536558d3480f9fe968086d794fc6db2d0eb667b01"
-ASSET_COUNT = 49
+ASSET_COUNT = 34
 CONFIG_PATH = "tldw_chatbook/config.py"
 CONFIG_BEFORE = "096361f6c4255a49646d3b9383282ed180bd82cde90caf4b376b9ba8e840c960"
-CONFIG_AFTER = "da3a1d55cc080bd193fe1a37a04ae5f4fc83d8d5cb9bb78a05fa13135b4ce026"
+CONFIG_AFTER = "47de2fc374da8c98431e4111ec76b5ca594974482bdac66514085094979d371b"
 ARTIFACT_NAME = "pr3023-opt36-candidate-r1"
 
 
@@ -96,7 +93,7 @@ def identity(root, binding):
     return {"head": os.environ["GITHUB_SHA"], "parent": binding["publication_parent"],
             "goal_snapshot_origin_commit": binding["goal_snapshot_origin_commit"], "changed_paths": changed,
             "runtime_mechanism_origin_only": "f6bb9fba4a707dfeb4491ffa9903a52086424f6a",
-            "scope": "Exact Root-supplied selected Goal snapshot; runtime acquisition head is not the product baseline."}
+            "scope": "Approved cb89 component prefix plus temporary current47de config; not whole current8546 Goal."}
 
 
 def packet_check(packet, binding):
@@ -111,9 +108,9 @@ def packet_check(packet, binding):
     for row in rows:
         path = relative(packet, row["path"])
         assert not path.is_symlink() and path.stat().st_size == row["bytes"] and sha(path) == row["sha256"]
-    assert sha(packet / "source-map-selected-r4.json") == MAP_SHA
-    assert sha(packet / "candidate-command-plan.json") == PLAN_SHA
-    return read(packet / "candidate-command-plan.json"), read(packet / "source-map-selected-r4.json")
+    assert sha(packet / "component-baseline-source-map.json") == MAP_SHA
+    assert sha(packet / "command-plan.json") == PLAN_SHA
+    return read(packet / "command-plan.json"), read(packet / "component-baseline-source-map.json")
 
 
 def initialize(root, archive, binding_path, expected_binding):
@@ -151,7 +148,7 @@ def initialize(root, archive, binding_path, expected_binding):
         initial = sources(root)
         write(archive / "sources-initial.json", initial)
         assert len(selected) == 8479 and initial == selected
-        assert len(plan["stage"]) == 2 and len(plan["products_staged"]) == 1
+        assert len(plan["stage"]) == 1 and len(plan["products_staged"]) == 1
         product = plan["products_staged"][0]
         assert product["logical_path"] == CONFIG_PATH
         assert product["before_sha256"] == selected[CONFIG_PATH] == CONFIG_BEFORE
@@ -168,7 +165,7 @@ def initialize(root, archive, binding_path, expected_binding):
                 role, before_sha = "temporary_config_replacement", CONFIG_BEFORE
                 assert row["sha256"] == CONFIG_AFTER
             else:
-                role, before_sha = "unchanged_current_source", row["sha256"]
+                role, before_sha = "unchanged_approved_component_source", row["sha256"]
             if before_sha is not None:
                 assert sha(relative(root, name)) == before_sha
             roles.append({"logical_path": name, "role": role, "checkout_before_sha256": before_sha,
@@ -219,159 +216,30 @@ def passed(case):
     return all(case.find(tag) is None for tag in ("failure", "error", "skipped"))
 
 
-def observer(document, expected_count, nodeid, properties, packet):
-    assert document["observer_errors"] == []
-    observation = document["observation"]
-    assert isinstance(observation, dict) and observation["gate"]["original_fixture_callback_observed"] is False
-    expected_sources = {r["module"]: r["sha256"] for r in read(packet / "expected-sources.json")["sources"]}
-    expected_sources.update({r["module"]: r["sha256"] for r in read(packet / "runtime-binding.json")["sources"]})
-    actual_sources = {r["module"]: r["sha256"] for r in observation["gate"]["sources"]}
-    assert len(actual_sources) == len(observation["gate"]["sources"])
-    assert all(expected_sources[name] == value for name, value in actual_sources.items())
-    assert actual_sources["tldw_chatbook.config"] == CONFIG_AFTER
-    capture = observation["adapter_capture"]
-    assert capture["factory_present_at_runtime"] is False and capture["reader_invoked_factory_checker_or_producer"] is False
-    assert capture["independently_compiled_actual_closures"] is True
-    assert capture["helper_qualname"] == "_bind_user_data_dir_stamps.<locals>._user_data_dir_stamps"
-    assert capture["checker_qualname"] == "_bind_user_data_dir_stamps.<locals>.source_current"
-    assert (capture["function_records"], capture["fixed_bindings"], capture["cached_receivers"], capture["canonical_modules"]) == (25, 39, 3, 3)
-    name = nodeid.split("::")[1].split("[")[0]
-    parameter = nodeid.rsplit("[", 1)[1][:-1] if "[" in nodeid else None
-    held = name == "test_actual_batch_return_or_projection_source_change_discards_whole_sample"
-    retained = name == "test_shipping_helper_propagates_exact_retained_native_close"
-    empty = name == "test_empty_and_missing_descendants_preserve_original_positions_without_optional_empty_work"
-    observed = observation["native_observers"]
-    assert len(observed) == expected_count
-    for index, row in enumerate(observed):
-        births = row["births"]
-        assert not row["excluded"] and row["actual_monitor_retired"] is True
-        assert [birth["ordinal"] for birth in births] == list(range(len(births)))
-        assert all(b["status"] >= 0 and b["thread"] == observation["caller"] for b in births)
-        if empty and index == 0:
-            assert not births and not row["errors"] and row["pending_births"] == 0
-            assert row["close_birth_ordinals"] == [] and row["counts"] == {} and row["security"] == []
-            continue
-        assert births
-        if retained:
-            assert row["errors"] == ["native-birth-not-retired-once", "post-drain-handle-still-valid"] and row["pending_births"] == 1
-            detail = json.loads(properties["retained_close_without_fallback_or_retry"])
-            cleanup = json.loads(properties["retained_fixture_finally_retired"])
-            outcome, api = parameter.split("-")
-            assert detail["outcome"] == cleanup["outcome"] == outcome and detail["api"] == cleanup["api"] == api
-            assert detail["native_close_attempts_for_exact_owner"] == cleanup["original_close_attempts"] == detail["helper_entries"] == 1
-            assert detail["scalar_fallbacks_after_error"] == 0
-            assert all(detail[key] is True for key in ("same_failed_owner", "protected_physical_owner_still_valid",
-                "same_actual_cause_context_suppression", "original_traceback_tail_preserved", "same_shipping_error_object"))
-            failed = [b for b in births if b["closes"] != [[True, 0]]]
-            assert len(failed) == 1 and failed[0]["handle"] == cleanup["continuous_handle"]
-            assert cleanup["fixture_unprotected_then_native_closed"] is True and cleanup["native_invalid_error"] == 6
-            assert detail["births"] == len(births) and detail["observer_retention_expected_not_retirement_claim"] == row["errors"]
-            if outcome == "raising":
-                assert failed[0]["closes"] == []
-                expected_closed = [b["ordinal"] for b in births if b is not failed[0]]
-            else:
-                assert outcome == "protected_false" and len(failed[0]["closes"]) == 1
-                assert failed[0]["closes"][0][0] is False and failed[0]["closes"][0][1] != 0
-                expected_closed = list(range(len(births)))
-            assert sorted(row["close_birth_ordinals"]) == expected_closed
-        else:
-            assert row["pending_births"] == 0
-            if held and parameter in {"batch_body", "batch_defaults"}:
-                assert row["errors"] in ([], ["source-changed"])
-            else:
-                assert row["errors"] == []
-            assert sorted(row["close_birth_ordinals"]) == list(range(len(births)))
-            assert all(b["closes"] == [[True, 0]] for b in births)
-            assert row["security"] and all(security[0] and security[1] for security in row["security"])
-    shipping = observation["shipping_observers"]
-    assert all(row["errors"] == [] and row["monitor_retired"] is True for row in shipping)
-    if held:
-        assert len(shipping) == 1
-        active = shipping[0]
-        boundary = json.loads(properties["actual_shipping_source_boundary"])
-        expected_checkpoint = ["projection" if parameter == "projection" else "batch-return"]
-        assert active["returns"] == 1 and active["changed"] is True and active["drains"]
-        assert active["false_checkpoints"] == boundary["genuine_false_checkpoints"] == expected_checkpoint
-        assert active["restored_at_false_return"] is boundary["original_slots_restored_before_false_was_consumed"] is True
-        assert boundary["change"] == parameter and boundary["mutation_fired"] is True and boundary["actual_batch_returns"] == 1
-        assert boundary["physical_drains_before_change"] == active["drains"]
-        assert boundary["scalar_calls_after_batch"] == active["starts"].get("posture", 0) == 0
-        assert boundary["observer_errors"] == [] and boundary["native_source_errors"] == observed[0]["errors"]
-    if name == "test_shipping_large_descriptor_uses_original_scalar_only_after_physical_drain":
-        assert len(shipping) == 1
-        positive = json.loads(properties["shipping_descriptor_fallback_after_original_drain"])
-        assert positive["postures_equal"] is True and positive["actual_batch_errors"] == positive["helper_entries"] == 1
-        assert positive["original_error"] == ["PermissionError", 13, "windows_admission_descriptor_unavailable"]
-        assert positive["physical_drain_before_scalar"] == shipping[0]["drains"] and len(shipping[0]["drains"]) == 1
-        assert positive["counts"] == observed[0]["counts"] and positive["native_births"] == len(observed[0]["births"])
-        assert len(positive["original_scalar_paths"]) == 2 and positive["original_scalar_paths"][0] == positive["original_scalar_paths"][1]
-    if name == "test_shipping_helper_uses_one_fresh_batch_after_equal_values_and_retirement":
-        positive = json.loads(properties["shipping_causal_before_schedule_assert"])
-        native = observed[0]
-        assert positive["five_field_values_equal"] is positive["same_order_duplicate"] is True and positive["observer_errors"] == []
-        assert positive["counts"] == positive["expected_batch_counts"] == native["counts"]
-        assert positive["births_retired_once"] == len(native["births"]) and positive["ancestry"] == native["ancestry"]
-        assert positive["caller"] == observation["caller"]
-    return observation
+
 
 
 def assess(command, directory, receipt, plan, archive):
     nodes = command["expected_nodeids"]
-    gates = [read(path) for path in sorted((directory / "gates").glob("*.json"))]
-    assert len(gates) == command["expected_gates"]
+    assert len(nodes) == 1
     if command["mode"] == "collection":
         found = [line.strip() for line in (directory / "stdout.log").read_text(encoding="utf-8").splitlines()
                  if line.strip().startswith("Tests/") and "::" in line]
         assert found == nodes and receipt["returncode"] == 0
-        return {"classification": "EXACT_COLLECTION", "nodeids": found, "gates": 0}
-    parent_cases = cases(directory / "pytest.xml", nodes, plan)
-    assert receipt["returncode"] == 0 and all(passed(case) for case in parent_cases)
-    parents = [g for g in gates if g["pid"] == receipt["pid"]]
-    assert [g["nodeid"] for g in sorted(parents, key=lambda g: nodes.index(g["nodeid"]))] == nodes
-    assert all(g["parent_pid"] == os.getpid() and g["private_profile_node_marker"] is None for g in parents)
-    children = [g for g in gates if g["pid"] != receipt["pid"]]
-    assert len(children) == command["expected_private_profile_child_cases"]
-    child_receipts = []
-    for document in parents:
-        index = nodes.index(document["nodeid"])
-        assert document["reports_before_teardown_result"] == [{"when": "setup", "outcome": "passed"}, {"when": "call", "outcome": "passed"}]
-        name = document["nodeid"].split("::")[1].split("[")[0]
-        expected = 0
-        if command["group"] == "candidate31":
-            if name in {"test_shipping_helper_uses_one_fresh_batch_after_equal_values_and_retirement",
-                        "test_actual_batch_return_or_projection_source_change_discards_whole_sample",
-                        "test_shipping_large_descriptor_uses_original_scalar_only_after_physical_drain",
-                        "test_shipping_helper_propagates_exact_retained_native_close"}:
-                expected = 1
-            elif name == "test_direct_custom_posture_keeps_original_dispatch_before_optional_work":
-                expected = int(not document["nodeid"].endswith(("[function]", "[callable]")))
-            elif name == "test_empty_and_missing_descendants_preserve_original_positions_without_optional_empty_work":
-                expected = 2
-        properties = {p.get("name"): p.get("value") for p in parent_cases[index].findall("properties/property")}
-        observation = observer(document, expected, document["nodeid"], properties, archive / "packet")
-        assert observation["private_profile_child"] is False and observation["launcher"]["actual_main_stack_observed"] is True
-        for child in observation["private_profile_children"]:
-            assert type(child["pid"]) is int and child["pid"] > 0 and child["returncode"] == 0 and child["original_timeout"] == 180
-            xml, log, work, profile = (Path(child[key]).resolve() for key in ("xml", "log", "work", "profile"))
-            assert all(p.is_relative_to(archive) for p in (xml, log, work, profile))
-            assert xml.is_file() and log.is_file() and work.is_dir() and profile.is_dir()
-            assert passed(cases(xml, [document["nodeid"]], plan)[0])
-            matching = [g for g in children if g["pid"] == child["pid"] and g["nodeid"] == document["nodeid"]]
-            assert len(matching) == 1
-            inner = matching[0]
-            assert inner["nodeid"] == document["nodeid"] == inner["private_profile_node_marker"]
-            assert inner["parent_pid"] == receipt["pid"]
-            assert inner["reports_before_teardown_result"] == [{"when": "setup", "outcome": "passed"}, {"when": "call", "outcome": "passed"}]
-            actual = observer(inner, 0, document["nodeid"], {}, archive / "packet")
-            assert actual["private_profile_child"] is True and not actual["private_profile_children"] and actual["memo_resolver_callbacks"]
-            assert actual["launcher"]["spec_name"] == "pytest.__main__"
-            child_receipts.append(child)
-    assert len(child_receipts) == len(children)
-    return {"classification": "CANDIDATE_COHORT_PASS_PENDING_INDEPENDENT_ACTUAL_REVIEW",
-            "parent_cases": len(parent_cases), "child_cases": len(children), "gates": len(gates), "children": child_receipts}
+        return {"classification": "EXACT_COLLECTION", "nodeids": found}
+    result = cases(directory / "pytest.xml", nodes, plan)
+    assert receipt["returncode"] == 0 and len(result) == 1 and passed(result[0])
+    properties = result[0].findall("properties/property")
+    capture = [p.get("value") for p in properties if p.get("name") == "opt36_current_windows_installation"]
+    assert len(capture) == 1
+    document = json.loads(capture[0])
+    write(directory / "installation-capture.json", document)
+    # Root independently audits every capture field; this is only raw-case status.
+    return {"classification": "ONE_CASE_PASS_PENDING_INDEPENDENT_ACTUAL_REVIEW", "parent_cases": 1,
+            "private_profile_children": 0, "capture_property": "installation-capture.json"}
 
 
-def child(command, root, packet, archive, plan):
+def child(command, root, packet, archive, plan, direct_memory):
     fields = {"python": sys.executable, "checkout_root": str(root), "packet_root": str(packet),
               "archive": str(archive), "pathsep": os.pathsep}
     directory = Path(command["archive"].format(**fields)).resolve()
@@ -386,16 +254,23 @@ def child(command, root, packet, archive, plan):
         environment.update({key: value.format(**fields) for key, value in source.items()})
     receipt = {"argv": argv, "cwd": str(root), "parent_pid": os.getpid(), "started": False,
                "environment_overrides": {key: environment[key] for key in plan["environment"]}, "waited": False}
-    process = None
+    # A persisted intent prevents a shell finalizer from overlooking a missing
+    # start receipt. No child is launched unless this write completed.
+    write(directory / "start-intent.json", {key: receipt[key] for key in ("argv", "cwd", "parent_pid")})
+    process, primary = None, None
     try:
         with (directory / "stdout.log").open("wb") as out, (directory / "stderr.log").open("wb") as err:
+            direct_index = len(direct_memory)
+            direct_memory.append((None, receipt))
             process = subprocess.Popen(argv, cwd=root, env=environment, stdout=out, stderr=err)
+            direct_memory[direct_index] = (process, receipt)
             receipt.update(started=True, pid=process.pid)
-            # Start receipt stays inside the ownership/cleanup try.
             write(directory / "process.json", receipt)
-            receipt["returncode"] = process.wait()
+            receipt["returncode"] = process.wait(timeout=210)
             receipt["waited"] = True
             receipt["poll"] = process.poll()
+    except BaseException as failure:
+        primary = failure
     finally:
         if process is not None:
             try:
@@ -406,46 +281,125 @@ def child(command, root, packet, archive, plan):
                             receipt["cleanup_terminated"] = True
                         except BaseException:
                             receipt["terminate_error"] = traceback.format_exc()
-                    receipt["cleanup_returncode"] = process.wait()
+                    try:
+                        receipt["cleanup_returncode"] = process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        receipt["cleanup_killed"] = True
+                        receipt["cleanup_returncode"] = process.wait(timeout=30)
                     receipt["waited"] = True
                     receipt["waited_in_cleanup"] = True
-            finally:
+            except BaseException as cleanup:
+                if primary is None:
+                    primary = cleanup
+                else:
+                    primary.add_note("direct-child cleanup: " + repr(cleanup))
+            try:
                 receipt["final_poll"] = process.poll()
-                receipt["direct_child_handle_scope"] = "Actual Popen object/pid/wait/poll on Windows; no POSIX ECHILD claim. Inner original helper owns its three asyncio children."
-                write(directory / "process.json", receipt)
-        else:
+            except BaseException as cleanup:
+                if primary is None:
+                    primary = cleanup
+                else:
+                    primary.add_note("direct-child final poll: " + repr(cleanup))
+            receipt["direct_child_handle_scope"] = "Actual Popen object/pid/wait/poll on Windows; no POSIX ECHILD claim. This metadata-only case declares no private-profile memo children."
+        try:
             write(directory / "process.json", receipt)
+        except BaseException as diagnostic:
+            if primary is None:
+                primary = diagnostic
+            else:
+                primary.add_note("direct-child receipt write: " + repr(diagnostic))
+    if primary is not None:
+        raise primary
     assert receipt["started"] and receipt["waited"] and receipt["poll"] == receipt["returncode"] == receipt["final_poll"]
     result = assess(command, directory, receipt, plan, archive)
     write(directory / "assessment.json", result)
     return result
 
 
-def restore(root, archive, packet, binding):
-    errors = []
-    attempt = archive / ("restoration-attempt-" + str(len(list(archive.glob("restoration-attempt-*")))))
-    attempt.mkdir(exist_ok=False)
+def replace_config(target, body, mode):
+    """Atomic transition from complete verified bytes in the same directory."""
+    temporary = None
     try:
-        write(attempt / "sources-before.json", sources(root))
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".opt36-config-", delete=False) as stream:
+            temporary = Path(stream.name)
+            assert stream.write(body) == len(body)
+        temporary.chmod(mode)
+        assert temporary.read_bytes() == body
+        os.replace(temporary, target)
+    finally:
+        primary = sys.exc_info()[1]
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except BaseException as cleanup:
+                if primary is None:
+                    raise
+                primary.add_note("owned config temporary cleanup:" + repr(cleanup))
+
+
+def restore(root, archive, packet, binding, owned_memory=None, products_memory=None, direct_memory=None):
+    errors, custody_errors = [], []
+    attempt = None
+    try:
+        attempt = archive / ("restoration-attempt-" + str(len(list(archive.glob("restoration-attempt-*")))))
+        attempt.mkdir(exist_ok=False)
+    except BaseException:
+        errors.append("restoration attempt directory: " + traceback.format_exc())
+    try:
+        before = sources(root)
+        if attempt is not None:
+            write(attempt / "sources-before.json", before)
     except BaseException:
         errors.append("pre-restoration map: " + traceback.format_exc())
-    owned = read(archive / "owned-tests.json") if (archive / "owned-tests.json").is_file() else []
-    products = read(archive / "owned-products.json") if (archive / "owned-products.json").is_file() else []
-    # A shell fallback cannot recover a vanished Python Popen handle from a PID.
-    # Refuse removal while any start receipt lacks a completed native wait/poll.
-    for path in archive.glob("*/*/process.json"):
-        try:
-            receipt = read(path)
-            if receipt["started"] and (receipt.get("final_poll") is None or not receipt.get("waited")):
-                errors.append("unsettled direct-child receipt: " + str(path.relative_to(archive)))
-        except BaseException:
-            errors.append("unreadable direct-child receipt: " + str(path.relative_to(archive)))
-    if not errors:
+    owned, products = [], []
+    try:
+        owned = owned_memory if owned_memory is not None else (read(archive / "owned-tests.json") if (archive / "owned-tests.json").is_file() else [])
+    except BaseException:
+        errors.append("TEST ownership journal: " + traceback.format_exc())
+    try:
+        products = products_memory if products_memory is not None else (read(archive / "owned-products.json") if (archive / "owned-products.json").is_file() else [])
+    except BaseException:
+        errors.append("product ownership journal: " + traceback.format_exc())
+    if direct_memory is not None:
+        # Use the actual objects retained before any start-receipt write. Never
+        # reconstruct a Popen handle or wait result from a serialized PID.
+        for process, receipt in direct_memory:
+            try:
+                code = receipt.get("cleanup_returncode") if receipt.get("waited_in_cleanup") else receipt.get("returncode")
+                assert (process is not None and receipt.get("started") and receipt.get("waited")
+                        and code is not None and process.poll() == code == receipt.get("final_poll"))
+            except BaseException:
+                custody_errors.append("unsettled in-memory direct child: " + traceback.format_exc())
+    else:
+        # A shell fallback has no live Popen objects. Every persisted spawn
+        # intent requires its matching completed receipt; missing means unsafe.
+        intents = {p.parent: p for p in archive.glob("*/*/start-intent.json")}
+        receipts = {p.parent: p for p in archive.glob("*/*/process.json")}
+        for directory in sorted(set(intents) | set(receipts)):
+            try:
+                intent, receipt = read(intents[directory]), read(receipts[directory])
+                assert all(intent[key] == receipt[key] for key in ("argv", "cwd", "parent_pid"))
+                code = receipt.get("cleanup_returncode") if receipt.get("waited_in_cleanup") else receipt.get("returncode")
+                assert receipt.get("started") and receipt.get("waited") and code is not None and receipt.get("final_poll") == code
+            except BaseException:
+                custody_errors.append("missing/unsettled direct-child intent/receipt: " + str(directory.relative_to(archive)))
+    errors.extend(custody_errors)
+    # Evidence failures make this run fail, but only unresolved child custody
+    # blocks attempts to remove exact owned bytes and restore the config.
+    if not custody_errors:
         for row in reversed(owned):
             try:
+                logical = root / row["logical_path"]
                 path = relative(root, row["logical_path"])
-                if path.exists():
-                    if path.is_file() and sha(path) == row["sha256"]:
+                if logical.is_symlink():
+                    errors.append("retained symlink TEST: " + row["logical_path"])
+                elif path.exists():
+                    info = path.lstat()
+                    body, actual_body = relative(packet, row["source"]).read_bytes(), path.read_bytes()
+                    matching_bytes = actual_body == body or (row.get("stage_complete") is False and body.startswith(actual_body))
+                    if (path.is_file() and (info.st_dev, info.st_ino) == (row["device"], row["inode"])
+                            and sha(relative(packet, row["source"])) == row["sha256"] and matching_bytes):
                         path.unlink()
                     else:
                         errors.append("retained changed TEST: " + row["logical_path"])
@@ -453,36 +407,47 @@ def restore(root, archive, packet, binding):
                 errors.append("TEST restore attempt: " + traceback.format_exc())
         for row in reversed(products):
             try:
+                logical = root / row["logical_path"]
                 path, backup = relative(root, row["logical_path"]), relative(archive, row["backup_path"])
-                if not backup.is_file() or sha(backup) != row["before_sha256"]:
+                if logical.is_symlink():
+                    errors.append("retained symlink product: " + row["logical_path"])
+                elif not backup.is_file() or sha(backup) != row["before_sha256"]:
                     errors.append("retained product: invalid original backup: " + row["logical_path"])
                 elif not path.is_file():
                     errors.append("retained missing product: " + row["logical_path"])
-                elif sha(path) == row["before_sha256"]:
-                    pass  # Idempotent shell/always finalizer after successful restore.
-                elif sha(path) == row["sha256"]:
-                    path.write_bytes(backup.read_bytes())
+                elif sha(path) in (row["before_sha256"], row["sha256"]):
+                    if sha(path) == row["sha256"]:
+                        replace_config(path, backup.read_bytes(), row["mode"])
                     if sha(path) != row["before_sha256"]:
                         errors.append("product restoration hash differs: " + row["logical_path"])
+                    if path.stat().st_mode & 0o777 != row["mode"]:
+                        errors.append("product restoration mode differs: " + row["logical_path"])
                 else:
                     errors.append("retained changed product: " + row["logical_path"])
             except BaseException:
                 errors.append("product restore attempt: " + traceback.format_exc())
     actual = None
     try:
-        selected = read(packet / "source-map-selected-r4.json")
-        actual = sources(root)
-        write(archive / "sources-restored.json", actual)
+        selected, actual = read(packet / "component-baseline-source-map.json"), sources(root)
         if actual != selected or len(actual) != 8479:
             errors.append("restored scoped source map differs from exact8479")
         identity(root, binding)
     except BaseException:
-        errors.append(traceback.format_exc())
-    result = {"ok": not errors, "errors": errors, "owned_created_tests": owned,
+        errors.append("restored source/identity guard: " + traceback.format_exc())
+    try:
+        if actual is not None:
+            write(archive / "sources-restored.json", actual)
+    except BaseException:
+        errors.append("restored map write: " + traceback.format_exc())
+    result = {"ok": not errors, "errors": errors, "custody_errors": custody_errors, "owned_created_tests": owned,
               "owned_temporary_products": products, "restored_python_rows": len(actual) if actual is not None else None,
-              "scope": "Guarded removal of two owned TEST creations and restoration of one exact temporary config replacement from archived original bytes. No hard-cancellation/process-tree guarantee."}
-    write(archive / "restoration.json", result)
-    write(attempt / "restoration.json", result)
+              "scope": "Guarded removal of one owned TEST creation and restoration of one exact temporary config replacement from archived original bytes. No hard-cancellation/process-tree guarantee."}
+    for target in ([attempt / "restoration.json"] if attempt is not None else []) + [archive / "restoration.json"]:
+        try:
+            write(target, result)
+        except BaseException:
+            errors.append("restoration receipt write: " + traceback.format_exc())
+            result["ok"] = False
     return result
 
 
@@ -494,17 +459,18 @@ def artifacts(archive):
 
 def run(root, archive):
     packet, binding = archive / "packet", read(archive / "provenance/binding.json")
-    results, errors, owned, products = [], [], [], []
-    write(archive / "outer-process.json", {"pid": os.getpid(), "parent_pid": os.getppid(), "argv": sys.argv,
-          "executable": sys.executable, "scope": "Self-reported foreground outer process; its four direct Popen child waits/polls are separate."})
+    results, errors, owned, products, direct_memory = [], [], [], [], []
+    primary = None
     try:
+        write(archive / "outer-process.json", {"pid": os.getpid(), "parent_pid": os.getppid(), "argv": sys.argv,
+              "executable": sys.executable, "scope": "Self-reported foreground outer process; its two direct Popen child waits/polls are separate."})
         assert read(archive / "initialized.json")["ok"] is True
         identity(root, binding)
         plan, selected = packet_check(packet, binding)
         before = sources(root)
         write(archive / "sources-before.json", before)
         assert before == selected and len(selected) == 8479
-        assert [(c["group"], c["mode"]) for c in plan["commands"]] == [("candidate31", "collection"), ("candidate31", "test"), ("compatible_r13_5", "collection"), ("compatible_r13_5", "test")]
+        assert [(c["group"], c["mode"]) for c in plan["commands"]] == [("current_binding", "collection"), ("current_binding", "test")]
         assert not os.environ.get("TLDW_TEST_PRIVATE_PROFILE_NODE") and os.environ.get("TLDW_REQUIRE_ELEVATED_CUSTODY") != "1"
         runtime(packet, archive)
         assert len(plan["products_staged"]) == 1
@@ -519,46 +485,70 @@ def run(root, archive):
             with backup.open("xb") as stream:
                 stream.write(target.read_bytes())
             assert sha(backup) == CONFIG_BEFORE
-            products.append(dict(row, backup_path=backup_name))
+            products.append(dict(row, backup_path=backup_name, mode=target.stat().st_mode & 0o777))
             write(archive / "owned-products.json", products)  # Journal before mutation.
-            target.write_bytes(candidate.read_bytes())
+            replace_config(target, candidate.read_bytes(), products[-1]["mode"])
             assert sha(target) == CONFIG_AFTER
         for row in plan["stage"]:
             target = relative(root, row["logical_path"])
             assert not target.exists() and sha(relative(packet, row["source"])) == row["sha256"]
-            owned.append({"logical_path": row["logical_path"], "sha256": row["sha256"]})
-            write(archive / "owned-tests.json", owned)
             with target.open("xb") as stream:
-                stream.write(relative(packet, row["source"]).read_bytes())
+                info = os.fstat(stream.fileno())
+                owned.append(dict(row, device=info.st_dev, inode=info.st_ino, stage_complete=False))
+                write(archive / "owned-tests.json", owned)
+                body = relative(packet, row["source"]).read_bytes()
+                assert stream.write(body) == len(body)
+            assert sha(target) == row["sha256"]
+            owned[-1]["stage_complete"] = True
+            write(archive / "owned-tests.json", owned)
         staged = dict(selected)
         staged.update({r["logical_path"]: r["sha256"] for r in products + owned})
-        assert sources(root) == staged and len(staged) == 8481
+        assert sources(root) == staged and len(staged) == 8480
         write(archive / "sources-staged.json", sources(root))
         for command in plan["commands"]:
             assert sources(root) == staged
             try:
-                result = child(command, root, packet, archive, plan)
+                result = child(command, root, packet, archive, plan, direct_memory)
                 results.append(dict(group=command["group"], mode=command["mode"], **result))
             finally:
-                after = sources(root)
-                write(archive / ("sources-after-" + command["group"] + "-" + command["mode"] + ".json"), after)
-                assert after == staged
-                non_python(root, binding)
-    except BaseException:
+                child_failure = sys.exc_info()[1]
+                try:
+                    after = sources(root)
+                    assert after == staged
+                    non_python(root, binding)
+                    write(archive / ("sources-after-" + command["group"] + "-" + command["mode"] + ".json"), after)
+                except BaseException as guard_failure:
+                    if child_failure is None:
+                        raise
+                    child_failure.add_note("post-child source/evidence guard: " + repr(guard_failure))
+    except BaseException as failure:
+        primary = failure
         errors.append(traceback.format_exc())
     finally:
         try:
-            restoration = restore(root, archive, packet, binding)
-        except BaseException:
+            restoration = restore(root, archive, packet, binding, owned, products, direct_memory)
+        except BaseException as failure:
             restoration = {"ok": False, "errors": [traceback.format_exc()]}
-            write(archive / "restoration.json", restoration)
-        write(archive / "result.json", {"ordered_results": results, "errors": errors, "restoration": restoration,
-              "status": "COMPLETE_PENDING_INDEPENDENT_ACTUAL_REVIEW" if not errors and restoration["ok"] else "INCOMPLETE_OR_UNQUALIFIED_CANDIDATE_RESULT",
-              "scope": "Candidate31 then separate compatible5/three genuine memo children only. No product/source/task acceptance or elapsed claim."})
-        artifacts(archive)
+            if primary is None:
+                primary = failure
+            else:
+                primary.add_note("restoration failure: " + repr(failure))
+        result = {"ordered_results": results, "errors": errors, "restoration": restoration,
+                  "status": "COMPLETE_PENDING_INDEPENDENT_ACTUAL_REVIEW" if not errors and restoration["ok"] else "INCOMPLETE_OR_UNQUALIFIED_CANDIDATE_RESULT",
+                  "scope": "One current47de Windows installation capture in approved component prefix; no behavior replay, whole Goal, native, latency or Task completion."}
+        try:
+            write(archive / "result.json", result)
+            artifacts(archive)
+        except BaseException as diagnostic:
+            if primary is None:
+                primary = diagnostic
+            else:
+                primary.add_note("final result/artifact evidence: " + repr(diagnostic))
+    if primary is not None:
+        raise primary
     if errors or not restoration["ok"]:
         return 1
-    return 0 if len(results) == 4 and results[-1]["classification"] == "CANDIDATE_COHORT_PASS_PENDING_INDEPENDENT_ACTUAL_REVIEW" else 2
+    return 0 if len(results) == 2 and results[-1]["classification"] == "ONE_CASE_PASS_PENDING_INDEPENDENT_ACTUAL_REVIEW" else 2
 
 
 def main():

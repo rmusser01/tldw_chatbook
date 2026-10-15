@@ -1,18 +1,19 @@
 {
   "status": "ROOT_BOUND_AND_INDEPENDENTLY_REVIEWED",
-  "publication_parent": "95ed22a0186011ecaf4c1de308d03a2253a239e7",
-  "goal_snapshot_origin_commit": "95ed22a0186011ecaf4c1de308d03a2253a239e7",
+  "publication_parent": "cb89cd956ff60f9560949fb710dcac35ee2a0701",
+  "goal_snapshot_origin_commit": "cb89cd956ff60f9560949fb710dcac35ee2a0701",
   "runtime_mechanism_origin_only": "f6bb9fba4a707dfeb4491ffa9903a52086424f6a",
   "workflow_path": ".github/workflows/console-pause-native-evidence.yml",
   "packet_zip_path": ".github/qualification/pr3023-opt36-candidate-r1/packet.zip",
-  "outer_sha256": "62ed5e8ab7fba73fda3a4190dfbce7a1fea95e44160c4554435718011816f69f",
-  "packet_zip_sha256": "e20b8e40256bc651794683c15bedec6b6df1b9caf9d3221ebfd76a3ddc1073a1",
-  "packet_manifest_sha256": "db1448cc8a9d78731eafdb081ad792925465e1e71ae406ed5ef5032557fb4e93",
-  "reader_test_review_sha256": "a8b9f6dc244f8b5e6e0f31070ac56691b51788c6af3c614079db5d52776f2d8f",
-  "operational_review_sha256": "90447560e1cf8eef153a6c3adf98c2ac3753a58a802ad0622da7903c7b4e91f8",
+  "outer_sha256": "4881de1fe9f349d416c7ea4c3ebb4ca6fa607d807180621af52c20297d810779",
+  "packet_zip_sha256": "4ccefc2756c6539cb68c0df6332ceebf60fa6edd7e4e98fe3ec1d72c6e6d6502",
+  "packet_manifest_sha256": "db152c64d6780d1be04be8f1a1276ece636fd9a0a31a50136416e18fb20d34e5",
+  "reader_test_review_sha256": "5b6aa3d53a132451b2426e5052004f6811ca0afd953d5e1df1940bf49fc0e5f4",
+  "operational_review_sha256": "29a7286527ac7f169519e6b77c92206a598056b627070aa65ebbd4ebb2278e82",
   "native_asset_inventory_review_sha256": "4ef19200eea557af2f77e5b0731bea30a98e7450e017f7e17f16f86348c864c9",
   "changed_paths": [
     ".github/qualification/pr3023-opt36-candidate-r1/binding.json",
+    ".github/qualification/pr3023-opt36-candidate-r1/outer.py.txt",
     ".github/qualification/pr3023-opt36-candidate-r1/packet.zip",
     ".github/workflows/console-pause-native-evidence.yml"
   ],
@@ -39,8 +40,11 @@
     }
   ],
   "python_source_map_sha256": "11c4741b7b544c89d30f2f2536558d3480f9fe968086d794fc6db2d0eb667b01",
-  "command_plan_sha256": "525ac556548ed30e62cc82f2ea0d6c3973af3bc3e4870f66ec8fdb9ac7854540",
-  "required_root_attestation": "Exact original95ed published snapshot, unchanged8479 Python/map11c/config096 and all original finite guards. Three operational paths only: reader correction inside ZIP plus corresponding digest/manifest bindings and workflow binding hash. No new product/TEST/source export or current-dev equivalence. Previous failed run38758192365 remains immutable; candidate31 and compatible5/original bounds unchanged; native result pending.",
+  "command_plan_sha256": "5c71b46663ff0b8088cb0df46a97f66ac0ff4b4c21c68d9346b415ddcbc94924",
+  "required_root_attestation": "Exact approved cb89 component prefix8479/map11c/config096; four operational paths only. Temporarily stage entire current47de config plus one absent metadata TEST,8480staged, restore exact8479. One natural Windows parent body/no memo child/native behavior replay/plugin. Explicit importlib180/210/30/30 custody, same original runtime/native source guards. This mixed prefix excludes current private_paths/input_validation/fixtures/encryption transitions and is not whole current8546 Goal/config/Windows qualification. Prior31+5/3 behavior and current23 ordinary outcomes remain separate. No TaskDone, latency, global retirement, PR-check bypass or merge claim.",
   "original_goal_snapshot_origin_commit": "5d4369a45834b0964b84d8bb23f3fd87ca61dc1a",
-  "original_reader_test_review_sha256": "94e022e70e421c9d5ff327b0943a39f9953b201d23b44761e239e638b118a668"
+  "original_reader_test_review_sha256": "94e022e70e421c9d5ff327b0943a39f9953b201d23b44761e239e638b118a668",
+  "original_qualified_component_head": "cb89cd956ff60f9560949fb710dcac35ee2a0701",
+  "root_outer_review_sha256": "1c24dc6bdfecccc9a7b28e29172fa39e8e4bfbd6d2bee127ac2f5c64a1462e0f",
+  "artifact_name": "pr3023-opt36-current-binding-r1"
 }
