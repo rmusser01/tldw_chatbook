@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
+    Iterable,
     Iterator,
     List,
     Dict,
@@ -2409,6 +2410,50 @@ class SubscriptionsDB(BaseDB):
             )
 
             return subscription_id
+
+    def run_states(
+        self, subscription_ids: Iterable[int], rule_ids: Iterable[int] = ()
+    ) -> tuple[Dict[int, Dict[str, Any]], Dict[int, Dict[str, Any]]]:
+        """The state of some subscriptions and alert rules, in two reads.
+
+        The Dreams start check (TASK-34924) compares what Dreams' records
+        say with the sources and rules a restore may have put back; these
+        are its two reads of this store, by primary key.
+
+        Args:
+            subscription_ids: Subscriptions to read.
+            rule_ids: Local alert rules to read.
+
+        Returns:
+            ``({subscription_id: {"is_active", "is_paused", "source",
+            "processing_options"}}, {rule_id: {"enabled", "updated_at"}})``
+            for the rows that exist; a deleted row is absent.
+        """
+        sources = sorted({int(value) for value in subscription_ids})
+        rules = sorted({int(value) for value in rule_ids})
+        states: Dict[int, Dict[str, Any]] = {}
+        enabled: Dict[int, Dict[str, Any]] = {}
+        if not sources and not rules:
+            return states, enabled  # no connection opened for nothing
+        with self.connection() as conn:
+            if sources:
+                marks = ", ".join("?" for _ in sources)
+                for row in conn.execute(
+                        "SELECT id, is_active, is_paused, source,"
+                        " processing_options FROM subscriptions"
+                        f" WHERE id IN ({marks})", sources):
+                    states[int(row[0])] = {
+                        "is_active": bool(row[1]), "is_paused": bool(row[2]),
+                        "source": row[3], "processing_options": row[4]}
+            if rules:
+                marks = ", ".join("?" for _ in rules)
+                for row in conn.execute(
+                        "SELECT id, enabled, updated_at"
+                        " FROM local_watchlist_alert_rules"
+                        f" WHERE id IN ({marks})", rules):
+                    enabled[int(row[0])] = {
+                        "enabled": bool(row[1]), "updated_at": row[2]}
+        return states, enabled
 
     def get_subscription(self, subscription_id: int) -> Optional[Dict[str, Any]]:
         """Get a subscription by ID."""

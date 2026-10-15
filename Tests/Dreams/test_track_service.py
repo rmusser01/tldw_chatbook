@@ -4100,13 +4100,16 @@ async def test_a_second_story_on_the_page_shares_the_recorded_rule(
     assert len(await _change_rules(service, first["subscription_id"])) == 1
 
 
-def _seed_story(dreams_db, title: str) -> int:
-    collection = dreams_db.get_collection_by_date("2026-09-20")
+def _seed_story(dreams_db, title: str, *, url=None, date="2026-09-20") -> int:
+    """A story; ``url`` is the page a page watch of it tracks (a Dreams
+    source's URL is its story's, review of #3123, M1). Two stories of one
+    page need two dates: a collection holds a URL once."""
+    collection = dreams_db.get_collection_by_date(date)
     collection_id = (int(collection["id"]) if collection else
-                     dreams_db.create_collection("2026-09-20", "manual", "d"))
+                     dreams_db.create_collection(date, "manual", "d"))
     return dreams_db.insert_story(
         collection_id, title=title,
-        url=f"https://dreams.test/{title.replace(' ', '-')}", snippet="",
+        url=url or f"https://dreams.test/{title.replace(' ', '-')}", snippet="",
         body="b", status="complete", source="web", kind="content",
         event_date=None, location=None, matched_topics=[], query="q")
 
@@ -4119,7 +4122,7 @@ async def test_a_rule_from_before_ids_were_recorded_is_adopted_by_exact_identity
     watch's own story would have given it -- and then by id for good. A
     look-alike with any other name stays the user's."""
     subs_db, service = subs_stack
-    story_id = _seed_story(dreams_db, "Festival line-up announced")
+    story_id = _seed_story(dreams_db, "Festival line-up announced", url=_URL)
     tracked = await track_page(
         service, dreams_db, url=_URL, title="Festival line-up announced",
         intent="event", origin_story_id=story_id)
@@ -5870,7 +5873,7 @@ async def test_a_global_rule_is_never_taken_for_dreams_own_however_it_is_named(
     source."""
     subs_db, service = subs_stack
     title = "Festival line-up announced"
-    story_id = _seed_story(dreams_db, title)
+    story_id = _seed_story(dreams_db, title, url=_URL)
     tracked = await track_page(
         service, dreams_db, url=_URL, title=title, intent="event",
         origin_story_id=story_id)
@@ -5943,7 +5946,7 @@ async def test_a_rule_an_earlier_build_named_with_brackets_is_still_dreams_own(
     the brackets; it must still be recognised (and silenced with Dreams)."""
     subs_db, service = subs_stack
     title = "[PDF] Rust conference"
-    story_id = _seed_story(dreams_db, title)
+    story_id = _seed_story(dreams_db, title, url=_URL)
     tracked = await track_page(
         service, dreams_db, url=_URL, title=title, intent="event",
         origin_story_id=story_id)
@@ -6031,8 +6034,8 @@ async def test_a_watch_retired_during_the_switch_on_ends_with_its_source_off(
 
 async def _two_watches_one_owing(dreams_db, service, scheduling_db):
     """A and B ride one source; the switch-off recorded the stop on B only."""
-    first = _seed_story(dreams_db, "one")
-    second = _seed_story(dreams_db, "two")
+    first = _seed_story(dreams_db, "one", url=_URL)
+    second = _seed_story(dreams_db, "two", url=_URL, date="2026-09-21")
     a = await track_page(service, dreams_db, url=_URL, title="Flights",
                          intent="deal", origin_story_id=first)
     b = await track_page(service, dreams_db, url=_URL, title="Flights",
@@ -6277,7 +6280,8 @@ async def test_tracking_while_dreams_is_off_changes_nothing_and_says_why(
     subs_db, service = subs_stack
     first = await track_page(
         service, dreams_db, url=_URL, title="Festival", intent="event",
-        event_date="2026-10-01", origin_story_id=_seed_story(dreams_db, "one"),
+        event_date="2026-10-01",
+        origin_story_id=_seed_story(dreams_db, "one", url=_URL),
         scheduling_db_getter=_sched_getter(scheduling_db))
     settings["enabled"] = False
     await _switch(service, dreams_db, scheduling_db, off=True)
@@ -6294,7 +6298,8 @@ async def test_tracking_while_dreams_is_off_changes_nothing_and_says_why(
         lambda: track_page(
             service, dreams_db, url=_URL, title="Festival", intent="event",
             event_date="2026-10-01",
-            origin_story_id=_seed_story(dreams_db, "two"),
+            origin_story_id=_seed_story(
+                dreams_db, "two", url=_URL, date="2026-09-21"),
             scheduling_db_getter=_sched_getter(scheduling_db)),
         lambda: track_page(
             service, dreams_db, url="https://example.com/other", title="Other",
@@ -6847,3 +6852,76 @@ def test_the_switch_lock_is_one_per_event_loop_and_stays_put():
         second.close()
     assert a1 is a2 and b1 is b2
     assert a1 is not b1
+
+
+# --- TASK-34985: a re-track after an untrack while Dreams was off alerts ------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["dreams-created", "users-own"])
+async def test_tracking_again_after_untracking_while_off_alerts_again(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, source):
+    """The switch-off silenced Dreams' change rule and its record said so;
+    retiring the watch while Dreams was off dropped that, and tracking the
+    page again reused the rule as it stood: a tracked page that never
+    alerts. A user's own disabled rule on their own source stays off."""
+    _subs_db, service = subs_stack
+    users_rule = None
+    if source == "dreams-created":
+        owned = await _event_page(dreams_db, service, scheduling_db)
+        source_id, item_id = owned["subscription_id"], owned["tracked_item_id"]
+        track_again = lambda: _event_page(dreams_db, service, scheduling_db)
+    else:
+        source_id, attached = await _attach_to_users_source(
+            dreams_db, service, provenance=UrlProvenance.USER_ENTERED)
+        item_id = attached["tracked_item_id"]
+        users_rule = await _users_rule(service, job_id=source_id)
+        await service.update_alert_rule(users_rule["rule_id"], enabled=False)
+        track_again = lambda: track_page(
+            service, dreams_db, url="https://example.com/users-own",
+            title="Theirs", intent="topic", origin_story_id=2)
+    dreams_rule = _rule_id_on_record(dreams_db, item_id)
+    settings["enabled"] = False
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await untrack(service, dreams_db, item_id,
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+    settings["enabled"] = True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    await track_again()
+
+    rules = {r["rule_id"]: r["enabled"]
+             for r in await service.list_alert_rules(job_id=source_id)}
+    assert rules[dreams_rule] is True or rules[dreams_rule] == 1, (
+        "the tracked page alerts again")
+    if users_rule is not None:
+        assert not rules[users_rule["rule_id"]], "the user's own rule stays off"
+
+
+@pytest.mark.asyncio
+async def test_tracking_again_leaves_off_a_rule_the_user_switched_off_after(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Review of #3123, N4. The rule a retired watch's record owes is the
+    one Dreams switched off; switched on and off again by the user after
+    the untrack, it is the user's, and tracking the page again leaves it
+    off -- and the record no longer owes it."""
+    _subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id = owned["tracked_item_id"]
+    dreams_rule = _rule_id_on_record(dreams_db, item_id)
+    settings["enabled"] = False
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    await untrack(service, dreams_db, item_id,
+                  scheduling_db_getter=_sched_getter(scheduling_db))
+    await service.update_alert_rule(dreams_rule, enabled=True)
+    await service.update_alert_rule(dreams_rule, enabled=False)
+    settings["enabled"] = True
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    await _event_page(dreams_db, service, scheduling_db)
+
+    rules = {r["rule_id"]: r["enabled"] for r in await service.list_alert_rules(
+        job_id=owned["subscription_id"])}
+    assert not rules[dreams_rule], "the user's switch-off stands"
+    assert dreams_rule not in (_record(dreams_db, item_id) or {}).get(
+        "rules", []), "and is no longer owed"

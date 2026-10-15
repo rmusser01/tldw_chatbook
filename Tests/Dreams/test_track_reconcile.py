@@ -884,6 +884,7 @@ async def test_boot_suspend_settles_against_the_real_stores(
         (rule,) = await service.list_alert_rules(job_id=source_id)
         assert not rule["enabled"]
         record = json.loads(_suspension(path, item_id))
+        assert record.pop("at"), "when the switch-off settled it (#3123, M2)"
         assert record == {
             "subscription": True, "reminders": [reminder["id"]],
             "rules": [rule["rule_id"]], "settled": "off"}
@@ -899,3 +900,645 @@ async def test_boot_suspend_settles_against_the_real_stores(
     finally:
         subs_db.close()
         scheduling_db.close()
+
+
+# --- TASK-34924: a restore that undoes the switch is caught at the next start --
+#
+# Switching Dreams off stops the sources, rules and reminders its watches
+# own; they live in the subscriptions and scheduling stores, which a backup
+# restores on their own, while Dreams' records (another store) do not
+# change. A restore is modelled as what it is to these stores: their files
+# replaced by an earlier copy while the app is down.
+
+
+class _RealStores:
+    """The three real stores and the slice of the app the boot reads."""
+
+    def __init__(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+            lambda section, key, default=None: default)
+        self.tmp = tmp_path
+        self.dreams_path = tmp_path / "dreams.sqlite"
+        monkeypatch.setattr(
+            track_reconcile, "get_dreams_db_path", lambda: self.dreams_path)
+        self.paths = {"subs": tmp_path / "subscriptions.db",
+                      "sched": tmp_path / "scheduled.db"}
+        self._open()
+
+    def _open(self):
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+        from tldw_chatbook.Subscriptions import LocalWatchlistsService
+
+        self.subs_db = SubscriptionsDB(self.paths["subs"], "restore-test")
+        self.scheduling_db = ScheduledTasksDB(self.paths["sched"], "restore-test")
+        self.service = LocalWatchlistsService(db_factory=lambda: self.subs_db)
+
+    def close(self):
+        self.subs_db.close()
+        self.scheduling_db.close()
+
+    def backup(self, name, keys=("subs", "sched")):
+        import sqlite3
+
+        for key, path in self.paths.items():
+            if key not in keys:
+                continue
+            source = sqlite3.connect(path)
+            target = sqlite3.connect(self.tmp / f"{name}-{key}.db")
+            with target:
+                source.backup(target)
+            source.close()
+            target.close()
+
+    def restore(self, name, keys=("subs", "sched")):
+        """The app is down; the store files are put back as they were."""
+        import shutil
+
+        self.close()
+        for key, path in self.paths.items():
+            if key not in keys:
+                continue
+            for suffix in ("-wal", "-shm"):
+                Path(str(path) + suffix).unlink(missing_ok=True)
+            shutil.copyfile(self.tmp / f"{name}-{key}.db", path)
+        self._open()
+
+    def app(self, dreams_db=None):
+        return SimpleNamespace(
+            get_dreams_db=lambda: dreams_db,
+            local_watchlists_service=self.service,
+            subscriptions_db=self.subs_db,
+            scheduling_service=SimpleNamespace(db=self.scheduling_db),
+            scheduler_loop=SimpleNamespace(request_reload=lambda: None),
+        )
+
+    async def switch(self, settings, *, on: bool):
+        from tldw_chatbook.Dreams.track_service import set_tracking_suspended
+
+        settings["enabled"] = on
+        db = DreamsDB(self.dreams_path, "restore-test")
+        try:
+            await set_tracking_suspended(
+                self.service, db, suspended=not on,
+                scheduling_db_getter=lambda: self.scheduling_db)
+        finally:
+            db.close_all()
+
+    async def track(self):
+        from tldw_chatbook.Dreams.track_service import track_page
+
+        db = DreamsDB(self.dreams_path, "restore-test")
+        try:
+            return await track_page(
+                self.service, db, url="https://example.com/festival",
+                # Far ahead: the switch-on and the boot run the lifecycle
+                # sweep on the real clock, which retires a passed event.
+                title="Festival", intent="event", event_date="2099-10-01",
+                origin_story_id=1,
+                scheduling_db_getter=lambda: self.scheduling_db)
+        finally:
+            db.close_all()
+
+    async def running(self, source_id):
+        (reminder,) = self.scheduling_db.list_reminder_tasks(owner_id="local")
+        (rule,) = await self.service.list_alert_rules(job_id=source_id)
+        return (bool(int(self.subs_db.get_subscription(source_id)["is_active"])),
+                bool(reminder["enabled"]), bool(rule["enabled"]))
+
+
+@pytest.mark.asyncio
+async def test_a_restore_with_dreams_off_runs_nothing_dreams_created(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """AC 1: a backup taken while Dreams was on is restored into a profile
+    where Dreams is off. The restored source, rule and reminder ran again
+    -- the records said everything was stopped, so the start read none of
+    them. The start now finds them out of step and stops them."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        stores.backup("while-on")
+        await stores.switch(settings, on=False)
+        assert await stores.running(source_id) == (False, False, False)
+
+        stores.restore("while-on")
+        assert await stores.running(source_id) == (True, True, True), "fixture"
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert await stores.running(source_id) == (False, False, False)
+        record = json.loads(_suspension(stores.dreams_path,
+                                        tracked["tracked_item_id"]))
+        assert record["settled"] == "off" and record["subscription"] is True
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_a_restore_with_dreams_on_runs_every_live_watchs_source(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """AC 2: a backup taken while Dreams was off is restored into a profile
+    where Dreams is on (only the subscriptions and schedules came back).
+    Dreams' records owe nothing -- switching on cleared them -- so the
+    source stayed off under a live watch. The start now gives the watch a
+    restart debt and the switch-on pass restarts it."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        await stores.switch(settings, on=False)
+        stores.backup("while-off")
+        await stores.switch(settings, on=True)
+        assert (await stores.running(source_id))[0] is True
+
+        stores.restore("while-off")
+        assert (await stores.running(source_id))[0] is False, "fixture"
+        dreams_db = DreamsDB(stores.dreams_path, "boot-app")
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(dreams_db))
+        finally:
+            dreams_db.close_all()
+
+        assert (await stores.running(source_id))[0] is True
+        assert _suspension(stores.dreams_path, tracked["tracked_item_id"]) is None
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [True, False], ids=["dreams-on", "dreams-off"])
+async def test_a_start_that_finds_the_stores_in_step_writes_and_loads_nothing(
+        tmp_path, settings, egress_seams, monkeypatch, on):
+    """The two reads are all an ordinary start pays: nothing is written
+    and the Dreams service chain is not imported."""
+    import sys
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        if not on:
+            await stores.switch(settings, on=False)
+        before = (stores.subs_db.get_subscription(source_id)["updated_at"],
+                  _suspension(stores.dreams_path, tracked["tracked_item_id"]))
+        _forget_track_service(monkeypatch)
+        dreams_db = DreamsDB(stores.dreams_path, "boot-app") if on else None
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(dreams_db))
+        finally:
+            if dreams_db is not None:
+                dreams_db.close_all()
+
+        assert "tldw_chatbook.Dreams.track_service" not in sys.modules
+        assert (stores.subs_db.get_subscription(source_id)["updated_at"],
+                _suspension(stores.dreams_path,
+                            tracked["tracked_item_id"])) == before
+    finally:
+        stores.close()
+
+
+def test_a_paused_source_the_switch_disabled_is_not_seen_as_running():
+    """Watchlists' Resume clears ``is_paused`` only: a source with
+    ``is_active`` 0 does not run, paused or not, and the start must not
+    take it for one a restore switched back on (it would every start)."""
+    rows = [{"id": 1, "subscription_id": 7, "created_by_dreams": 1,
+             "alert_rule_id": 0, "event_date": None,
+             "suspension": json.dumps({"subscription": True, "reminders": [],
+                                       "rules": [], "settled": "off"})}]
+
+    def state(active):
+        return {"is_active": active, "is_paused": True,
+                "source": "https://example.com/page", "processing_options": None}
+
+    assert not track_reconcile._restore_drift(
+        rows, [], {7: state(False)}, {}, [], enabled=False)
+    assert track_reconcile._restore_drift(
+        rows, [], {7: state(True)}, {}, [], enabled=False)
+
+
+@pytest.mark.asyncio
+async def test_a_restore_with_dreams_off_stops_what_a_retired_watch_left(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """AC 1, a retired watch: untracking it switched its source off and
+    disarmed its reminder, and its retirement record says so. A backup
+    from before the untrack brings both back running into a profile where
+    Dreams is now off; no switch pass reads a retired watch, so the start
+    stops them itself."""
+    from tldw_chatbook.Dreams.track_service import untrack
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        stores.backup("before-untrack")
+        db = DreamsDB(stores.dreams_path, "restore-test")
+        try:
+            await untrack(stores.service, db, tracked["tracked_item_id"],
+                          scheduling_db_getter=lambda: stores.scheduling_db)
+        finally:
+            db.close_all()
+        await stores.switch(settings, on=False)
+        assert (await stores.running(source_id))[:2] == (False, False), "fixture"
+
+        stores.restore("before-untrack")
+        assert (await stores.running(source_id))[:2] == (True, True), "fixture"
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert (await stores.running(source_id))[:2] == (False, False)
+    finally:
+        stores.close()
+
+
+# --- Review of #3123, M1: a reused source id is never Dreams' ------------------
+#
+# ``subscriptions.id`` is AUTOINCREMENT, and a restore puts the table's id
+# counter back too. Restore only the subscriptions from a backup older than
+# a watch, and the user's next new source gets the id Dreams' source had,
+# while the Dreams store still names that id as Dreams' own.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [False, True], ids=["dreams-off", "dreams-on"])
+async def test_the_start_never_acts_on_a_users_source_on_a_reused_id(
+        tmp_path, settings, egress_seams, monkeypatch, on):
+    """Dreams off: the user's active source used to be switched OFF at the
+    next start. Dreams on: the user's source, created inactive on purpose,
+    used to be switched ON (and a user-entered address skips the public
+    check)."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        settings["enabled"] = on
+        if not on:
+            settings["enabled"] = True  # track with Dreams on, then off
+        tracked = None
+        stores.backup("before-the-watch", keys=("subs",))
+        tracked = await stores.track()
+        if not on:
+            await stores.switch(settings, on=False)
+        stores.restore("before-the-watch", keys=("subs",))
+        from tldw_chatbook.Utils.egress import UrlProvenance
+
+        users = await stores.service.create_source({
+            "name": "My NAS", "url": "https://nas.example/status",
+            "source_type": "url", "active": not on,
+            "url_provenance": UrlProvenance.USER_ENTERED})
+        source_id = users["source_id"]
+        assert source_id == tracked["subscription_id"], "fixture: id reused"
+        dreams_db = DreamsDB(stores.dreams_path, "boot-app") if on else None
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(dreams_db))
+        finally:
+            if dreams_db is not None:
+                dreams_db.close_all()
+
+        assert bool(int(stores.subs_db.get_subscription(source_id)[
+            "is_active"])) is (not on), "the user's source is left as it was"
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_the_switch_off_never_stops_a_users_source_on_a_reused_id(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """The suspend pass took the reused id for Dreams' source and stopped
+    the user's own; the watch's source is gone and is handled as such."""
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        stores.backup("before-the-watch", keys=("subs",))
+        tracked = await stores.track()
+        stores.restore("before-the-watch", keys=("subs",))
+        users = await stores.service.create_source({
+            "name": "My NAS", "url": "https://nas.example/status",
+            "source_type": "url", "active": True,
+            "url_provenance": UrlProvenance.USER_ENTERED})
+        source_id = users["source_id"]
+        assert source_id == tracked["subscription_id"], "fixture: id reused"
+
+        await stores.switch(settings, on=False)
+
+        assert int(stores.subs_db.get_subscription(source_id)["is_active"]) == 1
+        record = json.loads(_suspension(stores.dreams_path,
+                                        tracked["tracked_item_id"]))
+        assert record["settled"] == "off" and record["subscription"] is False
+    finally:
+        stores.close()
+
+
+# --- Review of #3123, M2: a reminder or rule the user re-arms is theirs --------
+#
+# With Dreams off, a reminder (or Dreams' change rule) the user switches back
+# on in Schedules or Watchlists was disarmed again at every start -- no
+# restore needed. Rows carry ``updated_at``; the records now carry when the
+# switch-off (or the retirement) wrote them, and only a row last changed
+# before that is taken for one a restore brought back.
+
+
+def test_record_and_row_times_compare_to_the_millisecond():
+    """A record's ``at`` is canonical (milliseconds, ADR-173); a rule's
+    ``updated_at`` carries microseconds. The same millisecond is neither
+    before nor after (round 2, P1): not taken for a restore, and not the
+    user's change either."""
+    from tldw_chatbook.Dreams.track_reconcile import (
+        changed_after,
+        changed_before,
+    )
+
+    at = "2026-10-15T12:00:00.123Z"
+    same_ms = "2026-10-15T12:00:00.123456+00:00"
+    assert not changed_before(same_ms, at)
+    assert not changed_after(same_ms, at)
+    assert changed_before("2026-10-15T12:00:00.122999+00:00", at)
+    assert changed_after("2026-10-15T12:00:00.124000+00:00", at)
+    assert not changed_before(None, at) and not changed_after(None, at)
+
+
+_AT = "2026-10-15T12:00:00.123Z"
+_SAME_MS = "2026-10-15T12:00:00.123900+00:00"
+_MS_EARLIER = "2026-10-15T12:00:00.122999+00:00"
+
+
+@pytest.mark.parametrize("kind", ["rule", "reminder", "retired-reminder"])
+def test_a_row_changed_in_the_records_millisecond_is_not_the_restores(kind):
+    """Review of #3123, round 2, P1. A restored row's time predates the
+    record (the backup was taken before the switch-off or the untrack);
+    Dreams' own disarm in the same millisecond leaves the row off, which
+    the check does not look at. So an armed row in that millisecond is
+    the user's re-arm: left armed. One millisecond earlier, it is the
+    restore's. Both edges, for each kind of row the check compares."""
+    record = {"subscription": False, "reminders": ["r1"], "rules": [5],
+              "settled": "retired" if kind == "retired-reminder" else "off",
+              "at": _AT}
+    row = {"id": 1, "subscription_id": 7, "created_by_dreams": 1,
+           "alert_rule_id": 5, "event_date": "2099-10-01",
+           "story_url": "https://example.com/page",
+           "suspension": json.dumps(record)}
+    states = {7: {"is_active": False, "is_paused": False,
+                  "source": "https://example.com/page",
+                  "processing_options": None}}
+
+    def drift(changed):
+        rules = {5: {"enabled": True, "updated_at": changed}} if kind == "rule" else {}
+        reminders = [] if kind == "rule" else [
+            {"id": "r1", "link_id": "1", "enabled": True, "last_run_at": None,
+             "updated_at": changed}]
+        if kind == "retired-reminder":
+            return track_reconcile._restore_drift(
+                [], [row], states, {}, reminders, enabled=False)
+        return track_reconcile._restore_drift(
+            [row], [], states, rules, reminders, enabled=False)
+
+    assert not drift(_SAME_MS), "the same millisecond: the user's"
+    assert drift(_MS_EARLIER), "a millisecond earlier: the restore's"
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_and_rule_the_user_re_arms_while_off_stay_armed(
+        tmp_path, settings, egress_seams, monkeypatch):
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        await stores.switch(settings, on=False)
+        (reminder,) = stores.scheduling_db.list_reminder_tasks(owner_id="local")
+        (rule,) = await stores.service.list_alert_rules(job_id=source_id)
+        stores.scheduling_db.update_reminder_task(reminder["id"], enabled=True)
+        await stores.service.update_alert_rule(rule["rule_id"], enabled=True)
+
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert await stores.running(source_id) == (False, True, True), (
+            "the user's reminder and rule stand; the source stays off")
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_a_retired_watchs_reminder_the_user_re_arms_while_off_stays_armed(
+        tmp_path, settings, egress_seams, monkeypatch):
+    from tldw_chatbook.Dreams.track_service import untrack
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        db = DreamsDB(stores.dreams_path, "restore-test")
+        try:
+            await untrack(stores.service, db, tracked["tracked_item_id"],
+                          scheduling_db_getter=lambda: stores.scheduling_db)
+        finally:
+            db.close_all()
+        await stores.switch(settings, on=False)
+        (reminder,) = stores.scheduling_db.list_reminder_tasks(owner_id="local")
+        assert not reminder["enabled"], "fixture: untrack disarmed it"
+        stores.scheduling_db.update_reminder_task(reminder["id"], enabled=True)
+
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert stores.scheduling_db.get_reminder_task(reminder["id"])["enabled"]
+    finally:
+        stores.close()
+
+
+# --- Review of #3123, round 2, P2: the pass the check starts keeps them too ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restored, users", [("subs", "reminder"),
+                                             ("sched", "rule")])
+async def test_a_users_re_arm_survives_a_restore_that_un_settles_its_watch(
+        tmp_path, settings, egress_seams, monkeypatch, restored, users):
+    """The check leaves a re-arm alone -- but when the same start also
+    finds something a restore brought back, it un-settles the watch, and
+    the switch-off pass stopped every armed reminder and rule of it, the
+    user's re-arm included. A restore of the subscriptions (source and
+    rule running again) while the user re-armed the reminder; one of the
+    schedules (the reminder armed again) while the user re-armed the
+    rule. What the restore brought back stops; the user's stays."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        stores.backup("before", keys=(restored,))
+        await stores.switch(settings, on=False)
+        if users == "reminder":
+            (reminder,) = stores.scheduling_db.list_reminder_tasks(owner_id="local")
+            stores.scheduling_db.update_reminder_task(reminder["id"], enabled=True)
+        else:
+            (rule,) = await stores.service.list_alert_rules(job_id=source_id)
+            await stores.service.update_alert_rule(rule["rule_id"], enabled=True)
+        stores.restore("before", keys=(restored,))
+        assert await stores.running(source_id) == (
+            restored == "subs", True, True), "fixture: the restore's and the user's both run"
+
+        await track_reconcile.reconcile_at_boot(stores.app())
+
+        assert await stores.running(source_id) == (
+            False, users == "reminder", users == "rule"), (
+            "the restore's stop again; the user's re-arm stays")
+        record = json.loads(_suspension(stores.dreams_path,
+                                        tracked["tracked_item_id"]))
+        assert record["settled"] == "off"
+        await track_reconcile.reconcile_at_boot(stores.app())
+        assert await stores.running(source_id) == (
+            False, users == "reminder", users == "rule"), "and at the next start"
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_a_switch_off_the_user_makes_still_stops_everything(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """Only the pass the start check starts leaves a later change alone:
+    a switch-off the user makes in Settings stops (and records) every
+    armed reminder and rule, even one changed after an older record's
+    time."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        await stores.switch(settings, on=False)
+        await stores.switch(settings, on=True)
+        db = DreamsDB(stores.dreams_path, "restore-test")
+        try:
+            # An unsettled record that still carries an old time.
+            db.set_tracked_suspension(tracked["tracked_item_id"], json.dumps(
+                {"subscription": False, "reminders": [], "rules": [],
+                 "at": "2026-01-01T00:00:00.000Z"}))
+        finally:
+            db.close_all()
+
+        await stores.switch(settings, on=False)
+
+        assert await stores.running(source_id) == (False, False, False)
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restored", [("sched",), ("subs", "sched")])
+async def test_an_upgraded_profiles_record_is_never_kept_on_a_guess(
+        tmp_path, settings, egress_seams, monkeypatch, restored):
+    """Review of #3123, round 2, P3, and round 3. A record an earlier
+    build wrote has no ``at``: whether its rule and reminder were re-armed
+    by the user or by the restore cannot be told. Alone, they are not
+    taken for the restore's (a user's choice is not undone on a guess);
+    with a restored source the watch is un-settled, and its pass -- which
+    keeps the user's changes only on a record with an ``at`` -- stops and
+    records all three (switching Dreams on restores them). Either way the
+    next start reads it the same."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        stores.backup("before", keys=restored)
+        await stores.switch(settings, on=False)
+        item_id = tracked["tracked_item_id"]
+        record = json.loads(_suspension(stores.dreams_path, item_id))
+        assert record.pop("at"), "fixture: this build writes one"
+        db = DreamsDB(stores.dreams_path, "restore-test")
+        try:
+            db.set_tracked_suspension(item_id, json.dumps(record))
+        finally:
+            db.close_all()
+        stores.restore("before", keys=restored)
+        with_source = "subs" in restored
+        assert await stores.running(source_id) == (
+            with_source, True, with_source), "fixture"
+
+        for _start in range(2):
+            await track_reconcile.reconcile_at_boot(stores.app())
+            assert await stores.running(source_id) == (
+                False, not with_source, False)
+        record = json.loads(_suspension(stores.dreams_path, item_id))
+        assert record["settled"] == "off"
+        if with_source:
+            assert record["subscription"] and record["reminders"] and (
+                record["rules"]), "stopped and recorded"
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_a_switch_off_during_a_start_with_dreams_on_stops_everything(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """Review of #3123, round 3. With Dreams on, the check writes restart
+    debts (no ``at``); the start passed their ids to the pass as watches
+    to keep the user's changes on, so a switch-off landing while the start
+    worked left the armed reminder running, settled the watch "off" with
+    no ``at`` -- and no later start or switch-off looked at it again."""
+    from tldw_chatbook.Dreams import track_service
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        tracked = await stores.track()
+        source_id = tracked["subscription_id"]
+        await stores.switch(settings, on=False)
+        stores.backup("off", keys=("subs",))
+        await stores.switch(settings, on=True)
+        stores.restore("off", keys=("subs",))
+        assert await stores.running(source_id) == (False, True, False), (
+            "fixture: source and rule off as backed up, the reminder armed")
+        real_backfill = track_service.backfill_egress_marks
+
+        async def switched_off_meanwhile(*args, **kwargs):
+            settings["enabled"] = False  # the user, while the start works
+            return await real_backfill(*args, **kwargs)
+
+        monkeypatch.setattr(
+            track_service, "backfill_egress_marks", switched_off_meanwhile)
+        db = DreamsDB(stores.dreams_path, "boot-app")
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(db))
+        finally:
+            db.close_all()
+
+        assert await stores.running(source_id) == (False, False, False)
+        record = json.loads(_suspension(stores.dreams_path,
+                                        tracked["tracked_item_id"]))
+        assert record["settled"] == "off" and record.get("at"), record
+    finally:
+        stores.close()
+
+
+# --- Review of #3123, N3: a store that refuses the start check's read ----------
+
+
+@pytest.mark.asyncio
+async def test_a_store_that_refuses_the_start_read_holds_dreams_work_and_says_so(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """The start does not fail and unrelated work runs, but Dreams' work
+    stays held until the next start (an error never authorizes), and one
+    warning names the store and the kind of refusal -- nothing else."""
+    from loguru import logger
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(str(message)),
+                      level="WARNING", format="{message}")
+    try:
+        await stores.track()
+
+        class Refused(RuntimeError):
+            pass
+
+        def refuse(*args, **kwargs):
+            raise Refused("restored profile awaiting review")
+
+        monkeypatch.setattr(stores.subs_db, "run_states", refuse)
+        gate = track_reconcile.DreamsDispatchGate()
+        dreams_db = DreamsDB(stores.dreams_path, "boot-app")
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(dreams_db), gate)
+        finally:
+            dreams_db.close_all()
+
+        assert gate.is_set() and not gate.dispatch_ready
+        refusals = [m for m in messages if "refused" in m]
+        assert len(refusals) == 1, messages
+        assert "subscriptions" in refusals[0] and "Refused" in refusals[0]
+        assert "awaiting review" not in refusals[0], "the reason type only"
+    finally:
+        logger.remove(sink)
+        stores.close()

@@ -682,6 +682,24 @@ LIVE_SUSPENSIONS_SQL = (
     "SELECT suspension FROM dream_tracked_items"
     " WHERE status IN ('active', 'paused')"
 )
+#: TASK-34924: the start check's read of the live wrappers' rows.
+LIVE_BOOT_ROWS_SQL = (
+    "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
+    " alert_rule_id, dream_tracked_items.event_date, suspension,"
+    " s.url AS story_url FROM dream_tracked_items"
+    " LEFT JOIN dream_stories AS s"
+    " ON s.id = dream_tracked_items.origin_story_id"
+    " WHERE dream_tracked_items.status IN ('active', 'paused')"
+)
+RETIRED_BOOT_ROWS_SQL = (
+    "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
+    " alert_rule_id, dream_tracked_items.event_date, suspension,"
+    " s.url AS story_url FROM dream_tracked_items"
+    " LEFT JOIN dream_stories AS s"
+    " ON s.id = dream_tracked_items.origin_story_id"
+    " WHERE dream_tracked_items.status = 'retired'"
+    " AND dream_tracked_items.suspension IS NOT NULL"
+)
 STORY_LOOKUP_SQL = (
     "SELECT * FROM dream_tracked_items WHERE origin_story_id = ?"
     " AND (status = 'active' OR (? AND status = 'paused'))"
@@ -714,6 +732,8 @@ PLAN_PINNED_QUERIES = {
     "live_tracked_suspensions": (LIVE_SUSPENSIONS_SQL, (), TRACKED_STATUS),
     "tracking_boot_state[records]": (
         LIVE_SUSPENSIONS_SQL, (), TRACKED_STATUS),
+    "tracking_boot_rows[rows]": (LIVE_BOOT_ROWS_SQL, (), TRACKED_STATUS),
+    "tracking_boot_rows[retired]": (RETIRED_BOOT_ROWS_SQL, (), TRACKED_STATUS),
     "find_tracked_by_story": (
         STORY_LOOKUP_SQL, (7, 0, None, None), TRACKED_ORIGIN_STORY),
     # Qodo #10 (PR #2921): the mechanism-narrowed form is the same
@@ -916,3 +936,33 @@ def test_reminder_event_date_round_trips(db):
     assert db.get_tracked_item(item)["reminder_event_date"] is None
     db.set_tracked_reminder_date(item, "2026-10-01")
     assert db.get_tracked_item(item)["reminder_event_date"] == "2026-10-01"
+
+
+def test_the_pinned_boot_rows_statement_is_the_production_one():
+    """The pin above runs this literal; it must be what the store runs."""
+    assert DreamsDB._LIVE_BOOT_ROWS_SQL == LIVE_BOOT_ROWS_SQL
+    assert DreamsDB._RETIRED_BOOT_ROWS_SQL == RETIRED_BOOT_ROWS_SQL
+
+
+def test_tracking_boot_rows_are_the_live_wrappers_and_the_backlog_flag(db):
+    live = db.create_tracked_item(
+        mechanism="page", intent="topic", cadence_seconds=3600,
+        subscription_id=7, created_by_dreams=1, egress_marked=0,
+        alert_rule_id=3)
+    retired = db.create_tracked_item(
+        mechanism="page", intent="topic", cadence_seconds=3600,
+        subscription_id=8, created_by_dreams=1)
+    db.set_tracked_status(retired, "retired", retired_reason="manual")
+
+    rows, gone, backlog = db.tracking_boot_rows()
+
+    assert [(r["id"], r["subscription_id"], r["created_by_dreams"],
+             r["alert_rule_id"], r["event_date"], r["suspension"],
+             r["story_url"]) for r in rows] == [(live, 7, 1, 3, None, None, None)]
+    assert gone == [] and backlog is True
+    assert db.tracking_boot_state()[1] is True
+
+    db.set_tracked_suspension(retired, '{"subscription": true}')
+    _rows, gone, _backlog = db.tracking_boot_rows(retired=True)
+    assert [(r["id"], r["suspension"]) for r in gone] == [
+        (retired, '{"subscription": true}')]
