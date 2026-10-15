@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from rich.cells import cell_len
+from rich.text import Text
 import json
 import math
 import re
@@ -1255,8 +1256,8 @@ class ChatApprovalCard(Container):
                 "always_allow": "Remember this tool",
                 "deny": "Deny",
             }
-            submit.label = "Apply " + labels.get(
-                str(self._batch_selects[0].value), "decisions"
+            submit.label = Text(
+                "Apply " + labels.get(str(self._batch_selects[0].value), "decisions")
             )
         else:
             submit.label = "Apply decisions"
@@ -1487,8 +1488,8 @@ class ChatApprovalCard(Container):
         )
         self.query_one(
             "#approval-approve-all", Button
-        ).label = f"Allow all {count} once"
-        self.query_one("#approval-deny-all", Button).label = f"Deny all {count}"
+        ).label = Text(f"Allow all {count} once")
+        self.query_one("#approval-deny-all", Button).label = Text(f"Deny all {count}")
         self._bulk_once_available = (
             view.bulk_once
             if self._batch_view
