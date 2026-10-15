@@ -221,3 +221,15 @@ file also imports Notifications, Scheduling and the egress guard, and a skipped
 job would fail the aggregate's verdict. Its own job, so no existing lane moves
 toward its cap; its first run (38588725796) took 6m50s. One more runner per PR:
 ten concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-34986): PR2921's two Dreams/Guardian steps ("Run Dreams and
+Guardian boundary contracts", "Run Dreams admission-sensitive contracts") run in
+their own job, `dreams-boundary` ("Dreams and Guardian boundary contracts"),
+moved verbatim from `console-p0-gate` with the same install line and 20-min cap;
+the required check `needs` it and fails when it is not `success`. With them the
+Console P0 regression gate measured median 16.1 / max 18.7 min over 76 PR runs
+and was cancelled at the cap twice; replaying the 76 runs, the gate keeps median
+11.6 / max 13.9 min and the new job takes median 5.2 / max 6.7. In the two cancelled
+runs the gate's own steps took ~17.5 (a failing run) and ~16.1 min with setup, so
+its worst case keeps about 4 min of headroom. One more runner
+per PR: eleven concurrent test runners, then the aggregate.

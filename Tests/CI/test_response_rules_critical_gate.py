@@ -119,21 +119,32 @@ INHERITED = {
 }
 
 
+#: Where each inherited pytest step runs. TASK-34986 moved the two Dreams
+#: steps out of console-p0-gate, verbatim, into dreams-boundary.
+STEP_JOBS = {
+    "Run the sandboxed Console P0 regression tests": "console-p0-gate",
+    "Run the admission-sensitive Console P0 regression tests": "console-p0-gate",
+    "Run Dreams and Guardian boundary contracts": "dreams-boundary",
+    "Run Dreams admission-sensitive contracts": "dreams-boundary",
+}
+
+
 def validate(document):
     jobs = document["jobs"]
-    job = jobs["console-p0-gate"]
-    assert job["timeout-minutes"] == 20 and len(job["steps"]) == 7
-    assert (
-        job["if"]
-        == "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))"
-    )
-    assert not job.get("continue-on-error", False)
-    assert "console-p0-gate" in jobs["derived-artifacts"]["needs"]
-    commands = {
-        s["name"]: s
-        for s in job["steps"]
-        if s.get("run", "").lstrip().startswith("pytest")
-    }
+    commands = {}
+    for job_name in sorted(set(STEP_JOBS.values())):
+        job = jobs[job_name]
+        assert job["timeout-minutes"] == 20 and len(job["steps"]) == 5
+        assert (
+            job["if"]
+            == "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))"
+        )
+        assert not job.get("continue-on-error", False)
+        assert job_name in jobs["derived-artifacts"]["needs"]
+        for s in job["steps"]:
+            if s.get("run", "").lstrip().startswith("pytest"):
+                assert STEP_JOBS.get(s["name"]) == job_name, s["name"]
+                commands[s["name"]] = s
     assert set(commands) == set(INHERITED)
     for name, inherited in INHERITED.items():
         step = commands[name]

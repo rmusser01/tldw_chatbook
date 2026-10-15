@@ -245,11 +245,13 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-33621.27: the Console P0 regression gate is the third lane.
     # TASK-34916: the PR Fast Lane's admission-sensitive half is its own job.
     # TASK-34929: the Dreams tracking tests are the fifth lane.
+    # TASK-34986: PR2921's Dreams/Guardian steps left console-p0-gate.
     assert required.get("needs") == [
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "ui-fast-lane",
         "console-p0-gate",
+        "dreams-boundary",
         "dreams-tracking",
     ]
     assert required["if"] == "${{ always() }}"
@@ -263,6 +265,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     for lane, step_name in (
         ("pr-fast-lane", "Require successful PR fast lane"),
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
+        ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
     ):
         verdict = _named_step(required, step_name)
@@ -272,7 +275,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         )
         assert f"needs.{lane}.result" in verdict["run"]
         assert "exit 1" in verdict["run"]
-    for job_name in ("pr-fast-lane-admission", "dreams-tracking"):
+    for job_name in ("pr-fast-lane-admission", "dreams-boundary", "dreams-tracking"):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
         assert all(not step.get("continue-on-error", False) for step in job["steps"])
@@ -483,7 +486,14 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     assert p0["if"] == LANES
     assert p0["runs-on"] == "ubuntu-latest"
     assert p0["timeout-minutes"] == 20
-    assert len(p0["steps"]) == 7
+    # checkout, setup-python, install, sandboxed, admission-sensitive.
+    # TASK-34986 moved PR2921's two Dreams/Guardian steps to dreams-boundary
+    # (with them this job measured max 18.7 min of 20 over 76 PR runs).
+    assert len(p0["steps"]) == 5
+    assert [step.get("name") for step in p0["steps"][-2:]] == [
+        "Run the sandboxed Console P0 regression tests",
+        "Run the admission-sensitive Console P0 regression tests",
+    ]
     assert "strategy" not in p0
     setup = next(
         step for step in p0["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -678,6 +688,9 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         ("derived-artifacts", "Require successful Dreams tracking tests"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
+        ("dreams-boundary", None),
+        ("dreams-boundary", "Run Dreams admission-sensitive contracts"),
+        ("derived-artifacts", "Require successful Dreams and Guardian boundary contracts"),
         ("derived-artifacts", None),
         ("derived-artifacts", "Require successful PR fast lane"),
         ("derived-artifacts", "Require successful Console P0 regression gate"),
@@ -825,17 +838,32 @@ def test_exact_invocation_accepts_comments_without_changing_executable_argv():
 
 
 def _assert_dreams_required_steps(workflow: dict) -> None:
-    job = workflow["jobs"]["console-p0-gate"]
+    # TASK-34986: the two PR2921 steps run in their own job, moved verbatim
+    # from console-p0-gate (with them it measured max 18.7 min of 20).
+    job = workflow["jobs"]["dreams-boundary"]
+    assert job["name"] == "Dreams and Guardian boundary contracts"
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
     names = (
         "Run Dreams and Guardian boundary contracts",
         "Run Dreams admission-sensitive contracts",
     )
+    # checkout, setup-python, install, then the two steps in this order.
+    assert len(job["steps"]) == 5
     assert tuple(step.get("name") for step in job["steps"][-2:]) == names
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    assert shlex.split(_named_step(job, "Install fast-lane dependencies")["run"]) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
     for name in names:
         owners = [key for key, candidate in workflow["jobs"].items()
                   for step in candidate.get("steps", ()) if step.get("name") == name]
-        assert owners == ["console-p0-gate"]
+        assert owners == ["dreams-boundary"]
     assert not job.get("continue-on-error", False)
     for name, targets, limit in (
         ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS, 180),
@@ -862,7 +890,7 @@ def test_dreams_critical_boundaries_are_executable_required_lane_members() -> No
 ])
 def test_dreams_membership_cannot_be_satisfied_by_comments(name, targets) -> None:
     workflow = _workflow("derived-artifacts.yml")
-    step = _named_step(workflow["jobs"]["console-p0-gate"], name)
+    step = _named_step(workflow["jobs"]["dreams-boundary"], name)
     step["run"] = step["run"].replace(targets[0] + " \\\n", "")
     step["run"] += "\n# " + targets[0]
     with pytest.raises(AssertionError):
@@ -874,12 +902,12 @@ def test_dreams_membership_cannot_be_satisfied_by_comments(name, targets) -> Non
     "Run Dreams admission-sensitive contracts",
 ])
 @pytest.mark.parametrize("mutation", [
-    "missing", "order", "duplicate", "wrong-job", "suppression",
+    "missing", "order", "duplicate", "wrong-job", "moved-back", "suppression",
     "conditional", "continue-on-error", "job-budget", "test-budget",
 ])
 def test_dreams_required_placement_rejects_drift(name, mutation):
     workflow = _workflow("derived-artifacts.yml")
-    job = workflow["jobs"]["console-p0-gate"]
+    job = workflow["jobs"]["dreams-boundary"]
     step = _named_step(job, name)
     if mutation == "missing":
         job["steps"].remove(step)
@@ -890,6 +918,9 @@ def test_dreams_required_placement_rejects_drift(name, mutation):
     elif mutation == "wrong-job":
         job["steps"].remove(step)
         workflow["jobs"]["pr-fast-lane"]["steps"].append(step)
+    elif mutation == "moved-back":  # TASK-34986: back into console-p0-gate
+        job["steps"].remove(step)
+        workflow["jobs"]["console-p0-gate"]["steps"].append(step)
     elif mutation == "suppression":
         step["run"] += " --collect-only"
     elif mutation == "conditional":

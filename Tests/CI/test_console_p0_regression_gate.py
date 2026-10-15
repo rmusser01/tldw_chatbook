@@ -215,10 +215,10 @@ def _lanes() -> dict[str, tuple[str, ...]]:
             "console-p0-gate", "Run the admission-sensitive Console P0 regression tests"
         ),
         "Dreams and Guardian contracts (sandboxed)": _step_targets(
-            "console-p0-gate", "Run Dreams and Guardian boundary contracts"
+            "dreams-boundary", "Run Dreams and Guardian boundary contracts"
         ),
         "Dreams contracts (admission-sensitive)": _step_targets(
-            "console-p0-gate", "Run Dreams admission-sensitive contracts"
+            "dreams-boundary", "Run Dreams admission-sensitive contracts"
         ),
         "Dreams tracking (sandboxed)": _step_targets(
             "dreams-tracking", "Run the Dreams tracking tests"
