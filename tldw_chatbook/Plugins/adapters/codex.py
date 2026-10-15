@@ -212,7 +212,9 @@ def vendor_inventory(capture, overlay, *, dialect, portable_root=False):
         diagnostics.append(Diagnostic(code="foreign_policy_no_grant"))
 
     def add(kind, path, definition, local_id=None, reasons=(), support="adapted"):
-        local_id = local_id or definition.get("name") or PurePosixPath(path).stem
+        if local_id is None:
+            name = definition.get("name") if isinstance(definition, dict) else None
+            local_id = name or PurePosixPath(path).stem
         records.append(
             ComponentRecord(
                 component_id=f"{kind}:{local_id}",
@@ -305,16 +307,20 @@ def vendor_inventory(capture, overlay, *, dialect, portable_root=False):
                 require(isinstance(document, dict))
                 servers = document.get("mcpServers", document)
                 require(isinstance(servers, dict))
-                for name, raw in servers.items():
+                for entry_index, name in enumerate(sorted(servers)):
+                    raw = servers[name]
+                    valid_name = (
+                        bool(name)
+                        and len(name) <= 128
+                        and ":" not in name
+                        and not any(c.isspace() or ord(c) < 32 for c in name)
+                    )
+                    # Colons are reserved from valid source IDs. Sorted positions
+                    # also survive canonical catalog replay without collisions.
+                    local_id = name if valid_name else f"invalid:{index}:{entry_index}"
                     try:
+                        require(valid_name)
                         require(isinstance(raw, dict))
-                        require(
-                            isinstance(name, str)
-                            and bool(name)
-                            and len(name) <= 128
-                            and ":" not in name
-                            and not any(c.isspace() for c in name)
-                        )
                         definition = dict(raw)
                         if "oauth_resource" in definition:
                             definition.pop("oauth_resource")
@@ -342,6 +348,7 @@ def vendor_inventory(capture, overlay, *, dialect, portable_root=False):
                                     "${CURSOR_PLUGIN_ROOT}", "${PLUGIN_ROOT}"
                                 ).replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
 
+                            require("command" in definition)
                             command = variable_text(definition["command"])
                             if command.startswith("${PLUGIN_ROOT}/"):
                                 command = "./" + command[len("${PLUGIN_ROOT}/") :]
@@ -369,10 +376,18 @@ def vendor_inventory(capture, overlay, *, dialect, portable_root=False):
                             "mcp",
                             path,
                             raw,
-                            name,
+                            local_id,
                             ("definition_unsupported",),
                             "unsupported",
                         )
+                        if not valid_name:
+                            diagnostics.append(
+                                Diagnostic(
+                                    code="mcp_name_invalid",
+                                    path=path,
+                                    component_id=f"mcp:{local_id}",
+                                )
+                            )
             except (PackageFileError, TypeError, ValueError):
                 blockers.append("mcp_definition_unsupported")
                 diagnostics.append(

@@ -339,3 +339,222 @@ def test_unknown_vendor_constraints_remain_visible(tmp_path):
         "vendor_fields_unsupported"
         in result.inventory["skill:example"].activation_blockers
     )
+
+
+@pytest.mark.parametrize("dialect", ["cursor", "openai"])
+@pytest.mark.parametrize(
+    "name, raw",
+    [
+        ("bad", {}),
+        ("bad", {"type": "stdio"}),
+        ("bad", {"command": None}),
+        ("bad", {"command": ""}),
+        ("", None),
+        ("", False),
+        ("", 7),
+        ("", "invalid"),
+        ("", []),
+        ("", {"name": "good", "command": "python"}),
+        ("bad:name", {"command": "python"}),
+        ("bad name", {"command": "python"}),
+    ],
+)
+def test_malformed_mcp_entry_preserves_valid_inspection_sibling(
+    tmp_path, dialect, name, raw
+):
+    manifest = (
+        ".cursor-plugin/plugin.json"
+        if dialect == "cursor"
+        else ".codex-plugin/plugin.json"
+    )
+    write_json(
+        tmp_path,
+        manifest,
+        {
+            "name": "test",
+            "mcpServers": {"mcpServers": {name: raw, "good": {"command": "python"}}},
+        },
+    )
+    result = inspect_package(tmp_path, dialect=dialect)
+    assert not result.rejected and not result.activation_blockers
+    assert "mcp:good" in result.inventory and len(result.inventory) == 2
+    bad = next(row for key, row in result.inventory.items() if key != "mcp:good")
+    if name == "bad":
+        assert bad.component_id == "mcp:bad"
+    else:
+        assert bad.local_id.startswith("invalid:")
+        assert any(
+            d.code == "mcp_name_invalid" and d.component_id == bad.component_id
+            for d in result.diagnostics
+        )
+    assert bad.support == "unsupported"
+    assert bad.activation_blockers == ("definition_unsupported",)
+    assert json.loads(bad.definition_json) == raw
+    good = result.inventory["mcp:good"]
+    assert good.support == "adapted" and not good.activation_blockers
+    assert json.loads(good.definition_json) == {"type": "stdio", "command": "python"}
+
+
+@pytest.mark.parametrize("dialect", ["cursor", "openai"])
+def test_valid_mcp_entries_share_public_inspection_control(tmp_path, dialect):
+    manifest = (
+        ".cursor-plugin/plugin.json"
+        if dialect == "cursor"
+        else ".codex-plugin/plugin.json"
+    )
+    write_json(
+        tmp_path,
+        manifest,
+        {
+            "name": "test",
+            "mcpServers": {
+                "mcpServers": {
+                    "first": {"command": "python"},
+                    "good": {"command": "python"},
+                }
+            },
+        },
+    )
+    result = inspect_package(tmp_path, dialect=dialect)
+    assert not result.rejected and not result.activation_blockers
+    assert set(result.inventory) == {"mcp:first", "mcp:good"}
+    assert all(
+        row.support == "adapted" and not row.activation_blockers
+        for row in result.inventory.values()
+    )
+
+
+@pytest.mark.parametrize(
+    "name, raw",
+    [
+        ("", None),
+        ("", {"name": "good"}),
+        ("bad name", []),
+        ("x" * 129, {}),
+        ("\x00", False),
+        ("valid", {"command": "python"}),
+    ],
+)
+@pytest.mark.parametrize("catalog", [False, True])
+def test_valid_mcp_sibling_can_commit_and_recover_with_invalid_name(
+    plugin_stack, tmp_path, name, raw, catalog
+):
+    from Tests.Plugins.test_recovery import lose_registry
+    from tldw_chatbook.Plugins.recovery import retained_inspections
+
+    root = tmp_path / "package"
+    root.mkdir()
+    overlay = {"mcpServers": {"mcpServers": {name: raw, "good": {"command": "python"}}}}
+    write_json(
+        root,
+        ".cursor-plugin/plugin.json",
+        {"name": "malformed-sibling", **({} if catalog else overlay)},
+    )
+    inspection = inspect_package(
+        root, dialect="cursor", catalog_overlay=overlay if catalog else None
+    )
+    stack = plugin_stack
+    review = stack.call(
+        lambda: stack.coordinator.review(
+            inspection, selection=("mcp:good",), workspace_id=None
+        )
+    )
+    receipt = stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
+    assert receipt.committed
+    snapshot = stack.call(stack.coordinator.published_snapshot)
+    retained = retained_inspections(snapshot)[
+        (review.installation_id, inspection.effective_digest)
+    ]
+    assert set(retained.inventory) == set(inspection.inventory)
+    for key, row in retained.inventory.items():
+        original = inspection.inventory[key]
+        assert (row.definition_json, row.support, row.activation_blockers) == (
+            original.definition_json,
+            original.support,
+            original.activation_blockers,
+        )
+    assert not retained.inventory["mcp:good"].activation_blockers
+    assert len(retained.inventory) == 2
+    lose_registry(stack)
+    stack.call(stack.coordinator.recover)
+    recovered = stack.call(stack.coordinator.published_snapshot)
+    assert recovered["revisions"] == snapshot["revisions"]
+    assert recovered["components"] == snapshot["components"]
+
+
+def test_invalid_mcp_names_have_distinct_stable_diagnostic_ids(tmp_path):
+    write_json(tmp_path, ".cursor-plugin/plugin.json", {"name": "test"})
+    servers = {
+        "": None,
+        "invalid:0:0": False,
+        "bad name": [],
+        "invalid-0": {"command": "python"},
+        "good": {"command": "python"},
+    }
+
+    def inspect(values):
+        return inspect_package(
+            tmp_path,
+            dialect="cursor",
+            catalog_overlay={"mcpServers": {"mcpServers": values}},
+        )
+
+    result = inspect(servers)
+    reordered = inspect(dict(reversed(list(servers.items()))))
+    assert not result.rejected and not result.activation_blockers
+    assert result.effective_digest == reordered.effective_digest
+    assert len(result.inventory) == len(servers)
+    assert all(
+        not result.inventory[key].activation_blockers
+        for key in ("mcp:good", "mcp:invalid-0")
+    )
+    bad = [row for row in result.inventory.values() if row.support == "unsupported"]
+    assert len(bad) == 3
+    assert len({row.component_id for row in bad}) == 3
+    assert all(
+        row.local_id.startswith("invalid:") and len(row.component_id) < 256
+        for row in bad
+    )
+    assert {row.definition_json for row in bad} == {"null", "false", "[]"}
+    assert {
+        d.component_id for d in result.diagnostics if d.code == "mcp_name_invalid"
+    } == {row.component_id for row in bad}
+
+
+def test_invalid_mcp_placeholder_cannot_be_admitted_when_selected(
+    plugin_stack, tmp_path
+):
+    from Tests.Plugins.test_admission import activate, admission, trust
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    root = tmp_path / "package"
+    root.mkdir()
+    write_skill(root)
+    write_json(
+        root,
+        ".cursor-plugin/plugin.json",
+        {"name": "diagnostic-only", "mcpServers": {"mcpServers": {"": None}}},
+    )
+    inspection = inspect_package(root, dialect="cursor")
+    invalid = next(
+        key for key, row in inspection.inventory.items() if row.support == "unsupported"
+    )
+    stack = plugin_stack
+    review = stack.call(
+        lambda: stack.coordinator.review(
+            inspection, selection=tuple(inspection.inventory), workspace_id=None
+        )
+    )
+    assert stack.call(
+        lambda: stack.coordinator.commit(review, review.operation_id)
+    ).committed
+    assert trust(stack, review.installation_id).committed
+    assert activate(stack, review.installation_id, "workspace-a", "enabled").committed
+    gate = admission(stack)
+    snapshot = stack.call(
+        lambda: gate.capture(review.installation_id, "workspace-a", "run")
+    )
+    assert snapshot.selection == ("skill:example",)
+    stack.call(lambda: gate.check(snapshot, "skill:example"))
+    with pytest.raises(PluginUnavailable):
+        stack.call(lambda: gate.check(snapshot, invalid))
