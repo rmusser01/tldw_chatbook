@@ -57,6 +57,12 @@ class WebSessionStore:
         except (OSError, ValueError) as error:
             logger.warning("discarding unreadable web session store: %s", error)
             return {}
+        if not isinstance(raw, dict):
+            logger.warning(
+                "discarding non-object web session store payload: %s",
+                type(raw).__name__,
+            )
+            return {}
         records: dict[str, StoredSession] = {}
         for key, value in raw.items():
             try:

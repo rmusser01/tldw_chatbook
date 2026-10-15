@@ -19,6 +19,7 @@ import html
 import signal
 import ssl
 import sys
+import time
 from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
@@ -71,6 +72,8 @@ from ..Utils.optional_deps import (
     check_web_server_deps,
     require_dependency,
 )
+from ..Utils.paths import get_user_data_dir
+from .session_store import WebSessionStore
 
 _TEXTUAL_SERVE_RESIZE_HOOK = "window.onresize=()=>{this.fit()}"
 _TEXTUAL_SERVE_CANVAS_RENDERERS = (
@@ -586,6 +589,9 @@ class ChatbookWebServerMixin:
         web_ssl_context: ssl.SSLContext | None = None,
         canvas_policy: CanvasConfigPolicy | None = None,
         canvas_profile_snapshot: ProfileSnapshot | None = None,
+        session_store: WebSessionStore | None = None,
+        session_idle_timeout_seconds: float | None = None,
+        session_absolute_timeout_seconds: float | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -595,7 +601,14 @@ class ChatbookWebServerMixin:
                 port=self.port,
                 access_token=None,
             )
-        self._web_auth = WebAuthManager(web_auth_policy)
+        manager_kwargs: dict[str, object] = {"session_store": session_store}
+        if session_idle_timeout_seconds is not None:
+            manager_kwargs["idle_timeout_seconds"] = session_idle_timeout_seconds
+        if session_absolute_timeout_seconds is not None:
+            manager_kwargs[
+                "absolute_timeout_seconds"
+            ] = session_absolute_timeout_seconds
+        self._web_auth = WebAuthManager(web_auth_policy, **manager_kwargs)
         self._web_ssl_context = web_ssl_context
         self._canvas_policy = canvas_policy or get_canvas_config_policy()
         self._canvas_disabled_latched = not self._canvas_policy.enabled
@@ -735,7 +748,7 @@ class ChatbookWebServerMixin:
 
     @staticmethod
     def _set_session_cookie(response, grant, *, secure: bool) -> None:
-        max_age = max(1, int(grant.expires_at - asyncio.get_running_loop().time()))
+        max_age = max(1, int(grant.expires_at - time.time()))
         response.set_cookie(
             SESSION_COOKIE_NAME,
             grant.cookie_value,
@@ -1574,6 +1587,24 @@ def create_server(
             "INSECURE DEVELOPMENT MODE: remote Chatbook content is using plaintext HTTP"
         )
 
+    session_idle_timeout_days = max(
+        1,
+        int(get_cli_setting("web_server", "session_idle_timeout_days", default=30)),
+    )
+    session_absolute_timeout_days = max(
+        1,
+        int(
+            get_cli_setting(
+                "web_server", "session_absolute_timeout_days", default=180
+            )
+        ),
+    )
+    if session_absolute_timeout_days < session_idle_timeout_days:
+        raise ValueError(
+            "web_server.session_absolute_timeout_days must be greater than or "
+            "equal to web_server.session_idle_timeout_days"
+        )
+
     logger.info("Creating web server on {}:{}", host, port)
     server = chatbook_web_server_class(
         command=command,
@@ -1584,6 +1615,9 @@ def create_server(
         web_auth_policy=web_auth_policy,
         web_ssl_context=ssl_context,
         canvas_policy=get_canvas_config_policy(web_auth_policy=web_auth_policy),
+        session_store=WebSessionStore(get_user_data_dir() / "web_sessions.json"),
+        session_idle_timeout_seconds=session_idle_timeout_days * 86400,
+        session_absolute_timeout_seconds=session_absolute_timeout_days * 86400,
     )
 
     return server

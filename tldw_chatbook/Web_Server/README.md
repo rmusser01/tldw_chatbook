@@ -99,7 +99,7 @@ Use a password manager, service secret facility, or the dedicated keyring entry
 to provision the value. Do not reuse an LLM-provider, MCP, or tldw API key, and
 do not put the credential in a URL or command-line argument. Remote browsers log
 in at `/auth/login`. Chatbook may also issue a one-use `/auth/bootstrap` link;
-the nonce expires after 60 seconds, is consumed on exchange, and is removed from
+the nonce expires after 120 seconds, is consumed on exchange, and is removed from
 the visible URL.
 
 For direct TLS, configure both `tls_certificate` and `tls_private_key`. Behind a
@@ -111,25 +111,33 @@ override that exposes terminal, chat, Canvas, and credentials to network
 observers and emits a warning; a firewall does not make plaintext equivalent to
 TLS.
 
-Successful login creates an opaque in-memory browser session. Sessions expire
-after 30 minutes idle or eight hours absolute by default, and process shutdown
-revokes all sessions and live channels. There is currently no logout or
-individual-session revoke UI. The trusted Canvas preview's explicit inner
-**Close** control revokes that Canvas view, not the browser's full Chatbook
-session. The served page's outer **Hide Canvas** control only hides its pane;
-the iframe and authority remain live. Closing an ordinary browser tab is not a
-guaranteed revocation action. The dedicated token admits the full Chatbook app
-on this host; it is not a multi-user account, filesystem, or database isolation
-system. Canvas capability URLs are narrower: a copied or guessed URL cannot
-reuse another browser session's Canvas authority.
+Successful login creates an opaque browser session. Sessions persist across
+restarts in `web_sessions.json` in the user data dir, which stores cookie
+digests only and is written with mode 0600. Sessions expire after 30 days idle
+(sliding with activity) or 180 days absolute by default; configure whole-day
+values with `[web_server] session_idle_timeout_days = 30` and
+`session_absolute_timeout_days = 180` (minimum 1; the absolute value must be at
+least the idle value). Stopping the served process closes live channels but no
+longer revokes sessions — sign out or revoke devices on `/auth/devices`. The
+trusted Canvas preview's explicit inner **Close** control revokes that Canvas
+view, not the browser's full Chatbook session. The served page's outer
+**Hide Canvas** control only hides its pane; the iframe and authority remain
+live. Closing an ordinary browser tab is not a guaranteed revocation action.
+The dedicated token admits the full Chatbook app on this host; it is not a
+multi-user account, filesystem, or database isolation system. Canvas
+capability URLs are narrower: a copied or guessed URL cannot reuse another
+browser session's Canvas authority.
 
 ### Incident response
 
 If a token, browser session, proxy, or served host may be compromised:
 
-1. stop the served Chatbook process to revoke every in-memory session and
-   one-use bootstrap;
-2. rotate the dedicated token in its actual source and remove the old value;
+1. stop the served Chatbook process **and** revoke every device — use
+   **Revoke all** on `/auth/devices`, or delete `web_sessions.json` from the
+   user data dir while the process is stopped (stopping alone no longer
+   revokes persisted sessions);
+2. rotate the dedicated token in its actual source and remove the old value —
+   token rotation additionally invalidates bootstrap pairing;
 3. verify the certificate/private key, exact `public_url`, and literal trusted
    proxy list, then restart;
 4. inspect host and reverse-proxy logs using your normal operational controls

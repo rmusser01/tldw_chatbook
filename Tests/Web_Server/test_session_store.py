@@ -52,3 +52,10 @@ def test_load_missing_or_corrupt_file_fails_safe(tmp_path: Path) -> None:
     corrupt = tmp_path / "web_sessions.json"
     corrupt.write_text("{not json")
     assert WebSessionStore(corrupt).load() == {}
+
+
+def test_load_valid_json_non_object_top_level_fails_safe(tmp_path: Path) -> None:
+    target = tmp_path / "web_sessions.json"
+    for payload in ("[1, 2]", '"x"', "null"):
+        target.write_text(payload)
+        assert WebSessionStore(target).load() == {}
