@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -93,6 +95,54 @@ def _parsed(raw: Any) -> dict | None:
     return record if isinstance(record, dict) else {}
 
 
+def _url_key(url: Any) -> tuple[str, str, str, str]:
+    """A URL compared the way Dreams wrote it: scheme and host case-folded,
+    no fragment, no trailing slash on the path."""
+    parts = urlsplit(str(url or "").strip())
+    return (parts.scheme.lower(), parts.netloc.lower(),
+            parts.path.rstrip("/"), parts.query)
+
+
+def is_dreams_source(
+    processing_options: Any, source_url: Any, story_urls: Iterable[Any],
+) -> bool:
+    """Whether a subscription is still the source a Dreams watch created.
+
+    Review of #3123, M1. ``subscriptions.id`` is AUTOINCREMENT and a
+    restore puts the table's id counter back too: restore only the
+    subscriptions from a backup older than a watch, and the user's next
+    new source takes the id Dreams' source had, while the Dreams store
+    still names that id as Dreams' own. So a Dreams path that changes a
+    source by id asks this first, from durable data on both sides, and a
+    "no" means the watch's source is gone -- handled like a deleted one,
+    and the source with that id is never touched:
+
+    * its stored ``url_provenance`` is not ``user_entered`` (Dreams marks
+      what it creates as nobody's typing; a source the user typed, or
+      whose address the user changed, is theirs);
+    * its URL is the URL of a story Dreams made it for (Dreams writes the
+      story's URL into the source it creates; stories are never deleted).
+      A watch with no story leaves only the first test.
+
+    Args:
+        processing_options: The source's stored options (text or dict).
+        source_url: The source's URL.
+        story_urls: The URLs of the stories of its Dreams watches.
+    """
+    options = processing_options
+    if isinstance(options, str):
+        try:
+            options = json.loads(options)
+        except ValueError:
+            options = None
+    # ``Utils.egress.URL_PROVENANCE_OPTION`` / ``UrlProvenance.USER_ENTERED``,
+    # written out so this module stays light.
+    if isinstance(options, dict) and options.get("url_provenance") == "user_entered":
+        return False
+    urls = [url for url in story_urls if url]
+    return not urls or any(_url_key(source_url) == _url_key(url) for url in urls)
+
+
 @dataclass
 class _Drift:
     """What a restore put out of step, as the work that brings it back.
@@ -115,8 +165,8 @@ class _Drift:
 def _restore_drift(
     rows: list[dict],
     gone: list[dict],
-    run_states: dict[int, tuple[bool, bool]],
-    rule_states: dict[int, bool],
+    run_states: dict[int, dict],
+    rule_states: dict[int, dict],
     reminders: list[dict],
     *,
     enabled: bool,
@@ -158,20 +208,30 @@ def _restore_drift(
     armed = {str(row.get("link_id")) for row in reminders
              if row.get("enabled") and not row.get("last_run_at")}
     drift = _Drift()
+    def dreams_own(row: dict, state: dict | None) -> bool:
+        # A source id Dreams no longer owns -- a restore handed it to the
+        # user's new source (review of #3123, M1) -- is not looked at.
+        return (bool(int(row.get("created_by_dreams") or 0))
+                and state is not None
+                and is_dreams_source(state.get("processing_options"),
+                                     state.get("source"),
+                                     [row.get("story_url")]))
+
     for row in rows:
         record = _parsed(row.get("suspension"))
         state = run_states.get(int(row.get("subscription_id") or 0))
-        created = bool(int(row.get("created_by_dreams") or 0))
+        created = dreams_own(row, state)
         if not enabled:
             if settled_state(row.get("suspension")) != SETTLED_OFF:
                 continue  # not settled: the pass takes it up anyway
-            if ((created and state is not None and state[0])
-                    or rule_states.get(int(row.get("alert_rule_id") or 0), False)
+            rule = rule_states.get(int(row.get("alert_rule_id") or 0)) or {}
+            if ((created and state["is_active"])
+                    or rule.get("enabled")
                     or str(row["id"]) in armed):
                 unsettled = dict(record or {})
                 unsettled.pop("settled", None)
                 drift.records.append((int(row["id"]), json.dumps(unsettled)))
-        elif (created and state is not None and not state[0]
+        elif (created and not state["is_active"]
                 and not (record or {}).get("subscription")):
             owed = {"reminders": [], "rules": [], **(record or {}),
                     "subscription": True}
@@ -184,8 +244,8 @@ def _restore_drift(
         record = _parsed(row.get("suspension")) or {}
         source_id = int(row.get("subscription_id") or 0)
         state = run_states.get(source_id)
-        if (record.get("subscription") and int(row.get("created_by_dreams") or 0)
-                and state is not None and state[0] and source_id not in ridden
+        if (record.get("subscription") and dreams_own(row, state)
+                and state["is_active"] and source_id not in ridden
                 and source_id not in drift.sources):
             drift.sources.append(source_id)
         disarmed = {str(value) for value in record.get("reminders") or []}
@@ -223,8 +283,8 @@ def _read_drift(
     """
     subscriptions_db = getattr(app, "subscriptions_db", None)
     scheduling_db = getattr(getattr(app, "scheduling_service", None), "db", None)
-    run_states: dict[int, tuple[bool, bool]] = {}
-    rule_states: dict[int, bool] = {}
+    run_states: dict[int, dict] = {}
+    rule_states: dict[int, dict] = {}
     reminders: list[dict] = []
     gone_owing = [row for row in gone
                   if (_parsed(row.get("suspension")) or {}).get("subscription")]
@@ -586,7 +646,7 @@ async def _boot_pass(
                 await stop_restored_leftovers(
                     subs_service,
                     getattr(getattr(app, "scheduling_service", None), "db", None),
-                    drift.sources, drift.reminders)
+                    drift.sources, drift.reminders, dreams_db)
             # Reconcile deliberately contains per-write failures. Returning
             # from it does not prove that the persisted obligations settled.
             records, pending_marks = await asyncio.to_thread(dreams_db.tracking_boot_state)

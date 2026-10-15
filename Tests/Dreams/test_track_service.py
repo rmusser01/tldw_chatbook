@@ -4100,13 +4100,16 @@ async def test_a_second_story_on_the_page_shares_the_recorded_rule(
     assert len(await _change_rules(service, first["subscription_id"])) == 1
 
 
-def _seed_story(dreams_db, title: str) -> int:
-    collection = dreams_db.get_collection_by_date("2026-09-20")
+def _seed_story(dreams_db, title: str, *, url=None, date="2026-09-20") -> int:
+    """A story; ``url`` is the page a page watch of it tracks (a Dreams
+    source's URL is its story's, review of #3123, M1). Two stories of one
+    page need two dates: a collection holds a URL once."""
+    collection = dreams_db.get_collection_by_date(date)
     collection_id = (int(collection["id"]) if collection else
-                     dreams_db.create_collection("2026-09-20", "manual", "d"))
+                     dreams_db.create_collection(date, "manual", "d"))
     return dreams_db.insert_story(
         collection_id, title=title,
-        url=f"https://dreams.test/{title.replace(' ', '-')}", snippet="",
+        url=url or f"https://dreams.test/{title.replace(' ', '-')}", snippet="",
         body="b", status="complete", source="web", kind="content",
         event_date=None, location=None, matched_topics=[], query="q")
 
@@ -4119,7 +4122,7 @@ async def test_a_rule_from_before_ids_were_recorded_is_adopted_by_exact_identity
     watch's own story would have given it -- and then by id for good. A
     look-alike with any other name stays the user's."""
     subs_db, service = subs_stack
-    story_id = _seed_story(dreams_db, "Festival line-up announced")
+    story_id = _seed_story(dreams_db, "Festival line-up announced", url=_URL)
     tracked = await track_page(
         service, dreams_db, url=_URL, title="Festival line-up announced",
         intent="event", origin_story_id=story_id)
@@ -5870,7 +5873,7 @@ async def test_a_global_rule_is_never_taken_for_dreams_own_however_it_is_named(
     source."""
     subs_db, service = subs_stack
     title = "Festival line-up announced"
-    story_id = _seed_story(dreams_db, title)
+    story_id = _seed_story(dreams_db, title, url=_URL)
     tracked = await track_page(
         service, dreams_db, url=_URL, title=title, intent="event",
         origin_story_id=story_id)
@@ -5943,7 +5946,7 @@ async def test_a_rule_an_earlier_build_named_with_brackets_is_still_dreams_own(
     the brackets; it must still be recognised (and silenced with Dreams)."""
     subs_db, service = subs_stack
     title = "[PDF] Rust conference"
-    story_id = _seed_story(dreams_db, title)
+    story_id = _seed_story(dreams_db, title, url=_URL)
     tracked = await track_page(
         service, dreams_db, url=_URL, title=title, intent="event",
         origin_story_id=story_id)
@@ -6031,8 +6034,8 @@ async def test_a_watch_retired_during_the_switch_on_ends_with_its_source_off(
 
 async def _two_watches_one_owing(dreams_db, service, scheduling_db):
     """A and B ride one source; the switch-off recorded the stop on B only."""
-    first = _seed_story(dreams_db, "one")
-    second = _seed_story(dreams_db, "two")
+    first = _seed_story(dreams_db, "one", url=_URL)
+    second = _seed_story(dreams_db, "two", url=_URL, date="2026-09-21")
     a = await track_page(service, dreams_db, url=_URL, title="Flights",
                          intent="deal", origin_story_id=first)
     b = await track_page(service, dreams_db, url=_URL, title="Flights",
@@ -6277,7 +6280,8 @@ async def test_tracking_while_dreams_is_off_changes_nothing_and_says_why(
     subs_db, service = subs_stack
     first = await track_page(
         service, dreams_db, url=_URL, title="Festival", intent="event",
-        event_date="2026-10-01", origin_story_id=_seed_story(dreams_db, "one"),
+        event_date="2026-10-01",
+        origin_story_id=_seed_story(dreams_db, "one", url=_URL),
         scheduling_db_getter=_sched_getter(scheduling_db))
     settings["enabled"] = False
     await _switch(service, dreams_db, scheduling_db, off=True)
@@ -6294,7 +6298,8 @@ async def test_tracking_while_dreams_is_off_changes_nothing_and_says_why(
         lambda: track_page(
             service, dreams_db, url=_URL, title="Festival", intent="event",
             event_date="2026-10-01",
-            origin_story_id=_seed_story(dreams_db, "two"),
+            origin_story_id=_seed_story(
+                dreams_db, "two", url=_URL, date="2026-09-21"),
             scheduling_db_getter=_sched_getter(scheduling_db)),
         lambda: track_page(
             service, dreams_db, url="https://example.com/other", title="Other",

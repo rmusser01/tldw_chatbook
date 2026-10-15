@@ -118,7 +118,12 @@ from .settings import (
     dreams_region,
     dreams_setting,
 )
-from .track_reconcile import SETTLED_OFF, SETTLED_ON, settled_state
+from .track_reconcile import (
+    SETTLED_OFF,
+    SETTLED_ON,
+    is_dreams_source,
+    settled_state,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .cycle_service import CycleDeps
@@ -531,6 +536,9 @@ async def backfill_egress_marks(
                 source = await subs_service.get_source(subscription_id)
             except KeyError:
                 source = None  # deleted by the user: nothing to stamp
+            if source is not None and not await _still_dreams_source(
+                    dreams_db, subscription_id, source):
+                source = None  # no longer Dreams' source (review of #3123, M1)
             stamped = source is not None and _needs_story_mark(source)
             if stamped:
                 await subs_service.update_source(
@@ -1262,7 +1270,7 @@ async def _retry_held_source(
 
     resolved, held = await _restore_source(
         subs_service, subscription_id, before_enable=unsettle,
-        enable_guard=_switch_lock)
+        enable_guard=_switch_lock, dreams_db=dreams_db)
     if not resolved:
         raise TrackPrivateURL(
             f"refusing to track a non-public destination ({held})")
@@ -1317,16 +1325,41 @@ async def _restore_rules_left_off(
                 held=record.get("held"), settled=_SETTLED_RETIRED))
 
 
-async def _source_is_gone(subs_service: Any, wrapper: dict) -> bool:
-    """Whether a page watch's source was deleted from Watchlists."""
+async def _still_dreams_source(
+    dreams_db: Any, subscription_id: int, source: Any,
+) -> bool:
+    """Whether ``source`` is still the one Dreams made for its watches.
+
+    Review of #3123, M1 (see ``track_reconcile.is_dreams_source``): after a
+    restore of the subscriptions alone, the id a Dreams watch names can
+    belong to the user's own new source. Every Dreams path that changes a
+    source's state by id asks this first, and a "no" is handled like a
+    deleted source.
+    """
+    urls = await asyncio.to_thread(run_finite_local_worker,
+        dreams_db.story_urls_for_subscription, int(subscription_id))
+    return is_dreams_source(_source_options(source), source.get("url"), urls)
+
+
+async def _source_is_gone(
+    subs_service: Any, wrapper: dict, dreams_db: Any = None,
+) -> bool:
+    """Whether a page watch's source was deleted from Watchlists.
+
+    A Dreams-created watch's id that now names another source -- the
+    user's, after a restore (review of #3123, M1) -- is gone too.
+    """
     subscription_id = int(wrapper.get("subscription_id") or 0)
     if not subscription_id:
         return False
     try:
-        await subs_service.get_source(subscription_id)
+        source = await subs_service.get_source(subscription_id)
     except KeyError:
         return True
-    return False
+    return (dreams_db is not None
+            and bool(int(wrapper.get("created_by_dreams") or 0))
+            and not await _still_dreams_source(
+                dreams_db, subscription_id, source))
 
 
 async def _retire_replaced(
@@ -1368,18 +1401,21 @@ async def _retire_dead_siblings(
         if (int(sibling["id"]) != int(wrapper["id"])
                 and sibling.get("mechanism") == _PAGE_MECHANISM
                 and sibling.get("status") in ("active", "paused")
-                and await _source_is_gone(subs_service, sibling)):
+                and await _source_is_gone(subs_service, sibling, dreams_db)):
             await _retire_replaced(
                 subs_service, dreams_db, sibling, scheduling_db_getter)
 
 
-async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool:
+async def _disable_dream_source(
+    subs_service: Any, subscription_id: int, dreams_db: Any = None,
+) -> bool:
     """Switch off a source Dreams created; say whether DREAMS did it.
 
     Used when the last watch on it is retired. A source that is already
     off -- the user switched it off in Watchlists -- or gone is left
     alone and is NOT claimed, so the retirement record never accounts for
-    a disable that was not Dreams' (round 3, T10).
+    a disable that was not Dreams' (round 3, T10). So is one that is no
+    longer the source Dreams made (review of #3123, M1).
 
     Returns:
         True when the source was running and Dreams switched it off.
@@ -1387,6 +1423,9 @@ async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool
     try:
         source = await subs_service.get_source(subscription_id)
     except KeyError:
+        return False
+    if dreams_db is not None and not await _still_dreams_source(
+            dreams_db, subscription_id, source):
         return False
     if not (bool(source.get("active")) or bool(source.get("paused"))):
         return False
@@ -1481,7 +1520,8 @@ async def track_page(
     if origin_story_id is not None:
         wrapper = await _reusable_wrapper(
             dreams_db, origin_story_id, _PAGE_MECHANISM)
-        if wrapper is not None and await _source_is_gone(subs_service, wrapper):
+        if wrapper is not None and await _source_is_gone(
+                subs_service, wrapper, dreams_db):
             # TASK-34927. The user deleted the watch's source in Watchlists
             # -- what the notices and the guide tell them to do with one
             # that is stuck -- and is tracking again: the old watch has
@@ -1562,6 +1602,12 @@ async def track_page(
             # foreign source the user disabled themselves. Attaching to either
             # as-is would record an active tracked item against a dead watch.
             source = await subs_service.get_source(subscription_id)
+            if dream_owned and not await _still_dreams_source(
+                    dreams_db, subscription_id, source):
+                # The Dreams store names this id, but it is not the source
+                # Dreams made -- the user's, after a restore (review of
+                # #3123, M1): attached as theirs, never switched by Dreams.
+                dream_owned, created_by_dreams = False, 0
             if not bool(source.get("active")) and not bool(source.get("paused")):
                 # "active=False, paused=False" is exactly the DISABLED state
                 # untrack writes (is_active=0, is_paused untouched at 0); an
@@ -1789,7 +1835,7 @@ async def untrack(
     ):
         try:
             subscription_disabled = await _disable_dream_source(
-                subs_service, int(subscription_id))
+                subs_service, int(subscription_id), dreams_db)
         except Exception as exc:  # noqa: BLE001 - wrapper is retired either way
             logger.warning(
                 "Dreams untrack: disabling subscription {} failed: {}",
@@ -1975,7 +2021,7 @@ async def sweep_track_lifecycle(
         ):
             try:
                 subscription_disabled = await _disable_dream_source(
-                    subs_service, int(subscription_id))
+                    subs_service, int(subscription_id), dreams_db)
             except Exception as exc:  # noqa: BLE001 - retire stands either way
                 logger.warning(
                     "Dreams sweep: disabling subscription {} failed: {}",
@@ -2502,6 +2548,12 @@ async def _plan_source_stop(
             int(rider.get("created_by_dreams") or 0) == 1 for rider in riders
         ) or await asyncio.to_thread(run_finite_local_worker,
             dreams_db.subscription_dream_owned, subscription_id)
+        if owned and not await _still_dreams_source(
+                dreams_db, subscription_id, source):
+            # The id names another source now -- the user's, after a
+            # restore (review of #3123, M1). The watch's own source is
+            # gone: handled as deleted, the other one never touched.
+            return _SourceStop(known=True, applied=True)
         # Running means "would be fetched, now or after one press of
         # Resume" (round 3, T9): the normalized ``active`` is ``is_active
         # and not paused``, so an auto-paused source reads inactive while
@@ -2648,7 +2700,7 @@ async def _suspend_pass(
 
 async def _restore_source(
     subs_service: Any, subscription_id: int, *, before_enable: Any = None,
-    enable_guard: Any = None,
+    enable_guard: Any = None, dreams_db: Any = None,
 ) -> tuple[bool, str | None]:
     """Re-enable one subscription Dreams stopped, if its page is public.
 
@@ -2677,6 +2729,11 @@ async def _restore_source(
         source = await subs_service.get_source(subscription_id)
     except KeyError:
         return True, None  # the user deleted the source
+    if dreams_db is not None and not await _still_dreams_source(
+            dreams_db, subscription_id, source):
+        # Not the source Dreams made any more (review of #3123, M1): as
+        # good as deleted, and never switched on.
+        return True, None
     # The question is about a STORY address. One the user has since typed
     # over it is theirs (round 4): Watchlists fetches it, private or not,
     # and holding it here as "not public" would hold it for good.
@@ -2867,7 +2924,8 @@ async def _resume_pass(
         try:
             outcomes[subscription_id] = await _restore_source(
                 subs_service, subscription_id,
-                before_enable=partial(unsettle_held_riders, subscription_id))
+                before_enable=partial(unsettle_held_riders, subscription_id),
+                dreams_db=dreams_db)
         except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
             logger.warning(
                 "Dreams resume: restoring subscription {} failed: {}",
@@ -2904,7 +2962,8 @@ async def _resume_pass(
                 except KeyError:
                     pass  # the user deleted the rule
             if subscription_id in outcomes:
-                await _disable_dream_source(subs_service, subscription_id)
+                await _disable_dream_source(
+                    subs_service, subscription_id, dreams_db)
         except Exception as exc:  # noqa: BLE001 - the next pass is no help here
             logger.warning(
                 "Dreams resume: re-checking subscription {} failed: {}",
@@ -3188,7 +3247,7 @@ async def reconcile_tracking(
 
 async def stop_restored_leftovers(
     subs_service: Any, scheduling_db: Any,
-    source_ids: list[int], reminder_ids: list[str],
+    source_ids: list[int], reminder_ids: list[str], dreams_db: Any = None,
 ) -> None:
     """Stop again what a restore brought back for retired watches.
 
@@ -3206,7 +3265,8 @@ async def stop_restored_leftovers(
     """
     for source_id in source_ids:
         if subs_service is not None:
-            await _disable_dream_source(subs_service, int(source_id))
+            await _disable_dream_source(
+                subs_service, int(source_id), dreams_db)
     if reminder_ids and scheduling_db is not None:
         await asyncio.to_thread(run_finite_local_worker,
             _disable_reminders, scheduling_db, list(reminder_ids))

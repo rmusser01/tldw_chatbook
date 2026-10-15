@@ -939,10 +939,12 @@ class _RealStores:
         self.subs_db.close()
         self.scheduling_db.close()
 
-    def backup(self, name):
+    def backup(self, name, keys=("subs", "sched")):
         import sqlite3
 
         for key, path in self.paths.items():
+            if key not in keys:
+                continue
             source = sqlite3.connect(path)
             target = sqlite3.connect(self.tmp / f"{name}-{key}.db")
             with target:
@@ -950,12 +952,14 @@ class _RealStores:
             source.close()
             target.close()
 
-    def restore(self, name):
-        """The app is down; both store files are put back as they were."""
+    def restore(self, name, keys=("subs", "sched")):
+        """The app is down; the store files are put back as they were."""
         import shutil
 
         self.close()
         for key, path in self.paths.items():
+            if key not in keys:
+                continue
             for suffix in ("-wal", "-shm"):
                 Path(str(path) + suffix).unlink(missing_ok=True)
             shutil.copyfile(self.tmp / f"{name}-{key}.db", path)
@@ -1103,10 +1107,14 @@ def test_a_paused_source_the_switch_disabled_is_not_seen_as_running():
              "suspension": json.dumps({"subscription": True, "reminders": [],
                                        "rules": [], "settled": "off"})}]
 
+    def state(active):
+        return {"is_active": active, "is_paused": True,
+                "source": "https://example.com/page", "processing_options": None}
+
     assert not track_reconcile._restore_drift(
-        rows, [], {7: (False, True)}, {}, [], enabled=False)
+        rows, [], {7: state(False)}, {}, [], enabled=False)
     assert track_reconcile._restore_drift(
-        rows, [], {7: (True, True)}, {}, [], enabled=False)
+        rows, [], {7: state(True)}, {}, [], enabled=False)
 
 
 @pytest.mark.asyncio
@@ -1138,5 +1146,82 @@ async def test_a_restore_with_dreams_off_stops_what_a_retired_watch_left(
         await track_reconcile.reconcile_at_boot(stores.app())
 
         assert (await stores.running(source_id))[:2] == (False, False)
+    finally:
+        stores.close()
+
+
+# --- Review of #3123, M1: a reused source id is never Dreams' ------------------
+#
+# ``subscriptions.id`` is AUTOINCREMENT, and a restore puts the table's id
+# counter back too. Restore only the subscriptions from a backup older than
+# a watch, and the user's next new source gets the id Dreams' source had,
+# while the Dreams store still names that id as Dreams' own.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [False, True], ids=["dreams-off", "dreams-on"])
+async def test_the_start_never_acts_on_a_users_source_on_a_reused_id(
+        tmp_path, settings, egress_seams, monkeypatch, on):
+    """Dreams off: the user's active source used to be switched OFF at the
+    next start. Dreams on: the user's source, created inactive on purpose,
+    used to be switched ON (and a user-entered address skips the public
+    check)."""
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        settings["enabled"] = on
+        if not on:
+            settings["enabled"] = True  # track with Dreams on, then off
+        tracked = None
+        stores.backup("before-the-watch", keys=("subs",))
+        tracked = await stores.track()
+        if not on:
+            await stores.switch(settings, on=False)
+        stores.restore("before-the-watch", keys=("subs",))
+        from tldw_chatbook.Utils.egress import UrlProvenance
+
+        users = await stores.service.create_source({
+            "name": "My NAS", "url": "https://nas.example/status",
+            "source_type": "url", "active": not on,
+            "url_provenance": UrlProvenance.USER_ENTERED})
+        source_id = users["source_id"]
+        assert source_id == tracked["subscription_id"], "fixture: id reused"
+        dreams_db = DreamsDB(stores.dreams_path, "boot-app") if on else None
+        try:
+            await track_reconcile.reconcile_at_boot(stores.app(dreams_db))
+        finally:
+            if dreams_db is not None:
+                dreams_db.close_all()
+
+        assert bool(int(stores.subs_db.get_subscription(source_id)[
+            "is_active"])) is (not on), "the user's source is left as it was"
+    finally:
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_the_switch_off_never_stops_a_users_source_on_a_reused_id(
+        tmp_path, settings, egress_seams, monkeypatch):
+    """The suspend pass took the reused id for Dreams' source and stopped
+    the user's own; the watch's source is gone and is handled as such."""
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    try:
+        stores.backup("before-the-watch", keys=("subs",))
+        tracked = await stores.track()
+        stores.restore("before-the-watch", keys=("subs",))
+        users = await stores.service.create_source({
+            "name": "My NAS", "url": "https://nas.example/status",
+            "source_type": "url", "active": True,
+            "url_provenance": UrlProvenance.USER_ENTERED})
+        source_id = users["source_id"]
+        assert source_id == tracked["subscription_id"], "fixture: id reused"
+
+        await stores.switch(settings, on=False)
+
+        assert int(stores.subs_db.get_subscription(source_id)["is_active"]) == 1
+        record = json.loads(_suspension(stores.dreams_path,
+                                        tracked["tracked_item_id"]))
+        assert record["settled"] == "off" and record["subscription"] is False
     finally:
         stores.close()

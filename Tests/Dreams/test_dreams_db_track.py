@@ -684,14 +684,21 @@ LIVE_SUSPENSIONS_SQL = (
 )
 #: TASK-34924: the start check's read of the live wrappers' rows.
 LIVE_BOOT_ROWS_SQL = (
-    "SELECT id, subscription_id, created_by_dreams, alert_rule_id,"
-    " event_date, suspension FROM dream_tracked_items"
-    " WHERE status IN ('active', 'paused')"
+    "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
+    " alert_rule_id, dream_tracked_items.event_date, suspension,"
+    " s.url AS story_url FROM dream_tracked_items"
+    " LEFT JOIN dream_stories AS s"
+    " ON s.id = dream_tracked_items.origin_story_id"
+    " WHERE dream_tracked_items.status IN ('active', 'paused')"
 )
 RETIRED_BOOT_ROWS_SQL = (
-    "SELECT id, subscription_id, created_by_dreams, alert_rule_id,"
-    " event_date, suspension FROM dream_tracked_items"
-    " WHERE status = 'retired' AND suspension IS NOT NULL"
+    "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
+    " alert_rule_id, dream_tracked_items.event_date, suspension,"
+    " s.url AS story_url FROM dream_tracked_items"
+    " LEFT JOIN dream_stories AS s"
+    " ON s.id = dream_tracked_items.origin_story_id"
+    " WHERE dream_tracked_items.status = 'retired'"
+    " AND dream_tracked_items.suspension IS NOT NULL"
 )
 STORY_LOOKUP_SQL = (
     "SELECT * FROM dream_tracked_items WHERE origin_story_id = ?"
@@ -950,8 +957,8 @@ def test_tracking_boot_rows_are_the_live_wrappers_and_the_backlog_flag(db):
     rows, gone, backlog = db.tracking_boot_rows()
 
     assert [(r["id"], r["subscription_id"], r["created_by_dreams"],
-             r["alert_rule_id"], r["event_date"], r["suspension"])
-            for r in rows] == [(live, 7, 1, 3, None, None)]
+             r["alert_rule_id"], r["event_date"], r["suspension"],
+             r["story_url"]) for r in rows] == [(live, 7, 1, 3, None, None, None)]
     assert gone == [] and backlog is True
     assert db.tracking_boot_state()[1] is True
 

@@ -1614,16 +1614,44 @@ class DreamsDB(BaseDB):
     )
 
     _LIVE_BOOT_ROWS_SQL = (
-        "SELECT id, subscription_id, created_by_dreams, alert_rule_id,"
-        " event_date, suspension FROM dream_tracked_items"
-        " WHERE status IN ('active', 'paused')"
+        "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
+        " alert_rule_id, dream_tracked_items.event_date, suspension,"
+        " s.url AS story_url FROM dream_tracked_items"
+        " LEFT JOIN dream_stories AS s"
+        " ON s.id = dream_tracked_items.origin_story_id"
+        " WHERE dream_tracked_items.status IN ('active', 'paused')"
     )
 
     _RETIRED_BOOT_ROWS_SQL = (
-        "SELECT id, subscription_id, created_by_dreams, alert_rule_id,"
-        " event_date, suspension FROM dream_tracked_items"
-        " WHERE status = 'retired' AND suspension IS NOT NULL"
+        "SELECT dream_tracked_items.id, subscription_id, created_by_dreams,"
+        " alert_rule_id, dream_tracked_items.event_date, suspension,"
+        " s.url AS story_url FROM dream_tracked_items"
+        " LEFT JOIN dream_stories AS s"
+        " ON s.id = dream_tracked_items.origin_story_id"
+        " WHERE dream_tracked_items.status = 'retired'"
+        " AND dream_tracked_items.suspension IS NOT NULL"
     )
+
+    def story_urls_for_subscription(self, subscription_id: int) -> list[str]:
+        """The story URLs of the watches Dreams made a subscription for.
+
+        Review of #3123, M1: the durable half of "is this subscription
+        still the source this Dreams watch created" -- Dreams writes the
+        story's URL into the source it creates. Stories are never deleted.
+
+        Args:
+            subscription_id: The watchlists subscription.
+
+        Returns:
+            The distinct URLs of the stories of its ``created_by_dreams``
+            wrappers, any status; empty for one with no story.
+        """
+        with self.connection() as conn:
+            return [str(row[0]) for row in conn.execute(
+                "SELECT DISTINCT s.url FROM dream_tracked_items AS t"
+                " JOIN dream_stories AS s ON s.id = t.origin_story_id"
+                " WHERE t.subscription_id = ? AND t.created_by_dreams = 1",
+                (subscription_id,))]
 
     def tracking_boot_rows(
         self, *, retired: bool = False,
@@ -1642,7 +1670,8 @@ class DreamsDB(BaseDB):
             ``(live, retired_rows, egress_backlog)``: one dict per active or
             paused wrapper (``id``, ``subscription_id``,
             ``created_by_dreams``, ``alert_rule_id``, ``event_date``,
-            ``suspension``), the same for each retired wrapper with a
+            ``suspension``, and its story's URL as ``story_url``), the
+            same for each retired wrapper with a
             record (empty unless asked for), and the backlog flag of
             :meth:`tracking_boot_state`.
         """
