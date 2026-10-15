@@ -1,5 +1,5 @@
 ---
-id: TASK-34948
+id: TASK-35025
 title: 'Merge queue: never evict a PR as stuck while dev has moved past its head'
 status: Done
 created_date: 2026-10-14 13:13
@@ -11,6 +11,15 @@ labels:
 priority: medium
 updated_date: 2026-10-14 14:23
 ---
+
+## Renumbering provenance
+
+This task previously held id TASK-34948, colliding with "Extract Console realtime lifecycle controller under existing
+decomposition contract", which arrived on dev first (commit 7297b17672, 2026-10-14 18:36 UTC, "fix(ci): resolve
+task-ID collisions ..."). This task was created 2026-10-14 13:13 UTC on `fix/task-34948-queue-stuck-behind` (PR #3103)
+and had not reached dev. Per the owner rule decided in TASK-19601 (the older arrival on dev keeps the id; the younger
+renumbers), it is TASK-35025. The commit subjects on PR #3103 still say TASK-34948. Found when the queue evicted #3103:
+the required check's backlog id-uniqueness test failed on both attempts (2026-10-14 22:51 and 23:18 UTC).
 
 ## Description
 
