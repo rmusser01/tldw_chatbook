@@ -1734,16 +1734,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         await self.mount(banner, before="#watchlists-header-bar")
 
-    def _rail_unread_suffix(self) -> str:
-        """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
-
-        Empty when there is nothing unread — a permanent "0 unread" is
-        chrome, not information, and an expanded rail already shows the
-        per-node numbers.
-        """
-        unread = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
-        return f"{unread} unread" if unread else ""
-
     def _apply_tree_data_to_live_surfaces(self) -> None:
         """Publish freshly loaded tree data without recomposing the screen.
 
@@ -3122,20 +3112,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # selection pushes the real value).
         pane.position = self._reader_position_text()
         return pane
-
-    def _watchlists_are_empty(self) -> bool:
-        """Whether this profile has nothing in Watchlists yet (TASK-998).
-
-        Delegates to `OverviewPane.profile_is_empty`, which is the one
-        definition of this question (Qodo #3 on PR #1017). It used to be
-        copied here, and two copies deciding what the Overview region and the
-        Inspector each say is a drift waiting to happen -- the two disagreeing
-        is precisely the confusing first-run state TASK-998 removed.
-
-        Returns:
-            True only once `overview_data` has loaded and reports nothing.
-        """
-        return OverviewPane.profile_is_empty(self.overview_data)
 
     def _watchlists_profile_state(self) -> str:
         """Loading, empty or populated (TASK-1020).
