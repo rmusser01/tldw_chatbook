@@ -39,7 +39,6 @@ if TYPE_CHECKING:
         ApprovalDecisions,
         BuiltinToolGate,
         BuiltinToolProvider,
-        ConsolePendingDecisionProjection,
         LocalToolProvider,
         MCPPendingCall,
         MCPToolProvider,
@@ -2329,39 +2328,6 @@ class InterruptRoundHost(InitialHookReviewMixin):
             )
         state["active_since"] = None
 
-    def _pending_decision_payloads_locked(
-        self, session_id: str
-    ) -> list[dict[str, Any]]:
-        payloads = [
-            payload
-            for store in (
-                self.payloads["approval"],
-                self.payloads["skill_install"],
-                self.payloads["skill_script"],
-                self.payloads[CONSOLE_PENDING_HOOK_REVIEW_KIND],
-            )
-            for payload in store.values()
-            if payload.get("session_id") == session_id and payload.get("_decision_id")
-        ]
-        return sorted(payloads, key=lambda item: int(item["_decision_order"]))
-
-    def _pending_round_states_snapshot(self) -> dict[str, dict[str, Any]]:
-        """Snapshot existing round records without nesting registry locks.
-
-        Lock order is type registry lock, release, then
-        ``_approval_state_lock`` in callers. No code acquires a type lock while
-        holding the shared projection lock.
-        """
-        with self.lock:
-            states = dict(self.registries["approval"])
-        with self.lock:
-            states.update(self.registries["skill_install"])
-        with self.lock:
-            states.update(self.registries["skill_script"])
-        with self.lock:
-            states.update(self.registries[CONSOLE_PENDING_HOOK_REVIEW_KIND])
-        return states
-
     def _permission_summary_worker(
         self, round_id: str, payload: dict[str, Any], resolution: object, tail: list
     ) -> None:
@@ -3264,39 +3230,6 @@ class InterruptRoundHost(InitialHookReviewMixin):
         """
         with self.read_controller__pending_chat_create_lock():
             return list(self.read_controller__pending_chat_create_rounds())
-
-    def pending_decision_projection(
-        self, session_id: str
-    ) -> ConsolePendingDecisionProjection | None:
-        """Return the session's one stable mixed-type FIFO head."""
-        states = self._pending_round_states_snapshot()
-        now = self.read_controller_decision_monotonic_clock()()
-        with self.lock:
-            payloads = self._pending_decision_payloads_locked(session_id)
-            if not payloads:
-                return None
-            payload = payloads[0]
-            decision_id = str(payload["_decision_id"])
-            state = states.get(decision_id)
-            finishing = payload.get("phase") == "finishing"
-            if (state is None or state.get("settled")) and not finishing:
-                return None
-            state = state or {}
-            remaining = state.get("remaining_active_seconds")
-            active_since = state.get("active_since")
-            if remaining is not None and active_since is not None:
-                remaining = max(
-                    0.0, float(remaining) - max(0.0, now - float(active_since))
-                )
-            snapshot = dict(payload)
-            snapshot["timeout_seconds"] = remaining or 0.0
-            return self.read_global_ConsolePendingDecisionProjection()(
-                decision_type=str(payload["_decision_type"]),
-                session_id=session_id,
-                decision_id=decision_id,
-                remaining_active_seconds=remaining,
-                payload=snapshot,
-            )
 
     def pending_question_ids(self) -> list[str]:
         """Return the request ids of every armed question round, arm order.

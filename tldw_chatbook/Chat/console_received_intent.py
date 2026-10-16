@@ -118,7 +118,7 @@ def _input_session_locked(
 class ConsoleReceivedIntentInputMixin:
     """Input checks on the store's existing session objects and admission lock."""
 
-    def _set_session_draft_inputs(
+    def set_session_draft(
         self,
         session_id: str,
         draft: str,

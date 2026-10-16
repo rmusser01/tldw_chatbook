@@ -9769,31 +9769,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Return the in-memory composer draft for a native Console session."""
         return self._session_or_raise(session_id).draft
 
-    def set_session_draft(
-        self,
-        session_id: str,
-        draft: str,
-        *,
-        authored_token: tuple[int, int] | None = None,
-    ) -> ConsoleChatSession:
-        """Mirror draft edits synchronously and retain pending handoff writes.
-
-        Args:
-            session_id: The live composer session.
-            draft: Current authored text.
-            authored_token: Optional composer generation/edit serial identity.
-
-        Returns:
-            The updated live session.
-
-        Raises:
-            KeyError: If the session is unknown.
-            ValueError: If an authored token is malformed.
-        """
-        return self._set_session_draft_inputs(
-            session_id, draft, authored_token=authored_token
-        )
-
     def _write_agent_handoff_revision(self, pending: dict[str, Any]) -> bool:
         revision, draft = pending["revision"], pending["draft"]
         expected = pending["durable_revision"]

@@ -36,6 +36,7 @@ class Host(TextualAppGuards, App):
     # Actual shipping starter/lifecycle bodies on a controlled real Textual App.
     # This is not a complete TldwCli constructor/mount qualification.
     boot_worker_starters = TldwCli.boot_worker_starters
+    _start_actor_pack_recovery_worker = TldwCli._start_actor_pack_recovery_worker
     _close_boot_worker_gate = TldwCli._close_boot_worker_gate
     _stop_boot_worker_reconcile = TldwCli._stop_boot_worker_reconcile
     ensure_actor_pack_recovery = TldwCli.ensure_actor_pack_recovery

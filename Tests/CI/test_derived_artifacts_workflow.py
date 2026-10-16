@@ -488,6 +488,10 @@ def test_pr_step_contract_rejects_location_and_target_drift(monkeypatch, mutatio
 # TASK34406: bounded current source/custody witnesses in the real required lane.
 _PR3023_CRITICAL_TARGETS = (
     "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change",
+    "Tests/Chat/test_console_trace_admission_gc.py::test_collection_between_admission_and_reservation_preserves_exact_revision",
+    "Tests/Chat/test_console_trace_admission_gc.py::test_canonical_ancestry_cannot_retain_payload_through_another_owners_policy",
+    "Tests/Chat/test_console_retry_json_wire.py::test_json_schema_retry_fence_precedes_actual_http[unchanged-groq]",
+    "Tests/Chat/test_console_retry_json_wire.py::test_json_schema_retry_fence_precedes_actual_http[changed-type-groq]",
     "Tests/Chat/test_console_retry_json_identity.py::test_failed_retry_rejects_python_equal_json_changes[true-to-one-response_format-deepseek]",
     "Tests/Chat/test_console_retry_json_identity.py::test_failed_retry_rejects_python_equal_json_changes[unchanged-response_format-deepseek]",
     "Tests/Chat/test_console_native_commit.py::test_owned_native_commit_drains_original_callback_and_connection_after_global_cancel",

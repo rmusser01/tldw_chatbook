@@ -1466,6 +1466,70 @@ class ServiceWiringMixin(
             policy_enforcer=self.service_policy_enforcer,
         )
 
+    def _start_actor_pack_recovery_worker(self, callback: Callable[[], Any]) -> Worker:
+        # Keep this staggered callback off-loop, but retain its physical
+        # outcome before App shutdown retires its database creators.
+        async def recover() -> Any:
+            from contextvars import Context
+
+            from textual.worker import active_worker, get_current_worker
+
+            from .Chat.console_preparation_reads import run_preparation_read
+
+            gate = getattr(self, "_boot_worker_gate", None)
+            if (
+                self._exit
+                or getattr(self, "_shutting_down", False)
+                or (gate is not None and gate.is_closed)
+            ):
+                return None
+            worker = get_current_worker()
+
+            def invoke() -> Any:
+                def call() -> Any:
+                    token = active_worker.set(worker)
+                    try:
+                        return callback()
+                    finally:
+                        active_worker.reset(token)
+
+                # Match FreshContextExecutor + Textual's old run_callable:
+                # no loop ambient context, only the actual active Worker.
+                return Context().run(call)
+
+            def issued_current() -> None:
+                # The boot fence applies before issue, not to completion
+                # of an already issued original/custom synchronous call.
+                return None
+
+            return await run_preparation_read(
+                invoke,
+                creator=self,
+                session_id=None,
+                reads=self._actor_pack_recovery_reads,
+                require_current=issued_current,
+            )
+
+        return self.run_worker(
+            recover,
+            name="deferred_actor_pack_recovery",
+            group="actor_pack_recovery",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
+        """Fence queued boot work and settle exact issued native recovery."""
+        self._close_boot_worker_gate("actor pack shutdown")
+        reads = getattr(self, "_actor_pack_recovery_reads", None)
+        if not reads:
+            return None
+        from .Chat.console_preparation_reads import drain_preparation_reads
+
+        if await drain_preparation_reads(reads):
+            return asyncio.CancelledError()
+        return None
+
     def ensure_actor_pack_recovery(self) -> None:
         """Run Actor Pack crash recovery once per app session (task-21106).
 

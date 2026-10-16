@@ -691,18 +691,6 @@ class LifecycleMixin:
             self._chunking_lab_coordinator = owner
             return owner
 
-    async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
-        """Fence queued boot work and settle exact issued native recovery."""
-        self._close_boot_worker_gate("actor pack shutdown")
-        reads = getattr(self, "_actor_pack_recovery_reads", None)
-        if not reads:
-            return None
-        from .Chat.console_preparation_reads import drain_preparation_reads
-
-        if await drain_preparation_reads(reads):
-            return asyncio.CancelledError()
-        return None
-
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()

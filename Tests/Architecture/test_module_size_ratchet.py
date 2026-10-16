@@ -83,7 +83,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
-    "tldw_chatbook/app_service_wiring.py": 3601,
+    "tldw_chatbook/app_service_wiring.py": 3573,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -98,11 +98,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
-    "tldw_chatbook/Chat/console_chat_controller.py": 29299,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29184,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6471,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
-    "tldw_chatbook/Chat/console_chat_store.py": 22344,
+    "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
