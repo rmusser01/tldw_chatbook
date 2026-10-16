@@ -100,4 +100,17 @@ After this phase, task-1379 re-runs the Settings critique.
 - Settings: a key check after the save redraws the return line ("the provider accepted the key"), and the unsaved-changes and Return without saving copy were reworded.
 
 **Review fixes (2026-10-16).** The review of `1c1730f4b0`: the wizard's Test 401, Claude subscription and cleared-key cases and the status picker's Tab stop (see TASK-33008.5), the setup card's focus guard under a dialog, the return line's key-accepted copy for another provider, docs and docstrings, ratchet rows re-pinned to measured sizes, polling waits in the wizard's compose-crash tests, and the phase's new tests gated in the PR lanes.
+
+**Review fixes, rounds 2 and 3 (2026-10-16).** Round 2 (`9b76adb752`..`f54e5fa863`, `06d` retaken in `2489f65118`): the subscription check reads Anthropic's table as readiness does; a key a check saw refused reads as checked, and Authentication drops "(optional)"; the Provider step names an unavailable listing as Model does; the rest of the phase's tests joined a PR lane (the wizard's bootstrap nodes in the admission step); polling waits replaced fixed pauses. Round 3 (review of `465eb63bf5..f54e5fa863`) fixed the Provider step's copy:
+- A listing that cannot list reads "Model listing unavailable; you can enter the model ID on the next step." The step has no model ID field; Model keeps its own line.
+- A Test's 401 to a key that was sent reads like the listing's: "<Provider> rejected this API key. Update it, or continue anyway." It keeps its ✗ and no longer uses the shared verdict's words.
+- `failed_listing` returns the line and changes nothing; the listing handler marks the key.
+- A new test pins the listing-path 401 title (admission lane). First_Run_Setup.md covers the staged key line's no-usable-list case. The Provider step's ratchet row is now 2,454. `06d` was retaken in `5c75fe49c8`; only its Test line changed.
+
+Verified 2026-10-16 on `feat/model-config-p8-first-run` at `00b8b2d756` (the code; later commits change only the capture and this note), against base `2489f65118`:
+- Tests/Wizards (xdist): base 1 failed, 1207 passed, 31 `RecoveryRequired` errors. Head shows the same failure and errors, plus 2-3 load flakes that differed between two runs at load average 50-126; all 5 pass serially at head and base.
+- Tests/CI: 959 passed at both.
+- Module-size ratchet: only dev's 8 known rows fail.
+- `./scripts/preflight.sh` passes; ruff reports no new findings.
+- Each changed test fails without its fix.
 <!-- SECTION:NOTES:END -->
