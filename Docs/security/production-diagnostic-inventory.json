@@ -4180,8 +4180,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 19,
-      "diagnostic_digest": "60d4667e8c971e05ed89",
+      "call_count": 22,
+      "diagnostic_digest": "878e4d61bd3f21f2a5dd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/mobile_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10937,6 +10937,24 @@
             "self._data_dir"
           ],
           "scope": "MobileChatService._build_engine",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "071f58ddfab5b11e",
+          "method": "info",
+          "path_expressions": [
+            "notes_path"
+          ],
+          "scope": "MobileChatService._ensure_reading_dbs",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "0a06eb12cff6d466",
+          "method": "info",
+          "path_expressions": [
+            "media_path"
+          ],
+          "scope": "MobileChatService._ensure_reading_dbs",
           "status": "legacy_unreviewed"
         }
       ],
