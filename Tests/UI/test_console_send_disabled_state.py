@@ -312,7 +312,7 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run(request):
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         reason = composer.query_one("#console-send-disabled-reason", Static)

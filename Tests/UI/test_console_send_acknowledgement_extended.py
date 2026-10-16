@@ -226,7 +226,7 @@ async def test_a_tab_switch_before_the_paint_never_acknowledges_the_shown_tab(
         with eager_tasks():
             console = host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-composer")
-            _select_llamacpp_console(console)
+            await _select_llamacpp_console(console)
             store = console._ensure_console_chat_store()
             sent_from = store.active_session_id
             await pilot.click("#console-new-chat-tab")

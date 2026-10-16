@@ -1380,7 +1380,8 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
     # A drained callback does not complete a refresh deferred to its timer.
     while time.monotonic() < deadline and (
-        screen._console_sync_in_progress
+        not screen._console_attach_reconciled
+        or screen._console_sync_in_progress
         or screen._console_sync_requested
         or getattr(screen, "_console_control_bar_replay_whole_sync", False)
         or getattr(screen, "_console_control_bar_sync_scheduled", False)

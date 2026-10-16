@@ -2532,7 +2532,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             session.id,
             ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
         )
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not list(console.query("#console-provider-blocker"))
@@ -2550,7 +2550,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             session.id,
             ConsoleSessionSettings(provider="llama_cpp", model=None),
         )
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not list(console.query("#console-provider-blocker"))
@@ -2628,7 +2628,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
             session.id, role=ConsoleMessageRole.USER, content="Hello Console"
         )
         await console._sync_native_console_chat_ui()
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not list(console.query("#console-start-here"))
@@ -3908,7 +3908,7 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 0
 
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-mcp")
 
@@ -3945,7 +3945,7 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 1
 
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-mcp")
 

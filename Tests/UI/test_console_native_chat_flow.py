@@ -254,7 +254,7 @@ def _persist_console_provider_config(
     app.app_config = config_module.load_settings(force_reload=True)
 
 
-def _apply_mounted_console_provider_config(
+async def _apply_mounted_console_provider_config(
     console: ChatScreen,
     *,
     provider: str,
@@ -278,7 +278,7 @@ def _apply_mounted_console_provider_config(
             source="user",
         )
     )
-    _sync_console_control_bar_now(console)
+    await _sync_console_control_bar_now(console)
 
 
 def _configure_openai_missing_api_key(app, model: str = "gpt-4o") -> None:
@@ -4856,26 +4856,28 @@ async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     raise AssertionError("Console workspace switcher modal did not open")
 
 
-def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> None:
-    """Render the control bar before returning, whatever holds the config locks.
+async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> None:
+    """Await the checked display owner, then render before the caller acts.
 
-    While another thread holds a config lock, ``_sync_console_control_bar``
-    defers to a 0.2s timer and returns False (TASK-34415). A test that then
-    presses a control or reads the rendered state, with no await long enough
-    for that timer, acts on the state from before the call (TASK-34789).
-    Holding both locks first (the sync's own order; they are reentrant) makes
-    it render now.
+    Warming runs before either config lock so its real worker can acquire them.
+    Holding both locks during the final sync retains the existing immediate
+    render guarantee without racing a config rebuild (TASK-34415/34789).
 
     Args:
         console: The mounted ChatScreen to render.
         *rail_state: The optional pre-computed rail state the sync accepts.
     """
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+    )
+
+    assert await ConsoleReadinessConfigProjection.for_screen(console).warm()
     with config_module._settings_rebuild_lock(), config_module._config_file_lock():
         rendered = console._sync_console_control_bar(*rail_state)
     assert rendered
 
 
-def _select_llamacpp_console(console: ChatScreen) -> None:
+async def _select_llamacpp_console(console: ChatScreen) -> None:
     """Select the native llama.cpp path after mounted controls initialize.
 
     ``_console_control_provider``/``_console_control_model`` mirror the
@@ -4914,7 +4916,7 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     )
     # Callers load a draft and press Send next: a deferred sync would leave
     # Send in its mount-time disabled state and make that press a no-op.
-    _sync_console_control_bar_now(console)
+    await _sync_console_control_bar_now(console)
 
 
 @pytest.mark.asyncio
@@ -4939,7 +4941,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         gateway = console._ensure_console_provider_gateway()
-        _apply_mounted_console_provider_config(
+        await _apply_mounted_console_provider_config(
             console,
             provider="openai",
             model="gpt-4.1",
@@ -4992,7 +4994,7 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _apply_mounted_console_provider_config(
+        await _apply_mounted_console_provider_config(
             console,
             provider="openai",
             model="gpt-4.1",
@@ -5177,7 +5179,7 @@ async def test_console_native_blocked_send_preserves_composer_text_and_shows_rec
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("blocked draft")
 
@@ -5714,7 +5716,7 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5745,7 +5747,7 @@ async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5789,7 +5791,7 @@ async def test_console_collapsed_stop_stale_action_warns_without_expanding():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5823,7 +5825,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         assert console._console_setup_blocked_reason() == ""
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -5879,7 +5881,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         assert console._console_setup_blocked_reason() == ""
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
@@ -5943,7 +5945,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5955,7 +5957,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
             console._ensure_console_chat_controller().run_state.status
             is ConsoleRunStatus.VALIDATING
         )
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
 
@@ -6010,7 +6012,7 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         # Neutralise the 0.2s transcript poll: with no timer to eventually
         # surface the message, only an acceptance-time echo can.
         monkeypatch.setattr(
@@ -6047,7 +6049,7 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_pasted_text(long_text)
 
@@ -6074,7 +6076,7 @@ async def test_console_native_send_preserves_expanded_payload_whitespace():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("  padded payload  ")
 
@@ -6137,7 +6139,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -6177,7 +6179,7 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("typed text")
         composer.insert_pasted_text(" and pasted text")
@@ -6247,7 +6249,7 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         # real `ChatPersistenceService` the store already built links workspace
         # membership through this same registry, so the double is both stale and
         # redundant -- assert against production's own linking instead.
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -6312,7 +6314,7 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         # real `ChatPersistenceService` the store already built links workspace
         # membership through this same registry, so the double is both stale and
         # redundant -- assert against production's own linking instead.
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         first_session = store.ensure_session()
         store.replace_session_settings(
             first_session.id,
@@ -7276,7 +7278,7 @@ async def test_console_accepted_send_records_first_send_flag():
         # real `ChatPersistenceService` the store already built links workspace
         # membership through this same registry, so the double is both stale and
         # redundant -- assert against production's own linking instead.
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -7299,7 +7301,7 @@ async def test_console_failed_send_does_not_record_first_send_flag():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -7339,7 +7341,7 @@ async def test_console_accepted_send_clears_composer_before_run_end():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         assert controller.on_submission_accepted is None
 
@@ -9055,7 +9057,7 @@ async def test_console_edit_resend_clears_replaced_descendant_original_attempt()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         store = controller.store
         session = store.ensure_session()
@@ -9840,7 +9842,7 @@ async def test_console_failed_stream_renders_retry_without_continue_and_recovers
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -9888,7 +9890,7 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
         store.append_message(
@@ -9934,7 +9936,7 @@ async def test_console_regenerate_action_streams_selected_variant():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
         store.append_message(
@@ -10002,7 +10004,7 @@ async def test_console_rejected_regenerate_preserves_original_attempt_preview():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         store = controller.store
         session = store.ensure_session(title="Chat 1")
@@ -14417,7 +14419,7 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         # Mirror the sync `_process_console_attachment` performs right after
         # staging, so the composer starts in the same blocked state a real
         # attach would leave behind.
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         send_button = console.query_one("#console-send-message", Button)
@@ -15186,7 +15188,7 @@ async def test_console_retry_accepted_fires_success_toast():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
@@ -15295,7 +15297,7 @@ async def test_console_routine_send_fires_no_success_toast():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()

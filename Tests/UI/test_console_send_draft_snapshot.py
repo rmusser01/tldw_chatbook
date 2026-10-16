@@ -271,7 +271,7 @@ async def test_console_pre_durable_failure_keeps_newer_typing_and_recovery():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
         await pilot.pause()
@@ -429,7 +429,7 @@ async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
         await pilot.pause()

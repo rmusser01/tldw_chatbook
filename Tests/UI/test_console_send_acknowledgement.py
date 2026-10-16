@@ -264,7 +264,7 @@ def eager_tasks():
 async def ready_console(host, pilot, gateway):
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
-    _select_llamacpp_console(console)
+    await _select_llamacpp_console(console)
     await pilot.pause(0.3)
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     composer.focus()

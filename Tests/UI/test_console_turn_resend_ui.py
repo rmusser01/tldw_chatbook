@@ -266,7 +266,7 @@ async def test_console_resend_click_re_runs_a_failed_turn_in_place():
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
@@ -315,7 +315,7 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         entered = asyncio.Event()
         started = asyncio.Event()
@@ -383,7 +383,7 @@ async def test_console_poll_paints_again_after_work_that_ended_during_a_paint(
 
         async def paint() -> None:
             nonlocal live
-            if sys._getframe(1).f_code.co_name != "_poll_transcript":
+            if sys._getframe(1).f_code.co_name != "sync_poll_display_ui":
                 return  # only the poll's own paints are counted
             poll_paints.append(live)
             live = False  # the work ends while the first one is under way
@@ -421,7 +421,7 @@ async def test_console_poll_paints_again_after_work_that_started_and_ended_durin
 
         async def paint() -> None:
             nonlocal live
-            if sys._getframe(1).f_code.co_name != "_poll_transcript":
+            if sys._getframe(1).f_code.co_name != "sync_poll_display_ui":
                 return  # only the poll's own paints are counted
             poll_paints.append(not poll_paints)
             if len(poll_paints) == 1:
@@ -464,7 +464,7 @@ async def test_console_r_resends_a_refused_echo_as_one_message():
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
@@ -523,7 +523,7 @@ async def test_resend_poll_survives_initial_hook_admission_read(request, monkeyp
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
@@ -591,7 +591,7 @@ async def test_transcript_resend_retains_failed_rows_until_connection_is_ready(r
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()

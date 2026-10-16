@@ -2116,7 +2116,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 "_build_console_inspector_state",
                 lambda _launch: state,
             )
-            _sync_console_control_bar_now(screen, screen._current_console_rail_state())
+            await _sync_console_control_bar_now(screen, screen._current_console_rail_state())
         await _settle(pilot, passes=10)
 
         assert "local" in events

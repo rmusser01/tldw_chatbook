@@ -412,7 +412,7 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
             await pilot.click("#console-dictation")
             before = await _wait_for_painted(chip, pilot, "speech model")
 
-            _sync_console_control_bar_now(console)
+            await _sync_console_control_bar_now(console)
             await pilot.pause()
 
             assert _painted(chip) == before
