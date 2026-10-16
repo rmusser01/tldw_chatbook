@@ -38,6 +38,9 @@ from dataclasses import replace
 
 import pytest
 
+# Real app construction retains the admitted collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.UI.Navigation import screen_registry
 from tldw_chatbook.UI.Navigation.screen_registry import (
     ScreenRoute,

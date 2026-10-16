@@ -28,6 +28,9 @@ from tldw_chatbook.UI.Navigation import screen_registry
 
 from Tests.UI.app_factory import _build_test_app
 
+# Real app construction reads the collection-bound private config source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _cheap_routes(count: int) -> list:
     """`count` routes whose `load_screen_class()` is a no-op dict hit."""
@@ -55,6 +58,7 @@ def sleep_spy(monkeypatch):
 def test_gap_is_inserted_between_routes_only(monkeypatch, sleep_spy):
     """N routes produce N-1 pauses: none before the first, none after the last."""
     app = _build_test_app()
+    sleep_spy.clear()  # Constructor backoff is outside the route-warming probe.
     monkeypatch.setattr(app, "_screen_preimport_pacing", lambda: (1.0, 0.10))
     pauses: list[float] = []
     monkeypatch.setattr(app, "_pause_between_preimports", pauses.append)
@@ -74,6 +78,7 @@ def test_single_route_preimport_is_untouched(monkeypatch, sleep_spy):
     ``load_screen_class()`` with nothing at all in front of it.
     """
     app = _build_test_app()
+    sleep_spy.clear()
     monkeypatch.setattr(app, "_screen_preimport_pacing", lambda: (3.0, 1.5))
     pauses: list[float] = []
     monkeypatch.setattr(app, "_pause_between_preimports", pauses.append)
@@ -416,3 +421,63 @@ def test_env_override_survives_the_pacing_change(monkeypatch, value, expected):
     monkeypatch.setattr(app_module, "_usable_cpu_count", lambda: 1)
     monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", value)
     assert app._screen_preimport_enabled() is expected
+
+
+# TASK-34406.4: speculative imports yield to received/accepted Console work.
+
+
+def test_preimport_waits_for_received_custody_before_the_next_route(monkeypatch):
+    from types import SimpleNamespace
+
+    app = _build_test_app()
+    runtime = app.console_runtime
+    intent = SimpleNamespace(turn_id="preimport-received", session_id="cold-send")
+    runtime._register_custody(None, received_intent=intent)
+    monkeypatch.setattr(app, "_screen_preimport_pacing", lambda: (0.0, 0.0))
+    imported: list[str] = []
+    slept: list[float] = []
+    routes = _cheap_routes(2)
+    monkeypatch.setattr(
+        type(routes[0]),
+        "load_screen_class",
+        lambda self: imported.append(self.screen_name),
+    )
+
+    def release_after_navigation_bound(seconds):
+        # A Console turn is real work, not a wedged navigation lock.
+        assert imported == [routes[0].screen_name]
+        slept.append(seconds)
+        if len(slept) == app_module.SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS + 1:
+            runtime._release_custody(intent.turn_id)
+
+    monkeypatch.setattr(app_module.time, "sleep", release_after_navigation_bound)
+    try:
+        app._preimport_screens(routes)
+        assert len(slept) == app_module.SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS + 1
+        assert set(slept) == {app_module.SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS}
+        assert imported == [route.screen_name for route in routes]
+        assert not runtime.has_custodied_turns()
+    finally:
+        runtime._release_custody(intent.turn_id)
+
+
+def test_shutdown_interrupts_the_custodied_send_park(monkeypatch):
+    from types import SimpleNamespace
+
+    app = _build_test_app()
+    runtime = app.console_runtime
+    request = SimpleNamespace(turn_id="preimport-accepted", session_id="cold-send")
+    runtime._register_custody(request)
+    slept: list[float] = []
+
+    def quit_while_busy(seconds):
+        slept.append(seconds)
+        app._shutting_down = True
+
+    monkeypatch.setattr(app_module.time, "sleep", quit_while_busy)
+    try:
+        app._pause_between_preimports(0.0)
+        assert slept == [app_module.SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS]
+        assert runtime.has_custodied_turns()
+    finally:
+        runtime._release_custody(request.turn_id)

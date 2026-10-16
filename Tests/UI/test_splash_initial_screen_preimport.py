@@ -38,6 +38,9 @@ from dataclasses import replace
 
 import pytest
 
+# Real app construction retains the admitted collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.app_module_patches import set_app_global
 from tldw_chatbook import app as app_module
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME

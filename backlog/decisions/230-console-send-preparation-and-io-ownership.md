@@ -169,3 +169,18 @@ That single execution scope still freshly admits every actual source before the
 run body starts; it avoids re-admitting the same profile/config/database sources
 in a nested scope. Qualification never imports or calls an optional source before
 admission. Missing or custom source objects keep the admitted global fallback.
+
+
+### TASK-34406.4 — Speculative screen imports yield to Console custody (2026-10-16)
+
+The app-owned whole-registry screen preimporter defers its next route while the
+existing `ConsoleRuntime.has_custodied_turns()` projection reports received or
+accepted work. This is only a scheduling hint read by the existing daemon
+thread: it grants no permission, retains no native lease and changes no
+preparation worker, freshness check, audit or provider contract. An import
+already running finishes normally. Between-route waits remain shutdown-aware;
+the navigation-only park retains its original bound. A long Console response
+can delay warming unvisited screens until custody clears; direct navigation
+still uses its ordinary loader. The certain-work, single-route splash warmup
+remains immediate. Prefer this existing custody projection over a duplicate
+busy flag, extra executor or permission cache.

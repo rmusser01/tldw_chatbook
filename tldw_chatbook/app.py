@@ -5353,10 +5353,9 @@ class TldwCli(
         TASK-21113 added pacing BETWEEN routes: after each import the thread
         hands the event loop back a slice proportional to what it just took
         (see ``SCREEN_PREIMPORT_YIELD_RATIO`` and friends), and parks
-        entirely while a screen navigation is resolving. Both are strictly
-        between-route, so the single-route call this method also serves --
-        task-21110's initial-screen warm-up, racing the splash -- reaches its
-        one ``load_screen_class()`` with nothing added in front of it. The
+        entirely while navigation or Console custody owns foreground work.
+        Both waits are between routes: TASK-21110's single-route splash
+        warmup reaches its ``load_screen_class()`` without a pause. The
         loop also drops out on ``_shutting_down`` so quit does not wait on a
         daemon thread's remaining registry.
 
@@ -5426,19 +5425,16 @@ class TldwCli(
             return False
 
     def _pause_between_preimports(self, gap_seconds: float) -> None:
-        """Yield the CPU between two route imports, then wait out any nav.
+        """Yield between imports and give received Console work priority.
 
-        Runs on the pre-import daemon thread. The park is bounded by
-        ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS`` and abandoned
-        immediately on ``_shutting_down`` so neither a wedged navigation nor
-        a quit can leave this thread sleeping in a loop.
+        Runs on the pre-import daemon thread. Navigation alone parks for at
+        most ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS``. Console
+        custody parks until accepted work settles; an import already running
+        cannot be interrupted. Shutdown abandons either park within one slice.
 
-        The gap sleep itself is sliced into navigation-poll-sized steps with
-        a ``_shutting_down`` check between slices (TASK-22214, the 22200
-        ``_interruptible_sleep`` precedent): with the caps at 2.0 s / 6.0 s
-        a single ``time.sleep(gap)`` would leave a quit waiting out the
-        whole gap before ``_preimport_screens``'s own shutdown check could
-        run. Sliced, the thread notices a quit within one 0.05 s slice.
+        Gap sleeps use poll-sized slices with a shutdown check between
+        them (TASK-22214): even a capped 2 s / 6 s gap need not finish
+        before shutdown is observed.
         """
         remaining = gap_seconds
         while remaining > 0:
@@ -5447,14 +5443,16 @@ class TldwCli(
             step = min(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS, remaining)
             time.sleep(step)
             remaining -= step
-        # Counted, not accumulated: summing 0.05 a hundred times lands either
-        # side of 5.0 depending on float rounding, which would make the bound
-        # off by one at random.
+        # Count polls to avoid float accumulation shifting the nav bound.
         polls = 0
-        while (
-            polls < SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS
-            and not getattr(self, "_shutting_down", False)
-            and self._screen_navigation_in_progress()
+        runtime = getattr(self, "console_runtime", None)
+        while not getattr(self, "_shutting_down", False) and (
+            (
+                polls < SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS
+                and self._screen_navigation_in_progress()
+            )
+            # Custody covers received intent before a controller/run exists.
+            or (runtime is not None and runtime.has_custodied_turns())
         ):
             time.sleep(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS)
             polls += 1
