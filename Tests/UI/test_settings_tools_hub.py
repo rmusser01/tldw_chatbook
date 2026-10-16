@@ -5,12 +5,15 @@ import time
 import pytest
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.private_profile import private_profile_test
+from Tests.UI.test_mcp_workbench import PermissionsHubService
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
     _open_settings_category,
 )
+from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
@@ -150,3 +153,62 @@ async def test_footer_shortcuts_follow_active_mode():
             await pilot.pause(0.01)
         in_tools_mode = settings._category_footer_shortcuts(SettingsCategoryId.TOOLS)
         assert ("t", "test tool") in in_tools_mode
+
+
+def _valid_profile_context() -> dict[str, object]:
+    return {
+        "category": "tools",
+        "mode": "permissions",
+        "tool_policy_profile_id": "research",
+        "profile_revision": 3,
+        "profile_policy_digest": "a" * 64,
+    }
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_apply_navigation_context_accepts_bounded_tools_context(request, tmp_path):
+    app = _build_test_app()
+    # A real (fake-seam) hub service: the workbench's initial load worker
+    # reads app_instance.unified_mcp_service, and the real service raises
+    # RecoveryRequired in this sandbox (pre-existing env block, see
+    # baseline-failures.txt) -- the handoff test stubs the same seam.
+    app.unified_mcp_service = PermissionsHubService(
+        tmp_path / "mcp_permissions.json"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings.apply_navigation_context(_valid_profile_context())
+        await pilot.pause()
+        assert settings.active_category == SettingsCategoryId.TOOLS.value
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        # The stashed initial view state is applied at the END of the
+        # workbench's initial reload worker (see
+        # test_panel_view_state_round_trip above) -- poll for the mode
+        # instead of assuming one pause settled it.
+        deadline = time.monotonic() + 2.0
+        while (
+            time.monotonic() < deadline
+            and pane.workbench.active_mode != "permissions"
+        ):
+            await pilot.pause(0.01)
+        assert pane.workbench.active_mode == "permissions"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_apply_navigation_context_rejects_malformed_tools_context(request):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause()
+        bad = _valid_profile_context()
+        bad["profile_policy_digest"] = "zz"  # not 64 hex chars
+        settings.apply_navigation_context(bad)
+        await pilot.pause()
+        assert settings.active_category != SettingsCategoryId.TOOLS.value
