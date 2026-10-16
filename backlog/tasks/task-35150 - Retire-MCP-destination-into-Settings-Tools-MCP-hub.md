@@ -89,7 +89,7 @@ this branch (36,444 → 36,634) and is exempt from the module-size ratchet by
 design (no row yet — the #3057 pin never landed first). The 12 red ratchet
 modules were already red at the pristine merge base — line-count-proven on
 untouched files (app_lifecycle 2337 > 2134, app.py 5824 > 5712,
-mcp_workbench 6878 = 6760) — so no offset extraction was warranted; the
+mcp_workbench 6878 > 6760) — so no offset extraction was warranted; the
 `mcp-defaults` deletion offset stands on its own.
 
 **Category-count note (spec A1).** Category-count neutral — `MCP_DEFAULTS`
