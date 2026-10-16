@@ -2561,6 +2561,19 @@ class TestProviderTrustChain:
             "refusal for llama.cpp ('authentication')",
             setup_state.PROVIDER_PROBE_AUTH,
         )
+        # Only a 401 rejects a key (owner ruling 2026-10-02): a 403 means the
+        # key may not list models, so the listing reads as unavailable on
+        # both steps and marks no key.
+        forbidden = replace(refused, error=replace(refused.error, category="forbidden"))
+        assert first_run_model_discovery._model_discovery_ui_outcome(forbidden) == (
+            [],
+            "listing_unavailable",
+            "",
+        )
+        assert line(True, forbidden) == (
+            setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
+            setup_state.PROVIDER_PROBE_NONE,
+        )
 
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(

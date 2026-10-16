@@ -106,6 +106,7 @@ After this phase, task-1379 re-runs the Settings critique.
 - A Test's 401 to a key that was sent reads like the listing's: "<Provider> rejected this API key. Update it, or continue anyway." It keeps its ✗ and no longer uses the shared verdict's words.
 - `failed_listing` returns the line and changes nothing; the listing handler marks the key.
 - A new test pins the listing-path 401 title (admission lane). First_Run_Setup.md covers the staged key line's no-usable-list case. The Provider step's ratchet row is now 2,454. `06d` was retaken in `5c75fe49c8`; only its Test line changed.
+- A 403 to the wizard's model listing no longer rejects the key (only a 401 does, owner ruling 2026-10-02): both steps read it as an unavailable listing, the key is not marked and its line reads as after a 403 to Test (unit case in the gated listing test, one admission-lane wizard node).
 
 Verified 2026-10-16 on `feat/model-config-p8-first-run` at `00b8b2d756` (the code; later commits change only the capture and this note), against base `2489f65118`:
 - Tests/Wizards (xdist): base 1 failed, 1207 passed, 31 `RecoveryRequired` errors. Head shows the same failure and errors, plus 2-3 load flakes that differed between two runs at load average 50-126; all 5 pass serially at head and base.

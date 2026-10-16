@@ -99,8 +99,14 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     if result.status == "success":
         models = list(_model_ids_from_discovery_result(result))
         return models, "available" if models else "empty", ""
+    # A 403 means this key may not list models: only a 401 rejects a key
+    # (owner ruling 2026-10-02, PR #2958 review; as Test and Settings read it).
     if result.status == "unsupported" or (
-        result.error is not None and result.error.kind == "unsupported_endpoint"
+        result.error is not None
+        and (
+            result.error.kind == "unsupported_endpoint"
+            or result.error.category == "forbidden"
+        )
     ):
         return [], "listing_unavailable", ""
     error_kind = result.error.kind if result.error is not None else ""

@@ -13769,6 +13769,64 @@ async def test_a_listing_that_refused_a_sent_key_makes_the_key_required() -> Non
 
 
 @pytest.mark.asyncio
+async def test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it() -> None:
+    """TASK-33008: a 403 to the listing of a typed key read as a rejected
+    key, marked Authentication required and said "the server rejected it".
+    Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review): a
+    403 means this key may not list models, as after a 403 to Test."""
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    listing = AsyncMock(
+        return_value=ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="success",
+            models=(),
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(discover_models=listing)
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=AsyncMock())
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(pilot, lambda: step._selected_discovery_state == "complete")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        status = step.query_one("#setup-provider-probe-status", Static)
+        key_line = step.query_one("#setup-provider-key-status", Static)
+        step.query_one("#setup-provider-api-key", Input).value = "sk-list-only"
+        await pilot.pause()
+
+        listing.return_value = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="forbidden",
+            ),
+        )
+        step._begin_selected_provider_discovery(step._effective_provider_draft())
+        await _until(pilot, lambda: step._selected_discovery_state == "failed")
+        assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        assert str(auth.title) == "Authentication (optional)"
+        assert str(key_line.render()) == (
+            "Key staged — it will be checked when you continue."
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("typed_key", "failure"), [("", "key_required"), ("sk-wrong", "authentication")]
 )

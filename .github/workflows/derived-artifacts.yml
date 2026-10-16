@@ -281,6 +281,7 @@ jobs:
             Tests/Wizards/test_first_run_setup_wizard.py::test_the_pinned_notice_keeps_clear_of_the_frame \
             Tests/Wizards/test_first_run_setup_wizard.py::test_a_refused_key_is_told_as_checked_and_the_section_not_optional \
             Tests/Wizards/test_first_run_setup_wizard.py::test_a_listing_that_refused_a_sent_key_makes_the_key_required \
+            Tests/Wizards/test_first_run_setup_wizard.py::test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it \
             Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word \
             Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule \
             Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once \
