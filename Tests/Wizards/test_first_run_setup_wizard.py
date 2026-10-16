@@ -12393,6 +12393,21 @@ async def test_key_hints_footer_and_test_button_probe():
         assert probe.await_count >= 1
 
 
+async def _press_next(pilot, container) -> None:
+    """Ctrl+N, then wait for the step to change instead of a fixed pause.
+
+    TASK-33008 review: under xdist a full GC pause in this file (340-600 ms)
+    landed in the old 0.2 s window, and the test went on from Welcome.
+    """
+    before = container.current_step
+    await pilot.press("ctrl+n")
+    for _ in range(100):
+        if container.current_step != before:
+            break
+        await pilot.pause(0.05)
+    await pilot.pause(0.2)
+
+
 @pytest.mark.asyncio
 async def test_provider_reentry_with_visible_discovery_button_focuses_list():
     """Review finding: after discovery unhides the pinned button, re-entering
@@ -12409,8 +12424,7 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         container = wizard.query_one(SetupWizardContainer)
         container.select_track(TRACK_QUICK)
         await pilot.pause(0.1)
-        await pilot.press("ctrl+n")  # Welcome -> Provider
-        await pilot.pause(0.2)
+        await _press_next(pilot, container)  # Welcome -> Provider
         provider_step = container.steps[container.current_step]
         # Simulate discovery having found a server: banner + button visible.
         provider_step.query_one("#setup-provider-detected").remove_class("hidden")
@@ -12418,8 +12432,7 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
             "hidden"
         )
         await pilot.pause(0.1)
-        await pilot.press("ctrl+n")  # Provider -> Model
-        await pilot.pause(0.2)
+        await _press_next(pilot, container)  # Provider -> Model
         await pilot.press("ctrl+b")  # back to Provider (re-entry)
         await pilot.pause(0.2)
         choices = provider_step.query_one("#setup-provider-choice", OptionList)
@@ -12540,8 +12553,7 @@ class TestComposeCrashPolicy:
             assert failed_step.compose_failure.reason_code == "compose_failed"
             assert STEP_PROVIDER in container.active_ids
 
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             assert container.steps[container.current_step] is failed_step
             assert len(failed_step.query("#setup-step-retry")) == 1
             assert len(failed_step.query("#setup-step-manual")) == 1
@@ -12612,8 +12624,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_step = container.steps[container.current_step]
             unchanged_steps = {
                 step.config.id: step
@@ -12654,8 +12665,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
 
             retired = []
             for _ in range(3):
@@ -12685,8 +12695,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_index = container.current_step
             failed_step = container.steps[failed_index]
             parent = failed_step.parent
@@ -12789,8 +12798,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_step = container.steps[container.current_step]
             failed_index = container.current_step
             started = asyncio.Event()
@@ -12900,8 +12908,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_step = container.steps[container.current_step]
             failed_index = container.current_step
             started = asyncio.Event()
@@ -12992,8 +12999,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
             saved_data = dict(container.wizard_data)
             persist = AsyncMock(return_value=True)
             container.persist_current_checkpoint = persist
@@ -13027,8 +13033,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
             persist = AsyncMock(return_value=True)
             container.persist_current_checkpoint = persist
 
@@ -13053,8 +13058,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
             container.persist_current_checkpoint = AsyncMock(return_value=False)
 
             wizard.query_one("#setup-step-later", Button).press()
@@ -13080,8 +13084,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
 
             for _ in range(5):
                 wizard.query_one("#wizard-next", Button).press()
