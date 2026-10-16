@@ -13806,3 +13806,33 @@ execution. Trace the actual first exception before changing execution context:
 a context change cannot repair a wrong fixture marker, and missing-marker
 validation must remain strict. Shared fixture path changes need their real
 restart consumers as targeted evidence.
+
+
+## Bound the complete passive read and exercise actual first use (TASK-32693, 2026-10-15)
+
+The Plugins browser passed 32 targeted UI checks and its preimport cap, but review
+found hidden full-package reads before the bounded README loop, unopened category
+imports during Overview restoration, and Back invalidating a load without clearing
+its busy owner. Compositor colors also exposed unreadable title/placeholder text.
+
+- Measure retained member opens and bytes across the whole public call. Here
+  `capture(fresh=False)` still reinspected every package file; the flag controls
+  admission, not I/O. Fixed passive listing reads no retained members; explicit
+  README reads at most 65,537 bytes including its sentinel. Runtime retains full
+  verification; authenticated recorded eligibility is labeled separately.
+- A local import at the top of a shared method is not category-first-use evidence.
+  Cold actual Overview mount/empty restore/search/unrelated inputs must leave
+  unopened groups absent; later category, saved-draft and patch-point controls
+  must still work. A constructor control prevented an unnecessary change.
+- Hold a cancellation-resistant old worker until its replacement is waiting.
+  Rejecting the old result is insufficient: its cleanup must neither strand nor
+  clear the newer busy owner. Verify populated success after releasing the latter.
+- Check actual compositor paint, not text dumps alone: scoped token changes moved
+  title/placeholder contrast from 3.214/3.516 to 14.191/12.749 at both required sizes.
+
+During this task, root also overwrote an indexed 7,117-byte pre-commit review
+dispatch after verifying 408 artifacts. Frozen source, raw runs and the actual
+reviewed dispatch survived, but only 407 old entries remain verifiable. Preserve
+every indexed existing path, including preparatory instructions, before rewriting
+it; use unique commit-qualified output names. Record an unrecovered gap instead
+of reconstructing different bytes or erasing the failed hash check.
