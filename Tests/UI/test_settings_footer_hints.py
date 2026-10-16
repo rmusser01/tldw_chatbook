@@ -23,6 +23,8 @@ These tests pin:
   the ACTIVE category's working shortcuts once that collapse happens.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from textual.widgets import Input, Static
 
@@ -45,6 +47,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
     SettingsScreen,
 )
+from tldw_chatbook.UI.Screens.settings_tools_hub import TOOLS_HUB_MODE_SHORTCUTS
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -64,18 +67,33 @@ _ALL_KNOWN_LABELS = (
 )
 
 
-def _expected_labels(category: SettingsCategoryId) -> tuple[str, ...]:
-    return tuple(
-        label for _key, label in SettingsScreen._category_footer_shortcuts(category)
-    )
+def _expected_labels(
+    screen: SettingsScreen, category: SettingsCategoryId
+) -> tuple[str, ...]:
+    return tuple(label for _key, label in screen._category_footer_shortcuts(category))
 
 
 def test_category_footer_shortcuts_only_advertise_working_keys():
     """Pure mapping check across all 12 sidebar categories (no Pilot needed)."""
     assert len(ALL_CATEGORY_IDS) >= 12
+    # task-35150: the mapping is an instance method now (the TOOLS branch
+    # reads the mounted hub pane), but it is still instance-STATE-only --
+    # an unmounted screen has no pane, so TOOLS resolves to its servers-mode
+    # default set whatever app instance backs the screen. A stub keeps this
+    # check pure instead of dragging in the `_build_test_app()` bootstrap
+    # the rest of this file's mounted tests already own.
+    screen = SettingsScreen(SimpleNamespace(unified_mcp_service=None))
     for category_value in ALL_CATEGORY_IDS:
         category = SettingsCategoryId(category_value)
-        shortcuts = SettingsScreen._category_footer_shortcuts(category)
+        shortcuts = screen._category_footer_shortcuts(category)
+        if category is SettingsCategoryId.TOOLS:
+            # ADR-233 (task-35150): TOOLS & MCP runs the hub's own per-mode
+            # key model (1-4/a/r everywhere, t in Tools mode, space in
+            # Permissions) instead of the s/r/t draft verbs, so the generic
+            # verb assertions below do not apply. Unmounted (no pane), the
+            # mapping pins the servers-mode default set.
+            assert shortcuts == TOOLS_HUB_MODE_SHORTCUTS["servers"]
+            continue
         theme_keys = SettingsScreen.THEME_SHORTCUTS
         if category is SettingsCategoryId.THEME:
             # TASK-33062: the theme list's own bindings, listed after the
@@ -363,7 +381,7 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
         panel = host.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         help_text = panel.state.render_text()
-        for label in _expected_labels(SettingsCategoryId.STORAGE):
+        for label in _expected_labels(screen, SettingsCategoryId.STORAGE):
             assert label in help_text, (
                 f"F1 help must keep {label!r} discoverable, got {help_text!r}"
             )
@@ -520,7 +538,7 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
             "active handles." in body
         ), body
         assert "Writes here: yes." in body, body
-        for label in _expected_labels(SettingsCategoryId.STORAGE):
+        for label in _expected_labels(screen, SettingsCategoryId.STORAGE):
             assert label in body, f"rendered F1 body must teach {label!r}, got {body!r}"
 
         await pilot.press("escape")
@@ -566,6 +584,9 @@ async def test_advertised_capabilities_match_real_action_branches():
     * ``t``: the "No test action is available" stub toast must fire IFF the
       category is NOT in TESTABLE_SETTINGS_CATEGORIES. Adding a test
       branch (or deleting one) without updating the frozenset goes red.
+      TOOLS & MCP (ADR-233, task-35150) is the one carve-out: its ``t``
+      drives the hub pane's Test Tool flow instead of the stub, pinned in
+      test_settings_tools_hub.py.
     * ``s``: probed in CLEAN state only, so nothing is ever written -- every
       guided save branch early-returns "No Settings changes to save." when
       the category has no staged edits. The "has no save action yet"
@@ -597,11 +618,22 @@ async def test_advertised_capabilities_match_real_action_branches():
             await pilot.pause()
             test_stubbed = any(_TEST_STUB_TOAST in toast for toast in toasts)
             testable = category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
-            assert test_stubbed == (not testable), (
-                f"{category_value}: test stub fired={test_stubbed} but category "
-                f"membership in TESTABLE_SETTINGS_CATEGORIES={testable} -- "
-                "update the frozenset or the action branches (toasts: {toasts})"
-            )
+            if category is SettingsCategoryId.TOOLS:
+                # ADR-233 (task-35150): TOOLS `t` dispatches to the hub
+                # pane's Test Tool flow (pinned in
+                # test_settings_tools_hub.py) instead of the stub toast,
+                # so the frozenset contract does not model this category.
+                assert not test_stubbed, (
+                    f"{category_value}: TOOLS `t` must reach the hub pane, "
+                    f"not the stub toast (toasts: {toasts})"
+                )
+            else:
+                assert test_stubbed == (not testable), (
+                    f"{category_value}: test stub fired={test_stubbed} but "
+                    f"category membership in TESTABLE_SETTINGS_CATEGORIES="
+                    f"{testable} -- update the frozenset or the action "
+                    f"branches (toasts: {toasts})"
+                )
 
             toasts.clear()
             screen.action_settings_save_category()

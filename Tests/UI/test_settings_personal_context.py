@@ -1230,7 +1230,9 @@ async def test_restore_collision_keeps_record_archived_and_gives_safe_recovery()
 
 
 def test_my_profile_footer_contract_advertises_only_working_actions() -> None:
-    shortcuts = SettingsScreen._category_footer_shortcuts(
+    # task-35150: the mapping is an instance method (the TOOLS branch reads
+    # the mounted hub pane's mode), so the call needs a screen instance.
+    shortcuts = SettingsScreen(_build_test_app())._category_footer_shortcuts(
         SettingsCategoryId.PERSONAL_CONTEXT
     )
     assert shortcuts == (

@@ -3751,6 +3751,12 @@ class SettingsScreen(BaseAppScreen):
         ("e", "settings_personal_context_edit", "Edit profile record"),
         ("d", "settings_personal_context_delete", "Delete profile record"),
         ("x", "settings_personal_context_export", "Export profile"),
+        # Tools & MCP (ADR-233): mode keys self-guard to the TOOLS category,
+        # mirroring the RAG accelerator self-guard pattern above.
+        ("1", "settings_tools_mode('servers')", "Tools: Servers"),
+        ("2", "settings_tools_mode('tools')", "Tools: Tools"),
+        ("3", "settings_tools_mode('permissions')", "Tools: Permissions"),
+        ("4", "settings_tools_mode('audit')", "Tools: Audit"),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -3761,9 +3767,8 @@ class SettingsScreen(BaseAppScreen):
         ("t", "test category"),
     )
 
-    @staticmethod
     def _category_footer_shortcuts(
-        category: SettingsCategoryId,
+        self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
         """Advertised footer hints for ONE category (task-1340, ADR-031).
 
@@ -3773,6 +3778,11 @@ class SettingsScreen(BaseAppScreen):
         F1 help panel and the footer never disagree. The keys stay bound
         screen-wide (they respond with guidance everywhere), but only what
         the active category actually supports is taught.
+
+        Instance method (task-35150): the TOOLS branch below reads the
+        mounted hub pane's live mode, so per-mode hints flow here -- and
+        through `_workbench_help_state` into F1 help -- without extra
+        plumbing.
         """
         shortcuts: list[tuple[str, str]] = []
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
@@ -3793,6 +3803,10 @@ class SettingsScreen(BaseAppScreen):
             shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
         if category is SettingsCategoryId.THEME:
             shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
+        if category is SettingsCategoryId.TOOLS:
+            pane = self._tools_hub_pane()
+            mode = pane.active_mode if pane is not None else "servers"
+            shortcuts.extend(TOOLS_HUB_MODE_SHORTCUTS.get(mode, ()))
         return tuple(shortcuts)
 
     #: task-1564: categories whose `t` binding performs a real test action --
@@ -4629,6 +4643,32 @@ class SettingsScreen(BaseAppScreen):
         """
         shortcuts = self._footer_shortcut_entries()
         self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+        # task-35150: the "settings" source above and the "settings-tools"
+        # source below share one footer context slot (last writer wins), so
+        # every "settings" re-registration must re-assert the TOOLS hint set
+        # when TOOLS is active. Without this, any focus change in the TOOLS
+        # category (on_descendant_focus/blur above both re-register
+        # "settings" with TOOLS's empty s/r/t set) would silently wipe the
+        # per-mode hints from the footer.
+        self._refresh_tools_footer_shortcuts()
+
+    def _refresh_tools_footer_shortcuts(self) -> None:
+        """Register the active Tools-mode hint set; clear it otherwise."""
+        if self.active_category != SettingsCategoryId.TOOLS.value:
+            self.clear_footer_shortcuts(source="settings-tools")
+            return
+        pane = self._tools_hub_pane()
+        mode = pane.active_mode if pane is not None else "servers"
+        self.register_footer_shortcuts(
+            source="settings-tools",
+            shortcuts=TOOLS_HUB_MODE_SHORTCUTS.get(mode, ()),
+        )
+
+    def on_tools_hub_panel_mode_changed(
+        self, event: ToolsHubPanel.ModeChanged
+    ) -> None:
+        event.stop()
+        self._refresh_tools_footer_shortcuts()
 
     def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
         """Category- and focus-aware footer hints (task-1564/1560).
@@ -26115,6 +26155,12 @@ class SettingsScreen(BaseAppScreen):
             # here too would fire first, against the pane the swap has not
             # rebuilt yet -- pre-swap geometry, and a wasted pass.
             self.call_after_refresh(self._update_inspector_overflow_hint)
+        # task-35150: one call site covers enter and leave -- the helper
+        # self-clears the "settings-tools" hint set for every non-TOOLS
+        # category (the pane is usually not mounted yet on enter, so the
+        # servers-mode default registers now and ModeChanged re-registers
+        # with the restored mode once the hub finishes loading).
+        self._refresh_tools_footer_shortcuts()
 
     async def recompose(self) -> None:
         """Restore a pending category focus after a WHOLE-screen rebuild.
@@ -33246,6 +33292,14 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # Tools & MCP has no draft state; `s` stays unadvertised there
+            # (footer hints below) and answers with guidance like other
+            # non-guided categories.
+            self.app.notify(
+                "Tools & MCP applies changes immediately — nothing to save."
+            )
+            return
         category = self._active_category_id()
         if category is SettingsCategoryId.HOOKS:
             self._start_hooks_save()
@@ -34166,6 +34220,11 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            pane = self._tools_hub_pane()
+            if pane is not None:
+                pane.refresh_now()  # `r` = force reload in this category
+            return
         category = self._active_category_id()
         if category is SettingsCategoryId.PRIVACY_SECURITY and getattr(
             self, "_raw_cli_save_pending", False
@@ -34423,6 +34482,11 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            pane = self._tools_hub_pane()
+            if pane is not None:
+                pane.test_selected_tool()  # `t` = test tool in this category
+            return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
             detail, summary, passed = self._provider_readiness_test_report()
@@ -34581,12 +34645,27 @@ class SettingsScreen(BaseAppScreen):
         """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # `a` = add server in this category (per-category dispatch, the
+            # same pattern s/r/t use).
+            pane = self._tools_hub_pane()
+            if pane is not None:
+                pane.add_server()
+            return
         if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
             self._dispatch_personal_context_action("add_record")
             return
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
             return
         self._trigger_library_rag_profile_set_active()
+
+    def action_settings_tools_mode(self, mode: str) -> None:
+        """1-4 -- switch Tools & MCP mode; no-op outside the TOOLS category."""
+        if self.active_category != SettingsCategoryId.TOOLS.value:
+            return
+        pane = self._tools_hub_pane()
+        if pane is not None:
+            pane.activate_mode(mode)
 
     def _dispatch_personal_context_action(self, action_name: str) -> None:
         """Route a category-scoped shortcut to the mounted profile panel."""

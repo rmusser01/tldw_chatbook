@@ -101,3 +101,52 @@ async def test_settings_registers_tools_category_and_mounts_pane(request):
         assert settings.active_category == SettingsCategoryId.TOOLS.value
         assert settings.query_one("#settings-tools-hub", ToolsHubPanel)
         assert settings.query_one(MCPWorkbench)
+
+
+@pytest.mark.asyncio
+async def test_mode_keys_and_verb_keys_dispatch_only_in_tools_category():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        # Outside TOOLS: the a/r/t actions keep their existing no-op/toast
+        # behavior and never touch a pane (none mounted).
+        settings.action_settings_test_category()  # must not raise
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        called: list[str] = []
+        pane.activate_mode = lambda mode: called.append(mode)  # type: ignore[assignment]
+        pane.test_selected_tool = lambda: called.append("test")  # type: ignore[assignment]
+        settings.action_settings_tools_mode("audit")
+        assert called == ["audit"]
+        settings.action_settings_test_category()
+        assert called == ["audit", "test"]
+
+
+@pytest.mark.asyncio
+async def test_footer_shortcuts_follow_active_mode():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        base = settings._category_footer_shortcuts(SettingsCategoryId.TOOLS)
+        assert ("1-4", "mode") in base
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        pane.activate_mode("tools")
+        # The tools canvas mounts deferred (task-2901): a mode request that
+        # lands in the pre-mount window is stashed and replayed by the
+        # initial load worker, so poll for the mode instead of assuming one
+        # pause settled it (same precedent as
+        # test_panel_view_state_round_trip above).
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and pane.active_mode != "tools":
+            await pilot.pause(0.01)
+        in_tools_mode = settings._category_footer_shortcuts(SettingsCategoryId.TOOLS)
+        assert ("t", "test tool") in in_tools_mode
