@@ -309,8 +309,9 @@ _BUDGETS: dict[str, int] = {
     # review fix lowers it to 6,177: the subscription poll's second
     # default-readiness sync is gone (TASK-33006.21). Then to 6,155: compose
     # yields the two view tabs unmarked and leaves the mark to that loop
-    # (TASK-33003.11).
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6155,
+    # (TASK-33003.11). Then 6,160: that loop's tooltip escapes the tab name,
+    # as the markup-interpolation guard requires (escape_markup import).
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6160,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

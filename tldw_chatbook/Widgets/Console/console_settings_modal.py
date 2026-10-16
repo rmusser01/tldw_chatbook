@@ -140,7 +140,11 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ProviderSettingsNavigationTarget,
 )
-from tldw_chatbook.Utils.input_validation import validate_text_input, validate_url
+from tldw_chatbook.Utils.input_validation import (
+    escape_markup,
+    validate_text_input,
+    validate_url,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 from .console_context_controls import (
@@ -2786,7 +2790,8 @@ class ConsoleSettingsModal(
             # its old width and crop its mark or name (TASK-33003.11).
             tab.refresh(layout=True)
             tab.set_class(selected, "console-settings-view-active")
-            tab.tooltip = f"Selected view: {name}" if selected else f"Show {name}"
+            verb = "Selected view: " if selected else "Show "
+            tab.tooltip = escape_markup(verb + name)
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model
