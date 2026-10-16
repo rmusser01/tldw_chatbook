@@ -189,7 +189,8 @@ download actions sit outside that generated runtime. See the
 
 `/m` is a phone-first companion page for a served Chatbook: chat and
 tool-call approvals for conversations initiated from the phone, plus reading
-of earlier mobile conversations. It is not the full served terminal. The
+of this server run's mobile conversations (conversations are per-server-run
+in v1 — see the limits below). It is not the full served terminal. The
 mobile surface runs its own engine over its own databases under
 `<user data dir>/mobile/`, so it shows only mobile-initiated conversations;
 desktop conversations stay on the desktop surfaces.
@@ -203,9 +204,17 @@ v1 limits:
 
 - Approvals cover mobile-initiated conversations only; desktop-initiated
   runs never wait on the phone.
-- Desktop activity reaches the phone via completion-level polling — every
-  12 seconds and again when the page regains focus — not live streaming.
-  The phone's own runs do stream over a WebSocket while it is connected.
+- Conversations are per-server-run: the sessions list is in-memory, and
+  while message rows persist under `<user data dir>/mobile/`, earlier
+  mobile conversations are not rehydrated after a server restart in v1 —
+  rehydration is a recorded follow-up.
+- Within mobile-initiated conversations, completion-level polling — every
+  12 seconds and again when the page regains focus — syncs messages that
+  completed outside the live stream (a reconnect, a second `/m` tab).
+  Desktop activity does not reach the phone via polling (the isolated
+  mobile databases cannot see it); desktop approvals and run-status are
+  the planned Phase 2 relay, not v1. The phone's own runs do stream over a
+  WebSocket while it is connected.
 - There is no service worker and no offline support; with no connection the
   page shows the last synced state.
 - REVIEWED run hooks never fire on mobile sends (`ensure_run_hooks` is not
