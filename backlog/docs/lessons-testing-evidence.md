@@ -121,6 +121,21 @@ competing work. Report the first-send number even when the median is flat.
 catalog while nothing it read changed. Over 10 paired launches, first sends
 then reached the provider a median 88 ms sooner than the base.
 
+**Follow-up (TASK-34406.4, 2026-10-16).** Giving the existing speculative
+screen preimporter the runtime's received/accepted-turn custody signal let
+it wait between routes during Console work. Four balanced fresh first
+Sends per version, on one busy host through served CDP, measured post-save
+preparation at 6288 -> 3934 ms median; all four pairs improved with equal
+content, 27 tool schemas and verified traces. This is a scoped comparison,
+not a native-paint, population-p95 or later-send claim. A separate
+instrumented candidate was slower than its diagnostic baseline
+(5497 versus 3772 ms), with a permission callback at 422 ms wall/29 ms CPU
+and only about 12 ms from submission to invoke. Keep those unfavorable
+profile observations too: worker wall is not isolated disk time, and an
+inclusive function profile cannot replace unprofiled critical-path pairs.
+The existing permission/admission checks stayed intact; long or held turns
+can delay speculative warming until custody clears.
+
 ## The guard, not the read, was the cost: a correct cache keeps paying the guard (TASK-33620.15.1, 2026-10-09)
 
 **Incident.** Live, a Console run start spent 19-21 main-thread samples
