@@ -207,8 +207,9 @@ download actions sit outside that generated runtime. See the
 
 `/m` is a phone-first companion page for a served Chatbook: chat and
 tool-call approvals for conversations initiated from the phone, plus reading
-of this server run's mobile conversations (conversations are per-server-run
-in v1 — see the limits below). It is not the full served terminal. The
+of this server run's mobile conversations (earlier runs' conversations are
+listed and restored on demand — see the limits below). It is not the full
+served terminal. The
 mobile surface runs its own engine over its own databases under
 `<user data dir>/mobile/`, so it shows only mobile-initiated conversations;
 desktop conversations stay on the desktop surfaces.
@@ -257,10 +258,11 @@ v1 limits:
   while Canvas is enabled and the round's Console view is mounted; every
   other desktop round (unmounted Console screen, parked background
   session) waits on the desktop user, exactly as before.
-- Conversations are per-server-run: the sessions list is in-memory, and
-  while message rows persist under `<user data dir>/mobile/`, earlier
-  mobile conversations are not rehydrated after a server restart in v1 —
-  rehydration is a recorded follow-up.
+- Conversations survive a server restart: the sessions list also shows
+  persisted conversations from `<user data dir>/mobile/` (pre-existing rows
+  were written under the same schema), listed lazily without loading their
+  trees — a conversation's history is restored on first read or send
+  through the same resume machinery the desktop uses.
 - Desktop activity reaches the phone at completion level via the relay's
   run-status pushes; the 12-second/focus-regain polling syncs within
   mobile-initiated conversations (the isolated mobile databases cannot see

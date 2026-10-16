@@ -144,7 +144,7 @@ async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
             what="run_completed event",
         )
 
-        messages = service.session_messages(session["id"])
+        messages = await service.session_messages(session["id"])
         assert any(
             m["role"] == "assistant" and FINAL_ANSWER in m["content"]
             for m in messages["messages"]
@@ -198,7 +198,7 @@ async def test_send_is_serialized_per_session(tmp_path: Path) -> None:
             what="two run_completed events",
         )
 
-        messages = service.session_messages(session["id"])["messages"]
+        messages = (await service.session_messages(session["id"]))["messages"]
         user_texts = [m["content"] for m in messages if m["role"] == "user"]
         assert user_texts == ["first question", "second question"]
         # The second user row landed only after the first turn's assistant
@@ -270,7 +270,7 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
             e for e in got if e.type == "delta" and e.session_id == session["id"]
         ]
         assert deltas, "no streaming deltas observed during the run"
-        messages = service.session_messages(session["id"])["messages"]
+        messages = (await service.session_messages(session["id"]))["messages"]
         assert any(
             m["role"] == "user" and m["content"] == "held turn" for m in messages
         )
@@ -323,7 +323,7 @@ async def test_messages_cursor(tmp_path: Path) -> None:
             timeout=15,
             what="first run_completed event",
         )
-        first = service.session_messages(session["id"])
+        first = await service.session_messages(session["id"])
         first_ids = [m["id"] for m in first["messages"]]
         assert first["cursor"] == first_ids[-1]
 
@@ -335,7 +335,7 @@ async def test_messages_cursor(tmp_path: Path) -> None:
             what="second run_completed event",
         )
 
-        after = service.session_messages(
+        after = await service.session_messages(
             session["id"], after_message_id=first["cursor"]
         )
         after_ids = [m["id"] for m in after["messages"]]
@@ -413,7 +413,7 @@ async def test_send_after_run_completed_is_accepted_immediately(
             timeout=15,
             what="second run_completed event",
         )
-        messages = service.session_messages(session["id"])["messages"]
+        messages = (await service.session_messages(session["id"]))["messages"]
         assert [m["content"] for m in messages if m["role"] == "user"] == [
             "first turn",
             "immediate follow-up",
@@ -507,6 +507,102 @@ async def test_pump_tick_in_the_return_window_delivers_fast_run_content(
         # announce run_completed for content the subscriber never got.
         types = [e.type for e in got]
         assert types.index("delta") < types.index("run_completed"), types
+    finally:
+        await _shutdown(service, subscriber)
+
+
+# ========================================================================= #
+# Restart rehydration (ADR-234 recorded follow-up, #3128 Important 2)       #
+# ========================================================================= #
+
+
+async def test_conversations_survive_restart_via_lazy_restore(
+    tmp_path: Path,
+) -> None:
+    """A new service over the same data_dir lists earlier mobile
+    conversations (persisted identity, no eager hydration), reads their
+    history through a lazy restore, and a send into a restored session
+    completes a full engine round-trip."""
+    data_dir = tmp_path / "mobile"
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=data_dir, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="before restart")
+        await service.send(session["id"], "turn before restart")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=30,
+            what="pre-restart run_completed event",
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+    # A fresh service (the served-process-restart shape) over the SAME dir.
+    gateway2 = AgentModeGateway()
+    service2 = MobileChatService(data_dir=data_dir, provider_gateway=gateway2)
+    got2: list[Any] = []
+    subscriber2 = asyncio.create_task(_subscribe(service2, got2))
+    try:
+        listing = service2.sessions
+        assert len(listing) == 1, listing
+        restored = listing[0]
+        restored_id = restored["id"]
+        assert restored["title"] == "before restart"
+        assert restored["workspace_id"] == "global"
+        assert restored["has_folder_tools"] is False
+        # No eager tree hydration: the listing alone built no in-memory
+        # session for the persisted conversation.
+        engine2 = service2._engine
+        assert engine2 is not None
+        assert engine2.store.sessions() == []
+
+        # Reading an unknown id lazily restores the persisted conversation
+        # and returns its history.
+        history = await service2.session_messages(restored_id)
+        contents = [(m["role"], m["content"]) for m in history["messages"]]
+        assert ("user", "turn before restart") in contents
+        assert any(
+            role == "assistant" and FINAL_ANSWER in content
+            for role, content in contents
+        )
+        # The restored session lives in-memory under the persisted identity.
+        assert [s.id for s in engine2.store.sessions()] == [restored_id]
+
+        # One send into the restored session completes a full round-trip.
+        await service2.send(restored_id, "turn after restart")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got2),
+            timeout=30,
+            what="post-restore run_completed event",
+        )
+        after = await service2.session_messages(restored_id)
+        user_texts = [m["content"] for m in after["messages"] if m["role"] == "user"]
+        assert user_texts == ["turn before restart", "turn after restart"]
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in after["messages"]
+        )
+        assert gateway2.stream_calls, "the restored session never reached a provider"
+    finally:
+        await _shutdown(service2, subscriber2)
+
+
+async def test_unknown_session_attempts_restore_then_raises(
+    tmp_path: Path,
+) -> None:
+    """Unknown ids on the read and send surfaces attempt the lazy restore
+    and still raise ``KeyError`` (the REST layer's 404) when the persisted
+    store has no such conversation."""
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=AgentModeGateway())
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        with pytest.raises(KeyError):
+            await service.session_messages("no-such-conversation")
+        with pytest.raises(KeyError):
+            await service.send("no-such-conversation", "anyone out there")
     finally:
         await _shutdown(service, subscriber)
 

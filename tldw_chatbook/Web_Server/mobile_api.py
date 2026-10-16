@@ -263,7 +263,7 @@ async def handle_messages(server: Any, request) -> Any:
     service = server._get_mobile_service()
     after = request.query.get("after") or None
     try:
-        result = service.session_messages(
+        result = await service.session_messages(
             request.match_info["sid"], after_message_id=after
         )
     except KeyError:

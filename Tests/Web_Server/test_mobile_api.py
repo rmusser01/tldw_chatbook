@@ -150,7 +150,7 @@ class FakeMobileService:
         self._messages[session_id] = []
         return dict(session)
 
-    def session_messages(
+    async def session_messages(
         self, session_id: str, *, after_message_id: str | None = None
     ) -> dict[str, Any]:
         self.calls.append(

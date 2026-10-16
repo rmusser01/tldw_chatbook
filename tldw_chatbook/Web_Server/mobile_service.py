@@ -21,6 +21,15 @@ every created session gets ``ProjectInstructionControlState.legacy_disabled()``
 (the startup ``AGENTS.md`` flow needs UI confirm callbacks mobile does not
 wire).
 
+Restart rehydration (ADR-234 recorded follow-up): ``sessions`` also lists
+persisted conversations from the isolated mobile chat DB — lazily, no tree
+hydration; the persisted conversation id is the session identity. Touching an
+unknown id on ``session_messages``/``send`` attempts a lazy restore through
+the SAME hydration machinery the TUI resume and the launch wake use
+(``load_console_conversation_tree`` + ``hydrate_console_generation_settings``
++ ``hydrate_console_session`` → ``ConsoleChatStore.restore_persisted_session``);
+an id still unknown after the restore attempt raises ``KeyError`` as before.
+
 Reading surface (Phase 2b, read-only): notes and library browsing through
 lazily opened handles over the app's own chatbook databases
 (``config.get_chachanotes_db_path`` / ``config.get_media_db_path`` — the
@@ -56,6 +65,10 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
 from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
+from tldw_chatbook.Chat.chat_conversation_scope_service import (
+    ChatConversationScopeService,
+)
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -65,6 +78,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    ConversationLoadFailed,
+    ConversationServiceUnavailable,
+    hydrate_console_generation_settings,
+    hydrate_console_session,
+    load_console_conversation_tree,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -103,6 +123,12 @@ _POLL_INTERVAL_SECONDS = 0.5
 
 #: Preview length for mobile notes listings (Phase 2b wire contract).
 _NOTES_PREVIEW_CHARS = 200
+
+#: Page size for the persisted-conversation listing that backs ``sessions``
+#: (restart rehydration). One page, newest-first — the mobile surface's own
+#: list is small; the conversations route gains real pagination as its own
+#: follow-up.
+_PERSISTED_LISTING_LIMIT = 500
 
 #: Relay supervisor cadence (seconds): spawn/stop per-child drain tasks and
 #: run the fail-closed disconnect probes (ADR-236).
@@ -185,10 +211,19 @@ class HeadlessAppContext:
     workspace roots — without it the ``fs_*`` family is never advertised).
     ``call_from_thread`` is the only METHOD the approval path calls; off
     the UI loop a direct invocation is correct (spike note).
+
+    The persisted-session resume machinery additionally reads
+    ``chachanotes_db`` and ``chat_conversation_scope_service`` (the same two
+    attributes the TUI resume and the launch wake read off the real App) —
+    here they point at the service's own isolated mobile chat DB, so the
+    lazy restore hydrates exactly the conversations this surface owns.
     """
 
     def __init__(
-        self, workspace_registry_service: LocalWorkspaceRegistryService
+        self,
+        workspace_registry_service: LocalWorkspaceRegistryService,
+        chachanotes_db: CharactersRAGDB,
+        conversation_service: ChatConversationService,
     ) -> None:
         self.unified_mcp_service = UnifiedMCPControlPlaneService(
             target_store=None,
@@ -197,6 +232,14 @@ class HeadlessAppContext:
             server_service=None,
         )
         self.workspace_registry_service = workspace_registry_service
+        self.chachanotes_db = chachanotes_db
+        # Local-only scope service over the mobile chat DB, same shape the
+        # app wires: no server service, no policy gates — mode "local" is
+        # the only mode the resume machinery requests.
+        self.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=conversation_service,
+            server_service=None,
+        )
 
     def call_from_thread(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Invoke directly — there is no UI loop to marshal onto."""
@@ -214,6 +257,7 @@ class _Engine:
     bridge: ConsoleAgentBridge
     controller: ConsoleChatController
     app_context: HeadlessAppContext
+    conversation_service: ChatConversationService
 
 
 @dataclass
@@ -300,6 +344,11 @@ class MobileChatService:
         self._state = _EngineState()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._turn_tasks: dict[str, asyncio.Task[None]] = {}
+        # Serializes lazy persisted-session restores (restart rehydration):
+        # the store's restore path creates a session under an explicit id
+        # and refuses duplicates, so two racing first touches of the same
+        # unknown id must not both restore.
+        self._restore_lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue[MobileEvent]] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -350,9 +399,11 @@ class MobileChatService:
             str(self._data_dir / "workspaces.db"), client_id="mobile-service"
         )
         registry = LocalWorkspaceRegistryService(workspace_db)
+        chat_db = CharactersRAGDB(str(self._data_dir / "chat.db"), "mobile-service")
+        conversation_service = ChatConversationService(chat_db)
         store = ConsoleChatStore(
             persistence=ChatPersistenceService(
-                CharactersRAGDB(str(self._data_dir / "chat.db"), "mobile-service"),
+                chat_db,
                 workspace_registry=registry,
             )
         )
@@ -379,7 +430,11 @@ class MobileChatService:
             # wired: mobile v1 does not fire run hooks (spike shape).
             hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
         )
-        app_context = HeadlessAppContext(workspace_registry_service=registry)
+        app_context = HeadlessAppContext(
+            workspace_registry_service=registry,
+            chachanotes_db=chat_db,
+            conversation_service=conversation_service,
+        )
         controller.app = app_context
         controller.set_pending_approval = self._on_pending_approval
         self._engine = _Engine(
@@ -390,6 +445,7 @@ class MobileChatService:
             bridge=bridge,
             controller=controller,
             app_context=app_context,
+            conversation_service=conversation_service,
         )
         logger.info("mobile engine constructed over data_dir=%s", self._data_dir)
 
@@ -425,11 +481,77 @@ class MobileChatService:
 
     @property
     def sessions(self) -> list[dict[str, Any]]:
-        """Sessions newest-first: ``[{id, title, workspace_id, has_folder_tools}]``."""
-        engine = self._engine
-        if engine is None:
+        """Sessions newest-first: ``[{id, title, workspace_id, has_folder_tools}]``.
+
+        In-memory sessions lead (newest-first); persisted conversations from
+        the isolated mobile chat DB that are not yet in memory follow, also
+        newest-first by their ``last_modified`` — every conversation in that
+        DB is mobile's. A persisted row is listed under the persisted
+        conversation id (the identity the store's restore path reuses), with
+        NO tree hydration: reading one later lazily restores it via
+        :meth:`session_messages`/:meth:`send`.
+        """
+        engine = self._require_engine()
+        merged: dict[str, dict[str, Any]] = {}
+        bound_conversations: set[str] = set()
+        for session in reversed(engine.store.sessions()):
+            merged[session.id] = self._session_dict(session)
+            if session.persisted_conversation_id is not None:
+                # Already open under its live session identity — the
+                # persisted row below must not double-list it (the same
+                # idiom the launch wake uses to skip open conversations).
+                bound_conversations.add(str(session.persisted_conversation_id))
+        for row in self._persisted_conversation_rows(engine):
+            conversation_id = str(row.get("id") or "")
+            if (
+                not conversation_id
+                or conversation_id in merged
+                or conversation_id in bound_conversations
+            ):
+                continue
+            workspace_id = self._persisted_row_workspace_id(row)
+            merged[conversation_id] = {
+                "id": conversation_id,
+                "title": str(row.get("title") or "") or "New Chat",
+                "workspace_id": workspace_id,
+                "has_folder_tools": self._has_folder_tools(workspace_id),
+            }
+        return list(merged.values())
+
+    def _persisted_conversation_rows(
+        self, engine: _Engine
+    ) -> list[dict[str, Any]]:
+        """One newest-first page of persisted mobile conversations.
+
+        Scope ``all`` over the isolated DB (no workspace/client filters —
+        everything in it is mobile's); listing must never break the read.
+
+        Args:
+            engine: The engine graph.
+
+        Returns:
+            Normalized conversation rows (may be empty).
+        """
+        try:
+            page = engine.conversation_service.list_conversations(
+                limit=_PERSISTED_LISTING_LIMIT, scope_type="all"
+            )
+        except Exception:  # noqa: BLE001 - listing must never break reads
+            logger.warning("mobile persisted conversation listing failed")
             return []
-        return [self._session_dict(s) for s in reversed(engine.store.sessions())]
+        items = page.get("items")
+        return items if isinstance(items, list) else []
+
+    @staticmethod
+    def _persisted_row_workspace_id(row: dict[str, Any]) -> str:
+        """The workspace a persisted row's restored session would report."""
+        if str(row.get("scope_type") or "") == "workspace" and row.get(
+            "workspace_id"
+        ):
+            return str(row["workspace_id"])
+        # Global-scope rows restore into the Console default workspace —
+        # the same value ``_session_dict`` reports for those sessions.
+        return CONSOLE_GLOBAL_WORKSPACE_ID
 
     def _session_dict(self, session: Any) -> dict[str, Any]:
         return {
@@ -459,13 +581,18 @@ class MobileChatService:
             )
             return False
 
-    def session_messages(
+    async def session_messages(
         self, session_id: str, *, after_message_id: str | None = None
     ) -> dict[str, Any]:
         """Return transcript rows, optionally only those after a cursor.
 
+        An unknown ``session_id`` first attempts a lazy restore of the
+        persisted conversation with that id (restart rehydration); an id
+        still unknown after the attempt raises ``KeyError`` as before.
+
         Args:
-            session_id: Console session id.
+            session_id: Console session id (a persisted conversation id is
+                restored on first touch).
             after_message_id: Cursor — only messages strictly after this
                 message id are returned.
 
@@ -476,11 +603,16 @@ class MobileChatService:
             timestamp (documented deviation from the plan sketch).
 
         Raises:
-            KeyError: Unknown ``session_id``.
+            KeyError: Unknown ``session_id`` (after the restore attempt).
             ValueError: ``after_message_id`` is not in the transcript.
         """
         engine = self._require_engine()
-        messages = engine.store.messages_for_session(session_id)
+        try:
+            messages = engine.store.messages_for_session(session_id)
+        except KeyError:
+            if not await self._restore_persisted_session(session_id):
+                raise
+            messages = engine.store.messages_for_session(session_id)
         if after_message_id is not None:
             ids = [m.id for m in messages]
             try:
@@ -502,6 +634,81 @@ class MobileChatService:
         ]
         cursor = wire[-1]["id"] if wire else (after_message_id or None)
         return {"messages": wire, "cursor": cursor}
+
+    async def _restore_persisted_session(self, session_id: str) -> bool:
+        """Lazily restore one persisted conversation into the engine store.
+
+        Reuses the store's resume machinery exactly as the TUI resume and
+        the launch wake do — ``load_console_conversation_tree`` (full tree,
+        raised caps) + ``hydrate_console_generation_settings`` +
+        ``hydrate_console_session`` (which builds ``all_nodes`` and calls
+        ``ConsoleChatStore.restore_persisted_session``) — over the
+        ``HeadlessAppContext``'s mobile-DB conversation service. The
+        restored session takes the persisted conversation id as its session
+        identity, so later touches need no translation.
+
+        Args:
+            session_id: The unknown id being touched (a persisted
+                conversation id).
+
+        Returns:
+            True when the session exists afterwards (restored here, or
+            another task restored it first); False when no persisted
+            conversation matched or the restore failed (logged, ids only).
+        """
+        engine = self._require_engine()
+        if self._session_known(engine, session_id):
+            return True
+        async with self._restore_lock:
+            if self._session_known(engine, session_id):
+                return True
+            try:
+                tree = await load_console_conversation_tree(
+                    engine.app_context, session_id
+                )
+            except (
+                ConversationServiceUnavailable,
+                ConversationLoadFailed,
+            ) as exc:
+                logger.warning(
+                    "mobile persisted-session restore could not load the tree "
+                    "session_id=%s error=%s",
+                    session_id,
+                    type(exc).__name__,
+                )
+                return False
+            if tree is None:
+                return False
+            conversation = tree.get("conversation")
+            if not isinstance(conversation, dict):
+                conversation = {}
+            try:
+                hydration = hydrate_console_generation_settings({}, conversation)
+                await hydrate_console_session(
+                    app=engine.app_context,
+                    store=engine.store,
+                    conversation_id=session_id,
+                    tree=tree,
+                    settings=hydration.settings,
+                    generation_durable_snapshot=hydration.durable_snapshot,
+                    generation_metadata_status=hydration.metadata_status,
+                    session_id=session_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - a failed restore is a 404
+                logger.warning(
+                    "mobile persisted-session restore failed session_id=%s "
+                    "error=%s",
+                    session_id,
+                    type(exc).__name__,
+                )
+                return False
+            logger.info("mobile persisted session restored id=%s", session_id)
+            return True
+
+    @staticmethod
+    def _session_known(engine: _Engine, session_id: str) -> bool:
+        """Whether the store already holds a session with this id."""
+        return any(session.id == session_id for session in engine.store.sessions())
 
     # ------------------------------------------------------------------ #
     # Reading surfaces (Phase 2b, read-only)                              #
@@ -725,19 +932,26 @@ class MobileChatService:
         Pre-validation refusals (raised before anything is scheduled, so the
         REST send route maps them to 404/409):
         - unknown ``session_id`` (``KeyError`` — the engine has no such
-          session);
+          session after the lazy restore attempt a restart-surviving id
+          triggers);
         - a turn already pending or a run still active for the session
           (``MobileSendRefused``) — the engine's own admission rule is one
           run per session, so this mirrors a genuine pre-submit refusal.
 
         Raises:
-            KeyError: Unknown ``session_id``.
+            KeyError: Unknown ``session_id`` (after the restore attempt).
             MobileSendRefused: A turn is already in flight for the session.
         """
         engine = await self._ensure_started()
         # Cheap existence probe: raises KeyError for an unknown session
-        # without materializing messages.
-        engine.store.message_count(session_id)
+        # without materializing messages — after one lazy-restore attempt
+        # (restart rehydration), so a persisted conversation id sends too.
+        try:
+            engine.store.message_count(session_id)
+        except KeyError:
+            if not await self._restore_persisted_session(session_id):
+                raise
+            engine.store.message_count(session_id)
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         status = engine.controller.run_state_for(session_id).status
         if (
