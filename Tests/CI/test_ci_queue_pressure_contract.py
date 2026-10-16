@@ -150,6 +150,25 @@ FAST_LANE_TARGETS = (
     # reads or refuses every way save_state could write a key.
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_speech_pipeline_voice_draft_is_compared",
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_save_state_key_pin_reads_or_refuses_every_way_a_key_is_written",
+    # TASK-33008 (Phase 8 review): the phase's non-UI tests ran in no PR lane.
+    # The return route's navigation and handoff stores (whole files, ~2 s
+    # each), the status row's cost chip (whole file, ~40 s under load), and
+    # the wizard's key-required, subscription, status-line and notice tests
+    # (nodes; the wizard file runs ~8 min whole). Each 3 of 3 serial.
+    "Tests/State/test_conversation_settings_navigation.py",
+    "Tests/State/test_pending_handoff_store.py",
+    "Tests/Chat/test_console_status_chips_cost.py",
+    "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_cleared_key_is_a_keyless_check_that_lifts_the_key_mark",
+    "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_provider_notice_and_line_both_offer_to_continue",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_model_status_is_plain_text_that_space_and_enter_cannot_pick",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_model_render_in_flight_at_quit_mounts_nothing",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_401_to_a_request_that_sent_no_key_asks_for_a_key",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_401_to_a_test_that_sent_no_key_asks_for_a_key",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_401_to_a_test_reads_as_a_key_problem_after_next",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_claude_subscription_is_never_told_to_add_an_api_key",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_check_that_asks_for_a_key_brings_authentication_into_view",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_the_pinned_notice_keeps_clear_of_the_frame",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -213,6 +232,10 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_roleplay_hostile_names.py",
     "Tests/UI/test_roleplay_journeys.py",
     "Tests/UI/test_app_factory_cleanup.py",
+    # TASK-33008 (Phase 8 review): the footer drops a key the screen lists as
+    # unavailable. The footer reads guarded config while it composes, so the
+    # node keeps the bootstrap profile and runs here.
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

@@ -605,6 +605,9 @@ async def test_footer_workbench_shortcuts_join_a_key_less_hint_cleanly():
         assert "  " not in rendered, rendered
 
 
+# The footer reads guarded config while it composes, so this gated node keeps
+# the bootstrap profile and runs in the admission-sensitive lane (TASK-32873).
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [211, 100, 60, 30])
 async def test_a_global_key_the_screen_lists_as_unavailable_is_left_out(width):

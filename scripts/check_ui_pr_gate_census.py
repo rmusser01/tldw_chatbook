@@ -317,7 +317,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # seven-shard lane of their day; the block has since been re-dealt whole for
 # ten shards, so no earlier offset holds. Every block entry keeps its own
 # "what it pins" comment, and a blank line ends the block's header.
-MINIMUM_FILES = 282
+# TASK-33008 (Phase 8 review, 2026-10-16) raised it by 33, to 315: the
+# phase's new Console, Settings-return and Get started card tests ran in no
+# PR lane. 33 node ids are appended after the Phase 7 block, so no earlier
+# entry changes shard: the ten heaviest first, one to each of the ten shards
+# (16-40 s each, local serial at load average ~30), then 23 that take about
+# a second or less: about 225 s in all, 13-36 s a shard. Their files are too
+# slow whole (the return file runs ~13 min, Use detected's ~4.5 min); the 33
+# passed 3 of 3 serial runs together (243 s each).
+MINIMUM_FILES = 315
 
 
 def read_census(path: Path) -> list[str]:

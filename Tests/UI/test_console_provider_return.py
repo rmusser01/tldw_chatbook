@@ -1272,7 +1272,10 @@ async def _save_the_typed_key(app, pilot) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", list(_ROUTES_THAT_NAME_NO_MODEL))
+# Literal ids, so the census can gate one case (its checker reads them statically).
+@pytest.mark.parametrize(
+    "route", ["default-provider", "lists-no-models", "its-own-saved-model"]
+)
 @private_profile_test
 async def test_a_route_that_names_no_model_never_borrows_another_providers_model(
     monkeypatch, request, route: str
