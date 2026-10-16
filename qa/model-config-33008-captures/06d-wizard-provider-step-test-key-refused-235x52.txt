@@ -30,7 +30,7 @@
                                                          │                                                                                                                      │
                                                          │                                                                                                                      │
                                                          │                                                                                                                      │
-                                                         │    ✗ Unauthorized - the server rejected this API key. Check the Authentication section on this step.                 │
+                                                         │    ✗ llama.cpp rejected this API key. Update it, or continue anyway.                                                 │
                                                          │                                                                                                                      │
                                                          │    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮    │
                                                          │    │  ▼ Authentication                                                                                          │    │

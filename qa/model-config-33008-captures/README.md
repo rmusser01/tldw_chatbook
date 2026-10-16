@@ -9,7 +9,8 @@ captures the capture fix 4 wave changed were retaken the same day at `e5e5855ab5
 captures the capture fix 5 wave changed were retaken the same day at `7c260226ec`
 (after that wave and its one fix round; see "Retaken at 7c260226ec" below); `06d`
 was retaken 2026-10-16 at `f54e5fa863` (after its copy fix; see "Retaken at
-f54e5fa863" below).
+f54e5fa863" below) and again the same day at `00b8b2d756` (after the 401 wording fix;
+see "Retaken at 00b8b2d756" below).
 Each moment was captured at 211x44, the tmux window was resized to 235x52 and
 captured again, then resized back. `.txt` is `tmux capture-pane -p`; `.ansi.txt` is
 the same moment with `-e` colour escapes (focus shows there: a focused button is bold
@@ -63,7 +64,7 @@ unchanged from the first set.
 | `06a-wizard-model-step-key-required` | First-run wizard, llama.cpp against a server that answered 401 to a request that sent no key, Model step: "llama.cpp needs an API key and none was set. Go Back to add one, or enter a model ID below." in a one-line status box. |
 | `06b-wizard-provider-step-test-key-required` | **Ctrl+B** back to Provider, **Tab** ×3 to Test connection, the step scrolled to its top with the mouse wheel (Authentication below the fold), **Enter** on Test connection: "✗ llama.cpp needs an API key and none was set. Add one under Authentication, or continue anyway.", with the inset pinned notice "The last connection check failed: … Add one under Authentication, or continue anyway.". The step scrolled so the whole Authentication section shows, titled "Authentication" (no "(optional)"), at both sizes; focus stays on Test connection. |
 | `06c-wizard-model-step-key-refused` | First-run wizard, llama.cpp against a server that answered 401 to a request that sent a key: the endpoint set to the stub, the made-up key typed under Authentication, **Enter** on Test connection (`06d`), then **Ctrl+N** to the Model step: "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." in a one-line status box, no Retry button, focus on the model name field. |
-| `06d-wizard-provider-step-test-key-refused` | The Provider step after that Test: "✗ Unauthorized - the server rejected this API key. Check the Authentication section on this step.", Authentication open with the masked key and "Key staged — the server rejected it; update it above.", focus on Test connection. The section is titled "Authentication" (no "(optional)"), as in `06b`. At 211x44 the step is scrolled so the provider list's top rows are above the fold; the 235x52 shot shows the whole step. |
+| `06d-wizard-provider-step-test-key-refused` | The Provider step after that Test: "✗ llama.cpp rejected this API key. Update it, or continue anyway." (the listing's wording for the same 401), Authentication open with the masked key and "Key staged — the server rejected it; update it above.", focus on Test connection. The section is titled "Authentication" (no "(optional)"), as in `06b`. At 211x44 the step is scrolled so the provider list's top rows are above the fold; the 235x52 shot shows the whole step. |
 
 `02d` is new in the `4f2bffa20f` set, `05e` in the `e5e5855ab5` set, and `06c` and
 `06d` at `f6db56bb4a`; every other file is retaken under its old name.
@@ -187,6 +188,27 @@ changed, and no key is typed, so it has no key line. `c933bd0ad4`'s "Model listi
 the model ID used by this endpoint." is for a server with no model list or a Claude
 subscription, and no capture shows either. `06a` and `06c` are the Model step, whose
 lines are unchanged (`c933bd0ad4` moved its unavailable line into a constant, same text).
+
+## Retaken at 00b8b2d756
+
+`1d1443532e` changed one line of `06d`: a Test's 401 to a key that was sent read
+"✗ Unauthorized - the server rejected this API key. Check the Authentication section
+on this step.", the shared verdict's words, while the listing's 401 read
+"llama.cpp rejected this API key. Update it, or continue anyway.". Retaken: `06d`
+only, the same way as at `f54e5fa863` (fresh scratch `HOME`/`XDG_*`, the same sandbox,
+the stub on 127.0.0.1:18432, `python -m tldw_chatbook`): Quick setup, llama.cpp, the
+endpoint set to the stub, a made-up key typed under Authentication, **Enter** on Test
+connection. Compared with the old files, each of the four differs in exactly that
+line, now "✗ llama.cpp rejected this API key. Update it, or continue anyway."; the
+"▼ Authentication" title, the key line "Key staged — the server rejected it; update
+it above.", the scroll and the focus on Test connection are unchanged. The stub's log
+shows one request, `GET /v1/models` with an Authorization header, from Test
+connection.
+
+Checked and not retaken: `06b`'s 401 is to a Test that sent no key, whose line already
+read the listing's way, and `c820dc8874`'s "Model listing unavailable; you can enter
+the model ID on the next step." (Provider step) is for a server with no model list or
+a Claude subscription, which no capture shows.
 
 ## Procedure
 
