@@ -21,6 +21,13 @@ every created session gets ``ProjectInstructionControlState.legacy_disabled()``
 (the startup ``AGENTS.md`` flow needs UI confirm callbacks mobile does not
 wire).
 
+Reading surface (Phase 2b, read-only): notes and library browsing through
+lazily opened handles over the app's own chatbook databases
+(``config.get_chachanotes_db_path`` / ``config.get_media_db_path`` — the
+same helpers ``app.py`` constructs them from). Strictly read paths: the
+only calls made are ``list_notes`` / ``get_note_by_id`` /
+``search_media_db`` / ``get_media_transcripts``.
+
 Logging discipline (ADR-234): session ids, run statuses, and event types
 only — never message content, never credentials.
 """
@@ -29,7 +36,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -47,6 +56,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, get_media_transcripts
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
@@ -76,6 +86,25 @@ _TERMINAL_MESSAGE_STATUSES = frozenset(
 #: Delta pump cadence (seconds) — one scan tick, always (the loop is a
 #: cheap forever-scan; there is no idle gating).
 _POLL_INTERVAL_SECONDS = 0.5
+
+#: Preview length for mobile notes listings (Phase 2b wire contract).
+_NOTES_PREVIEW_CHARS = 200
+
+
+def _wire_safe(value: Any) -> Any:
+    """Project one read value onto JSON-safe wire types, recursively.
+
+    Both reading DBs hand back ``datetime`` objects for their DATETIME
+    columns (``detect_types``); the mobile wire carries them as ISO 8601
+    strings. Everything else passes through untouched.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _wire_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_wire_safe(item) for item in value]
+    return value
 
 
 class MobileSendRefused(RuntimeError):
@@ -205,7 +234,14 @@ class MobileChatService:
     through :meth:`decide_approval` → ``controller.resolve_pending_approval``.
     """
 
-    def __init__(self, *, data_dir: Path, provider_gateway: Any) -> None:
+    def __init__(
+        self,
+        *,
+        data_dir: Path,
+        provider_gateway: Any,
+        notes_db_path: Path | None = None,
+        media_db_path: Path | None = None,
+    ) -> None:
         """Initialize the service (engine construction is lazy).
 
         Args:
@@ -213,6 +249,14 @@ class MobileChatService:
                 SQLite databases (created when missing).
             provider_gateway: ``ConsoleProviderGatewayProtocol``
                 implementation used for every turn.
+            notes_db_path: Override for the reading notes database path.
+                ``None`` (the default — and the only production value)
+                resolves via ``config.get_chachanotes_db_path()`` on first
+                read, exactly as the app itself constructs the DB; the
+                override exists so tests can point at tmp_path databases
+                without loading config.
+            media_db_path: Override for the reading media database path
+                (``None`` → ``config.get_media_db_path()``, same rule).
         """
         self._data_dir = Path(data_dir)
         self._gateway = provider_gateway
@@ -226,6 +270,15 @@ class MobileChatService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pump_task: asyncio.Task[None] | None = None
         self._closed = False
+        self._notes_db_path_override = (
+            Path(notes_db_path) if notes_db_path is not None else None
+        )
+        self._media_db_path_override = (
+            Path(media_db_path) if media_db_path is not None else None
+        )
+        self._notes_db: CharactersRAGDB | None = None
+        self._media_db: MediaDatabase | None = None
+        self._reading_dbs_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # Construction                                                        #
@@ -404,6 +457,177 @@ class MobileChatService:
         ]
         cursor = wire[-1]["id"] if wire else (after_message_id or None)
         return {"messages": wire, "cursor": cursor}
+
+    # ------------------------------------------------------------------ #
+    # Reading surfaces (Phase 2b, read-only)                              #
+    # ------------------------------------------------------------------ #
+
+    def _ensure_reading_dbs(self) -> tuple[CharactersRAGDB, MediaDatabase]:
+        """Return the reading DB handles, opening them lazily (read-only use).
+
+        Paths resolve exactly as the app resolves them — the same config
+        helpers ``app.py`` builds these databases from
+        (``get_chachanotes_db_path`` / ``get_media_db_path``) — unless a
+        test-injected override was supplied. Opening runs each DB's schema
+        init/migration path (the constructors own that); this is the
+        established Phase 1b lazy-open-post-startup posture, and the reads
+        themselves are strictly read-only.
+
+        Returns:
+            ``(notes_db, media_db)`` handles.
+
+        Raises:
+            RuntimeError: The service is shut down.
+        """
+        if self._closed:
+            raise RuntimeError("MobileChatService is shut down")
+        if self._notes_db is not None and self._media_db is not None:
+            return self._notes_db, self._media_db
+        with self._reading_dbs_lock:
+            if self._notes_db is None or self._media_db is None:
+                from tldw_chatbook.config import (
+                    get_chachanotes_db_path,
+                    get_media_db_path,
+                )
+
+                notes_path = (
+                    self._notes_db_path_override or get_chachanotes_db_path()
+                )
+                media_path = self._media_db_path_override or get_media_db_path()
+                if self._notes_db is None:
+                    self._notes_db = CharactersRAGDB(
+                        notes_path, client_id="mobile-service"
+                    )
+                    logger.info("mobile reading notes DB opened path=%s", notes_path)
+                if self._media_db is None:
+                    self._media_db = MediaDatabase(
+                        db_path=media_path, client_id="mobile-service"
+                    )
+                    logger.info("mobile reading media DB opened path=%s", media_path)
+        return self._notes_db, self._media_db
+
+    def notes_page(self, *, page: int = 1, per_page: int = 50) -> dict[str, Any]:
+        """List non-deleted notes newest-first with truncated previews.
+
+        Args:
+            page: 1-based page number.
+            per_page: Page size (the route layer caps this).
+
+        Returns:
+            ``{"items": [{id, title, preview, created_at, last_modified}],
+            "page": n, "has_more": bool}`` — ``preview`` is the note's
+            first ``_NOTES_PREVIEW_CHARS`` characters (never the full
+            body); the timestamps pass through from ``list_notes`` as-is.
+            ``has_more`` comes from the one-over fetch row.
+        """
+        notes_db, _ = self._ensure_reading_dbs()
+        rows = notes_db.list_notes(
+            limit=per_page + 1,
+            offset=(page - 1) * per_page,
+            preview_chars=_NOTES_PREVIEW_CHARS,
+        )
+        has_more = len(rows) > per_page
+        items = [
+            _wire_safe(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "preview": row["preview"],
+                    "created_at": row.get("created_at"),
+                    "last_modified": row.get("last_modified"),
+                }
+            )
+            for row in rows[:per_page]
+        ]
+        return {"items": items, "page": page, "has_more": has_more}
+
+    def note_detail(self, note_id: str) -> dict[str, Any] | None:
+        """Return one note's full row, or ``None`` when it does not exist.
+
+        Args:
+            note_id: Note id.
+
+        Returns:
+            The note row (``id`` / ``title`` / ``content`` plus the other
+            scalar row fields ``get_note_by_id`` selects; DATETIME columns
+            as ISO 8601 strings), or ``None`` for an unknown or
+            soft-deleted note.
+        """
+        notes_db, _ = self._ensure_reading_dbs()
+        row = notes_db.get_note_by_id(note_id)
+        return _wire_safe(row) if row is not None else None
+
+    def library_page(self, *, page: int = 1, per_page: int = 25) -> dict[str, Any]:
+        """List active (non-deleted, non-trashed) media newest-first.
+
+        Args:
+            page: 1-based page number.
+            per_page: Page size (the route layer caps this).
+
+        Returns:
+            ``{"items": [{media_id, title, media_type, ingestion_date,
+            last_modified}], "page": n, "has_more": bool}`` — ``has_more``
+            derives from ``search_media_db``'s total-matches count.
+        """
+        _, media_db = self._ensure_reading_dbs()
+        # search_media_db returns ``(results_list, total_matches)`` — a
+        # tuple, not a dict; extraction adapts to that shape while the
+        # wire shape above stays fixed.
+        results, total = media_db.search_media_db(
+            search_query=None,
+            page=page,
+            results_per_page=per_page,
+            include_trash=False,
+            include_deleted=False,
+        )
+        items = [_wire_safe(self._library_item(row)) for row in results]
+        has_more = page * per_page < int(total)
+        return {"items": items, "page": page, "has_more": has_more}
+
+    def library_detail(self, media_id: int) -> dict[str, Any] | None:
+        """Return one media row joined with its active transcripts.
+
+        Args:
+            media_id: Media id.
+
+        Returns:
+            ``{media_id, title, media_type, ...remaining row fields,
+            transcripts: [...]}`` — the base wire projection plus every
+            other scalar row field passed through, plus the
+            ``get_media_transcripts`` list; ``None`` when no active row
+            matches.
+        """
+        _, media_db = self._ensure_reading_dbs()
+        results, _total = media_db.search_media_db(
+            search_query=None,
+            media_ids_filter=[int(media_id)],
+            page=1,
+            results_per_page=1,
+            include_trash=False,
+            include_deleted=False,
+        )
+        if not results:
+            return None
+        row = results[0]
+        item = self._library_item(row)
+        for key, value in row.items():
+            if key not in ("id", "title", "type", "ingestion_date", "last_modified"):
+                item[key] = value
+        item["transcripts"] = _wire_safe(
+            get_media_transcripts(media_db, int(media_id))
+        )
+        return _wire_safe(item)
+
+    @staticmethod
+    def _library_item(row: dict[str, Any]) -> dict[str, Any]:
+        """Project one ``search_media_db`` row onto the mobile wire keys."""
+        return {
+            "media_id": row["id"],
+            "title": row["title"],
+            "media_type": row["type"],
+            "ingestion_date": row.get("ingestion_date"),
+            "last_modified": row.get("last_modified"),
+        }
 
     # ------------------------------------------------------------------ #
     # Write surfaces                                                      #
@@ -941,11 +1165,22 @@ class MobileChatService:
 
         Idempotent. Mirrors the spike's teardown discipline:
         ``controller.shutdown()`` (bounded at 10 s), store connection
-        quiesce + close, then ``AgentRunsDB.close()``.
+        quiesce + close, then ``AgentRunsDB.close()``. The reading DBs
+        (Phase 2b) close first — they may be open even when the engine
+        never was.
         """
         if self._closed:
             return
         self._closed = True
+        for db, label in ((self._notes_db, "notes"), (self._media_db, "media")):
+            if db is None:
+                continue
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001 - teardown must finish regardless
+                logger.exception("mobile reading %s DB close failed", label)
+        self._notes_db = None
+        self._media_db = None
         pump = self._pump_task
         if pump is not None:
             pump.cancel()
