@@ -19996,3 +19996,23 @@ lookup. The fixture now deliberately acquires both `_held_connection()` handles
 under the actual worker guard, then checks physical close, caller usability and
 native maintenance admission. `_get_connection()` creates a different lifetime;
 using it as a held-handle probe did not exercise the intended owner.
+
+
+## Cold composition and served input need separate evidence (TASK-34406.3, 2026-10-16)
+
+A 232 ms inclusive first-send composition span repeated at 43 ms on identical
+production bytes. Removing two of three manifest parses then measured
+10.668 to 3.953 ms in a balanced manifest-only benchmark, while four fresh
+first-send pairs measured post-save medians of 3980 to 4064 ms. Host load rose
+10.67 to 37.06 on 18 logical CPUs, and a separate diagnostic observed a concurrent
+Personas import. Keep parser savings, async overlap and whole-Send measurements
+separate; the span is not an additive CPU budget or proof of a cold-Send gain.
+
+The same experiment's contiguous prompt predicate failed with wrapped/cursor
+rendering, while one diagnostic persisted its first prompt exactly. Its HTTP
+close plus two seconds still showed Queue/Stop, and a later synthetic Send click
+on baseline accepted no second message. The final first-only protocol used
+atomic insertion and Enter, waited for actual rendered Send readiness, and kept
+exact persisted prompts/replies, schemas and verified traces as the content
+oracles. Failed packets remain separate. This does not establish that historical
+failed drafts were valid or that any product input behavior was fixed.
