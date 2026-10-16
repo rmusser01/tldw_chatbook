@@ -4173,8 +4173,22 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "8a70e814225a166d6068",
+      "call_count": 1,
+      "diagnostic_digest": "98cd396c17feb0ba7e18",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/mobile_api.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 19,
+      "diagnostic_digest": "60d4667e8c971e05ed89",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/mobile_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 13,
+      "diagnostic_digest": "c96807b0b6779b8d0ee4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/serve.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10899,6 +10913,20 @@
         }
       ],
       "path": "tldw_chatbook/Web_Scraping/Article_Scraper/importers.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "4fac6a95cc27042e",
+          "method": "info",
+          "path_expressions": [
+            "self._data_dir"
+          ],
+          "scope": "MobileChatService._build_engine",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Web_Server/mobile_service.py"
     },
     {
       "candidates": [
