@@ -2849,6 +2849,37 @@ def blow_up_on_disk(*_args: Any, **_kwargs: Any) -> Any:
     raise AssertionError("remote request building must not touch the laptop disk")
 
 
+def test_remote_fs_mkdir_request_normalizes_and_carries_exclusions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-35081 review follow-up: fs_mkdir's remote admission is lexical."""
+    monkeypatch.setattr(
+        workspace_tool_executor_module, "capture_directory_chain", blow_up_on_disk
+    )
+    executor = _remote_executor()
+
+    request = executor._build_request(
+        "fs_mkdir", {"path": "deploy/v2"}, intent="write"
+    )
+
+    assert request.arguments["path"] == "deploy/v2"
+    assert request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"},
+        {"kind": "name", "value": ".env"},
+    ]
+
+
+def test_remote_fs_mkdir_request_rejects_git_metadata_lexically() -> None:
+    """The one lexically-checkable hidden-path write rule the remote
+    builder enforces: a ``.git`` path component refuses admission."""
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_mkdir", {"path": ".git/hooks"}, intent="write")
+
+    assert caught.value.code == "invalid_request"
+
+
 @pytest.mark.parametrize(
     "path",
     ["../escape", "a/../../b", "/etc/passwd", "a/..\\..\\b", "..", "a/../.."],

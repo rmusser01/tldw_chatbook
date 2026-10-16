@@ -1559,6 +1559,7 @@ class LocalToolProvider:
         from tldw_chatbook.Utils.sensitive_paths import (
             SensitivePathContext,
             merge_sensitive_context,
+            refuses_new_directory_chain,
             resolve_sensitive_context,
         )
 
@@ -1594,6 +1595,14 @@ class LocalToolProvider:
             path = resolve_workspace_path(
                 args["path"], root, intent="write", context=context
             )
+            if refuses_new_directory_chain(path, context=context):
+                # Mirror the executor's extra admission (a mkdir's leaf IS
+                # a new directory) so the preflight never renders an
+                # approval card the dispatch would then refuse.
+                raise LocalToolError(
+                    f"Refused: creating '{args['path']}' would collide with "
+                    "a protected path"
+                )
             return (ToolPathTarget(path=path, kind="directory"),)
         if name in {"fs_write", "fs_edit"}:
             path = resolve_workspace_path(
