@@ -231,8 +231,16 @@ class PluginsScreen(BaseAppScreen):
         workspace = await self._workspace()
         return self.is_running and token == self._token() and workspace == token[1]
 
+    def _cancel_load(self):
+        self.workers.cancel_group(self, "plugins-load")
+        self._load_generation = None
+        self._loading = False
+        self._update_actions()
+
     def _reload(self):
         self.browse.request_generation += 1
+        self._load_generation = self.browse.request_generation
+        self._loading = True
         self.run_worker(
             self._load(self.browse.request_generation),
             group="plugins-load",
@@ -243,7 +251,8 @@ class PluginsScreen(BaseAppScreen):
         from ..Plugins_Modules.browse_state import accept_response
         from ..Plugins_Modules.details import display_text
 
-        self._loading = True
+        if generation != self._load_generation:
+            return
         self._status("Loading cached metadata…")
         self._update_actions()
         try:
@@ -291,7 +300,8 @@ class PluginsScreen(BaseAppScreen):
                     "No current details. Cached display state cannot authorize an operation."
                 )
         finally:
-            if accept_response(generation, self.browse.request_generation):
+            if generation == self._load_generation:
+                self._load_generation = None
                 self._loading = False
                 self._update_actions()
 
@@ -495,6 +505,7 @@ class PluginsScreen(BaseAppScreen):
         self.browse.details_open = False
         self._layout()
         self.query_one("#plugins-list").focus()
+        self._reload()
 
     @on(Button.Pressed)
     def _button(self, event):
@@ -512,6 +523,8 @@ class PluginsScreen(BaseAppScreen):
             self._reload()
         elif action in {"repository", "import", "add-source"}:
             self.browse.request_generation += 1
+            self._cancel_load()
+            self._status("Choose a source for the preview.")
             self.browse.entry_action = action
             self._layout()
             self.query_one("#plugins-location").focus()

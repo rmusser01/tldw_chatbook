@@ -3,7 +3,7 @@
     height: 1fr;
     padding: $ds-space-0 $ds-space-inset;
 }
-#plugins-shell .section-title { height: $ds-control-height-compact; text-style: $ds-text-strong; }
+#plugins-shell .section-title { height: $ds-control-height-compact; text-style: $ds-text-strong; color: $ds-text-primary; }
 #plugins-scope { height: auto; color: $ds-authority-workspace; }
 #plugins-status { height: auto; max-height: $ds-control-height; color: $ds-text-muted; }
 #plugins-modes, #plugins-entry-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
@@ -11,6 +11,7 @@
 }
 #plugins-shell Button { min-width: 0; width: 1fr; }
 #plugins-modes Button { height: $ds-control-height; }
+#plugins-search > .input--placeholder { color: $ds-text-primary; }
 #plugins-search { height: $ds-control-height; }
 #plugins-panes { height: 1fr; min-height: 0; }
 #plugins-list-pane { width: $ds-sidebar-width; min-width: $ds-sidebar-min-width; height: 1fr; }

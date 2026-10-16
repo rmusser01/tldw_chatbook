@@ -696,3 +696,14 @@ category import groups are deferred to actual constructor/category use. Settings
 keeps original exported objects and explicitly assigned module patch points;
 event classes remain eager. All registered routes remain in the preimport walk,
 and no payload moves to app startup or receives a raised cap.
+
+
+### Task23 Fix1 — R99/R100 authenticated recorded display and actual category use
+
+Passive Installed listing and explicit README metadata lookup use recorded inspection metadata authenticated in the same registry SQLite projection that is compared with protected current authority and the published snapshot. This replaces the earlier contradictory `capture(fresh=False)` display requirement: that call still fully reinspects package bodies and remains mandatory for execution, not passive display. The registry collector is untrusted until coordinator equality gates succeed. Only requested current revision metadata is returned; unprotected evidence/availability/diagnostics/candidates are stripped and dependency edges derive from authenticated component constraints. No schema, store, owner or authority format changes.
+
+Admission shares its existing activation/trust/selection/mapping/dependency/revocation/live-fence checks between full capture and recorded eligibility. Display returns only component IDs, never RunPluginSnapshot, tokens, leases or run admission. Execution retains complete retained-byte verification, drain gates, component ceilings, data-root epochs and current authority checks. UI labels recorded eligibility and explicitly says package bytes are not reverified. Explicit README opens only the selected current root's no-follow regular README, reads at most65537 bytes including sentinel and returns at most65536 UTF8 bytes including truncation marker; it is a bounded literal preview, not proof of whole-package integrity.
+
+R100 requires actual cold Overview and unrelated shared handlers to leave unopened category panels/models deferred. Symbol resolution follows its matching category/field/ID/saved-content/nonempty-query branch; genuine shared Overview model use must be identified and tested. Original class/export/assigned-module-patch identity and saved drafts are preserved. ADR097 caps and all routes remain unchanged.
+
+Fix1 controls cover zero package-member reads for list/search, entire selected README read bound, authenticated-record tampering, identical shared eligibility/runtime gates with full runtime verification, cold Overview then actual category/draft behavior, held-load Back/form/new-owner cleanup and scoped token-backed title/placeholder contrast. See task-23-fix1-proposal.md and CLI5 plan; root owns independent re-review and closeout.

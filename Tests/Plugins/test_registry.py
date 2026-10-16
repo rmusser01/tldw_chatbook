@@ -819,3 +819,35 @@ def test_source_publication_compares_binding_without_recreating_removed_row(tmp_
             assert registry.list_marketplace_sources() == ()
     finally:
         owner.close()
+
+
+def test_recorded_collector_uses_same_projection_and_only_requested_revision(
+    plugin_stack, native_package, monkeypatch
+):
+    from Tests.Plugins.test_admission import install
+    from tldw_chatbook.Plugins import package_files
+
+    stack = plugin_stack
+    identity = install(stack, native_package())
+    authority = stack.call(stack.coordinator.published_snapshot)
+    revision = authority["installations"][0]["revision_digest"]
+    expected = (identity, revision)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("recorded projection read package bodies")
+
+    monkeypatch.setattr(package_files, "capture_package", forbidden)
+    collector = {expected: None}
+    projection = stack.call(
+        lambda: stack.registry.authority_projection(
+            operation_result=authority["operation_result"],
+            _recorded_inspections=collector,
+        )
+    )
+    assert projection == authority
+    assert set(collector) == {expected}
+    assert collector[expected].effective_digest == revision
+    assert stack.call(lambda: stack.coordinator.recorded_inspections(())) == (
+        authority,
+        {},
+    )

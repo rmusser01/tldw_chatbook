@@ -27,18 +27,18 @@ def installed_details(row) -> str:
         "Installation on this device: Installed",
         f"Activation: {activation} · {row.override} (global default: {'enabled' if row.activation_default else 'disabled'})",
         f"Trust: {'reviewed' if row.trusted else 'needs review'}",
-        f"{len(ready)} of {len(selected)} selected components available",
+        f"{len(ready)} of {len(selected)} selected components eligible by recorded metadata",
         f"Installation ID: {row.installation_id}",
         f"Revision: {row.revision_digest}",
         f"Format: {row.dialect or 'unknown'}",
         f"Source ID: {row.source_id or 'direct selected package'}",
         "Origin: " + display_text(row.origin),
         f"Ref: {display_text(row.ref or 'local selected bytes')}\nCommit: {row.commit or 'not recorded'}",
-        "\nComponents (inspection evidence; runtime permission checked separately):",
+        "\nComponents (recorded metadata; package bytes not reverified):",
     ]
     for item in row.components:
         state = (
-            "ready"
+            "eligible (recorded)"
             if item.component_id in ready
             else (
                 "excluded"
@@ -56,7 +56,7 @@ def installed_details(row) -> str:
         )
         evidence = (
             ", ".join(f"{entry.level} {entry.observed_at}" for entry in item.evidence)
-            or "unknown"
+            or "not authenticated; execution verifies retained bytes"
         )
         lines.extend(
             (

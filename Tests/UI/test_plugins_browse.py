@@ -88,7 +88,7 @@ async def test_keyboard_details_back_resize_and_restore_keep_stable_selection(
         await pilot.press("down", "enter")
         await pilot.pause()
         assert screen.browse.selected_installation_id == review.installation_id
-        assert "1 of 1 selected components available" in str(
+        assert "1 of 1 selected components eligible by recorded metadata" in str(
             screen.query_one("#plugins-detail", Static).render()
         )
         assert "Activation in: workspace-a" in paint(screen)
@@ -345,5 +345,51 @@ async def test_editing_import_location_refuses_pending_preview(
         await settled(pilot, screen)
         assert screen.browse.preview is None
         assert "earlier selection" in str(
+            screen.query_one("#plugins-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["back", "form"])
+async def test_back_replaces_held_load_without_old_completion_clearing_new_owner(
+    native_console, monkeypatch, transition
+):
+    rig = native_console
+    await rig.install()
+    original = rig.service.management_snapshot
+    entered = [asyncio.Event(), asyncio.Event()]
+    release = [asyncio.Event(), asyncio.Event()]
+    calls = []
+
+    async def held(*args, **kwargs):
+        index = len(calls)
+        calls.append(index)
+        if index < 2:
+            entered[index].set()
+            try:
+                await release[index].wait()
+            except asyncio.CancelledError:
+                await release[index].wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(rig.service, "management_snapshot", held)
+    app = BrowseApp(rig)
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = app.screen
+        await asyncio.wait_for(entered[0].wait(), 2)
+        if transition == "form":
+            screen.query_one("#plugins-import", Button).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not screen._loading
+        await pilot.press("escape")
+        await asyncio.wait_for(entered[1].wait(), 2)
+        release[0].set()
+        await pilot.pause()
+        assert screen._loading, "old completion cleared a newer load owner"
+        release[1].set()
+        await settled(pilot, screen)
+        assert screen.query_one("#plugins-list", OptionList).option_count == 1
+        assert "Loading" not in str(
             screen.query_one("#plugins-status", Static).render()
         )

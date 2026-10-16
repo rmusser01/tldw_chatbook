@@ -3257,8 +3257,6 @@ class SettingsScreen(BaseAppScreen):
         Args:
             state: Previously saved Settings navigation and draft state.
         """
-        AdvancedConfigSettings = _settings_category_symbol("AdvancedConfigSettings")
-        WebSearchSettings = _settings_category_symbol("WebSearchSettings")
         super().restore_state(state)
         if not isinstance(state, dict):
             return
@@ -3293,13 +3291,17 @@ class SettingsScreen(BaseAppScreen):
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
 
         search_session = state.get("web_search_session")
-        if type(search_session) is WebSearchSettings:
+        if search_session is not None and type(
+            search_session
+        ) is _settings_category_symbol("WebSearchSettings"):
             self._web_search_settings = search_session
             self._settings_drafts[SettingsCategoryId.WEB_SEARCH] = search_session.draft
             self._web_search_model()
 
         raw_session = state.get("raw_config_session")
-        if type(raw_session) is AdvancedConfigSettings:
+        if raw_session is not None and type(raw_session) is _settings_category_symbol(
+            "AdvancedConfigSettings"
+        ):
             self._advanced_config_settings = raw_session
             self._raw_config_model()  # Rebind this live, memory-only session.
 
@@ -6839,10 +6841,10 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Checkbox.Changed)
     def handle_image_gen_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        ImageGenSettingsPanel = _settings_category_symbol("ImageGenSettingsPanel")
         checkbox_id = str(getattr(event.checkbox, "id", "") or "")
         if not checkbox_id.startswith("settings-imagegen-"):
             return
+        ImageGenSettingsPanel = _settings_category_symbol("ImageGenSettingsPanel")
         event.stop()
         from ...Widgets.settings_image_gen_panel import switch_word, toggle_label
 
@@ -7587,10 +7589,10 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Checkbox.Changed)
     def handle_video_gen_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        VideoGenSettingsPanel = _settings_category_symbol("VideoGenSettingsPanel")
         checkbox_id = str(getattr(event.checkbox, "id", "") or "")
         if not checkbox_id.startswith("settings-videogen-"):
             return
+        VideoGenSettingsPanel = _settings_category_symbol("VideoGenSettingsPanel")
         event.stop()
         if checkbox_id == "settings-videogen-confirm_cost_estimate":
             original = self._video_gen_raw_section().get("confirm_cost_estimate")
@@ -8040,7 +8042,6 @@ class SettingsScreen(BaseAppScreen):
         summary: SettingsCategorySummary,
         query_text: str | None = None,
     ) -> int | None:
-        WEB_SEARCH_TERMS = _settings_category_symbol("WEB_SEARCH_TERMS")
         query = self._category_search_text(query_text).lower()
         if not query:
             return 0
@@ -8060,7 +8061,9 @@ class SettingsScreen(BaseAppScreen):
             )
         ).lower()
         if summary.category is SettingsCategoryId.WEB_SEARCH:
-            secondary_haystack += " " + WEB_SEARCH_TERMS.lower()
+            secondary_haystack += (
+                " " + _settings_category_symbol("WEB_SEARCH_TERMS").lower()
+            )
         if query in secondary_haystack:
             return 2
         # task-1715: field labels -- typing a setting's visible name
@@ -19881,16 +19884,6 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_category_button_label(category)
 
     def _render_detail_pane(self) -> ComposeResult:
-        AdvancedConfigPanel = _settings_category_symbol("AdvancedConfigPanel")
-        AgentsSettingsPanel = _settings_category_symbol("AgentsSettingsPanel")
-        ImageGenSettingsPanel = _settings_category_symbol("ImageGenSettingsPanel")
-        SettingsSplashScreenViewer = _settings_category_symbol(
-            "SettingsSplashScreenViewer"
-        )
-        VideoGenSettingsPanel = _settings_category_symbol("VideoGenSettingsPanel")
-        WebSearchSettingsPanel = _settings_category_symbol("WebSearchSettingsPanel")
-        env_var_summary = _settings_category_symbol("env_var_summary")
-        skill_trust_display = _settings_category_symbol("skill_trust_display")
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
             yield from self._render_overview_detail()
@@ -20253,6 +20246,9 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Theme", classes="destination-section settings-column-title")
             yield SettingsThemeEditor(id="settings-theme-editor")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
+            SettingsSplashScreenViewer = _settings_category_symbol(
+                "SettingsSplashScreenViewer"
+            )
             yield Static(
                 "Splash Screen", classes="destination-section settings-column-title"
             )
@@ -20263,10 +20259,12 @@ class SettingsScreen(BaseAppScreen):
             )
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.WEB_SEARCH:
+            WebSearchSettingsPanel = _settings_category_symbol("WebSearchSettingsPanel")
             yield WebSearchSettingsPanel(
                 self._web_search_model(), id="settings-web-search-panel"
             )
         elif category is SettingsCategoryId.IMAGE_GENERATION:
+            ImageGenSettingsPanel = _settings_category_symbol("ImageGenSettingsPanel")
             yield Static(
                 "Image Gen", classes="destination-section settings-column-title"
             )
@@ -20284,6 +20282,7 @@ class SettingsScreen(BaseAppScreen):
                 overlay=image_gen_overlay,
             )
         elif category is SettingsCategoryId.VIDEO_GENERATION:
+            VideoGenSettingsPanel = _settings_category_symbol("VideoGenSettingsPanel")
             yield Static(
                 "Video Gen", classes="destination-section settings-column-title"
             )
@@ -20381,6 +20380,8 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.WORKSPACES:
             yield from self._render_workspaces_detail()
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
+            env_var_summary = _settings_category_symbol("env_var_summary")
+            skill_trust_display = _settings_category_symbol("skill_trust_display")
             posture = self._settings_privacy_posture()
             yield Static(
                 "Privacy & Security",
@@ -20692,11 +20693,13 @@ class SettingsScreen(BaseAppScreen):
                     open_links=False,
                 )
         elif category is SettingsCategoryId.AGENTS:
+            AgentsSettingsPanel = _settings_category_symbol("AgentsSettingsPanel")
             yield Static("Agents", classes="destination-section settings-column-title")
             yield AgentsSettingsPanel(self.app_instance, id="settings-agents-panel")
         elif category in DOMAIN_SETTINGS_CATEGORY_IDS:
             yield from self._render_domain_category_detail(category)
         else:
+            AdvancedConfigPanel = _settings_category_symbol("AdvancedConfigPanel")
             yield Static(
                 "Advanced Config", classes="destination-section settings-column-title"
             )
@@ -28688,7 +28691,6 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_revert_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
-        AdvancedConfigPanel = _settings_category_symbol("AdvancedConfigPanel")
         if self._vllm_default_actions_fenced():
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
@@ -28716,6 +28718,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.WEB_SEARCH:
             self._web_search_model().capture_pending_input()
         if category is SettingsCategoryId.ADVANCED_CONFIG:
+            AdvancedConfigPanel = _settings_category_symbol("AdvancedConfigPanel")
             self.query_one(AdvancedConfigPanel).request_replacement("revert")
             return
         if category is SettingsCategoryId.SPEECH_TTS:
@@ -28808,8 +28811,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _revert_category(self, category: SettingsCategoryId) -> None:
         """Discard a dirty category's staged edits (post-confirmation)."""
-        WebSearchSettingsPanel = _settings_category_symbol("WebSearchSettingsPanel")
         if category is SettingsCategoryId.WEB_SEARCH:
+            WebSearchSettingsPanel = _settings_category_symbol("WebSearchSettingsPanel")
             try:
                 panel = self.query_one(WebSearchSettingsPanel)
             except QueryError:

@@ -247,7 +247,6 @@ class PluginService:
 
         def operation():
             from .admission import effective_activation
-            from .recovery import retained_inspections
 
             self._admission._workspace(workspace_id)
             authority = self._coordinator.published_snapshot()
@@ -260,17 +259,11 @@ class PluginService:
                 ),
                 key=lambda row: row["installation_id"],
             )[offset : offset + limit]
-            identities = {row["installation_id"] for row in installed}
-            inspections = retained_inspections(
-                {
-                    **authority,
-                    "revisions": [
-                        row
-                        for row in authority["revisions"]
-                        if row["installation_id"] in identities
-                    ],
-                },
-                coordinator=self._coordinator,
+            authority, inspections = self._coordinator.recorded_inspections(
+                tuple(
+                    (row["installation_id"], row["revision_digest"])
+                    for row in installed
+                )
             )
             result = []
             for row in installed:
@@ -302,9 +295,12 @@ class PluginService:
                 )
                 ready, error = (), None
                 try:
-                    ready = self._admission.capture(
-                        identity, workspace_id, "management-display", fresh=False
-                    ).selection
+                    ready = self._admission.recorded_eligibility(
+                        identity,
+                        workspace_id,
+                        authority=authority,
+                        inspection=inspection,
+                    )
                 except PluginUnavailable:
                     error = "plugin_components_unavailable"
                 binding = inspection.catalog_binding
@@ -374,28 +370,12 @@ class PluginService:
                 _member_fd,
                 validate_relative_member,
             )
-            from .recovery import retained_inspections
 
             self._admission._workspace(workspace_id)
-            authority = self._coordinator.published_snapshot()
-            if not any(
-                row["installation_id"] == installation_id
-                and row["revision_digest"] == revision_digest
-                for row in authority["installations"]
-            ):
-                raise ValueError("plugin_details_changed")
-            inspection = retained_inspections(
-                {
-                    **authority,
-                    "revisions": [
-                        row
-                        for row in authority["revisions"]
-                        if row["installation_id"] == installation_id
-                        and row["revision_digest"] == revision_digest
-                    ],
-                },
-                coordinator=self._coordinator,
-            )[(installation_id, revision_digest)]
+            _, inspections = self._coordinator.recorded_inspections(
+                ((installation_id, revision_digest),)
+            )
+            inspection = inspections[(installation_id, revision_digest)]
             try:
                 with (
                     _directory_fd(Path(inspection.materialized_identity)) as root_fd,
