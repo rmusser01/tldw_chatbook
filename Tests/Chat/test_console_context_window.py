@@ -439,6 +439,96 @@ async def test_real_http_transport_reads_serving_capacity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "meta,expected",
+    [
+        # Real llama.cpp /v1/models record: serving window and training bound.
+        ({"n_vocab": 151936, "n_ctx": 8192, "n_ctx_train": 32768, "n_embd": 4096}, 8192),
+        # Router mode with the model registered but not yet loaded: only the
+        # training bound is served (slot n_ctx reads 0 and is rejected).
+        ({"n_vocab": 151936, "n_ctx_train": 32768}, 32768),
+    ],
+)
+async def test_llama_cpp_custom_endpoint_model_list_reports_nested_meta(
+    meta, expected
+):
+    """TASK-35079: llama.cpp reports its window under /v1/models meta.n_ctx,
+    which the flat-key record scan never read -- custom-endpoint users always
+    saw the 32k application fallback."""
+    record = {
+        "id": "selected",
+        "object": "model",
+        "created": 1760000000,
+        "owned_by": "llamacpp",
+        "aliases": ["qwen"],
+        "meta": meta,
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"object": "list", "data": [record]}
+            )
+        )
+    ) as client:
+        result = await ContextWindowCache().resolve(
+            ContextWindowTarget(
+                "custom", "custom", "http://localhost:9000", "selected"
+            ),
+            client,
+        )
+    assert (result.tokens, result.source, result.verified) == (
+        expected,
+        "server metadata",
+        True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_windowless_probe_logs_one_credential_free_debug_line():
+    """TASK-35079: a supported-family probe that completes without a usable
+    window must be diagnosable from the log, without credentials, and
+    unsupported families (never probed) must stay silent."""
+    from loguru import logger
+
+    records = []
+    sink = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, json={"data": [{"id": "other", "max_model_len": 999999}]}
+                )
+            )
+        ) as client:
+            result = await ContextWindowCache().resolve(
+                ContextWindowTarget(
+                    "custom", "custom", "http://localhost:9000", "selected"
+                ),
+                client,
+            )
+            assert result.tokens == 32000
+            probe_lines = [
+                line for line in records if "probe found no usable window" in line
+            ]
+            assert len(probe_lines) == 1
+            assert "family=custom" in probe_lines[0]
+            assert "http://localhost:9000" in probe_lines[0]
+
+            await ContextWindowCache().resolve(
+                ContextWindowTarget(
+                    "openai", "openai", "https://api.openai.com/v1", "gpt-x"
+                ),
+                client,
+            )
+        assert (
+            len([line for line in records if "probe found no usable window" in line])
+            == 1
+        )
+    finally:
+        logger.remove(sink)
+
+
+@pytest.mark.asyncio
 async def test_failed_probe_is_not_retried_on_every_send(monkeypatch):
     """TASK-32923: failures were cached for 5 s, so an unreachable or slow
     metadata endpoint added up to the 1 s probe timeout to nearly every send.

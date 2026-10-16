@@ -12,10 +12,12 @@ from dataclasses import dataclass, field
 from time import monotonic
 
 import httpx
+from loguru import logger
 
 from tldw_chatbook.Utils.egress import (
     EgressBlockedError,
     check_url_or_raise_async,
+    log_origin,
     origin_set,
 )
 from tldw_chatbook.Utils.token_counter import (
@@ -56,6 +58,17 @@ SERVER_REPORTED_WINDOW_FAMILIES = frozenset(
         # catalog resolves OpenRouter windows instead (TASK-32923).
     }
 )
+
+#: Flat model-record keys that may carry a serving context window.
+_WINDOW_KEYS = (
+    "max_model_len",
+    "context_length",
+    "context_window",
+    "max_context_length",
+)
+#: Nested ``meta`` object keys (llama.cpp's /v1/models shape): the serving
+#: window first, generic aliases, then the training bound (TASK-35079).
+_META_WINDOW_KEYS = ("n_ctx",) + _WINDOW_KEYS + ("n_ctx_train",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +222,27 @@ class ContextWindowCache:
     async def _probe(
         self, target: ContextWindowTarget, client: httpx.AsyncClient
     ) -> int | None:
+        """One bounded probe, with a debug trail when it finds no window.
+
+        TASK-35079: "context size not detected" reports were undiagnosable
+        because every miss was silent; this line is TTL-throttled by the
+        cache, credential-free, and never fires for unprobed families.
+        """
+        if target.family not in SERVER_REPORTED_WINDOW_FAMILIES:
+            return None
+        capacity = await self._fetch_capacity(target, client)
+        if capacity is None:
+            logger.debug(
+                "Context-window metadata probe found no usable window "
+                "(family={} endpoint={})",
+                target.family,
+                log_origin(target.endpoint),
+            )
+        return capacity
+
+    async def _fetch_capacity(
+        self, target: ContextWindowTarget, client: httpx.AsyncClient
+    ) -> int | None:
         if not target.model or not target.endpoint:
             return None
         family = target.family
@@ -288,13 +322,19 @@ class ContextWindowCache:
                 record.get("model"),
             ):
                 continue
-            for name in (
-                "max_model_len",
-                "context_length",
-                "context_window",
-                "max_context_length",
-            ):
+            for name in _WINDOW_KEYS:
                 value = positive_window(record.get(name))
+                if value is not None:
+                    return value
+            meta = record.get("meta")
+            if not isinstance(meta, dict):
+                continue
+            # TASK-35079: llama.cpp reports the serving window as meta.n_ctx
+            # (slot capacity) and the training bound as meta.n_ctx_train; the
+            # serving value wins, and the bound still beats the 32k fallback
+            # when only it is served (router mode, model not yet loaded).
+            for name in _META_WINDOW_KEYS:
+                value = positive_window(meta.get(name))
                 if value is not None:
                     return value
         return None
