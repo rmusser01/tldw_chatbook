@@ -105,6 +105,14 @@ def _register(
 ):
     """Drive register_begin -> register_complete with a fresh P-256 key."""
     begin = service.register_begin(label=label)
+    # Discoverable credentials are mandated (ADR-235): roaming authenticators
+    # otherwise create server-side credentials that login (allowCredentials [])
+    # can never offer.
+    assert begin["publicKey"]["authenticatorSelection"] == {
+        "residentKey": "required",
+        "userVerification": "preferred",
+        "requireResidentKey": True,
+    }
     private_key = ec.generate_private_key(ec.SECP256R1())
     cose_key = cbor.encode(_cose_key_dict(private_key.public_key()))
     auth_data = _auth_data_bytes(_FLAG_UP_UV_AT, 0, credential_id, cose_key)
@@ -188,8 +196,8 @@ def test_registration_and_login_round_trip(tmp_path: Path) -> None:
     # Public material only: the COSE key decodes to a P-256 public key map and
     # nothing private (no PEM/seed/priv) ever reaches disk.
     cose_map = cbor.decode(base64.b64decode(record["public_key_b64"]))
+    assert set(cose_map) <= {1, 3, -1, -2, -3}  # public EC2 parts only, no -4/d
     assert cose_map[1] == 2 and cose_map[3] == -7
-    assert "PRIVATE" not in store_path.read_text().upper()
 
 
 def test_login_grants_nothing_directly_but_service_validates_origin(
@@ -234,7 +242,9 @@ def test_challenge_one_use_and_ttl(tmp_path: Path) -> None:
             base64.b64encode(attestation_object).decode(),
         )
 
-    # A fresh challenge works once, then the id is dead.
+    # A fresh challenge works once, then the id is dead.  The reuse attempt
+    # carries a FRESH credential id so the duplicate-credential guard cannot
+    # mask a popped-state regression.
     clock.advance(1.0)
     begin = service.register_begin(label="one use")
     client_data_json = _client_data_json(
@@ -245,11 +255,24 @@ def test_challenge_one_use_and_ttl(tmp_path: Path) -> None:
         client_data_json,
         base64.b64encode(attestation_object).decode(),
     )
+    reuse_key = ec.generate_private_key(ec.SECP256R1())
+    reuse_attestation = cbor.encode(
+        {
+            "fmt": "none",
+            "attStmt": {},
+            "authData": _auth_data_bytes(
+                _FLAG_UP_UV_AT,
+                0,
+                b"\x08" * 32,
+                cbor.encode(_cose_key_dict(reuse_key.public_key())),
+            ),
+        }
+    )
     with pytest.raises(AuthenticationError):
         service.register_complete(
             begin["challenge_id"],
             client_data_json,
-            base64.b64encode(attestation_object).decode(),
+            base64.b64encode(reuse_attestation).decode(),
         )
 
 

@@ -40,6 +40,8 @@ from fido2.webauthn import (
     AuthenticatorData,
     PublicKeyCredentialRpEntity,
     PublicKeyCredentialUserEntity,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
 )
 
 from ..Canvas.web_auth import AuthenticationError
@@ -208,7 +210,12 @@ class WebAuthnService:
     # ----------------------------------------------------------- ceremonies
 
     def register_begin(self, *, label: str) -> dict:
-        """Start registration; returns publicKey options + one-use challenge id."""
+        """Start registration; returns publicKey options + one-use challenge id.
+
+        Resident keys are REQUIRED so roaming authenticators create
+        discoverable credentials; login_begin offers an empty allow-list, so
+        only discoverable credentials can complete login (ADR-235).
+        """
         existing = [
             attested
             for _, attested in self._attested_credentials(self._store.load())
@@ -217,7 +224,11 @@ class WebAuthnService:
             "register",
             label,
             lambda challenge: self._server.register_begin(
-                user=self._user, credentials=existing, challenge=challenge
+                user=self._user,
+                credentials=existing,
+                resident_key_requirement=ResidentKeyRequirement.REQUIRED,
+                user_verification=UserVerificationRequirement.PREFERRED,
+                challenge=challenge,
             ),
         )
 
