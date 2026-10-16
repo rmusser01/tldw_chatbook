@@ -66,6 +66,14 @@ def _shown_toasts(screen) -> list[str]:
     ]
 
 
+async def _settle(pilot, done) -> None:
+    """Poll up to 5 s (a fixed 0.2 s fell short under load, review round 2)."""
+    for _ in range(100):
+        if done():
+            return
+        await pilot.pause(0.05)
+
+
 @pytest.mark.asyncio
 # TASK-33008 review round 2: _build_test_app reads guarded config, so under the
 # per-test sandbox it raises RecoveryRequired("raw_source_selection_changed");
@@ -83,16 +91,20 @@ async def test_a_dialog_over_the_console_draws_each_notice_once() -> None:
     async with host.run_test(size=(211, 44), notifications=True) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        shown = ["Console provider changed"]
         host.notify("Console provider changed", timeout=30)
-        await pilot.pause(0.2)
-        assert _shown_toasts(console) == ["Console provider changed"]
+        await _settle(pilot, lambda: _shown_toasts(console) == shown)
+        assert _shown_toasts(console) == shown
 
         dialog = _Dialog()
         await host.push_screen(dialog)
-        await pilot.pause(0.2)
-        assert _shown_toasts(dialog) == ["Console provider changed"]
+        await _settle(
+            pilot,
+            lambda: (_shown_toasts(dialog), _shown_toasts(console)) == (shown, []),
+        )
+        assert _shown_toasts(dialog) == shown
         assert _shown_toasts(console) == []
 
         host.pop_screen()
-        await pilot.pause(0.2)
-        assert _shown_toasts(console) == ["Console provider changed"]
+        await _settle(pilot, lambda: _shown_toasts(console) == shown)
+        assert _shown_toasts(console) == shown
