@@ -187,7 +187,7 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # mid-strip. Any change here must update the strip ORDER in lockstep so
 # position and shortcut stay aligned. ADR-172 retires the permanent Artifacts
 # entry while preserving its Ctrl+6 compatibility binding and every other slot;
-# ADR-233 does the same for the MCP destination and Ctrl+9.
+# ADR-237 does the same for the MCP destination and Ctrl+9.
 SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
     {
         "home": "ctrl+1",
@@ -209,7 +209,7 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
 # ADR-172: a retained hotkey for the retired route, outside permanent navigation.
 ARTIFACTS_COMPATIBILITY_SHORTCUT = "ctrl+6"
 
-# ADR-233: retained hotkey for the retired MCP destination, now a
+# ADR-237: retained hotkey for the retired MCP destination, now a
 # Settings > Tools & MCP deep-link outside permanent navigation.
 MCP_COMPATIBILITY_SHORTCUT = "ctrl+9"
 
@@ -226,7 +226,7 @@ _ROUTABLE_LEGACY_ROUTES = {
     "chatbooks",
     "subscriptions",
     "tools_settings",
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP;
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP;
     # the legacy "mcp" route id stays routable as its own canonical route,
     # mirroring "tools_settings".
     "mcp",
@@ -285,7 +285,7 @@ for destination in SHELL_DESTINATION_ORDER:
 _ROUTE_MAP["artifacts"] = ResolvedShellRoute("library", "library", "artifacts")
 _ROUTE_MAP["chatbooks"] = ResolvedShellRoute("library", "chatbooks", "chatbooks")
 
-# ADR-233: the MCP destination retired into Settings > Tools & MCP; both
+# ADR-237: the MCP destination retired into Settings > Tools & MCP; both
 # public route ids resolve onto the Settings destination.
 _ROUTE_MAP["mcp"] = ResolvedShellRoute("settings", "settings", "mcp")
 _ROUTE_MAP["tools_settings"] = ResolvedShellRoute(

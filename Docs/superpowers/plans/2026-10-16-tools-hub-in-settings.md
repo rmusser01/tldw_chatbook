@@ -22,10 +22,10 @@
 
 ---
 
-### Task 1: Governance first — backlog task + ADR-233
+### Task 1: Governance first — backlog task + ADR-237
 
 **Files:**
-- Create: `backlog/decisions/233-mcp-destination-retirement-tools-hub-in-settings.md`
+- Create: `backlog/decisions/237-mcp-destination-retirement-tools-hub-in-settings.md`
 - Create: `backlog/tasks/task-<id> - Retire-MCP-destination-into-Settings-Tools-and-MCP-hub.md` (created via `backlog task create`, not by hand)
 
 **Interfaces:**
@@ -49,18 +49,18 @@ backlog task list --plain | head -5   # note the assigned id
 backlog task edit <id> --plan "1. Pane module + TOOLS category registration (destination still live)\n2. Keybindings a/r/t/1-4 + per-mode footer hints\n3. Deep links + Tool Profiles handoff\n4. Destination retirement + route aliases + compat hotkey\n5. Test migration sweep\n6. Docs + verification"
 ```
 
-- [ ] **Step 3: Write ADR-233**
+- [ ] **Step 3: Write ADR-237**
 
-Create `backlog/decisions/233-mcp-destination-retirement-tools-hub-in-settings.md` following the house ADR shape (see `backlog/decisions/172-library-artifacts-browse-and-navigation.md`):
+Create `backlog/decisions/237-mcp-destination-retirement-tools-hub-in-settings.md` following the house ADR shape (see `backlog/decisions/172-library-artifacts-browse-and-navigation.md`):
 
 ```markdown
-# ADR-233: Retire the MCP destination; Settings hosts the Tools & MCP hub
+# ADR-237: Retire the MCP destination; Settings hosts the Tools & MCP hub
 
 Status: Accepted
 Date: 2026-10-16
 Related Task: task-<id> (fill in from Step 1)
 Spec: Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md
-Amends: ADR-015 (destination set 13 -> 12; fold map gains mcp/tools_settings -> Settings)
+Amends: ADR-015 (destination set 14 -> 13; fold map gains mcp/tools_settings -> Settings)
 Supersedes: the `mcp-defaults` Settings domain contract's "server operations stay
 in MCP" stance (the contract object is deleted with the category)
 Related: ADR-172 (retirement template reused), ADR-148 (workbench IA preserved
@@ -105,7 +105,7 @@ decision re-homes the workbench intact and deletes the pointer card instead.
 
 ## Consequences
 
-- `SHELL_DESTINATION_ORDER` drops to 12; ctrl+9 leaves
+- `SHELL_DESTINATION_ORDER` drops to 13 (14 pre-retirement); ctrl+9 leaves
   `SHELL_DESTINATION_SHORTCUTS` in lockstep (ADR-031/152).
 - ADR-148's rail IA, recovery review, and audit drill-down are unchanged;
   only the host screen changes.
@@ -122,11 +122,11 @@ decision re-homes the workbench intact and deletes the pointer card instead.
 - [ ] **Step 4: Link the ADR and spec from the task, then commit**
 
 ```bash
-backlog task edit <id> --notes "ADR-233 written; spec linked"
-git add backlog/decisions/233-mcp-destination-retirement-tools-hub-in-settings.md \
+backlog task edit <id> --notes "ADR-237 written; spec linked"
+git add backlog/decisions/237-mcp-destination-retirement-tools-hub-in-settings.md \
   "backlog/tasks/task-<id> - Retire-MCP-destination-into-Settings-Tools-and-MCP-hub.md" \
   Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md
-git commit -m "docs: ADR-233 + spec for Tools hub in Settings (task-<id>)"
+git commit -m "docs: ADR-237 + spec for Tools hub in Settings (task-<id>)"
 ```
 
 ---
@@ -658,7 +658,7 @@ In `settings_screen.py`:
 1. BINDINGS (~line 3656) — append after the personal-context entries (mode keys are new; `a`/`r`/`t` already bound):
 
 ```python
-        # Tools & MCP (ADR-233): mode keys self-guard to the TOOLS category,
+        # Tools & MCP (ADR-237): mode keys self-guard to the TOOLS category,
         # mirroring the RAG accelerator self-guard pattern above.
         ("1", "settings_tools_mode('servers')", "Tools: Servers"),
         ("2", "settings_tools_mode('tools')", "Tools: Tools"),
@@ -982,7 +982,7 @@ Expected: FAIL — `SettingsScreen` has no `handle_runtime_backend_changed`.
 
 ```python
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
-        """Forward runtime-backend changes to the Tools & MCP pane (ADR-233).
+        """Forward runtime-backend changes to the Tools & MCP pane (ADR-237).
 
         Args:
             runtime_backend: Newly active runtime backend identifier.
@@ -1067,7 +1067,7 @@ Expected: FAIL.
 1. `shell_destinations.py` — delete the `ShellDestination("mcp", …)` block (~lines 114-121) and the `"mcp": "ctrl+9"` entry (~line 206). Add next to `ARTIFACTS_COMPATIBILITY_SHORTCUT` (~line 217):
 
 ```python
-# ADR-233: retained hotkey for the retired MCP destination, now a
+# ADR-237: retained hotkey for the retired MCP destination, now a
 # Settings > Tools & MCP deep-link outside permanent navigation.
 MCP_COMPATIBILITY_SHORTCUT = "ctrl+9"
 ```
@@ -1086,7 +1086,7 @@ Extend the Settings destination's `palette_aliases` (the `research` destination 
 2. `screen_registry.py` — delete the `"mcp"` (~154) and `"tools_settings"` (~178) `ScreenRoute` entries; add to `_SCREEN_ALIASES` (~230):
 
 ```python
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP.
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP.
     "mcp": "settings",
     "tools_settings": "settings",
 ```
@@ -1094,7 +1094,7 @@ Extend the Settings destination's `palette_aliases` (the `research` destination 
 3. `app.py` — import `MCP_COMPATIBILITY_SHORTCUT` next to `ARTIFACTS_COMPATIBILITY_SHORTCUT` (~line 329) and add a binding beside the artifacts one (~line 948):
 
 ```python
-        # ADR-233: preserve muscle memory after MCP folds into Settings.
+        # ADR-237: preserve muscle memory after MCP folds into Settings.
         Binding(
             MCP_COMPATIBILITY_SHORTCUT,
             "settings_tools_hub",
@@ -1180,9 +1180,9 @@ git commit -m "feat(ui): retire MCP destination into Settings Tools & MCP; ctrl+
 
 - [ ] **Step 1: Update docs**
 
-- `AGENTS.md` Special Systems > Tool Calling: replace any "MCP destination" wording with "Settings > Tools & MCP (ADR-233)".
+- `AGENTS.md` Special Systems > Tool Calling: replace any "MCP destination" wording with "Settings > Tools & MCP (ADR-237)".
 - Check `Docs/Architecture/` for the MCP/tools subsystem doc; update its "surface" section to name the Settings category; leave the workbench internals description untouched.
-- `backlog/decisions/015-shell-destination-ia.md`: append an `Amended by: ADR-233` line under Status, matching how ADR-210 amended it.
+- `backlog/decisions/015-shell-destination-ia.md`: append an `Amended by: ADR-237` line under Status, matching how ADR-210 amended it.
 
 - [ ] **Step 2: Live verification (per `backlog/docs/lessons-live-verification.md`)**
 
@@ -1197,7 +1197,7 @@ Verify by hand: F4 → "Tools & MCP" category renders the four modes; each mode 
 Tick every AC checkbox in the task file, add Implementation Notes (approach, decisions, modified files — include the spec/ADR links), then:
 
 ```bash
-backlog task edit <id> -s Done --notes "Implemented per ADR-233; see Implementation Notes"
+backlog task edit <id> -s Done --notes "Implemented per ADR-237; see Implementation Notes"
 ```
 
 - [ ] **Step 4: Commit**

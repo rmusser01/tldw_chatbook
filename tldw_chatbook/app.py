@@ -954,7 +954,7 @@ class TldwCli(
             "Library Artifacts",
             show=False,
         ),
-        # ADR-233: preserve muscle memory after MCP folds into Settings.
+        # ADR-237: preserve muscle memory after MCP folds into Settings.
         Binding(
             MCP_COMPATIBILITY_SHORTCUT,
             "settings_tools_hub",
@@ -2485,7 +2485,7 @@ class TldwCli(
         "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
         "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
         "customize": {"category": "theme"},
-        # ADR-233: the MCP destination folds into Settings > Tools & MCP.
+        # ADR-237: the MCP destination folds into Settings > Tools & MCP.
         "mcp": {"category": "tools"},
         "tools_settings": {"category": "tools"},
     }

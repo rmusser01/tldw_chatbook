@@ -1,6 +1,6 @@
 """Settings Tools & MCP category pane: mode strip + the MCP workbench.
 
-Port of the retired MCP destination shell (ADR-233): the
+Port of the retired MCP destination shell (ADR-237): the
 same mode chips, per-mode shortcut sets, exclusive reload worker group, and
 bounded initial view state -- hosted inside the Settings screen instead of a
 standalone destination. DOM ids (#mcp-mode-strip, mcp-mode-* chips,
