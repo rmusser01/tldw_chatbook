@@ -109,6 +109,22 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # The scheduler's first tick waits for this hop (T14a), bounded.
         ("reconcile_at_boot", "dreams"),
         # -- ChatScreen / Console (initial-screen mount) --
+        # TASK-34406: initial checked readiness/context copies now read off-loop;
+        # their publication workers complete that same first visible projection.
+        ("_refresh", "console-readiness-config"),
+        ("_sync_native_console_chat_ui", "console-readiness-publication"),
+        ("_refresh", "console-context-presentation"),
+        ("_sync_native_console_chat_ui", "console-context-publication"),
+        # Initial agent history/child counts use finite view-owned reads instead
+        # of synchronous rail/fleet reads on the initial presentation.
+        ("_load_historical_presentation", "console-agent-history"),
+        ("_load_subagent_counts", "console-subagent-counts"),
+        # The initial controller publication and post-reconciliation mount/resume
+        # discovery retain their existing named groups and conditional starts.
+        ("_sync_native_console_chat_ui", "console-sync"),
+        ("_refresh_console_skill_candidates", "console-skill-discovery"),
+        # The Character view owns its initial/resume context refresh.
+        ("refresh_if_scope_changed", "console-character-context-refresh"),
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
         # TASK-32826: batch-read durable manual reminders off-loop so restored
         # conversation rows display their saved unread state on first use.

@@ -123,11 +123,14 @@ async def _disable_before_native_callback(monkeypatch, settings, select, revoke=
     import asyncio
     import threading
 
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
     original = asyncio.to_thread
     crossed = []
 
     async def delayed(function, *args, **kwargs):
-        if crossed or not select(function):
+        callback = args[0] if function is run_finite_local_worker and args else function
+        if crossed or not select(callback):
             return await original(function, *args, **kwargs)
         crossed.append(function)
         reached, release = asyncio.Event(), threading.Event()
