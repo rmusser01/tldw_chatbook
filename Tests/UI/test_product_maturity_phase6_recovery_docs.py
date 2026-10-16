@@ -207,7 +207,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             assert "Next: Configure ACP runtime setup in ACP before launch." in acp_text
             assert "Owner: ACP runtime." in acp_text
 
-            # ADR-233: the bare "mcp" route lands Settings > Tools & MCP via
+            # ADR-237: the bare "mcp" route lands Settings > Tools & MCP via
             # the alias + default context.
             await app.handle_screen_navigation(NavigateToScreen("mcp"))
             await _wait_until(
@@ -328,7 +328,7 @@ def test_phase6_mcp_recovery_doc_matches_current_hub_workflow() -> None:
     assert "`MCP: Not wired - MCP servers.`" in mcp_row[1]
     assert "`Add server`" in mcp_row[1]
     assert "`Import…`" in mcp_row[1]
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP.
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP.
     assert "Open Settings → Tools & MCP → Servers" in mcp_row[2]
     assert "then use Tools" in mcp_row[2]
     assert "Inventory" not in " ".join(mcp_row)

@@ -2561,7 +2561,7 @@ async def test_workflows_empty_state_offers_real_authoring_with_disabled_run():
 @pytest.mark.parametrize(
     ("route", "expected_text"),
     [
-        # ADR-233: the retired "mcp" row moved to the pane-level
+        # ADR-237: the retired "mcp" row moved to the pane-level
         # test_tools_hub_labels_server_first_workbench_columns below (the
         # "Model Context Protocol" purpose copy now lives in the Settings
         # Tools & MCP pane, #tools-hub-purpose, not a shell wrapper).
@@ -2582,7 +2582,7 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(
 
 
 class _ToolsPaneHarness(ConsolidatedCSSApp):
-    """ADR-233: mounts the Settings Tools & MCP pane the way
+    """ADR-237: mounts the Settings Tools & MCP pane the way
     `DestinationHarness` mounts screens -- the retired MCP destination
     cases port onto this harness (same DOM, pane-hosted)."""
 
@@ -2616,7 +2616,7 @@ async def test_tools_hub_embeds_mcp_workbench(request):
 
     Realigned from the retired `test_mcp_destination_embeds_mcp_workbench`
     (and before it `test_mcp_destination_embeds_unified_mcp_management_panel`)
-    when the MCP destination folded into Settings (ADR-233). Same product
+    when the MCP destination folded into Settings (ADR-237). Same product
     intent — the pane embeds its management surface directly, with no "open
     elsewhere" escape hatch and no "not embedded" placeholder copy.
     """
@@ -2645,7 +2645,7 @@ async def test_tools_hub_labels_server_first_workbench_columns(request):
 
     Realigned from the retired `test_mcp_destination_labels_server_first_
     workbench_columns` (and before it the `UnifiedMCPPanel` 3-column labels
-    test) when the MCP destination folded into Settings (ADR-233). Same
+    test) when the MCP destination folded into Settings (ADR-237). Same
     product intent — a server-first workbench with clearly delineated panes —
     verified against the `#mcp-hub-rail` / `#mcp-hub-canvas` /
     `#mcp-hub-inspector` landmarks: the rail lists servers, the canvas hosts
@@ -2844,7 +2844,7 @@ async def test_tools_hub_restores_unified_mcp_view_state_after_mount(
 
     Realigned from the retired `test_mcp_destination_restores_unified_mcp_
     view_state_after_mount` when the MCP destination folded into Settings
-    (ADR-233) -- the legacy blob shape is accepted by the workbench's
+    (ADR-237) -- the legacy blob shape is accepted by the workbench's
     tolerant `_apply_view_state`, so the pane passes it straight through as
     initial view state. Same product intent — a saved legacy view survives
     the hosting change:
@@ -2935,7 +2935,7 @@ async def test_tools_hub_permissions_and_tools_tooltips_are_current(request):
     the user about what pressing the chip would do. T7 (MCP Hub Phase 5):
     "audit" carried the same stale-copy defect until it shipped its own
     real canvas (`MCPAuditMode`) -- same regression class, same fix.
-    ADR-233: the chips (and their tooltips) moved onto the pane unchanged."""
+    ADR-237: the chips (and their tooltips) moved onto the pane unchanged."""
     host = _ToolsPaneHarness()
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause()
@@ -3025,7 +3025,7 @@ def test_tools_hub_runtime_refresh_uses_exclusive_worker(monkeypatch):
 
     Realigned from the retired `test_mcp_destination_runtime_refresh_uses_
     exclusive_worker` when the MCP destination folded into Settings
-    (ADR-233) -- the screen's `handle_runtime_backend_changed` forwarding
+    (ADR-237) -- the screen's `handle_runtime_backend_changed` forwarding
     (Task 5) lands here on the pane. Same product intent — a single, named,
     exclusive worker refreshes the MCP surface on runtime backend change.
     """
@@ -3051,7 +3051,7 @@ def test_tools_hub_runtime_refresh_uses_exclusive_worker(monkeypatch):
 
 
 def test_tools_hub_keys_dispatch_per_category_and_hints_are_per_mode():
-    """T13/T8 port (ADR-233): the retired screen's `a`/`r`/`t` BINDINGS now
+    """T13/T8 port (ADR-237): the retired screen's `a`/`r`/`t` BINDINGS now
     live on SettingsScreen and self-dispatch per category (a = add server,
     r = force reload, t = test tool inside TOOLS; their RAG/personal-context
     meanings elsewhere); the 1-4 mode keys self-guard to TOOLS. The per-mode
@@ -3258,7 +3258,7 @@ async def test_tools_hub_test_tool_opens_panel_for_selected_tool_end_to_end(requ
 
 class ToolsHubFooterHarness(ConsolidatedCSSApp):
     """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
-    for the Settings Tools & MCP category (ADR-233 port of the retired
+    for the Settings Tools & MCP category (ADR-237 port of the retired
     `MCPFooterHarness`): composes an `AppFooterStatus` directly on the App's
     own default screen, exactly like `TldwCli._create_main_ui_widgets` does
     in the real app (id="app-footer-status"). Task-264: `SettingsScreen`
@@ -3614,7 +3614,7 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 @pytest.mark.asyncio
 @private_profile_test
 async def test_legacy_tools_settings_route_opens_tools_hub_not_global_settings(request):
-    """ADR-233 port of `test_legacy_tools_settings_route_opens_mcp_not_
+    """ADR-237 port of `test_legacy_tools_settings_route_opens_mcp_not_
     global_settings`: the legacy route ids must still land on the Tools & MCP
     surface (Settings > Tools), not generic global preferences -- resolution
     aliases to Settings and the default context selects the tools category.

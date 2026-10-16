@@ -146,7 +146,7 @@ async def _drive_affected_routes(
     assert ingest._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
     _assert_removed_root_state_absent(app)
 
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP; the
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP; the
     # bare legacy "mcp" route rides the alias + default context.
     app.post_message(NavigateToScreen("mcp"))
     mcp = await _wait_for_screen(app, pilot, SettingsScreen, TAB_SETTINGS)
@@ -209,7 +209,7 @@ async def test_registered_destinations_own_state_without_retired_root_mirrors(
         "notes": ("library", TAB_LIBRARY, LibraryScreen),
         "search": ("library", TAB_LIBRARY, LibraryScreen),
         "ingest": ("library", TAB_LIBRARY, LibraryScreen),
-        # ADR-233: both legacy route ids alias to the Settings screen.
+        # ADR-237: both legacy route ids alias to the Settings screen.
         "mcp": ("settings", TAB_SETTINGS, SettingsScreen),
         "tools_settings": ("settings", TAB_SETTINGS, SettingsScreen),
         "evals": ("evals", TAB_EVALS, EvalsScreen),

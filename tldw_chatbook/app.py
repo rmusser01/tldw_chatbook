@@ -2772,6 +2772,12 @@ class TldwCli(
             "tools_settings",
             "notes",
             "prompts",
+            # ADR-237: the retired MCP destination's route id stays valid as
+            # a startup default -- `_push_initial_screen` resolves it through
+            # the registry alias to Settings and applies the legacy-route
+            # default context ({"category": "tools"}), same promise as
+            # `tools_settings` above.
+            "mcp",
         }
         return set(ALL_TABS) | shell_routes | legacy_aliases
 

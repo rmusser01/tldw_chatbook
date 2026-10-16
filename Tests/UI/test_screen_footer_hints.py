@@ -80,7 +80,7 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 assert "F6" in screen_footer.shortcut_text
                 assert "Ctrl+K" in screen_footer.shortcut_text
 
-                # ADR-233: the bare "mcp" legacy route rides the alias +
+                # ADR-237: the bare "mcp" legacy route rides the alias +
                 # default context and lands on Settings > Tools & MCP, whose
                 # footer advertises the same per-mode hint set the retired
                 # MCP destination registered.

@@ -57,7 +57,7 @@ ROUTE_SPECS = (
     ("media", TAB_LIBRARY, LibraryScreen),
     ("search", TAB_LIBRARY, LibraryScreen),
     ("ingest", TAB_LIBRARY, LibraryScreen),
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP; the
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP; the
     # legacy "mcp" route aliases to the Settings screen.
     ("mcp", TAB_SETTINGS, SettingsScreen),
     ("evals", TAB_EVALS, EvalsScreen),
@@ -230,7 +230,7 @@ async def _exercise_route(route: str, screen: object, pilot: Any) -> None:
         assert type(screen) is LibraryScreen
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
     elif route == "mcp":
-        # ADR-233: the bare "mcp" route lands Settings > Tools & MCP via the
+        # ADR-237: the bare "mcp" route lands Settings > Tools & MCP via the
         # alias + default context; ownership lives in the mounted pane.
         assert type(screen) is SettingsScreen
         pane = screen._tools_hub_pane()

@@ -234,7 +234,7 @@ async def test_apply_navigation_context_rejects_malformed_tools_context(request)
 @pytest.mark.asyncio
 @private_profile_test
 async def test_suspending_settings_invalidates_in_flight_recovery_review(request):
-    """ADR-233 port check: leaving Settings mid-review must invalidate an
+    """ADR-237 port check: leaving Settings mid-review must invalidate an
     accepted recovery review's UI receipt AND clear the TOOLS footer hints --
     both halves of the retired MCP shell's on_screen_suspend, driven through
     the REAL SettingsScreen handler (not an inlined copy)."""
@@ -360,3 +360,64 @@ async def test_runtime_backend_change_forces_pane_reload(request, tmp_path):
         pane.handle_runtime_backend_change = lambda backend: reloaded.append(True)  # type: ignore[assignment]
         await settings.handle_runtime_backend_changed("local")
         assert reloaded == [True]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_category_switch_away_and_back_restores_hub_view_state(
+    request, tmp_path
+):
+    """Final-review fix (task-35150): an intra-Settings category switch swaps
+    panes and DESTROYS the hub pane -- the leave path must snapshot its live
+    view state so switching back remounts the workbench in the mode the user
+    left, instead of resetting to Servers."""
+    app = _build_test_app()
+    # A real (fake-seam) hub service: the restore is applied at the END of
+    # the workbench's initial reload worker, which reads
+    # app_instance.unified_mcp_service -- the real service raises
+    # RecoveryRequired in this sandbox (pre-existing env block, see
+    # baseline-failures.txt), same seam stub as the tests above.
+    app.unified_mcp_service = PermissionsHubService(
+        tmp_path / "mcp_permissions.json"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        pane.activate_mode("audit")
+        # A mode request landing before the deferred audit canvas mounts is
+        # stashed and replayed by the initial load worker -- poll for the
+        # mode instead of assuming one pause settled it (same precedent as
+        # test_footer_shortcuts_follow_active_mode above).
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and pane.workbench.active_mode != "audit":
+            await pilot.pause(0.01)
+        assert pane.workbench.active_mode == "audit"
+
+        # Leave TOOLS: the pane swap destroys the pane, so the leave path
+        # must have captured its live view state first.
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        captured = settings._tools_hub_initial_view_state
+        assert isinstance(captured, dict)
+        assert captured.get("mode") == "audit"
+
+        # Come back: the fresh pane consumes the captured state at the end
+        # of its initial reload worker (see test_panel_view_state_round_trip
+        # above) -- poll for the synced chip, then assert the full state.
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        remounted = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        audit_chip = remounted.query_one("#mcp-mode-audit")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not audit_chip.has_class("is-active"):
+            await pilot.pause(0.01)
+        assert remounted.workbench.active_mode == "audit"
+        assert audit_chip.has_class("is-active")
+        assert remounted.get_view_state()["mode"] == "audit"

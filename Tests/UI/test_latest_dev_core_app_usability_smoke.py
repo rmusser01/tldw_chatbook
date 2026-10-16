@@ -49,7 +49,7 @@ CORE_FIRST_USE_ROUTES = (
     # tab "library") and checks the skills canvas's own empty-state copy
     # rather than the retired SkillsScreen's.
     (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP; the
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP; the
     # legacy "mcp" route lands SettingsScreen (canonical tab "settings") via
     # the alias + default context, and the pane's purpose copy carries the
     # MCP identity -- same shape as the retired skills row above.

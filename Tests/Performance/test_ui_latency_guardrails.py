@@ -58,7 +58,7 @@ SCREEN_SWITCH_BUDGET_SECONDS = 10.0
 
 #: The audit tour, hotkey -> expected screen class (``type(app.screen)``).
 #: SHELL_DESTINATION_ORDER: ctrl+1 home, ctrl+2 console(chat), ctrl+3 library,
-#: ctrl+4 personas, ctrl+7 schedules, f2 lab(llm), f4 settings. ADR-233:
+#: ctrl+4 personas, ctrl+7 schedules, f2 lab(llm), f4 settings. ADR-237:
 #: ctrl+9 is the retained Tools & MCP compatibility deep-link, whose target
 #: screen is Settings now -- the tour still measures the hotkey's switch.
 DESTINATION_TOUR: tuple[tuple[str, str], ...] = (

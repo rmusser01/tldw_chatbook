@@ -26897,6 +26897,20 @@ class SettingsScreen(BaseAppScreen):
             self._settings_selected_workspace_id = None
             self._discard_workspace_memory_confirmation()
         if (
+            self.active_category == SettingsCategoryId.TOOLS.value
+            and category_value != SettingsCategoryId.TOOLS.value
+        ):
+            # task-35150: the pane swap from assigning active_category below
+            # destroys the hub pane -- snapshot its live view state so a
+            # later return to TOOLS remounts the workbench in the mode the
+            # user left (same capture save_state() does, kept alive across
+            # in-session category switches). Target-guarded so a Tools->Tools
+            # deep-link (which sets its own state right before calling here)
+            # is not clobbered.
+            tools_pane = self._tools_hub_pane()
+            if tools_pane is not None:
+                self._tools_hub_initial_view_state = tools_pane.get_view_state()
+        if (
             self.active_category == SettingsCategoryId.THEME.value
             and category_value != SettingsCategoryId.THEME.value
             and self.theme_editor_modified
