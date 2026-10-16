@@ -12684,8 +12684,10 @@ class TestComposeCrashPolicy:
                 failed_step.query_one("#setup-step-retry", Button).press()
                 await _until(
                     pilot,
-                    lambda: container.steps[container.current_step] is not failed_step
-                    and not container._failure_action_running,
+                    lambda retired_step=failed_step: (
+                        container.steps[container.current_step] is not retired_step
+                        and not container._failure_action_running
+                    ),
                 )
                 assert len(container.query(ProviderStep)) == 1
                 assert len(container.query("#setup-step-retry")) == 1
