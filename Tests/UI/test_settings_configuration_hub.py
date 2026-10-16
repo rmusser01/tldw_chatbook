@@ -1300,7 +1300,6 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.SCHEDULES,
         SettingsCategoryId.WATCHLISTS,
         SettingsCategoryId.WORKFLOWS,
-        SettingsCategoryId.MCP_DEFAULTS,
         SettingsCategoryId.ACP_DEFAULTS,
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
@@ -1676,7 +1675,6 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         SettingsCategoryId.SCHEDULES,
         SettingsCategoryId.WATCHLISTS,
         SettingsCategoryId.WORKFLOWS,
-        SettingsCategoryId.MCP_DEFAULTS,
         SettingsCategoryId.ACP_DEFAULTS,
     }
 
@@ -2902,15 +2900,15 @@ async def test_settings_domain_category_renders_read_only_owner_contract():
         await _wait_for_selector(screen, pilot, "#settings-category-search")
         await pilot.press("/")
         await _wait_for_settings_search_focus(screen, pilot)
-        await pilot.press(*"mcp")
-        await _wait_for_settings_text(screen, pilot, "Filter: mcp")
+        await pilot.press(*"acp")
+        await _wait_for_settings_text(screen, pilot, "Filter: acp")
         await pilot.press("enter")
-        await _wait_for_settings_text(screen, pilot, "MCP Defaults")
+        await _wait_for_settings_text(screen, pilot, "ACP Defaults")
         text = _visible_text(screen)
 
-        assert "MCP Defaults" in text
-        assert "Owner destination: MCP" in text
-        assert "MCP owns server/tool runtime" in text
+        assert "ACP Defaults" in text
+        assert "Owner destination: ACP" in text
+        assert "ACP owns runtime launch" in text
 
 
 def test_settings_server_sync_workspace_rows_use_source_contracts():
