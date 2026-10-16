@@ -3,6 +3,9 @@
 Date: 2026-10-15
 Status: Accepted (spec 2026-10-15 §3.5; ADR-233 remains authoritative for
 session persistence, device pairing, and incident response)
+Amended 2026-10-15: the dependency is the canonical `fido2` (>=2,<3); the
+pre-implementation draft's "python-fido2 (>=1.1,<2)" name/range did not
+match the installable package (Ruling 5).
 
 ## Context
 
@@ -13,7 +16,7 @@ survive restarts because only public keys are stored server-side.
 
 ## Decision
 
-1. WebAuthn login via python-fido2 (>=1.1,<2, web extra only). Discoverable
+1. WebAuthn login via fido2 (>=2,<3, web extra only). Discoverable
    credentials, attestation "none", user verification "preferred".
 2. RP ID derived from [web_server] public_url's host at server build time.
    Passkeys are refused when public_url is unset or its host is an IP

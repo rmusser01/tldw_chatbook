@@ -131,6 +131,24 @@ multi-user account, filesystem, or database isolation system. Canvas
 capability URLs are narrower: a copied or guessed URL cannot reuse another
 browser session's Canvas authority.
 
+Passkeys (WebAuthn) are an alternative sign-in path. Register one from
+`/auth/devices` with **Add a passkey** (registration routes require an
+authenticated session plus the CSRF token) and sign in from `/auth/login`
+with **Use passkey**; a completed ceremony mints the same persistent
+device session as token login, labelled with a `(passkey)` suffix. The
+WebAuthn relying party is the `public_url` host, and relying-party ids
+must be registrable domains: with the default localhost bind, an unset
+`public_url`, or an IP-literal host, the pages omit the passkey controls,
+`/auth/devices` shows a "Passkeys need a domain origin" notice, and QR
+pairing or token login remain the path. The server stores public key
+material only, in `webauthn_credentials.json` in the user data dir
+(written with mode 0600). Losing or deleting that file logs every passkey
+out — QR/token login still works, and individual credentials can also be
+removed on `/auth/devices`. Each login must advance the credential's
+stored signature counter; a counter regression (a cloned authenticator)
+rejects the assertion. Passkeys need the `fido2` library (`>=2,<3`),
+installed with the `web` extra.
+
 ### Incident response
 
 If a token, browser session, proxy, or served host may be compromised:
