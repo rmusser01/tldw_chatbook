@@ -382,7 +382,12 @@ class PluginRegistry:
             for row in self._connection.execute(SELECT_INSTALLATIONS, (limit, offset))
         )
 
-    def authority_projection(self, *, operation_result: dict | None) -> dict:
+    def authority_projection(
+        self,
+        *,
+        operation_result: dict | None,
+        _recorded_inspections: dict | None = None,
+    ) -> dict:
         """Read complete logical authority in one SQLite snapshot.
 
         This validates shape, not reviewed authorization. The coordinator must
@@ -446,6 +451,12 @@ class PluginRegistry:
                 )
                 if inspection.effective_digest != row["revision_digest"]:
                     raise ValueError("revision inspection identity mismatch")
+                identity = (row["installation_id"], row["revision_digest"])
+                if (
+                    _recorded_inspections is not None
+                    and identity in _recorded_inspections
+                ):
+                    _recorded_inspections[identity] = inspection
                 fields = (
                     "source_identity",
                     "dialect",

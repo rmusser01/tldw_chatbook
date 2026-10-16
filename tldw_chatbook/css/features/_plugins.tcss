@@ -1,0 +1,46 @@
+/* Plugins: the existing dense terminal list / details grammar. */
+#plugins-shell {
+    height: 1fr;
+    padding: $ds-space-0 $ds-space-inset;
+}
+#plugins-shell .section-title { height: $ds-control-height-compact; text-style: $ds-text-strong; color: $ds-text-primary; }
+#plugins-scope { height: auto; color: $ds-authority-workspace; }
+#plugins-status { height: auto; max-height: $ds-control-height; color: $ds-text-muted; }
+#plugins-modes, #plugins-entry-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
+    height: $ds-control-height;
+}
+#plugins-shell Button { min-width: 0; width: 1fr; }
+#plugins-modes Button { height: $ds-control-height; }
+#plugins-search > .input--placeholder { color: $ds-text-primary; }
+#plugins-search { height: $ds-control-height; }
+#plugins-panes { height: 1fr; min-height: 0; }
+#plugins-list-pane { width: $ds-sidebar-width; min-width: $ds-sidebar-min-width; height: 1fr; }
+#plugins-list { height: 1fr; border: solid $ds-grid-line; }
+#plugins-list:focus { border: solid $ds-focus-accent; }
+#plugins-detail-pane { width: 1fr; height: 1fr; padding-left: $ds-space-inset; }
+#plugins-detail-scroll { height: 1fr; border: solid $ds-grid-line; padding: $ds-space-0 $ds-space-inset; }
+#plugins-detail, #plugins-readme { height: auto; }
+#plugins-page { width: auto; padding: $ds-space-1; }
+#plugins-entry-form { height: 1fr; }
+#plugins-entry-form Input, #plugins-entry-form Select { margin-bottom: $ds-space-stack; }
+#plugins-form-result { height: auto; }
+.plugins-narrow #plugins-list-pane { width: 100%; min-width: 0; }
+.plugins-narrow #plugins-detail-pane { width: 100%; padding-left: $ds-space-0; }
+#plugins-back { height: $ds-control-height; }
+
+/* Keep the 24-row terminal usable with the incumbent compact controls. */
+#plugins-shell .section-title, #plugins-scope, #plugins-search { margin: $ds-space-0; }
+.plugins-narrow #plugins-modes, .plugins-narrow #plugins-entry-actions,
+.plugins-narrow #plugins-pager, .plugins-narrow #plugins-detail-actions,
+.plugins-narrow #plugins-back {
+    height: $ds-control-height-compact;
+}
+.plugins-narrow #plugins-modes Button, .plugins-narrow #plugins-entry-actions Button,
+.plugins-narrow #plugins-pager Button, .plugins-narrow #plugins-detail-actions Button,
+.plugins-narrow #plugins-back {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0 $ds-space-inline;
+}
+.plugins-narrow #plugins-page { padding: $ds-space-0 $ds-space-inline; }

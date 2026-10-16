@@ -848,12 +848,55 @@ class PluginCoordinator:
 
     def published_snapshot(self) -> dict:
         """Return authenticated projection only while all publication gates agree."""
+        return self._authenticated_projection()
+
+    def recorded_inspections(
+        self, identities: tuple[tuple[str, str], ...]
+    ) -> tuple[dict, dict[tuple[str, str], PackageInspection]]:
+        """Authenticate recorded metadata without verifying retained package bytes.
+
+        Observational fields excluded from protected authority are not returned.
+        This is a passive display seam, never a substitute for runtime reinspection.
+        """
+        recorded = dict.fromkeys(identities)
+        authority = self._authenticated_projection(recorded)
+        current = {
+            (row["installation_id"], row["revision_digest"])
+            for row in authority["installations"]
+        }
+        if not set(recorded) <= current or any(
+            value is None for value in recorded.values()
+        ):
+            raise ValueError("plugin_recorded_revision_unavailable")
+        result = {}
+        for identity, inspection in recorded.items():
+            inventory = {
+                key: component.model_copy(
+                    update={"evidence": (), "availability": "disabled"}
+                )
+                for key, component in inspection.inventory.items()
+            }
+            result[identity] = inspection.model_copy(
+                update={
+                    "inventory": inventory,
+                    "dependency_edges": {
+                        key: value.dependencies for key, value in inventory.items()
+                    },
+                    "candidates": (),
+                    "diagnostics": (),
+                }
+            )
+        return authority, result
+
+    def _authenticated_projection(self, recorded_inspections=None) -> dict:
+        """Match one registry read to protected current/published authority."""
         self._require_worker()
         if self._published is None:
             raise PermissionError("plugin publication fenced; recovery required")
         current = self.authority.verify_current()
         projection = self.registry.authority_projection(
-            operation_result=current["operation_result"]
+            operation_result=current["operation_result"],
+            _recorded_inspections=recorded_inspections,
         )
         if current != self._published or projection != current:
             self._published = None
