@@ -279,7 +279,7 @@ the task's Implementation Notes.
 > before this branch); the measured branch delta is +190 lines
 > (36,444 → 36,634). The 12 red ratchet modules were already red at the
 > pristine merge base — line-count-proven on untouched files (app_lifecycle
-> 2337 > 2134, app.py 5824 > 5712, mcp_workbench 6878 = 6760) — so no
+> 2337 > 2134, app.py 5824 > 5712, mcp_workbench 6878 > 6760) — so no
 > offset extraction was warranted; the `mcp-defaults` deletion stands on
 > its own.
 
@@ -311,7 +311,7 @@ otherwise Console's permission deep links silently land on Servers.
 > must post full contexts to the canonical `settings` route; the
 > `mcp`/`tools_settings` aliases carry `{"category": "tools"}` via the
 > default-context map only (no merge of caller keys under the alias).
-> Follow-up task filed (deep-link context merge for legacy MCP aliases).
+> Follow-up task filed (task-35156, deep-link context merge).
 
 ### A5. ADR numbering collision
 

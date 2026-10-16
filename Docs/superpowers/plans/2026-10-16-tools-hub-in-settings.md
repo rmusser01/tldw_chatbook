@@ -1190,7 +1190,7 @@ git commit -m "feat(ui): retire MCP destination into Settings Tools & MCP; ctrl+
 python3 -m tldw_chatbook.app
 ```
 
-Verify by hand: F4 → "Tools & MCP" category renders the four modes; each mode chip switches; `1-4`, `a`, `r`, `t` work in the category and keep their old meaning elsewhere; ctrl+9 lands on Settings → Tools & MCP; command palette search "tools" and "mcp" finds Settings; Tool Profiles → Edit policy lands on the permissions matrix with the profile selected; the nav strip shows 12 destinations with no MCP entry and no shortcut gaps.
+Verify by hand: F4 → "Tools & MCP" category renders the four modes; each mode chip switches; `1-4`, `a`, `r`, `t` work in the category and keep their old meaning elsewhere; ctrl+9 lands on Settings → Tools & MCP; command palette search "tools" and "mcp" finds Settings; Tool Profiles → Edit policy lands on the permissions matrix with the profile selected; the nav strip shows 13 destinations with no MCP entry and no shortcut gaps.
 
 - [ ] **Step 3: Close the backlog task**
 
