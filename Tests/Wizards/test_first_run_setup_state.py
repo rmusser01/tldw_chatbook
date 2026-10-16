@@ -2454,16 +2454,19 @@ class TestProviderTrustChain:
         assert sends(draft("stored")) is True
 
         identity = ("llama_cpp", "http://127.0.0.1:8080")
-        owner = SimpleNamespace(
-            _key_required_at=identity, _refresh_auth_readiness=lambda: None
-        )
         checked = SimpleNamespace(credential_source="draft", connection_identity=identity)
-        first_run_model_discovery.note_probe_reached(owner, checked, key_sent=True)
-        assert owner._key_required_at == identity
-        first_run_model_discovery.note_probe_reached(
-            owner, checked, key_sent=sends(draft("draft"))
-        )
-        assert owner._key_required_at is None
+
+        def reached(typed: str):
+            owner = SimpleNamespace(
+                _key_required_at=identity,
+                _refresh_auth_readiness=lambda: None,
+                _effective_provider_draft=lambda: draft("draft", typed),
+            )
+            first_run_model_discovery.note_probe_reached(owner, checked)
+            return owner._key_required_at
+
+        assert reached("sk-local") == identity  # a typed key was sent
+        assert reached("") is None
 
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(

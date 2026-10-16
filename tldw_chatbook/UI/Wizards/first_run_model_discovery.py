@@ -141,8 +141,33 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
     return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
 
 
+def tested_failure_category(category: object) -> str:
+    """The Model step's failure category for a failed Test's probe category.
+
+    TASK-33008 review: a Test's 401 ("unauthorized") reached
+    ``classify_discovery_failure``, which reads only "authentication" as a
+    key problem, so every surface after Provider said "not reachable".
+    """
+
+    if category == "unauthorized":
+        return "authentication"
+    return str(category or "connection_error").replace("_", " ")
+
+
+def classify_render(step: Any, state: str, category: str) -> tuple[str, str]:
+    """The Model step's discovery state and PROVIDER_PROBE_* value to render."""
+
+    draft = step._current_provider_draft()
+    if subscription_cannot_list(step, draft, state, category):
+        state = "listing_unavailable"
+    key_sent = wizard_state.discovery_sends_a_key(draft)
+    return state, wizard_state.classify_discovery_failure(
+        state, category, key_sent=key_sent
+    )
+
+
 def subscription_cannot_list(
-    app_config: object, provider_draft: object, state: str, category: str
+    step: Any, provider_draft: object, state: str, category: str
 ) -> bool:
     """Whether a refused listing is a Claude subscription's, not a missing key.
 
@@ -152,6 +177,7 @@ def subscription_cannot_list(
     key they do not need. Such a listing reads as unavailable instead.
     """
 
+    app_config = getattr(getattr(step.wizard, "app_instance", None), "app_config", None)
     if (
         state != "connection_failed"
         or category != "authentication"
@@ -162,15 +188,14 @@ def subscription_cannot_list(
         return False
     from tldw_chatbook.LLM_Calls.anthropic_subscription import anthropic_auth_source
 
-    api_settings = app_config.get("api_settings")
-    settings = api_settings.get("anthropic") if isinstance(api_settings, Mapping) else None
-    settings = settings if isinstance(settings, Mapping) else None
+    api = app_config.get("api_settings")
+    settings = api.get("anthropic") if isinstance(api, Mapping) else None
+    if not isinstance(settings, Mapping):
+        return False
     return anthropic_auth_source(settings) == "claude_subscription"
 
 
-def probe_failure(
-    outcome: object, provider_draft: object, app_config: object = None
-) -> str:
+def probe_failure(owner: Any, outcome: object, provider_draft: object) -> str:
     """Classify a discovery outcome as the Model step does, for the Provider step.
 
     TASK-33008 (capture 06a): the two steps told one 401 two ways. A missing
@@ -181,7 +206,7 @@ def probe_failure(
         _models, state, category = _model_discovery_ui_outcome(outcome)
     except ValueError:
         return wizard_state.PROVIDER_PROBE_CONNECTION
-    if subscription_cannot_list(app_config, provider_draft, state, category):
+    if subscription_cannot_list(owner, provider_draft, state, category):
         return wizard_state.PROVIDER_PROBE_NONE
     return wizard_state.classify_discovery_failure(
         state, category, key_sent=wizard_state.discovery_sends_a_key(provider_draft)
@@ -211,18 +236,20 @@ def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
         )
 
 
-def note_probe_reached(
-    owner: Any, checked: Any, *, key_sent: bool, endpoint: str = "reachable"
-) -> None:
+def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:
     """Forget ``note_probe_failure``'s mark once a check of that connection
     sent no key and got through: the server no longer asks for one (it was
     restarted without --api-key), so the section is optional again.
 
-    ``key_sent`` is the rule that set the mark (``discovery_sends_a_key``):
+    "Sent no key" is the rule that set the mark (``discovery_sends_a_key``):
     a stored key being cleared is source "draft" with no text, and reading
     the source alone kept the mark for good on the listing path.
     """
 
+    key_sent = checked.credential_source != "none"
+    if checked.credential_source == "draft":
+        draft = owner._effective_provider_draft()
+        key_sent = wizard_state.discovery_sends_a_key(draft)
     if (
         endpoint == "reachable"
         and not key_sent
@@ -230,6 +257,26 @@ def note_probe_reached(
     ):
         owner._key_required_at = None
         owner._refresh_auth_readiness()
+
+
+def tested_evidence_detail(
+    owner: Any, identity: Any, evidence: Any, detail: str
+) -> str:
+    """The Provider line for a settled Test, moving the key mark as it reads.
+
+    TASK-33008: a 401 to a Test that sent no key asks for one, as the
+    listing does, instead of saying the server rejected a key.
+    """
+
+    if evidence.category == "unauthorized" and identity.credential_source == "none":
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+        failure = wizard_state.PROVIDER_PROBE_KEY_REQUIRED
+        display = provider_display_name(identity.provider_key)
+        detail = owner._discovery_failure_status(display, failure)
+        note_probe_failure(owner, failure, identity)
+    note_probe_reached(owner, identity, evidence.endpoint)
+    return detail
 
 
 def auth_title(owner: Any, requires_api_key: bool) -> str:

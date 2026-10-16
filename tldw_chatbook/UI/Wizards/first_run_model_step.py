@@ -435,15 +435,8 @@ class ModelStep(SetupStep):
                     models = []
                 elif evidence.endpoint == "unreachable":
                     discovery_state = "connection_failed"
-                    # A Test's 401 is the listing's "authentication", the
-                    # only name classify_discovery_failure reads as a key
-                    # problem; as "unauthorized" it read as "not reachable".
-                    failure_category = (
-                        "authentication"
-                        if evidence.category == "unauthorized"
-                        else (evidence.category or "connection_error").replace(
-                            "_", " "
-                        )
+                    failure_category = model_discovery.tested_failure_category(
+                        evidence.category
                     )
                     models = []
                 elif evidence.endpoint == "reachable" and not models:
@@ -551,25 +544,13 @@ class ModelStep(SetupStep):
             return
         if discovery_key != self._current_discovery_key():
             return
-        provider_draft = self._current_provider_draft()
-        if model_discovery.subscription_cannot_list(
-            getattr(getattr(self.wizard, "app_instance", None), "app_config", None),
-            provider_draft,
-            discovery_state,
-            failure_category,
-        ):
-            discovery_state = "listing_unavailable"
-        key_sent = wizard_state.discovery_sends_a_key(provider_draft)
-        probe_failure = wizard_state.classify_discovery_failure(
-            discovery_state, failure_category, key_sent=key_sent
+        discovery_state, probe_failure = model_discovery.classify_render(
+            self, discovery_state, failure_category
         )
         radio_set.set_class(not models, "-status")  # the box hugs a status line
-        # A status is not a Tab stop: the box drew as a focused control around
-        # inert text, ahead of the one field that works. Loading keeps the
-        # stop, so a list that follows still takes the step's first focus.
-        inert = not models and discovery_state != "loading"
-        radio_set.can_focus = not inert
-        if inert and radio_set.has_focus:
+        # A status is no Tab stop (06a drew it focused); loading keeps the stop.
+        radio_set.can_focus = bool(models) or discovery_state == "loading"
+        if not radio_set.can_focus and radio_set.has_focus:
             self.query_one("#setup-model-custom", Input).focus()
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)

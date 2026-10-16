@@ -1698,26 +1698,19 @@ class ProviderStep(SetupStep):
 
             display = provider_display_name(provider_key)
             status = self.query_one("#setup-provider-probe-status", Static)
-            key_sent = wizard_state.discovery_sends_a_key(provider_draft)
             if models:
                 status.update(f"Found {len(models)} model(s) for {display}.")
-                model_discovery.note_probe_reached(
-                    self, discovery_key, key_sent=key_sent
-                )
+                model_discovery.note_probe_reached(self, discovery_key)
             elif failed:
                 failure = model_discovery.probe_failure(
-                    model_outcome,
-                    provider_draft,
-                    getattr(self.wizard.app_instance, "app_config", None),
+                    self, model_outcome, provider_draft
                 )
                 status.update(self._discovery_failure_status(display, failure))
                 model_discovery.note_probe_failure(self, failure, discovery_key)
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
                 if model_outcome is not None:  # the listing answered "success"
-                    model_discovery.note_probe_reached(
-                        self, discovery_key, key_sent=key_sent
-                    )
+                    model_discovery.note_probe_reached(self, discovery_key)
             else:
                 status.update("")
         finally:
@@ -2333,7 +2326,6 @@ class ProviderStep(SetupStep):
         return provider_probe_result_from_settings_outcome(outcome)
 
     def _render_provider_evidence(self, identity: object) -> None:
-        from tldw_chatbook.Chat.provider_catalog import provider_display_name
         from tldw_chatbook.Chat.provider_test_evidence import (
             ProviderDraftIdentity,
             ProviderReadinessSnapshot,
@@ -2352,16 +2344,8 @@ class ProviderStep(SetupStep):
             category=evidence.category,
         )
         detail = provider_readiness_verdict(snapshot).detail
-        if evidence.category == "unauthorized" and identity.credential_source == "none":
-            failure = wizard_state.PROVIDER_PROBE_KEY_REQUIRED  # TASK-33008: none sent
-            display = provider_display_name(identity.provider_key)
-            detail = self._discovery_failure_status(display, failure)
-            model_discovery.note_probe_failure(self, failure, identity)
-        model_discovery.note_probe_reached(
-            self,
-            identity,
-            key_sent=identity.credential_source != "none",
-            endpoint=evidence.endpoint,
+        detail = model_discovery.tested_evidence_detail(
+            self, identity, evidence, detail
         )
         prefix = {"reachable": "✓ ", "unreachable": "✗ "}.get(evidence.endpoint, "")
         self.query_one("#setup-provider-probe-status", Static).update(prefix + detail)
