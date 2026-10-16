@@ -12393,18 +12393,23 @@ async def test_key_hints_footer_and_test_button_probe():
         assert probe.await_count >= 1
 
 
-async def _press_next(pilot, container) -> None:
-    """Ctrl+N, then wait for the step to change instead of a fixed pause.
+async def _until(pilot, predicate) -> None:
+    """Poll ``predicate`` for up to 5 s instead of trusting a fixed pause.
 
     TASK-33008 review: under xdist a full GC pause in this file (340-600 ms)
-    landed in the old 0.2 s window, and the test went on from Welcome.
+    landed in the old fixed windows, and the tests read a half-done step.
     """
+    for _ in range(100):
+        if predicate():
+            return
+        await pilot.pause(0.05)
+
+
+async def _press_next(pilot, container) -> None:
+    """Ctrl+N, then wait for the step to change (the old 0.2 s fell short)."""
     before = container.current_step
     await pilot.press("ctrl+n")
-    for _ in range(100):
-        if container.current_step != before:
-            break
-        await pilot.pause(0.05)
+    await _until(pilot, lambda: container.current_step != before)
     await pilot.pause(0.2)
 
 
@@ -12634,7 +12639,12 @@ class TestComposeCrashPolicy:
 
             monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
             failed_step.query_one("#setup-step-retry", Button).press()
-            await pilot.pause(0.6)
+            await _until(
+                pilot,
+                lambda: container.steps[container.current_step] is not failed_step
+                and not container._failure_action_running
+                and isinstance(app.focused, OptionList),
+            )
 
             replacement = container.steps[container.current_step]
             assert replacement is not failed_step
@@ -12672,7 +12682,11 @@ class TestComposeCrashPolicy:
                 failed_step = container.steps[container.current_step]
                 retired.append(failed_step)
                 failed_step.query_one("#setup-step-retry", Button).press()
-                await pilot.pause(0.3)
+                await _until(
+                    pilot,
+                    lambda: container.steps[container.current_step] is not failed_step
+                    and not container._failure_action_running,
+                )
                 assert len(container.query(ProviderStep)) == 1
                 assert len(container.query("#setup-step-retry")) == 1
                 assert len(container.query("#setup-step-manual")) == 1
@@ -12741,7 +12755,12 @@ class TestComposeCrashPolicy:
 
             monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
             failed_step.query_one("#setup-step-retry", Button).press()
-            await pilot.pause(0.8)
+            await _until(
+                pilot,
+                lambda: injected
+                and container.steps[failed_index] is not failed_step
+                and not container._failure_action_running,
+            )
 
             assert injected is True
             assert container._failure_action_running is False
@@ -12764,7 +12783,11 @@ class TestComposeCrashPolicy:
             )
 
             recovery_step.query_one("#setup-step-retry", Button).press()
-            await pilot.pause(0.8)
+            await _until(
+                pilot,
+                lambda: container.steps[failed_index] is not recovery_step
+                and not container._failure_action_running,
+            )
 
             replacement = container.steps[failed_index]
             assert replacement is not recovery_step
@@ -12864,7 +12887,14 @@ class TestComposeCrashPolicy:
                 assert checkpoint.await_count == 1
 
             release.set()
-            await pilot.pause(0.8)
+            await _until(
+                pilot,
+                lambda: app.wizard_results
+                or (
+                    container.steps[failed_index] is not failed_step
+                    and not container._failure_action_running
+                ),
+            )
 
             if outcome == "retry":
                 replacement = container.steps[failed_index]
@@ -13005,7 +13035,7 @@ class TestComposeCrashPolicy:
             container.persist_current_checkpoint = persist
 
             wizard.query_one("#setup-step-manual", Button).press()
-            await pilot.pause(0.3)
+            await _until(pilot, lambda: app.wizard_result != "UNSET")
 
             persist.assert_awaited_once()
             assert app.wizard_result == {
@@ -13038,7 +13068,7 @@ class TestComposeCrashPolicy:
             container.persist_current_checkpoint = persist
 
             wizard.query_one("#setup-step-later", Button).press()
-            await pilot.pause(0.3)
+            await _until(pilot, lambda: app.wizard_result != "UNSET")
 
             persist.assert_awaited_once()
             assert app.wizard_result is None
