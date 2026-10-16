@@ -128,11 +128,9 @@ you when you leave a category or the screen with unsaved edits — the **\*** in
 the rail is how you find it again. (Exceptions: switching the
 active RAG profile prompts — see [RAG defaults](settings/rag.md); leaving
 Speech & TTS with edits raises its own save/discard dialog instead of keeping
-the draft — see that section and Quirks; the Theme editor asks **Stay**,
+the draft — see that section and Quirks; and the Theme editor asks **Stay**,
 **Discard**, or **Save** when you switch category or leave Settings with
-unsaved edits — see [Interface — Theme](#interface--theme); and an unsaved
-**Prompt-cache snapshots** edit on Providers & Models is dropped, with no
-warning, when you leave Settings, so save it with **s** first.) Quitting is different: **Ctrl+Q**
+unsaved edits — see [Interface — Theme](#interface--theme).) Quitting is different: **Ctrl+Q**
 on Settings with unsaved changes asks "Quit and discard unsaved Settings
 changes?" and names the categories that hold them; **Keep editing** stays,
 **Discard and quit** quits (with unsaved theme edits too, the theme's own
@@ -488,9 +486,9 @@ reads "Ready · verified", the status ends "the provider accepted the key."
 instead; focus stays on the button. After a save, from either place, the button
 stays through any later edit and **Return without saving** no longer shows.
 Returning then goes back without asking and does not save those later edits:
-they stay in Settings as unsaved edits (except a snapshot preference — the
-enable or keep-count setting of **Prompt-cache snapshots**, under **Advanced**
-— which is dropped), so save again first if the chat should use them.
+they stay in Settings as unsaved edits, a snapshot preference (the enable or
+keep-count setting of **Prompt-cache snapshots**, under **Advanced**) among
+them, so save again first if the chat should use them.
 
 The return lands on that chat with the composer in focus (on the Get started
 card instead, while setup is still unfinished). When a **NEEDS SETUP** row in
@@ -1852,9 +1850,7 @@ not open an editor.
   uses its own **Validate Raw TOML**, **Save Raw TOML**, and **Revert Raw TOML** controls.
   (Exceptions: Speech & TTS never leaves a **\*** behind, because leaving it
   forces the save/discard choice; nor does Theme, whose editor asks **Stay**,
-  **Discard**, or **Save** before you leave it with unsaved edits; and an
-  unsaved **Prompt-cache snapshots** edit on Providers & Models does not
-  survive leaving Settings, so no **\*** marks it when you come back.)
+  **Discard**, or **Save** before you leave it with unsaved edits.)
 - **The Scope Inspector looks truncated.** Scroll it — "▼ more — scroll the
   inspector" at the bottom means there is more below.
 

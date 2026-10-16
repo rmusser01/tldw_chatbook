@@ -2196,9 +2196,10 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
     Console by hand takes the handoff back, and the next Settings visit no
     longer holds a return, so a later save cannot offer one to the old chat.
 
-    The same walk measures the guide's snapshot exception to "leaving keeps
-    the draft": the screen alone holds an unsaved snapshot preference, so
-    leaving Settings by the nav bar drops it."""
+    The same walk measures that "leaving keeps the draft" has no snapshot
+    exception: Settings keeps an unsaved snapshot preference when it is left
+    by the nav bar (TASK-33007, abd77af7c9), and the next visit shows it,
+    still unsaved."""
     app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
@@ -2238,11 +2239,11 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
         assert not app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display
-        # Loaded from the file again: the old screen's edit went with it, and
-        # with nothing else unsaved the category carries no "*".
+        # Kept by Settings: the old screen's edit is back, still unsaved, so
+        # the category carries its "*".
         fresh_snapshots = app.screen.query_one("#settings-snapshot-enabled", Checkbox)
-        assert fresh_snapshots.value is snapshot_saved
-        assert not app.screen._category_has_unsaved_changes(
+        assert fresh_snapshots.value is not snapshot_saved
+        assert app.screen._category_has_unsaved_changes(
             app.screen._active_category_id()
         )
 
@@ -2259,8 +2260,8 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
     Edits made after the save keep Return to Console, and the return neither
     asks about them nor saves them. A field edit (another key) waits in
     Settings as an unsaved edit, so the next recovery, for another provider,
-    opens on the conflict panel; a snapshot preference is kept by the screen
-    only and is dropped. Saving the waiting edit from the panel is not that
+    opens on the conflict panel; a snapshot preference waits there too, kept
+    by Settings (TASK-33007, abd77af7c9). Saving the waiting edit from the panel is not that
     recovery's save: the page moves on to its provider as on arrival, with
     focus in the named field, not on the button, and the next edit asks first
     again."""
@@ -2362,8 +2363,8 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
         assert fresh._provider_widget_value() == "openai"
         assert offered(fresh) == (False, False)  # The panel owns the answer.
         fresh_snapshots = fresh.query_one("#settings-snapshot-enabled", Checkbox)
-        # Loaded from the file again: the old screen's edit went with it.
-        assert fresh_snapshots.value is snapshot_saved
+        # Kept by Settings: the old screen's snapshot edit is back, unsaved.
+        assert fresh_snapshots.value is not snapshot_saved
 
         fresh.query_one("#settings-provider-conflict-review", Button).press()
         await _until(
