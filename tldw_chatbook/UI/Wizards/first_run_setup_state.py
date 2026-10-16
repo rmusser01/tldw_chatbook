@@ -630,9 +630,14 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
 
 
 #: A listing that cannot list (no model list, or a Claude subscription's):
-#: the Model step's status line, and the Provider step's line for it too.
+#: the Model step's status line, over its model ID field.
 MODEL_LISTING_UNAVAILABLE_LINE = (
     "Model listing unavailable; enter the model ID used by this endpoint."
+)
+#: The same cause on the Provider step, which has no model ID field (as each
+#: ``ProbeFailureCopy`` pairs a ``model_line`` with a ``provider_line``).
+PROVIDER_LISTING_UNAVAILABLE_LINE = (
+    "Model listing unavailable; you can enter the model ID on the next step."
 )
 
 

@@ -205,9 +205,10 @@ def failed_listing_line(
     TASK-33008 (capture 06a): the two steps told one 401 two ways. Review
     round 2: a listing Model reads as "Model listing unavailable" (no model
     list, or a Claude subscription's) read "Couldn't discover models for
-    {display}. You can continue anyway." here; it reads Model's line now,
-    while Next is allowed. A missing or untyped outcome reads as a
-    connection failure. A refused check marks the key (``note_probe_failure``).
+    {display}. You can continue anyway." here; it names Model's cause now,
+    with this step's own action, while Next is allowed. A missing or untyped
+    outcome reads as a connection failure. A refused check marks the key
+    (``note_probe_failure``).
     """
 
     try:
@@ -227,7 +228,7 @@ def failed_listing_line(
     except Exception:  # noqa: BLE001 - unreadable readiness: the step's own copy
         unavailable = False
     if unavailable:
-        return wizard_state.MODEL_LISTING_UNAVAILABLE_LINE
+        return wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
     return owner._discovery_failure_status(display, failure)
 
 

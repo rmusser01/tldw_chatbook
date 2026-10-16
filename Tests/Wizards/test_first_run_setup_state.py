@@ -2500,8 +2500,9 @@ class TestProviderTrustChain:
     def test_provider_tells_a_listing_that_cannot_list_as_model_does(self):
         """TASK-33008 review round 2: a server with no model list read "Model
         listing unavailable…" on Model and "Couldn't discover models for
-        llama.cpp. You can continue anyway." on Provider. One cause, one line,
-        while Next is allowed; a blocked Next keeps the step's refusal copy."""
+        llama.cpp. You can continue anyway." on Provider. One cause, while Next
+        is allowed; a blocked Next keeps the step's refusal copy. Review round
+        3: Provider has no model ID field, so its line points at the next step."""
         from types import SimpleNamespace
 
         from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
@@ -2534,7 +2535,9 @@ class TestProviderTrustChain:
                 owner, "llama.cpp", no_list, None, None
             )
 
-        assert line(True) == setup_state.MODEL_LISTING_UNAVAILABLE_LINE
+        assert line(True) == (
+            "Model listing unavailable; you can enter the model ID on the next step."
+        )
         assert line(False) == "refusal for llama.cpp ('')"
 
     def test_summary_actions_flip_on_probe_failure(self):

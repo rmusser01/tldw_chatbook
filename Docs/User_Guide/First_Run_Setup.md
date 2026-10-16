@@ -58,7 +58,7 @@ plain text instead:
 - "(loading models…)" while it asks the server.
 - "Pick a provider first — or type a model name below" when no provider is chosen.
 - "(no models found — enter one below)" when the server lists none.
-- "Model listing unavailable; enter the model ID used by this endpoint." when the server has no model list, or when Anthropic uses your Claude subscription: its model list needs an API key, and the subscription is not one. The Provider step's own check shows the same line.
+- "Model listing unavailable; enter the model ID used by this endpoint." when the server has no model list, or when Anthropic uses your Claude subscription: its model list needs an API key, and the subscription is not one. The Provider step's own check names the same cause: "Model listing unavailable; you can enter the model ID on the next step."
 - "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected.
 - "*Provider* needs an API key and none was set. Go Back to add one, or enter a model ID below." when the server refused a check that carried no key (a llama.cpp server started with `--api-key`, say).
 
