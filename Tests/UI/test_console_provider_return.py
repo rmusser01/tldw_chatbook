@@ -1087,8 +1087,10 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
         # Capture finding 9 (04b): the question says Discard also goes back.
         assert (app.screen.title, app.screen.message) == (
             "Return without saving",
-            "Discard all unsaved changes to Providers & Models and return to "
-            "Console?",
+            (
+                "Discard all unsaved changes to Providers & Models and return to "
+                "Console?"
+            ),
         )
         app.screen.query_one("#confirm-button", Button).press()
         await _until(

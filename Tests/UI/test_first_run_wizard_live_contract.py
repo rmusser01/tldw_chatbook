@@ -57,7 +57,6 @@ from textual.widgets import (
     Static,
 )
 
-from Tests.private_profile import private_profile_test
 from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
