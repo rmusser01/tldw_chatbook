@@ -596,11 +596,14 @@ async def test_lazy_mount_cached_inventory_preserves_handoff_awaiting_fresh_read
     )
     release = threading.Event()
     waiting = threading.Event()
+    fresh_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
     cached_hydration = False
 
     def wait_for_fresh_inventory():
         waiting.set()
         try:
+            loop.call_soon_threadsafe(fresh_started.set)
             assert release.wait(timeout=10), "fresh inventory was never released"
             return ()
         finally:
@@ -630,6 +633,16 @@ async def test_lazy_mount_cached_inventory_preserves_handoff_awaiting_fresh_read
         await pilot.pause()
         assert not window.query("#llamafile-gguf-managed-select")
         original_apply = window._apply_managed_gguf_inventory
+        original_ready = window._view_population_ready
+
+        async def ready_after_fresh_entry(view_name):
+            if view_name == "llamafile":
+                # The cached callback and native worker have independent scheduling.
+                async with asyncio.timeout(10):
+                    await fresh_started.wait()
+            original_ready(view_name)
+
+        monkeypatch.setattr(window, "_view_population_ready", ready_after_fresh_entry)
 
         def observe_cached_hydration(
             generation, choices, error, *, settle_handoff=True

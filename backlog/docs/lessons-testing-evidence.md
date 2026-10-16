@@ -19948,3 +19948,11 @@ native hold still active: an unreleased Event also remains false after its wait
 expires. Preserve exact fresh selection and all deadlines. The earlier hosted
 selection failure remains unexplained; this receipt proves the missing race
 witness, not that historical failure's cause.
+
+The stronger witness then failed on native Windows with default fd capture:
+valid cached application at3578ms preceded fresh thread entry at3688ms, so its
+waiting condition was false and no later cached callback replayed. A delayed
+entry control reproduced this order locally; the same control passed after
+only the test's original population-ready callback awaited actual thread entry.
+Keep that synchronization explicit instead of assuming worker start order. The
+original apply still runs once; no inventory, deadline or production guard changes.
