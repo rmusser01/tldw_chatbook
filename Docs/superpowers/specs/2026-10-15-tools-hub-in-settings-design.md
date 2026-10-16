@@ -4,7 +4,11 @@ Date: 2026-10-15
 Status: Approved 2026-10-16 — user confirmed all four open decisions:
 full absorption (Approach A); category title "Tools & MCP"; Tool Profiles
 stays separate with a cross-link; `mcp-defaults` deleted outright.
+Amended 2026-10-16 by a second, independent design review (see "Amendments"
+at the end): the user confirmed the long-term goal is UX and ease-of-use;
+no approved decision changes.
 Proposed ADR: ADR-233 (retire the MCP destination; Settings hosts the Tools hub)
+— the number is contested; see the ADR's numbering note and renumber before merge.
 
 ## Problem
 
@@ -223,3 +227,113 @@ ADR required: yes — `backlog/decisions/233-mcp-destination-retirement-tools-hu
 2. **Category title:** "Tools & MCP". ✓
 3. **Tool Profiles:** stays a separate category with a cross-link. ✓
 4. **`mcp-defaults` handling:** deleted outright. ✓
+
+## Amendments — second-session UX review (2026-10-16)
+
+A second brainstorm reached this same problem independently, converged on
+Approach A after review, and folded its findings here rather than fork a
+competing spec. The user's framing for this work and everything after it:
+**the long-term goal is UX and ease-of-use.** Retiring the destination is
+step one of that trajectory — relocating the workbench makes tools
+*findable*; it does not yet make them *understandable*. Nothing below
+changes an approved decision; A7 names the next UX steps so they are not
+lost when task-35150 closes.
+
+### A1. Sequencing against in-flight Settings work
+
+- **TASK-35016** (rail regroup; To Do, blocked on PR #3057) rewrites
+  `_category_groups()` into the ruled groups Core / Look & Feel / Console &
+  Agents / Retrieval & media / Data & Privacy / Maintenance ▸ / Owned
+  elsewhere ▸. Tools & MCP seats in **Console & Agents**. Deleting
+  `mcp-defaults` shrinks "Owned elsewhere" from 7 to 6 view-only pages —
+  tell that task's owner so its plan stops counting the pointer card.
+- **TASK-35020** (search-index drift guards; owns the red rail-size guard,
+  enum 33 vs guard 31): this change is category-count neutral —
+  `MCP_DEFAULTS` out, `TOOLS` in, still 33. Say so in the PR so the guard is
+  pinned once, at 33.
+- **PR #3057** (TASK-33007) gives `settings_screen.py` its first
+  size-ratchet row, pinned "may not grow". Whichever of #3057 and this
+  branch lands second reconciles the pin — see A2.
+
+### A2. The size-ratchet offset is mandatory, not hopeful
+
+The Risks table says `settings_screen.py` "gains only registration +
+dispatch glue". The ratchet (`Tests/Architecture/test_module_size_ratchet.py`)
+is explicit that budgets only go down and are never raised to pass. The glue
+already measures about +160 lines on this branch. Budget an **explicit
+offset in the same PR**: deleting the `mcp-defaults` domain contract,
+ownership record, inspector-guidance entry, and render branch should free at
+least that many lines; if it does not, extract the remainder into
+`settings_tools_hub.py` before merge. Record the before/after measurement in
+the task's Implementation Notes.
+
+### A3. No-draft honesty for the Tools & MCP category
+
+The workbench is immediate-write (permission store, gate config, server
+records). Settings pages are draft-then-save (the three commit models in
+`backlog/decisions/033-settings-commit-models-three-honestly-labeled.md`;
+**TASK-35022** is making Ctrl-S save the active page). Declare Tools & MCP a
+**no-draft category**: no save affordance or Ctrl-S hint in any of its four
+modes, no unsaved-changes guard on category switch, and TASK-35022's
+page-save path must exclude it explicitly. Add a test that the category
+reports no dirty draft after a permission toggle. Without this the footer
+advertises a save that does nothing — exactly what the plain-language and
+save-honesty tasks (35018 / 35019 / 35022) are policing.
+
+### A4. Deep-link context must merge through the alias (verify)
+
+Section 4 assumes a caller's context survives the `mcp → settings` alias.
+`app.py:4354` applies `_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT` default-only on
+the startup path; check `app_navigation.py:922` to confirm it **merges** the
+default `{"category": "tools"}` under the caller's explicit keys rather than
+replacing them. Add a test that posts
+`NavigateToScreen("mcp", {"mode": "permissions", "tool_policy_profile_id": …})`
+after retirement and asserts Permissions mode with that profile selected;
+otherwise Console's permission deep links silently land on Servers.
+
+### A5. ADR numbering collision
+
+"ADR-233" is also claimed by the served-web work: `ce8f2d6dcd` (2026-10-15,
+the earlier claim) "served web session persistence and device pairing", with
+ADR-234 (served mobile companion), ADR-235 (WebAuthn passkey login) and
+ADR-236 (canvas relay message types) claimed on sibling branches. Renumber
+this ADR to the next free number — **≥ 237 as of 2026-10-16 midday; re-sweep
+all refs at merge time** — and update the spec, plan, task-35150, and the
+decisions README. `backlog/decisions/` already carries duplicate numbers
+(031, 033, 150, 228); do not ship another.
+
+### A6. Documentation to update (extends rollout step 4)
+
+- `Docs/Architecture/mcp-hub.md` — the host is now Settings → Tools & MCP.
+- `Docs/Architecture/app-shell.md` — destination set 13 → 12; ctrl+9 is a
+  compatibility key.
+- `AGENTS.md` — the Main Screens list and the Tool Calling / MCP mentions
+  that call ctrl+9 a destination; `Constants.py` label constants for
+  `TAB_MCP` / `TAB_TOOLS_SETTINGS` become compatibility labels.
+
+### A7. Follow-up UX work (out of task-35150 scope — the next steps)
+
+The approved scope moves the workbench; its language is still the
+protocol's. In priority order, each a separate task **to be filed after
+task-35150 lands — by one owner, with a live ID sweep per
+`backlog/docs/lessons-backlog-hygiene.md`** (two sessions filing
+concurrently is how that doc's collisions happened):
+
+1. **Per-gate effect-scope labels.** Most gates apply to the *next* chat
+   (Console rebuilds its tool catalog per run); `web_deep_search_enabled`
+   needs a restart (external MCP server). Add one effect-scope field to the
+   `all_tool_gates()` table (`Agents/builtin_tool_gate.py`) so the hub,
+   this category, and the first-run Tools step render the same truth
+   instead of three copies of it.
+2. **Explain the two layers in one line.** Gate off = the tool does not
+   exist for agents; Allow / Ask / Off governs only tools that pass the
+   gate. Users flip a gate, see no change in the matrix, and conclude it is
+   broken. One sentence at the top of Permissions mode.
+3. **Plain-language pass on the four modes.** "Servers / Tools /
+   Permissions / Audit" name protocol artifacts; users ask "what can my
+   agents do?", "what has to ask me first?", "what did they do?". Rename
+   the chips and purpose lines under the TASK-35018 / 35019 copy rules.
+   This changes `UI/MCP_Modules/*` copy, so it needs its own brainstorm —
+   it is deliberately not folded into this spec's non-goals.
+4. *(small)* The first-run wizard's Tools step (ADR-217) should name
+   Settings → Tools & MCP as the "change this later" home.

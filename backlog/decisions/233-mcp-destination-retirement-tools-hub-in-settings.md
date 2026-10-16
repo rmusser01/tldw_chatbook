@@ -10,6 +10,13 @@ in MCP" stance (the contract object is deleted with the category)
 Related: ADR-172 (retirement template reused), ADR-148 (workbench IA preserved
 unchanged), ADR-031/ADR-152 (shortcut lockstep for removing ctrl+9)
 
+Numbering note (2026-10-16): "233" is contested — the served-web ADR "served
+web session persistence and device pairing" (`ce8f2d6dcd`, 2026-10-15, the
+earlier claim) also uses it, and 234–236 are claimed on sibling branches.
+Renumber this file to the next free number (≥ 237 at the time of writing;
+re-sweep all refs at merge) and update the spec, plan, task-35150 and the
+decisions README. See the spec's Amendments, A5.
+
 ## Decision
 
 Retire the MCP shell destination. Settings gains one "Tools & MCP" category
@@ -57,6 +64,10 @@ decision re-homes the workbench intact and deletes the pointer card instead.
   category switch with the same bounded context.
 - Startup configs with `default_tab = "mcp"` still land on Settings -> Tools
   & MCP via the alias + default context.
+- Follow-up UX direction (per-gate effect-scope labels, a one-line
+  gate-vs-permission explainer, a plain-language pass on the four modes) is
+  recorded in the spec's Amendments A7 and is deliberately outside this
+  decision's scope.
 
 ## Links
 
