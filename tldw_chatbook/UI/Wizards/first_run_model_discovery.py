@@ -230,16 +230,21 @@ def failed_listing_line(
 
 
 def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
-    """Remember a check that sent no key and was refused (capture 06b).
+    """Remember a check that was refused for its key (capture 06b).
 
     ``checked`` is the discovery key or Test identity the check ran under.
     From then on the Provider step's Authentication section is not called
     optional while it shows that connection (see ``auth_title``), and the
     section is scrolled into view: the line says "Add one under
-    Authentication", and at 211x44 it sat below the step's fold.
+    Authentication", and at 211x44 it sat below the step's fold. Review
+    round 2 (capture 06d): a server that refused a key that was sent asks
+    for a key too, so that refusal marks the section as well.
     """
 
-    if failure == wizard_state.PROVIDER_PROBE_KEY_REQUIRED:
+    if failure in {
+        wizard_state.PROVIDER_PROBE_KEY_REQUIRED,
+        wizard_state.PROVIDER_PROBE_AUTH,
+    }:
         owner._key_required_at = checked.connection_identity
         owner._refresh_auth_readiness()
         auth = owner.query_one("#setup-provider-auth-toggle")
@@ -260,6 +265,9 @@ def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") ->
     "Sent no key" is the rule that set the mark (``discovery_sends_a_key``):
     a stored key being cleared is source "draft" with no text, and reading
     the source alone kept the mark for good on the listing path.
+
+    Every settled check that is not a refusal comes here, so the key line is
+    refreshed here too (``staged_key_line``, review round 2).
     """
 
     key_sent = checked.credential_source != "none"
@@ -272,7 +280,7 @@ def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") ->
         and owner._key_required_at == checked.connection_identity
     ):
         owner._key_required_at = None
-        owner._refresh_auth_readiness()
+    owner._refresh_auth_readiness()
 
 
 def tested_evidence_detail(
@@ -281,18 +289,57 @@ def tested_evidence_detail(
     """The Provider line for a settled Test, moving the key mark as it reads.
 
     TASK-33008: a 401 to a Test that sent no key asks for one, as the
-    listing does, instead of saying the server rejected a key.
+    listing does, instead of saying the server rejected a key. Review round
+    2 (capture 06d): a 401 to a key that was sent marks the section too.
     """
 
-    if evidence.category == "unauthorized" and identity.credential_source == "none":
-        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+    if evidence.category == "unauthorized":
+        failure = wizard_state.PROVIDER_PROBE_AUTH
+        if identity.credential_source == "none":
+            from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
-        failure = wizard_state.PROVIDER_PROBE_KEY_REQUIRED
-        display = provider_display_name(identity.provider_key)
-        detail = owner._discovery_failure_status(display, failure)
+            failure = wizard_state.PROVIDER_PROBE_KEY_REQUIRED
+            display = provider_display_name(identity.provider_key)
+            detail = owner._discovery_failure_status(display, failure)
         note_probe_failure(owner, failure, identity)
     note_probe_reached(owner, identity, evidence.endpoint)
     return detail
+
+
+#: The line under a typed key that no check has answered.
+STAGED_KEY_LINE = "Key staged — it will be checked when you continue."
+
+
+def staged_key_line(owner: Any) -> str:
+    """The line under a typed key, from the last check of it (capture 06d).
+
+    It said "it will be checked when you continue" under a key a Test had
+    just seen refused. The Test of this key and address, or failing that its
+    model listing, now says what it found: a 401 rejected the key, an answer
+    did not. A check that is running, could not reach the server, or got no
+    usable list keeps the line: Next still checks the key.
+    """
+
+    key = owner._model_discovery_key(owner._effective_provider_draft())
+    if key is None:
+        return STAGED_KEY_LINE
+    evidence = owner._test_evidence_for_discovery_key(key)
+    if evidence is not None:
+        refused = evidence.category == "unauthorized"
+        answered = evidence.endpoint == "reachable"
+    else:
+        try:
+            outcome = owner._selected_provider_outcomes.get(key)
+            _models, state, category = _model_discovery_ui_outcome(outcome)
+        except ValueError:  # no listing of this key yet
+            return STAGED_KEY_LINE
+        refused = state == "connection_failed" and category == "authentication"
+        answered = state in {"available", "empty"}
+    if refused:
+        return "Key staged — the server rejected it; update it above."
+    if answered:
+        return "Key staged — the server did not refuse it."
+    return STAGED_KEY_LINE
 
 
 def auth_title(owner: Any, requires_api_key: bool) -> str:

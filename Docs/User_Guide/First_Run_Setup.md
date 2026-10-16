@@ -65,10 +65,18 @@ plain text instead:
   These two show no **Retry**, because retrying cannot fix a key. The Provider
   step names the same cause: "*Provider* rejected this API key. Update it, or
   continue anyway." or "*Provider* needs an API key and none was set. Add one
-  under Authentication, or continue anyway." In the second case the section is
-  titled "Authentication", not "Authentication (optional)", while that provider
-  and address are selected, until a check of that address that sends no key
-  gets through (the server was restarted without `--api-key`).
+  under Authentication, or continue anyway." In both cases the section is
+  titled "Authentication", not "Authentication (optional)", because a server
+  that refuses a key, or asks for one, wants one. The title stays while that
+  provider and address are selected, until a check of that address that sends
+  no key gets through (the server was restarted without `--api-key`).
+
+  Under a key you typed, the line says what the last **Test connection** or
+  model check of that key found: "Key staged — the server rejected it; update
+  it above." after a 401, and "Key staged — the server did not refuse it." when
+  the server answered. Before any check of that key, or when the check could
+  not reach the server, it reads "Key staged — it will be checked when you
+  continue."
 - "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
 
 The line is a message, not an option: it has no radio marker, and the arrow

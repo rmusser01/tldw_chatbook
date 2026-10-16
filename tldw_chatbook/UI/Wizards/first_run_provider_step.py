@@ -1342,9 +1342,7 @@ class ProviderStep(SetupStep):
                 f"Found {env_var} in your environment; nothing to store.{unavailable}"
             )
         elif credential_source == "draft":
-            status.update(
-                f"Key staged — it will be checked when you continue.{unavailable}"
-            )
+            status.update(model_discovery.staged_key_line(self) + unavailable)
         else:
             status.update(unavailable.strip())
 

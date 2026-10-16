@@ -345,8 +345,9 @@ _BUDGETS: dict[str, int] = {
     # a row on a small module would stop the next fix adding even one line.
     # Provider 2,461 -> 2,458: the Qodo round moved the handoff clear into
     # first_run_model_discovery.drop_unreusable_handoff. TASK-33008 review:
-    # the Test-evidence line moved there too -> 2,456.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2456,
+    # the Test-evidence line moved there too -> 2,456. Review round 2: the
+    # failed-listing line and the key line went there as well -> 2,453.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2453,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
