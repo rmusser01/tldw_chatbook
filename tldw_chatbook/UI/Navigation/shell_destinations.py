@@ -112,14 +112,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Build and launch repeatable agent workflows.",
     ),
     ShellDestination(
-        "mcp",
-        "MCP",
-        "mcp",
-        "MCP servers, tools, permissions, auth, and audit.",
-        "Configure tool and server capability plumbing.",
-        ("tools_settings",),
-    ),
-    ShellDestination(
         "acp",
         "ACP",
         "acp",
@@ -149,6 +141,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Global app preferences, appearance, accounts, and storage.",
         "Configure application preferences.",
         ("stats",),
+        palette_aliases=("tools", "mcp", "tool settings"),
     ),
     ShellDestination(
         "research",
@@ -193,7 +186,8 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # f7..f11 tail scanned as "9, 0, 7, 8, 9, 10, 11" with F10/F11 stranded
 # mid-strip. Any change here must update the strip ORDER in lockstep so
 # position and shortcut stay aligned. ADR-172 retires the permanent Artifacts
-# entry while preserving its Ctrl+6 compatibility binding and every other slot.
+# entry while preserving its Ctrl+6 compatibility binding and every other slot;
+# ADR-233 does the same for the MCP destination and Ctrl+9.
 SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
     {
         "home": "ctrl+1",
@@ -203,7 +197,6 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "watchlists_collections": "ctrl+5",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
-        "mcp": "ctrl+9",
         "acp": "ctrl+0",
         "lab": "f2",
         "logs": "f3",
@@ -215,6 +208,10 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
 
 # ADR-172: a retained hotkey for the retired route, outside permanent navigation.
 ARTIFACTS_COMPATIBILITY_SHORTCUT = "ctrl+6"
+
+# ADR-233: retained hotkey for the retired MCP destination, now a
+# Settings > Tools & MCP deep-link outside permanent navigation.
+MCP_COMPATIBILITY_SHORTCUT = "ctrl+9"
 
 _ROUTABLE_LEGACY_ROUTES = {
     "chunking_lab",
@@ -229,6 +226,10 @@ _ROUTABLE_LEGACY_ROUTES = {
     "chatbooks",
     "subscriptions",
     "tools_settings",
+    # ADR-233: the MCP destination retired into Settings > Tools & MCP;
+    # the legacy "mcp" route id stays routable as its own canonical route,
+    # mirroring "tools_settings".
+    "mcp",
     "stts",
     "evals",
     "stats",
@@ -283,6 +284,13 @@ for destination in SHELL_DESTINATION_ORDER:
 # ADR-172: preserve both public routes while Library owns browse navigation.
 _ROUTE_MAP["artifacts"] = ResolvedShellRoute("library", "library", "artifacts")
 _ROUTE_MAP["chatbooks"] = ResolvedShellRoute("library", "chatbooks", "chatbooks")
+
+# ADR-233: the MCP destination retired into Settings > Tools & MCP; both
+# public route ids resolve onto the Settings destination.
+_ROUTE_MAP["mcp"] = ResolvedShellRoute("settings", "settings", "mcp")
+_ROUTE_MAP["tools_settings"] = ResolvedShellRoute(
+    "settings", "settings", "tools_settings"
+)
 
 
 def get_shell_destination(destination_id: str) -> ShellDestination:

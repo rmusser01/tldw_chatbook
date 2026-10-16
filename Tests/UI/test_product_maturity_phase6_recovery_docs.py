@@ -207,18 +207,21 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             assert "Next: Configure ACP runtime setup in ACP before launch." in acp_text
             assert "Owner: ACP runtime." in acp_text
 
+            # ADR-233: the bare "mcp" route lands Settings > Tools & MCP via
+            # the alias + default context.
             await app.handle_screen_navigation(NavigateToScreen("mcp"))
             await _wait_until(
                 pilot,
                 lambda: (
-                    app.current_tab == "mcp"
-                    and app.screen.__class__.__name__ == "MCPScreen"
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                    and app.screen.query("#settings-tools-hub")
                 ),
             )
             mcp_text = _screen_text(app)
-            # task-2241: the plain-English explainer leads the header (the
+            # task-2241: the plain-English explainer leads the pane (the
             # old jargon purpose line is deleted; the mode chips already
-            # enumerate what the screen manages).
+            # enumerate what the surface manages).
             assert (
                 "MCP (Model Context Protocol) lets chatbook use external "
                 "tools — most people never need to change anything here." in mcp_text
@@ -325,6 +328,7 @@ def test_phase6_mcp_recovery_doc_matches_current_hub_workflow() -> None:
     assert "`MCP: Not wired - MCP servers.`" in mcp_row[1]
     assert "`Add server`" in mcp_row[1]
     assert "`Import…`" in mcp_row[1]
-    assert "Open MCP → Servers" in mcp_row[2]
+    # ADR-233: the MCP destination retired into Settings > Tools & MCP.
+    assert "Open Settings → Tools & MCP → Servers" in mcp_row[2]
     assert "then use Tools" in mcp_row[2]
     assert "Inventory" not in " ".join(mcp_row)

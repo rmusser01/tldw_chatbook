@@ -207,9 +207,26 @@ async def test_apply_navigation_context_rejects_malformed_tools_context(request)
         settings = _active_destination_screen(host)
         settings._select_category(SettingsCategoryId.APPEARANCE.value)
         await pilot.pause()
-        bad = _valid_profile_context()
-        bad["profile_policy_digest"] = "zz"  # not 64 hex chars
-        settings.apply_navigation_context(bad)
+        # Retired MCP-destination bounds, re-pinned on the Settings TOOLS branch:
+        # a bad digest, an unexpected extra key, and a profile id without
+        # its digest triple are all rejected (category stays where it was).
+        bad_digest = _valid_profile_context()
+        bad_digest["profile_policy_digest"] = "zz"  # not 64 hex chars
+        settings.apply_navigation_context(bad_digest)
+        await pilot.pause()
+        assert settings.active_category != SettingsCategoryId.TOOLS.value
+
+        extra_key = _valid_profile_context()
+        extra_key["extra"] = True
+        settings.apply_navigation_context(extra_key)
+        await pilot.pause()
+        assert settings.active_category != SettingsCategoryId.TOOLS.value
+
+        missing_digest = _valid_profile_context()
+        missing_digest["tool_policy_profile_id"] = "digest-missing"
+        missing_digest["profile_revision"] = None
+        missing_digest["profile_policy_digest"] = None
+        settings.apply_navigation_context(missing_digest)
         await pilot.pause()
         assert settings.active_category != SettingsCategoryId.TOOLS.value
 

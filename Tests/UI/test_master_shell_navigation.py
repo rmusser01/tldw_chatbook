@@ -532,7 +532,8 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "watchlists_collections": "ctrl+5",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
-        "mcp": "ctrl+9",
+        # ADR-233: the MCP destination retired into Settings > Tools & MCP;
+        # ctrl+9 survives as MCP_COMPATIBILITY_SHORTCUT outside the map.
         "acp": "ctrl+0",
         "lab": "f2",
         "logs": "f3",

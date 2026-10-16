@@ -21,6 +21,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
@@ -29,7 +30,6 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
@@ -80,9 +80,22 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 assert "F6" in screen_footer.shortcut_text
                 assert "Ctrl+K" in screen_footer.shortcut_text
 
+                # ADR-233: the bare "mcp" legacy route rides the alias +
+                # default context and lands on Settings > Tools & MCP, whose
+                # footer advertises the same per-mode hint set the retired
+                # MCP destination registered.
                 await app.handle_screen_navigation(NavigateToScreen("mcp"))
-                screen = await _wait_for_screen(app, pilot, MCPScreen, "mcp")
+                screen = await _wait_for_screen(app, pilot, SettingsScreen, "settings")
                 screen_footer = screen.query_one(AppFooterStatus)
+                for _ in range(300):
+                    if "a add server" in screen_footer.shortcut_text:
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError(
+                        "Tools & MCP footer hints did not register after "
+                        f"navigating the legacy mcp route: {screen_footer.shortcut_text}"
+                    )
                 assert "mode" in screen_footer.shortcut_text
                 assert "a add server" in screen_footer.shortcut_text
                 # F-003: the Tokens chip is meaningful only in chat contexts --
@@ -317,22 +330,36 @@ async def test_console_registration_updates_the_screens_own_footer():
 
 
 @pytest.mark.asyncio
-async def test_mcp_registration_updates_the_screens_own_footer():
-    """mcp_screen registration -> its footer text contains 'mode' and
-    'a add server'."""
+@private_profile_test
+async def test_tools_hub_registration_updates_the_screens_own_footer(request):
+    """Settings' Tools & MCP category registration -> its footer text
+    contains 'mode' and 'a add server' (the retired destination's hint set,
+    re-registered by the Settings screen under the "settings-tools" source)."""
     app_instance = _build_test_app()
-    host = _DefaultScreenFooterHost(app_instance, MCPScreen)
+    host = _DefaultScreenFooterHost(app_instance, SettingsScreen)
 
     async with host.run_test(size=(160, 48)) as pilot:
         await pilot.pause()
         screen = host.screen_stack[-1]
+        screen._select_category("tools")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
 
-        # Real registration path: MCPScreen.on_mount() already called
-        # _register_footer_shortcuts() during push_screen above.
+        # Real registration path: SettingsScreen re-registers the
+        # category-aware "settings"/"settings-tools" sources on category
+        # show; the TOOLS pane's mount is deferred, so poll for its hints.
         screen_footer = screen.query_one(AppFooterStatus)
         assert screen_footer.id == "screen-footer-status"
+        for _ in range(300):
+            if "a add server" in screen_footer.shortcut_text:
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "Tools & MCP footer hints did not register: "
+                f"{screen_footer.shortcut_text}"
+            )
         assert "mode" in screen_footer.shortcut_text
-        assert "a add server" in screen_footer.shortcut_text
 
         default_screen_footer = host.query_one(AppFooterStatus)
         assert default_screen_footer is not screen_footer

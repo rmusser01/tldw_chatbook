@@ -1,6 +1,6 @@
 """Settings Tools & MCP category pane: mode strip + the MCP workbench.
 
-Port of the retired MCP destination shell (`UI/Screens/mcp_screen.py`): the
+Port of the retired MCP destination shell (ADR-233): the
 same mode chips, per-mode shortcut sets, exclusive reload worker group, and
 bounded initial view state -- hosted inside the Settings screen instead of a
 standalone destination. DOM ids (#mcp-mode-strip, mcp-mode-* chips,
@@ -71,7 +71,7 @@ class ToolsHubPanel(Vertical):
     underline). Uses the raw $surface/$text tokens deliberately -- the
     $ds-focus-* aliases are only defined once the app-wide tcss bundle is
     loaded, and harness-mounted tests set no CSS_PATH (same reasoning as the
-    retired mcp_screen.py copy). */
+    retired shell's copy). */
     .mcp-mode-chip:focus,
     .mcp-mode-chip:hover:focus {
         background: $surface;

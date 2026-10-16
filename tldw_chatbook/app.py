@@ -327,6 +327,7 @@ from .UI.Navigation.screen_registry import (
 )
 from .UI.Navigation.shell_destinations import (
     ARTIFACTS_COMPATIBILITY_SHORTCUT,
+    MCP_COMPATIBILITY_SHORTCUT,
     SHELL_DESTINATION_ORDER,
     SHELL_DESTINATION_SHORTCUTS,
 )
@@ -951,6 +952,13 @@ class TldwCli(
             ARTIFACTS_COMPATIBILITY_SHORTCUT,
             "library_artifacts",
             "Library Artifacts",
+            show=False,
+        ),
+        # ADR-233: preserve muscle memory after MCP folds into Settings.
+        Binding(
+            MCP_COMPATIBILITY_SHORTCUT,
+            "settings_tools_hub",
+            "Settings Tools & MCP",
             show=False,
         ),
         Binding(
@@ -2489,6 +2497,9 @@ class TldwCli(
         "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
         "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
         "customize": {"category": "theme"},
+        # ADR-233: the MCP destination folds into Settings > Tools & MCP.
+        "mcp": {"category": "tools"},
+        "tools_settings": {"category": "tools"},
     }
 
     # How long the outgoing screen gets to flush pending work before the app
@@ -5174,8 +5185,7 @@ class TldwCli(
         """Ordered, module-deduplicated routes for the background pre-importer.
 
         Several canonical route ids share one module (``"ccp"``/``"personas"``
-        both target ``personas_screen.PersonasScreen``, ``"tools_settings"``/
-        ``"mcp"`` both target ``mcp_screen.MCPScreen``) -- importing each
+        both target ``personas_screen.PersonasScreen``) -- importing each
         module once is enough, a second ``import_module`` call for the same
         name is just a dict lookup, but there's no reason to schedule the
         redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
