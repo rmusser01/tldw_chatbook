@@ -4,6 +4,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
+
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel import ChatResumePanel
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
@@ -239,6 +240,9 @@ class ChatTaskCards(Container):
             # slot starts None and is filled by the advisory summarizer;
             # payload carriage means any remount re-renders it.
             summary=approval.get("summary"),
+            view=approval.get("view"),
+            presentation_revision=approval.get("presentation_revision"),
+            presentation_state=approval.get("presentation_state"),
         )
 
     @staticmethod

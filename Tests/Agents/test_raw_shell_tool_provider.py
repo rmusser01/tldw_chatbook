@@ -384,3 +384,20 @@ def test_raw_off_without_pending_review_and_final_disabled_have_distinct_facts(
     with use_run_id("run"), use_tool_call_id("c1"):
         result = provider.invoke("raw_shell:shell_exec", args)
     assert not result.ok and result.approval_decision is None
+
+
+def test_raw_pending_captures_chat_owner_without_changing_schema(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    provider = _provider(tmp_path)
+    schema = provider.load_schema("raw_shell:shell_exec")
+    args = {"command": "echo hello"}
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "owned-call"))
+    assert row.presentation_authority.profile_id == "console-session"
+    assert row.presentation_authority.grant_domain == "console_chat"
+    assert row.presentation_authority.revocation_label == "Disarm or exit"
+    assert row.requires_individual_review
+    assert "Until Chatbook exits" in row.scope_notice
+    assert row.options == ("approve_once", "approve_session", "deny")
+    assert provider.load_schema("raw_shell:shell_exec") == schema
+    assert args == {"command": "echo hello"}

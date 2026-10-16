@@ -277,6 +277,10 @@ async def test_violation_status_opens_rules_with_disable_action(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size):
+    from textual.worker import WorkerCancelled, WorkerState
+
+    from tldw_chatbook.UI.Console_Modules.command_handoff import COMMAND_WORKER_GROUP
+
     async with mounted_rules_console(tmp_path, size) as case:
         seed_answer(case)
         case.helper_entered, case.helper_release = asyncio.Event(), asyncio.Event()
@@ -285,9 +289,16 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
         await case.pilot.pause()
         assert not case.console._console_transcript_poll_needed()
         case.console.query_one("#console-send-message", Button).press()
+        learning_workers = []
         try:
             async with asyncio.timeout(5):
                 await case.helper_entered.wait()
+            learning_workers = [
+                worker
+                for worker in case.console.workers
+                if worker.node is case.console and worker.group == COMMAND_WORKER_GROUP
+            ]
+            assert len(learning_workers) == 1
             await case.pilot.pause()
             assert case.rules.state(case.session_id).phase == "drafting"
             assert not case.console._console_transcript_poll_needed()
@@ -305,7 +316,17 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             case.helper_release.set()
             async with asyncio.timeout(5):
                 await case.rules.helpers.wait_for_cleanup()
-            await case.console.workers.wait_for_complete()
+            unrelated = case.console.run_worker(
+                asyncio.Event().wait(), group="unrelated-stop-test-worker"
+            )
+            asyncio.get_running_loop().call_soon(unrelated.cancel)
+            async with asyncio.timeout(5):
+                for worker in learning_workers:
+                    await worker.wait()
+                    assert worker.state is WorkerState.SUCCESS
+            with pytest.raises(WorkerCancelled):
+                await unrelated.wait()
+            assert unrelated.is_finished and unrelated.is_cancelled
         assert case.rules.helpers.unsettled_count == 0
         assert case.composer.draft_text() == complaint
         assert case.learning_results and case.learning_results[-1][0] != "active"

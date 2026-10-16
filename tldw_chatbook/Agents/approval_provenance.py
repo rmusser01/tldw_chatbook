@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Agents.agent_models import ApprovalDecision
 
@@ -56,6 +57,11 @@ class ApprovalDecisions(dict[str, str]):
         )
 
         super().__init__(decisions or {})
+        self.observation_contexts = dict(getattr(decisions, "observation_contexts", {}))
+        self.observation_aliases = dict(getattr(decisions, "observation_aliases", {}))
+        self.observation_legacy_keys = frozenset(
+            getattr(decisions, "observation_legacy_keys", ())
+        )
         self.denial_reasons: dict[str, str] = {}
         if isinstance(denial_reasons, Mapping):
             for key, value in denial_reasons.items():
@@ -128,3 +134,36 @@ def append_denial_reason(refusal: str, decisions: Mapping[str, str], key: str) -
     if not reason:
         return refusal
     return f"{refusal}\nDenial reason (from user, untrusted text): {json.dumps(reason, ensure_ascii=False)}"
+
+
+def _stamp_answer_provenance(
+    stamps: dict[str, str],
+    rows: Sequence[MCPPendingCall],
+    decisions: Mapping[str, str],
+    *,
+    read_global_ApprovalDecisions: Callable[[], Any],
+    read_global_approval_was_unanswered: Callable[[], Any],
+    read_global_selected_approval_key: Callable[[], Any],
+) -> ApprovalDecisions:
+    """Keep unresolved denies attached to the selected name-scoped stamp."""
+    result = read_global_ApprovalDecisions()(stamps)
+    result.observation_contexts = dict(getattr(decisions, "observation_contexts", {}))
+    result.observation_aliases = dict(getattr(decisions, "observation_aliases", {}))
+    result.observation_legacy_keys = frozenset(
+        getattr(decisions, "observation_legacy_keys", ())
+    )
+    result.unresolved_keys = frozenset(
+        row.llm_name
+        for row in rows
+        if stamps.get(row.llm_name) == "deny"
+        and decisions.get(
+            read_global_selected_approval_key()(decisions, row.call_id, row.llm_name)
+        )
+        == "deny"
+        and read_global_approval_was_unanswered()(row, decisions)
+    )
+    return result
+
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
