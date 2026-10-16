@@ -273,13 +273,20 @@ textarea:focus {
 }
 
 .folder-badge,
-.entry-type {
+.entry-type,
+.approval-surface {
   flex: none;
   font-size: 11px;
   color: var(--accent-strong);
   border: 1px solid var(--accent-strong);
   border-radius: 8px;
   padding: 1px 6px;
+}
+
+.approval-surface {
+  display: inline-block;
+  align-self: flex-start;
+  margin-bottom: 4px;
 }
 
 .chat-title {

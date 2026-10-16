@@ -1108,7 +1108,9 @@ class TldwCli(
             from .Web_Server.served_relay_publisher import ServedRelayPublisher
 
             self._canvas_profile_snapshot = load_application_profile_snapshot()
-            self.served_canvas_handler = ServedCanvasControlHandler()
+            self.served_canvas_handler = ServedCanvasControlHandler(
+                relay_decide=self._served_relay_decide
+            )
             try:
                 self.served_canvas_control = CanvasControlClient.from_environment(
                     os.environ,
@@ -3686,6 +3688,41 @@ class TldwCli(
         if self.served_relay_publisher is None:
             return original
         return wrap_pending_approval_hook(self.served_relay_publisher, original)
+
+    def _served_relay_decide(self, round_id, decisions):
+        """Apply one phone decision on this child's Console controller.
+
+        ADR-236 ``relay.decide.request`` resolver for the served control
+        handler: locates the app-owned Console controller (the same lazy
+        ``chat_controller`` handle the relay run-status poller reads) and
+        forwards through ``resolve_pending_approval`` — the identical
+        entrypoint the desktop approval card's ApprovalDecided handler
+        uses. Truthiness is the delivery verdict the parent relays back:
+        the controller's own ``resolve_pending_approval`` returns ``None``
+        by contract, so the armed-round pre-check below (the same
+        round-id registry that resolve itself reads) is what
+        distinguishes a delivered decision from an unknown/stale round.
+        Both are safe: a mismatched round_id is a documented no-op there.
+        """
+
+        runtime = getattr(self, "console_runtime", None)
+        controller = (
+            getattr(runtime, "chat_controller", None)
+            if runtime is not None
+            else None
+        )
+        if controller is None:
+            return False
+        rounds = getattr(controller, "_pending_approval_rounds", None)
+        if not isinstance(rounds, dict):
+            # Unexpected controller shape: report undelivered rather than
+            # guessing; the child's own timeout semantics still govern.
+            return False
+        state = rounds.get(round_id)
+        if state is None or state.get("settled"):
+            return False
+        controller.resolve_pending_approval(dict(decisions), round_id=round_id)
+        return True
 
     async def _stop_served_canvas_control(self) -> None:
         """Close the private child channel without affecting terminal exit."""

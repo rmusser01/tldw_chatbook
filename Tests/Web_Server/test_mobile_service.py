@@ -977,6 +977,115 @@ async def test_relay_decision_routes_to_child_and_clears_round(
 
 
 @pytest.mark.loopback_network
+async def test_relay_end_to_end_real_child_handler_resolves_round(
+    tmp_path: Path,
+) -> None:
+    """Phase 2c headline proof (ADR-236): the full desktop→phone loop.
+
+    A real broker + a child running the REAL ``ServedCanvasControlHandler``
+    (its ``relay_decide`` wired to a stub Console controller, mirroring
+    app.py's ``_served_relay_decide`` binding) + the parent's
+    ``MobileChatService.attach_relay``. A raised desktop round publishes to
+    the phone surface, ``decide_approval`` routes the phone's decision back
+    over ``relay.decide.request``, the child's controller records it, and
+    the round clears on the parent.
+    """
+    from tldw_chatbook.Canvas.gateway import ServedCanvasControlHandler
+
+    class _StubConsoleController:
+        """Armed-round recording controller (the resolve contract the app
+        wiring forwards to: unknown/stale round ids are safe no-ops)."""
+
+        def __init__(self) -> None:
+            self.resolved: list[tuple[str, dict[str, str]]] = []
+            self.armed: set[str] = set()
+
+        def resolve_pending_approval(
+            self, decisions: dict[str, str], *, round_id: str | None = None
+        ) -> bool:
+            if round_id not in self.armed:
+                return False
+            self.resolved.append((str(round_id), dict(decisions)))
+            return True
+
+    async def scenario() -> None:
+        stub = _StubConsoleController()
+        service = _relay_test_service(tmp_path)
+        broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        child = CanvasControlClient(
+            launch.environment,
+            runtime_snapshot_id=_RELAY_SNAPSHOT,
+            handler=ServedCanvasControlHandler(
+                relay_decide=lambda round_id, decisions: (
+                    stub.resolve_pending_approval(decisions, round_id=round_id)
+                )
+            ).handle,
+        )
+        await child.start()
+        await broker.wait_connected("child-a", timeout=5)
+        service.attach_relay(broker, child_ids=lambda: ["child-a"])
+        got: list[Any] = []
+        subscriber = asyncio.create_task(_subscribe(service, got))
+        try:
+            # Desktop side: the round arms on the child and is published.
+            stub.armed.add("round-desktop-1")
+            await child.send_relay_event(
+                "relay.approval.raised", _relay_raised_payload()
+            )
+            await _wait_for(
+                lambda: any(
+                    a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+                ),
+                timeout=5,
+                what="desktop round in list_approvals",
+            )
+            desktop = next(
+                a
+                for a in service.list_approvals()
+                if a["round_id"] == "round-desktop-1"
+            )
+            assert desktop["surface"] == "desktop"
+
+            # Phone side: the decision routes back and is applied there.
+            delivered = await service.decide_approval(
+                "round-desktop-1", {"call-1": "approve_once"}
+            )
+            assert delivered is True
+            assert stub.resolved == [
+                ("round-desktop-1", {"call-1": "approve_once"})
+            ]
+            # The applied decision clears the round on the parent surface.
+            await _wait_for(
+                lambda: not [
+                    a
+                    for a in service.list_approvals()
+                    if a["round_id"] == "round-desktop-1"
+                ],
+                timeout=5,
+                what="desktop round cleared after decide",
+            )
+            assert any(
+                e.type == "approval_requested"
+                and e.payload.get("round_id") == "round-desktop-1"
+                and e.payload.get("surface") == "desktop"
+                for e in got
+            )
+        finally:
+            # Child client FIRST: broker.aclose() revokes the child and
+            # gathers the accept task, which blocks in _read_message until
+            # the client's socket is gone (same order as _ScriptedChild's
+            # teardown).
+            subscriber.cancel()
+            await child.aclose()
+            await broker.aclose()
+            await asyncio.wait_for(service.shutdown(), timeout=15)
+
+    await scenario()
+
+
+@pytest.mark.loopback_network
 async def test_relay_decide_dead_child_returns_false_and_drops_round(
     tmp_path: Path,
 ) -> None:

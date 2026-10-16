@@ -269,7 +269,24 @@ class FakeMobileService:
                     }
                 ],
                 "timeout_seconds": 300,
-            }
+            },
+            # ADR-236 desktop-relayed round: merged entries carry surface +
+            # child_id, and the route must pass both through untouched.
+            {
+                "round_id": "r-desktop-1",
+                "session_id": "desktop-session-1",
+                "calls": [
+                    {
+                        "call_id": "call-1",
+                        "llm_name": "fs_write",
+                        "options": ["approve_once", "deny"],
+                        "arguments": {"path": "notes/scratch.md"},
+                    }
+                ],
+                "timeout_seconds": 300,
+                "surface": "desktop",
+                "child_id": "child-a",
+            },
         ]
 
     async def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
@@ -860,6 +877,14 @@ async def test_approvals_list_and_decide(tmp_path, mobile_surface_gate) -> None:
         body = await listing.json()
         assert body["approvals"][0]["round_id"] == "r1"
         assert body["approvals"][0]["calls"][0]["llm_name"] == "fs_list"
+
+        # ADR-236: desktop-relayed rounds list alongside mobile ones and
+        # their surface/child_id markers pass through the route untouched
+        # (the phone tags each card desktop/phone off these fields).
+        desktop = body["approvals"][1]
+        assert desktop["round_id"] == "r-desktop-1"
+        assert desktop["surface"] == "desktop"
+        assert desktop["child_id"] == "child-a"
 
         decided = await client.post(
             "/api/v1/mobile/approvals/r1",

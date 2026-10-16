@@ -230,21 +230,42 @@ exists on `/m`, and reading views refresh on open only (no extra
 polling). Everything renders as plain text (`textContent` only), so note
 and transcript bodies are always inert.
 
+**Desktop approval relay (Phase 2c, ADR-236).** When Canvas browser
+delivery is enabled, approval rounds raised by desktop terminal sessions
+(served child Apps) reach `/m`'s approvals inbox alongside mobile-initiated
+ones — each card tagged **desktop** or **phone** — and a decision made on
+the phone routes back over the parent's loopback control broker to the
+owning desktop session, releasing the waiting agent run there. Desktop run
+completions also push to the phone as live cross-surface events (the
+`run_status` event over the existing stream), which resync an open chat and
+refresh the approvals inbox; this is update-level sync, not token-level
+transcript streaming. The relay covers rounds raised for the ACTIVE session
+while its Console view is mounted — the same lifecycle as the desktop
+approval card. Rounds raised while the Console screen is unmounted, and
+rounds for parked background sessions, are not relayed. Fail-closed is the
+rule on every failure: a disconnecting or unresponsive child (2 s routing
+budget) drops its rounds from the phone and the desktop child's own
+timeout/deny semantics govern, and with Canvas disabled the relay is
+entirely inert — no broker exists, and desktop approvals stay invisible on
+the phone (a documented limitation, not an error). The phone's decision
+authority equals the desktop user's: same single operator, riding the
+authenticated mobile API and the child-secret loopback hop.
+
 v1 limits:
 
-- Approvals cover mobile-initiated conversations only; desktop-initiated
-  runs never wait on the phone.
+- Desktop approvals reach the phone only through the relay above — only
+  while Canvas is enabled and the round's Console view is mounted; every
+  other desktop round (unmounted Console screen, parked background
+  session) waits on the desktop user, exactly as before.
 - Conversations are per-server-run: the sessions list is in-memory, and
   while message rows persist under `<user data dir>/mobile/`, earlier
   mobile conversations are not rehydrated after a server restart in v1 —
   rehydration is a recorded follow-up.
-- Within mobile-initiated conversations, completion-level polling — every
-  12 seconds and again when the page regains focus — syncs messages that
-  completed outside the live stream (a reconnect, a second `/m` tab).
-  Desktop activity does not reach the phone via polling (the isolated
-  mobile databases cannot see it); desktop approvals and run-status are
-  the planned Phase 2 relay, not v1. The phone's own runs do stream over a
-  WebSocket while it is connected.
+- Desktop activity reaches the phone at completion level via the relay's
+  run-status pushes; the 12-second/focus-regain polling syncs within
+  mobile-initiated conversations (the isolated mobile databases cannot see
+  desktop conversations). Not live transcript streaming. The phone's own
+  runs do stream over a WebSocket while it is connected.
 - There is no service worker and no offline support; with no connection the
   page shows the last synced state.
 - REVIEWED run hooks never fire on mobile sends (`ensure_run_hooks` is not

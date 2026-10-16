@@ -626,6 +626,13 @@
 
   function renderApprovalCard(round) {
     const card = document.createElement("li");
+    // ADR-236: tag which surface owns the round — desktop-relayed (from a
+    // served terminal session) or phone-initiated. The wire's surface
+    // value only picks between two fixed labels; it never becomes markup.
+    const surface = document.createElement("span");
+    surface.className = "approval-surface";
+    surface.textContent = round.surface === "desktop" ? "desktop" : "phone";
+    card.append(surface);
     const calls = Array.isArray(round.calls) ? round.calls : [];
     for (const call of calls) {
       const block = document.createElement("div");
@@ -806,6 +813,14 @@
         syncOpenSession(); // cross-surface completions land via this resync
         break;
       case "approval_requested":
+        refreshApprovals();
+        break;
+      case "run_status":
+        // ADR-236 desktop relay: a served terminal session's run
+        // transition. Resync the open chat when the event is for it, and
+        // always refresh the approvals inbox — a desktop run ending
+        // clears its pending rounds there.
+        if (sessionId === state.openSessionId) syncOpenSession();
         refreshApprovals();
         break;
       case "session_updated":

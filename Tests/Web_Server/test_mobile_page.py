@@ -444,6 +444,46 @@ async def test_mobile_app_js_carries_the_library_surface(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mobile_app_js_tags_approval_surfaces_and_handles_run_status(
+    tmp_path,
+) -> None:
+    """ADR-236 phone markers: each approval card carries a desktop/phone
+    surface tag, and desktop ``run_status`` events resync the open chat
+    plus the approvals inbox. Grep-style pinning over the served client.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.js")
+        assert response.status == 200
+        js = await response.text()
+
+    # The surface tag: one badge class, rendered from the wire's surface
+    # field, labelling desktop-relayed rounds "desktop" and phone ones
+    # "phone" (wire text reaches only textContent, never a class name).
+    assert "approval-surface" in js
+    assert '=== "desktop"' in js
+    assert '"desktop"' in js and '"phone"' in js
+
+    # run_status handling: the desktop relay's completion pushes ride the
+    # existing event envelope; the case block must resync the open chat
+    # and refresh the approvals inbox.
+    case_index = js.index('case "run_status":')
+    block = js[case_index : js.index("break;", case_index)]
+    assert "syncOpenSession()" in block
+    assert "refreshApprovals()" in block
+
+
+@pytest.mark.asyncio
+async def test_mobile_css_styles_the_approval_surface_tag(tmp_path) -> None:
+    """The surface tag reuses the reading surface's pill styling."""
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.css")
+        assert response.status == 200
+        body = await response.text()
+
+    assert ".approval-surface" in body
+
+
+@pytest.mark.asyncio
 async def test_mobile_css_styles_the_reading_surface(tmp_path) -> None:
     """The served stylesheet carries the tab bar + pre-wrap reading rules.
 
