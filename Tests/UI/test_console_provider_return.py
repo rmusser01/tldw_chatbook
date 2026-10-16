@@ -473,15 +473,17 @@ def _settings(
     conflict=None,
     own_draft=False,
     key_check="Ready · not tested",
+    provider="openai",
 ):
     """What the Settings offer and copy read from their screen.
 
     ``dirty`` is any unsaved Providers & Models edit; ``own_draft`` is the
     narrower case of a labelled edit to the target's own provider.
     ``key_check`` is the Key check row's word, read from the last check's
-    Readiness line as the real screen keeps it.
+    Readiness line as the real screen keeps it, for the form's ``provider``.
     """
     return SimpleNamespace(
+        _provider_widget_value=lambda: provider,
         _provider_return_target=target,
         _provider_return_outcome=outcome,
         _provider_navigation_conflict_target=conflict,
@@ -686,6 +688,9 @@ def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None
         _settings(console, SAVED, store, key_check="Ready · reachable 21:24"),
         _settings(console, other, store, key_check=verified),
         _settings(modal, SAVED, key_check=verified),
+        # Review: a check of another provider picked after the save says
+        # nothing about the key the recovery saved.
+        _settings(console, SAVED, store, key_check=verified, provider="anthropic"),
     ):
         assert continuation_copy(unchanged).endswith("is not yet verified.")
     store.close_session(chat.id)

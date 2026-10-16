@@ -288,8 +288,9 @@ def continuation_copy(screen: SettingsScreen) -> str:
 
     Returns:
         After a save: what was saved, where the return goes and what is still
-        unverified; for a Console return, once the Key check reads verified,
-        that the provider accepted the key. For a Console return with nothing
+        unverified; for a Console return, once the Key check of the
+        recovery's provider reads verified, that the provider accepted the
+        key. For a Console return with nothing
         saved: that nothing is unsaved and where the return goes. A Console
         return names the chat while that chat is open.
     """
@@ -310,7 +311,10 @@ def continuation_copy(screen: SettingsScreen) -> str:
         # Lazy: the card module imports this one.
         from .providers_models_card import key_check_verdict
 
-        # A key check after the save (t) answers what the save could not.
-        if key_check_verdict(screen).startswith(VERIFIED_PREFIX):
+        # A key check after the save (t) answers what the save could not, for
+        # the recovery's provider only: the check reads the form's provider.
+        if key_check_verdict(screen).startswith(VERIFIED_PREFIX) and (
+            provider_config_key(screen._provider_widget_value()) == target.provider
+        ):
             unverified = KEY_ACCEPTED_COPY
     return f"{saved[0]} Return to Console{chat}; {unverified}"
