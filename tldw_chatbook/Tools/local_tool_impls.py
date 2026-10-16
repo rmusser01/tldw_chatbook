@@ -552,6 +552,106 @@ def _format_stat_result(relative: Path, info: os.stat_result) -> str:
     )
 
 
+def create_directory(path: str, *, workspace_root: Path) -> str:
+    """Create directory ``path`` (and missing parents) inside the root.
+
+    TASK-35081: the fs_* family had no directory-creation capability --
+    every writer requires an existing parent (spec 2026-08-04 §2's
+    deliberate typo-catching divergence), so a model asked to "create a
+    folder" had no honest path to success and confabulated instead.
+    ``fs_mkdir`` keeps every write-intent guard: confinement, the
+    sensitive-path denylist (the target itself included), the
+    ``.git``-metadata write refusal, and the
+    ``refuses_new_directory_chain`` shadow-directory guard applied to the
+    target and each not-yet-existing ancestor — the exact chain
+    ``mkdir(parents=True)`` is about to create.
+
+    Creating a directory that already exists is a success no-op (a retried
+    mkdir must not burn an approval cycle); a non-directory at the target
+    is refused.
+
+    Args:
+        path: Directory to create, absolute or relative to
+            ``workspace_root``.
+        workspace_root: The confinement root ``path`` must resolve within.
+
+    Returns:
+        ``created directory <path>`` or ``directory already exists:
+        <path>``.
+
+    Raises:
+        LocalToolError: If ``path`` resolves outside ``workspace_root``,
+            is a protected path, would collide with one, or creation
+            fails.
+    """
+    sensitive_ctx = resolve_sensitive_context()
+    workspace = Path(workspace_root).resolve()
+    root = resolve_workspace_path(
+        path, workspace, intent="write", context=sensitive_ctx
+    )
+    if refuses_new_directory_chain(root, context=sensitive_ctx):
+        raise LocalToolError(
+            f"Refused: creating '{path}' would collide with a protected path"
+        )
+    return _mkdir_relative_directory(
+        root.relative_to(workspace),
+        workspace=workspace,
+        sensitive_exclusions=sensitive_exclusions_under(workspace, sensitive_ctx),
+        display_path=path,
+    )
+
+
+def _mkdir_relative_directory(
+    relative: Path,
+    *,
+    workspace: Path,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    display_path: str | None = None,
+) -> str:
+    """Create one already-admitted directory (with parents) relative to an I/O root.
+
+    The parent-side admission (executor ``_build_request``/remote builder)
+    has already run the absolute denylist and the new-directory-chain
+    guard; this core re-checks the request-carried exclusions with a
+    DIRECTORY classification so a binding-excluded or remote-home-denied
+    subtree cannot be planted, and refuses a symlinked chain whose
+    resolution escapes the root (``_relative_target_is_safe`` resolves
+    existing ancestors before anything is created).
+
+    Args:
+        relative: Root-relative target, already confined.
+        workspace: The confinement root ``relative`` resolves against.
+        sensitive_exclusions: Deny rules applied to the target chain.
+        display_path: Caller-facing path for messages.
+
+    Returns:
+        The creation (or already-exists) summary.
+
+    Raises:
+        LocalToolError: If the target is protected, resolves outside the
+            root, a non-directory exists at the target, or creation fails.
+    """
+    shown = display_path or str(relative)
+    target = workspace / relative
+    if not _relative_target_is_safe(
+        relative, workspace, sensitive_exclusions, is_directory=True
+    ):
+        raise LocalToolError(
+            f"Refused: '{shown}' is a protected path and cannot be created"
+        )
+    if target.exists() and not target.is_dir():
+        raise LocalToolError(f"a non-directory already exists at: {shown}")
+    if target.is_dir():
+        return f"directory already exists: {shown}"
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise LocalToolError(
+            f"could not create directory {shown}: {exc.strerror or exc}"
+        ) from exc
+    return f"created directory {shown}"
+
+
 def write_file(
     path: str,
     content: str,

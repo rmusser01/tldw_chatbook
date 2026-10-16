@@ -11,6 +11,7 @@ from tldw_chatbook.Tools import local_tool_impls
 from tldw_chatbook.Tools.local_tool_impls import (
     MAX_READ_CHARS,
     LocalToolError,
+    create_directory,
     edit_file,
     glob_files,
     grep_files,
@@ -286,6 +287,61 @@ def test_fs_read_truncates_at_max_chars(tmp_path):
     out = read_file("big.txt", workspace_root=ws)
     assert out.endswith("… [truncated]")
     assert len(out) <= MAX_READ_CHARS + len("\n… [truncated]")
+
+
+# --- fs_mkdir (TASK-35081) --------------------------------------------------
+
+
+def test_fs_mkdir_creates_directory_with_missing_parents(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    out = create_directory("a/b/c", workspace_root=ws)
+    assert (ws / "a" / "b" / "c").is_dir()
+    assert "created directory" in out and "a/b/c" in out
+
+
+def test_fs_mkdir_existing_directory_is_success_no_op(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "present").mkdir()
+    out = create_directory("present", workspace_root=ws)
+    assert "already exists" in out
+    assert (ws / "present").is_dir()
+
+
+def test_fs_mkdir_refuses_non_directory_at_target(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "occupied").write_text("file")
+    with pytest.raises(LocalToolError, match="non-directory"):
+        create_directory("occupied", workspace_root=ws)
+
+
+def test_fs_mkdir_refuses_git_metadata_write(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(LocalToolError, match=".git"):
+        create_directory(".git/hooks", workspace_root=ws)
+    assert not (ws / ".git").exists()
+
+
+def test_fs_mkdir_stays_confined_to_the_root(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        create_directory("../escape", workspace_root=ws)
+    assert not (tmp_path / "escape").exists()
+
+
+def test_fs_mkdir_then_fs_write_lands_in_new_folder(tmp_path):
+    # The pairing the incident was about: create the folder, then write
+    # into it on the next call without a parent-exists error.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    create_directory("notes/archive", workspace_root=ws)
+    out = write_file("notes/archive/2026.md", "hello\n", workspace_root=ws)
+    assert "wrote" in out
+    assert (ws / "notes" / "archive" / "2026.md").read_text() == "hello\n"
 
 
 def test_fs_write_creates_file(tmp_path):

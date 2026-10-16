@@ -1,5 +1,23 @@
 # Lessons: what counts as evidence a change works
 
+## A local red is only evidence after a same-tree baseline (TASK-35080/35081, 2026-10-15)
+
+**Incident.** While fixing the workspace-note and fs_mkdir gaps, this machine's
+dev HEAD already failed 193 of 269 tests in `Tests/Agents/test_local_tool_provider.py`
+(plus 7 in `test_local_tool_sensitive_paths.py`, 2 in `test_workspace_file_roots.py`,
+1 in `test_local_server_tools.py`, 1 fence-protocol note test) with
+`RecoveryRequired('raw_source_selection_changed')` from `Backup_Recovery/raw_participants.py`
+— local app state, not code. Three brand-new tests landed in that module and were
+indistinguishable from regressions until a `git stash`-baseline run of the same
+node IDs against unmodified dev proved the module was already red wholesale; the
+new tests' logic was then verified with an inline script through the real worker.
+
+**What to do.** Before believing any local failure says your change is wrong, run
+the same failing node IDs against your pre-change tree (`git stash push -- <files>`,
+rerun, `git stash pop`). If the baseline is red in that module, say so in the task
+notes and verify new logic out-of-band (inline script driving the real executor/
+worker) rather than "fixing" tests that were already broken.
+
 ## Exercise worker failures through the runtime, not only their message copy (TASK-35028, 2026-10-15)
 
 **Incident.** Workspace-worker message tests passed while a crashed worker returned

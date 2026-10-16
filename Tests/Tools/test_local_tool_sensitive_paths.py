@@ -38,6 +38,7 @@ import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
+    create_directory,
     edit_file,
     glob_files,
     grep_files,
@@ -47,6 +48,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
     write_file,
 )
 from tldw_chatbook.Tools.patch_tool_impls import patch_files
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 SSH_KEY_MARKER = "SYNTHETIC-NOT-A-REAL-PRIVATE-KEY-19551"
 AWS_MARKER = "aws_secret_access_key = SYNTHETIC-19551"
@@ -208,6 +210,59 @@ def test_fs_patch_refuses_rewriting_the_permission_store():
     )
     assert "protected path" in message
     assert store.read_text() == '{"version": 1}\n'  # untouched
+
+
+def test_fs_mkdir_refuses_shadowing_an_excluded_state_file(tmp_path):
+    """TASK-35081: ``fs_mkdir`` must not plant a directory where a binding
+    (or the denylist) expects a plain state file -- the TASK-849
+    shadow-directory hazard, now that the family can create directories.
+
+    ``_mkdir_relative_directory`` is the worker-side core; its exclusion
+    check classifies the target as a DIRECTORY, and a ``file``-kind
+    exclusion matches it exactly.
+    """
+    from tldw_chatbook.Tools.local_tool_impls import _mkdir_relative_directory
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        _mkdir_relative_directory(
+            Path("state.db"),
+            workspace=ws,
+            sensitive_exclusions=(SensitiveExclusion("file", "state.db"),),
+            display_path="state.db",
+        )
+    assert not (ws / "state.db").exists()
+
+
+def test_fs_mkdir_refuses_an_excluded_subtree(tmp_path):
+    """A directory creation inside an excluded subtree is refused whole."""
+    from tldw_chatbook.Tools.local_tool_impls import _mkdir_relative_directory
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        _mkdir_relative_directory(
+            Path("secret/new"),
+            workspace=ws,
+            sensitive_exclusions=(SensitiveExclusion("subtree", "secret"),),
+            display_path="secret/new",
+        )
+    assert not (ws / "secret").exists()
+
+
+def test_fs_mkdir_refuses_creating_a_directory_inside_ssh():
+    """A brand-new subdirectory inside a denylisted subtree is refused."""
+    _plant_ssh_key()
+
+    message = _refused(
+        lambda: create_directory(".ssh/newdir", workspace_root=_home()),
+        "fs_mkdir(.ssh/newdir)",
+    )
+    assert "protected path" in message
+    assert not (_home() / ".ssh" / "newdir").exists()
 
 
 def test_fs_patch_dry_run_also_refuses_the_permission_store():
@@ -686,38 +741,64 @@ def test_git_pure_helper_exemption_does_not_apply_to_same_name_in_other_module(
         test_every_workspace_rooted_function_uses_the_choke_point()
 
 
-def test_fs_family_never_creates_directories_on_the_agents_behalf():
-    """Companion to the tripwire above: no ``mkdir`` in the ``fs_*`` core.
+def test_fs_mkdir_is_the_only_directory_creator_and_consults_the_guard():
+    """TASK-35081 deliberately overturned the family's old "no mkdir" rule.
 
-    ``WriteFileTool`` in the sibling family creates parent directories on
-    request, which is why it must consult
-    ``Utils.sensitive_paths.refuses_new_directory_chain`` before calling
-    ``mkdir(parents=True)`` (TASK-849: otherwise an agent can plant a
-    directory where this app later expects its own state FILE -- a denial
-    of service). The ``fs_*`` family deliberately requires the parent
-    directory to already exist, so it has no such call site;
-    ``resolve_workspace_path`` still applies the guard for write intents.
-    If a ``mkdir`` ever appears here, that decision is being reversed and
-    the guard's placement has to be re-examined.
+    The fs_* family used to require an existing parent for every writer
+    (spec 2026-08-04 section 2's typo-catching divergence), so a model
+    asked to "create a folder" had no honest path to success and
+    confabulated (the incident behind TASK-35081). ``fs_mkdir`` is now the
+    ONE sanctioned directory creator in the family, and the TASK-849
+    shadow-directory guard the old tripwire protected must sit in front of
+    it: ``create_directory`` consults
+    ``Utils.sensitive_paths.refuses_new_directory_chain`` on the target
+    itself (the write-intent choke point already guards the ancestors of a
+    file target), no other function in this module may create
+    directories, and ``patch_tool_impls`` stays mkdir-free entirely.
     """
     import ast
 
     from tldw_chatbook.Tools import local_tool_impls, patch_tool_impls
 
+    def _function_defs(tree):
+        return {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    def _calls(function_node, attr_names):
+        return [
+            node
+            for node in ast.walk(function_node)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in attr_names
+        ]
+
     for module in (local_tool_impls, patch_tool_impls):
         tree = ast.parse(Path(module.__file__).read_text())
-        attr_calls = {
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        }
-        assert "mkdir" not in attr_calls, (
-            f"{module.__name__} now creates directories -- it must consult "
-            "Utils.sensitive_paths.refuses_new_directory_chain first"
+        creators = [
+            name
+            for name, node in _function_defs(tree).items()
+            if _calls(node, {"mkdir", "makedirs"})
+        ]
+        if module is patch_tool_impls:
+            assert not creators, f"{module.__name__} now creates directories"
+            continue
+        assert creators == ["_mkdir_relative_directory"], (
+            f"{module.__name__}: _mkdir_relative_directory must stay the only "
+            "directory creator in the fs_* family"
         )
-        assert "makedirs" not in attr_calls, (
-            f"{module.__name__} now creates directories"
-        )
+
+    tree = ast.parse(Path(local_tool_impls.__file__).read_text())
+    functions = _function_defs(tree)
+    assert any(
+        isinstance(node.func, ast.Name)
+        and node.func.id == "refuses_new_directory_chain"
+        for node in ast.walk(functions["create_directory"])
+        if isinstance(node, ast.Call)
+    ), "create_directory must consult refuses_new_directory_chain"
 
 
 def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path):

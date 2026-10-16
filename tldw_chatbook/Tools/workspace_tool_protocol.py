@@ -41,6 +41,7 @@ WorkspaceOperation = Literal[
     "fs_write",
     "fs_edit",
     "fs_patch",
+    "fs_mkdir",
     "fs_glob",
     "fs_grep",
     "stat_path",

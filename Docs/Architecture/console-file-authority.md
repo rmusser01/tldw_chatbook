@@ -34,7 +34,15 @@ At run start, `capture_run_admitted_workspace_roots` freezes the run's authority
 
 ### Read-only bindings
 
-`allow_write=False` (or no writable root) filters every mutating spec — `fs_write`, `fs_edit`, `fs_patch`, todo tools are not advertised at all ("read-only binding omits patching entirely").
+`allow_write=False` (or no writable root) filters every mutating spec — `fs_write`, `fs_edit`, `fs_mkdir`, `fs_patch`, todo tools are not advertised at all ("read-only binding omits patching entirely").
+
+### Directory creation (TASK-35081)
+
+`fs_mkdir` is the family's one directory creator (`mkdir -p` semantics; an existing directory is a success no-op, a non-directory at the target is refused). Every writer other than it still requires an existing parent — spec 2026-08-04 §2's typo-catching divergence. Its guards: the write-intent choke point (confinement, sensitive-path denylist, `.git` metadata refusal) plus `refuses_new_directory_chain` applied to the target itself — the TASK-849 shadow-directory guard the family's old "no mkdir" tripwire demanded be re-sited if a creator ever appeared. It rides the same pinned-worker wire (local and SSH roots) as the rest of the family.
+
+### Model-facing workspace note
+
+`workspace_context_note()` (TASK-33940.1, TASK-35080) tells the model how to address what it can reach: for a named workspace, each bound folder by the `root_alias` its fs_*/git_* tools accept; for the Default/global workspace — which admits no roots and therefore offers no path tools — an explicit no-project-folders note with the remediation (bind folders in a named workspace), so the model says it cannot access project files instead of confabulating.
 
 ## Project instructions (AGENTS.md / AGENTS.override.md)
 
