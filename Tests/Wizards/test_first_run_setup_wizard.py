@@ -13648,6 +13648,75 @@ async def test_a_401_to_a_test_reads_as_a_key_problem_after_next(
 
 
 @pytest.mark.asyncio
+async def test_a_claude_subscription_is_never_told_to_add_an_api_key(monkeypatch):
+    """TASK-33008 review: discovery never carries a Claude subscription, so
+    Anthropic refuses the keyless model list. Both steps said the server
+    "needs an API key and none was set", for a sign-in that works for chat.
+    The listing reads as unavailable, and no failed check is recorded."""
+    import tldw_chatbook.config as config_module
+    import tldw_chatbook.LLM_Calls.anthropic_subscription as subscription
+
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", dict)
+    monkeypatch.setattr(
+        subscription, "subscription_credential_status", lambda **_kw: "ready"
+    )
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    refused = ModelDiscoveryResult(
+        provider="anthropic",
+        provider_list_key="anthropic",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"anthropic": {"auth_source": "claude_subscription"}}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=refused)
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        step._local_discover = AsyncMock(return_value=())
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("anthropic")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        assert step._current_provider_readiness().subscription_status == "ready"
+        status = step.query_one("#setup-provider-probe-status", Static)
+        assert str(status.render()) == (
+            "Couldn't discover models for Anthropic. You can continue anyway."
+        )
+
+        await container._advance()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if model_step.query("#setup-model-listing-unavailable"):
+                break
+        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
+            "Model listing unavailable; enter the model ID used by this endpoint."
+        )
+        assert container.provider_probe_failure() == ""
+        assert model_step.confirm_before_advance() is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("check", ["test", "listing"])
 async def test_a_check_that_asks_for_a_key_brings_authentication_into_view(check):
     """TASK-33008 capture 06b at 211x44: Test said "Add one under

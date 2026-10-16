@@ -141,7 +141,36 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
     return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
 
 
-def probe_failure(outcome: object, provider_draft: object) -> str:
+def subscription_cannot_list(
+    app_config: object, provider_draft: object, state: str, category: str
+) -> bool:
+    """Whether a refused listing is a Claude subscription's, not a missing key.
+
+    TASK-33008 review: a subscription signs chat in, but discovery never
+    carries it, so a keyless Anthropic model list is refused. The copy said
+    the server "needs an API key and none was set", steering the user to a
+    key they do not need. Such a listing reads as unavailable instead.
+    """
+
+    if (
+        state != "connection_failed"
+        or category != "authentication"
+        or getattr(provider_draft, "provider", "") != "anthropic"
+        or wizard_state.discovery_sends_a_key(provider_draft)
+        or not isinstance(app_config, Mapping)
+    ):
+        return False
+    from tldw_chatbook.LLM_Calls.anthropic_subscription import anthropic_auth_source
+
+    api_settings = app_config.get("api_settings")
+    settings = api_settings.get("anthropic") if isinstance(api_settings, Mapping) else None
+    settings = settings if isinstance(settings, Mapping) else None
+    return anthropic_auth_source(settings) == "claude_subscription"
+
+
+def probe_failure(
+    outcome: object, provider_draft: object, app_config: object = None
+) -> str:
     """Classify a discovery outcome as the Model step does, for the Provider step.
 
     TASK-33008 (capture 06a): the two steps told one 401 two ways. A missing
@@ -152,6 +181,8 @@ def probe_failure(outcome: object, provider_draft: object) -> str:
         _models, state, category = _model_discovery_ui_outcome(outcome)
     except ValueError:
         return wizard_state.PROVIDER_PROBE_CONNECTION
+    if subscription_cannot_list(app_config, provider_draft, state, category):
+        return wizard_state.PROVIDER_PROBE_NONE
     return wizard_state.classify_discovery_failure(
         state, category, key_sent=wizard_state.discovery_sends_a_key(provider_draft)
     )

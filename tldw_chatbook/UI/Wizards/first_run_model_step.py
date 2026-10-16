@@ -551,7 +551,15 @@ class ModelStep(SetupStep):
             return
         if discovery_key != self._current_discovery_key():
             return
-        key_sent = wizard_state.discovery_sends_a_key(self._current_provider_draft())
+        provider_draft = self._current_provider_draft()
+        if model_discovery.subscription_cannot_list(
+            getattr(getattr(self.wizard, "app_instance", None), "app_config", None),
+            provider_draft,
+            discovery_state,
+            failure_category,
+        ):
+            discovery_state = "listing_unavailable"
+        key_sent = wizard_state.discovery_sends_a_key(provider_draft)
         probe_failure = wizard_state.classify_discovery_failure(
             discovery_state, failure_category, key_sent=key_sent
         )

@@ -1702,7 +1702,11 @@ class ProviderStep(SetupStep):
                 status.update(f"Found {len(models)} model(s) for {display}.")
                 model_discovery.note_probe_reached(self, discovery_key)
             elif failed:
-                failure = model_discovery.probe_failure(model_outcome, provider_draft)
+                failure = model_discovery.probe_failure(
+                    model_outcome,
+                    provider_draft,
+                    getattr(self.wizard.app_instance, "app_config", None),
+                )
                 status.update(self._discovery_failure_status(display, failure))
                 model_discovery.note_probe_failure(self, failure, discovery_key)
             elif attempted:
