@@ -212,3 +212,31 @@ async def test_apply_navigation_context_rejects_malformed_tools_context(request)
         settings.apply_navigation_context(bad)
         await pilot.pause()
         assert settings.active_category != SettingsCategoryId.TOOLS.value
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_runtime_backend_change_forces_pane_reload(request, tmp_path):
+    app = _build_test_app()
+    # A real (fake-seam) hub service: the workbench's initial load worker
+    # reads app_instance.unified_mcp_service, and the real service raises
+    # RecoveryRequired in this sandbox (pre-existing env block, see
+    # baseline-failures.txt) -- the handoff test stubs the same seam.
+    app.unified_mcp_service = PermissionsHubService(
+        tmp_path / "mcp_permissions.json"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        # Pre-mount (no pane in another category): the forward must no-op,
+        # not raise.
+        await settings.handle_runtime_backend_changed("local")
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        reloaded: list[bool] = []
+        pane.handle_runtime_backend_change = lambda backend: reloaded.append(True)  # type: ignore[assignment]
+        await settings.handle_runtime_backend_changed("local")
+        assert reloaded == [True]

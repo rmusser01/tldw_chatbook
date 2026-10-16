@@ -35362,6 +35362,16 @@ class SettingsScreen(BaseAppScreen):
         if pane is not None:
             pane.activate_mode(mode)
 
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Forward runtime-backend changes to the Tools & MCP pane (ADR-233).
+
+        Args:
+            runtime_backend: Newly active runtime backend identifier.
+        """
+        pane = self._tools_hub_pane()
+        if pane is not None:
+            pane.handle_runtime_backend_change(runtime_backend)
+
     def _dispatch_personal_context_action(self, action_name: str) -> None:
         """Route a category-scoped shortcut to the mounted profile panel."""
 
