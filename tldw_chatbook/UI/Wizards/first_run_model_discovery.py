@@ -294,16 +294,21 @@ def tested_evidence_detail(
     TASK-33008: a 401 to a Test that sent no key asks for one, as the
     listing does, instead of saying the server rejected a key. Review round
     2 (capture 06d): a 401 to a key that was sent marks the section too.
+    Round 3: that 401 is told as the listing tells it as well, not in the
+    shared verdict's own words.
     """
 
     if evidence.category == "unauthorized":
-        failure = wizard_state.PROVIDER_PROBE_AUTH
-        if identity.credential_source == "none":
-            from tldw_chatbook.Chat.provider_catalog import provider_display_name
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
-            failure = wizard_state.PROVIDER_PROBE_KEY_REQUIRED
-            display = provider_display_name(identity.provider_key)
-            detail = owner._discovery_failure_status(display, failure)
+        failure = (
+            wizard_state.PROVIDER_PROBE_KEY_REQUIRED
+            if identity.credential_source == "none"
+            else wizard_state.PROVIDER_PROBE_AUTH
+        )
+        detail = owner._discovery_failure_status(
+            provider_display_name(identity.provider_key), failure
+        )
         note_probe_failure(owner, failure, identity)
     note_probe_reached(owner, identity, evidence.endpoint)
     return detail

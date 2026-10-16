@@ -13674,9 +13674,9 @@ async def test_a_refused_key_is_told_as_checked_and_the_section_not_optional() -
         step.query_one("#setup-provider-test", Button).press()
         await _until(pilot, lambda: str(status.render()).startswith("✗"))
         assert probe.await_args.kwargs["credential_source"] == "draft"
+        # Review round 3: worded as the listing's 401, not the shared verdict.
         assert str(status.render()) == (
-            "✗ Unauthorized - the server rejected this API key. Check the "
-            "Authentication section on this step."
+            "✗ llama.cpp rejected this API key. Update it, or continue anyway."
         )
         assert (str(key_line.render()), str(auth.title)) == (rejected, "Authentication")
 

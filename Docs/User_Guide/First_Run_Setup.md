@@ -63,9 +63,11 @@ plain text instead:
 - "*Provider* needs an API key and none was set. Go Back to add one, or enter a model ID below." when the server refused a check that carried no key (a llama.cpp server started with `--api-key`, say).
 
   These two show no **Retry**, because retrying cannot fix a key. The Provider
-  step names the same cause: "*Provider* rejected this API key. Update it, or
-  continue anyway." or "*Provider* needs an API key and none was set. Add one
-  under Authentication, or continue anyway." In both cases the section is
+  step names the same cause, after its own model check and after **Test
+  connection** alike (a Test's line starts with ✗): "*Provider* rejected this
+  API key. Update it, or continue anyway." or "*Provider* needs an API key and
+  none was set. Add one under Authentication, or continue anyway." In both
+  cases the section is
   titled "Authentication", not "Authentication (optional)", because a server
   that refuses a key, or asks for one, wants one. The title stays while that
   provider and address are selected, until a check of that address that sends
