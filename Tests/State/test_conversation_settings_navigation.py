@@ -138,8 +138,8 @@ def test_provider_target_matches_only_its_own_return_kind() -> None:
 
 
 def test_a_console_recovery_pins_the_model_only_when_it_names_one() -> None:
-    """A route with no model (a provider that lists none) leaves Settings'
-    own model in the field; Chat settings routes its draft's, even none."""
+    """A route with no model (a provider that lists none) leaves the choice
+    to Settings; Chat settings routes its draft's, even none."""
 
     def target(model: str | None, session_id: str | None):
         return ProviderSettingsNavigationTarget(
