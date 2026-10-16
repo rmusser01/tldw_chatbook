@@ -421,11 +421,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "time_display",
     ): ("UNREACHABLE: Widgets/status_dashboard.py has no importer (prod or tests)."),
     # -- TASK-34991: the repeating-clock census recap. Every site below was
-    #    read at its receiver; the kinds are the four above. The
-    #    NEEDS-LAYOUT rows marked FINDING are real per-tick writes whose
-    #    emitting code is NOT equality-gated -- the layout pass they keep is
-    #    genuine (the box is content-sized), but the owners should add an
-    #    equality gate so the tick stops repainting unchanged copy at all.
+    #    read at its receiver; the kinds are the four above. The rows
+    #    originally marked FINDING (real per-tick writes whose emitting code
+    #    was NOT equality-gated) have since been equality-gated and re-
+    #    classified NOT-PER-TICK by TASK-35028; none remain NEEDS-LAYOUT.
     # -- Chat service layer (dict/hashlib/custom-object `.update` shares)
     (
         "tldw_chatbook/Chat/console_interrupt_rounds.py",
@@ -469,39 +468,41 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-A-WIDGET: `summary` is the dict being built from the record; "
         "this is `dict.update`."
     ),
-    # -- UI/Console_Modules/left_rail.py (TASK-34991 FINDING x3)
+    # -- UI/Console_Modules/left_rail.py (TASK-34991 FINDING x3, gated by
+    #    TASK-35028: per-write equality gates, same shape as
+    #    sync_model_section_values' `recovery.content != word` guard)
     (
         "tldw_chatbook/UI/Console_Modules/left_rail.py",
         "ConsoleLeftRail.sync_model_recovery",
         "title",
     ): (
-        "NEEDS-LAYOUT: #console-rail-section-title-model is a "
-        "height:auto Static (.console-rail-section-title pins only the "
-        "width), so skipping layout could strand a wrapped box. FINDING: "
-        "the Console sync tick reaches this unconditionally, repainting "
-        "'Model'/'Model ⚠' with unchanged copy -- the writer wants a "
-        "`has_warning` equality gate like sync_model_section_values' "
-        "`recovery.content != word` guard two methods up."
+        "NOT-PER-TICK: equality-gated on the widget's own stored content "
+        "(`title.content != title_copy`, TASK-35028), so an unchanged "
+        "Console sync tick does not repaint 'Model'/'Model ⚠'; a CHANGED "
+        "value keeps the default layout pass because "
+        "#console-rail-section-title-model is height:auto (.console-rail-"
+        "section-title pins only the width). Content-compare keeps the "
+        "gate correct across a same-instance recompose."
     ),
     (
         "tldw_chatbook/UI/Console_Modules/left_rail.py",
         "ConsoleLeftRail.sync_model_recovery",
-        "self.query_one('#console-context-recovery-copy', Static)",
+        "context_static",
     ): (
-        "NEEDS-LAYOUT: the recovery copy row is height:auto and its label "
-        "varies with the policy failure. FINDING: on the tick path the "
-        "write fires with unchanged copy whenever a context-settings "
-        "failure is mounted; wants an equality gate."
+        "NOT-PER-TICK: equality-gated on the widget's own stored content "
+        "(TASK-35028), so an unchanged context-settings failure copy is "
+        "not rewritten per tick; a CHANGED label keeps the default layout "
+        "pass because the recovery copy row is height:auto."
     ),
     (
         "tldw_chatbook/UI/Console_Modules/left_rail.py",
         "ConsoleLeftRail.sync_model_recovery",
-        "self.query_one('#console-default-recovery-copy', Static)",
+        "default_static",
     ): (
-        "NEEDS-LAYOUT: the default-recovery copy row is height:auto and "
-        "the copy is a real sentence when a default save is stuck. "
-        "FINDING: the tick path rewrites the (usually empty) copy every "
-        "sync with no equality gate."
+        "NOT-PER-TICK: equality-gated on the widget's own stored content "
+        "(TASK-35028), so the tick path no longer rewrites the (usually "
+        "empty) copy every sync; a CHANGED default-save sentence keeps "
+        "the default layout pass because the row is height:auto."
     ),
     # -- UI/LLM_Management/llamacpp_setup_view.py
     (
@@ -578,11 +579,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "MeetingsScreen._tick",
         "self.query_one('#meetings-timer', Static)",
     ): (
-        "NEEDS-LAYOUT: the meeting clock advances on every 0.2 s tick "
-        "while a session is attached, and #meetings-timer is a bare "
-        "height:auto Static. FINDING (TASK-34991): this is a real 5 Hz "
-        "whole-screen relayout while recording; the fix is a pinned "
-        "one-row box + layout=False, which needs its own task."
+        "NOT-PER-TICK: equality-gated on `_last_timer_text` (TASK-35028), so "
+        "a 0.2 s tick whose formatted clock has not moved costs a string "
+        "compare; a CHANGED value keeps the default layout pass because "
+        "#meetings-timer is a bare height:auto Static."
     ),
     (
         "tldw_chatbook/UI/Screens/meetings_screen.py",
@@ -607,10 +607,11 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "MeetingsScreen._set_enroll_progress",
         "self.query_one('#meetings-enroll-progress', Static)",
     ): (
-        "NEEDS-LAYOUT: the enrollment countdown text ('Recording… Ns "
-        "left') changes on every 1 s tick, and the row is a bare "
-        "height:auto Static. FINDING (TASK-34991): genuine per-second "
-        "relayout while a voice enrollment records."
+        "NOT-PER-TICK: equality-gated on `_enroll_progress_line` "
+        "(TASK-35028), so the 1 s countdown tick between whole-second "
+        "boundaries costs a compare; a CHANGED value ('Recording… Ns "
+        "left') keeps the default layout pass because the row is a bare "
+        "height:auto Static."
     ),
     # -- UI/Screens/scheduling/definition_detail.py + Widgets/detail_value_row
     (
@@ -660,17 +661,19 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: behind the same two poll equality gates as "
         "_set_static_text above."
     ),
-    # -- UI/Screens/skills_screen.py
+    # -- UI/Library_Modules/skills_trust_modals.py (moved verbatim out of
+    #    UI/Screens/skills_screen.py by task-34893; the row follows it)
     (
-        "tldw_chatbook/UI/Screens/skills_screen.py",
+        "tldw_chatbook/UI/Library_Modules/skills_trust_modals.py",
         "SkillRecoveryReviewModal._check_selection",
-        "self.query_one('#skills-recovery-status', Static)",
+        "status",
     ): (
-        "NEEDS-LAYOUT: the status row is height:auto (widget defaults), so "
-        "the write keeps the layout pass. FINDING (TASK-34991): while the "
-        "reviewed selection is stale this rewrites the SAME constant every "
-        "200 ms; a healthy tick writes nothing. The write wants an "
-        "equality gate."
+        "NOT-PER-TICK: equality-gated on the widget's own stored content "
+        "(`status.content != STALE_SELECTION_COPY`, TASK-35028), so the "
+        "0.2 s poll does not rewrite the constant stale-selection copy "
+        "every tick; the copy only ever takes that one value, and a first "
+        "transition onto it keeps the default layout pass because the "
+        "status row is height:auto."
     ),
     # -- UI/Wizards/first_run_busy_status.py
     (
@@ -699,12 +702,11 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "ChatApprovalCard._render_deadline",
         "label",
     ): (
-        "NEEDS-LAYOUT: the auto-continue countdown ('Auto-denies in "
-        "M:SS') changes on every 1 s tick of the card's own deadline "
-        "timer, and #approval-deadline is a bare height:auto Static, so "
-        "the write needs the layout pass. FINDING (TASK-34991): genuine "
-        "per-second relayout while an approval round with a timeout is "
-        "pending."
+        "NOT-PER-TICK: equality-gated on `_last_deadline_text` (TASK-35028), "
+        "so the card's 1 s deadline tick only repaints when the M:SS copy "
+        "actually moved; a CHANGED value keeps the default layout pass "
+        "because #approval-deadline is a bare height:auto Static. (The "
+        "unarmed branch's '' write is gated the same way.)"
     ),
     (
         "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
@@ -775,11 +777,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "ChatQuestionCard._sync_deadline",
         "label",
     ): (
-        "NEEDS-LAYOUT: the auto-continue countdown ('Auto-continues in "
-        "M:SS') changes on every 1 s tick of the card's own deadline "
-        "timer, and #question-deadline is height:auto in the card's own "
-        "stylesheet. FINDING (TASK-34991): genuine per-second relayout "
-        "while a question deadline counts down."
+        "NOT-PER-TICK: equality-gated on `_last_deadline_text` (TASK-35028), "
+        "so the card's 1 s deadline tick only repaints when the M:SS copy "
+        "actually moved; a CHANGED value keeps the default layout pass "
+        "because #question-deadline is height:auto in the card's own "
+        "stylesheet. (The unarmed branch's static copy is gated the same "
+        "way.)"
     ),
     # -- Widgets/Chat_Widgets/skill_install_confirm_card.py
     (
@@ -808,35 +811,43 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: behind the buddy poll's gate_key equality gate, as "
         "set_install above."
     ),
-    # -- Widgets/Console/console_agent_progress_modal.py (TASK-34991 FINDING x3)
+    # -- Widgets/Console/console_agent_progress_modal.py
+    #    (TASK-34991 FINDING x3, gated by TASK-35028)
     (
         "tldw_chatbook/Widgets/Console/console_agent_progress_modal.py",
-        "ConsoleAgentProgressModal._refresh_snapshot",
+        "ConsoleAgentProgressModal._set_status",
         "self.query_one('#agent-progress-status', Static)",
     ): (
-        "NEEDS-LAYOUT: the status line is a bare height:auto Static. "
-        "FINDING (TASK-34991): in the inbox-error state the 0.5 s poll "
-        "rewrites the same constant every tick; wants an equality gate."
+        "NOT-PER-TICK: equality-gated on `_last_status_text` -- _set_status "
+        "IS the gate (TASK-35028), reached from the 0.5 s poll's "
+        "_refresh_snapshot error branch (and the two discard outcomes) -- "
+        "so the inbox-error tick stops rewriting the same constant every "
+        "tick; a CHANGED status keeps the default layout pass because the "
+        "status line is a bare height:auto Static."
     ),
     (
         "tldw_chatbook/Widgets/Console/console_agent_progress_modal.py",
         "ConsoleAgentProgressModal._refresh_snapshot",
         "self.query_one('#agent-progress-count', Static)",
     ): (
-        "NEEDS-LAYOUT: the count line is a bare height:auto Static. "
-        "FINDING (TASK-34991): the 0.5 s poll rewrites it every tick even "
-        "while the snapshot (and so the copy) is unchanged; the "
-        "snapshot-equality gate right above guards only the SelectionList."
+        "NOT-PER-TICK: equality-gated on `_last_count_text` (TASK-35028), "
+        "so the 0.5 s poll with an unchanged snapshot (and so unchanged "
+        "count copy) repaints nothing; a CHANGED count keeps the default "
+        "layout pass because the count line is a bare height:auto Static. "
+        "The snapshot-equality gate right above guards only the "
+        "SelectionList."
     ),
     (
         "tldw_chatbook/Widgets/Console/console_agent_progress_modal.py",
         "ConsoleAgentProgressModal._sync_body",
         "self.query_one('#agent-progress-body', Static)",
     ): (
-        "NEEDS-LAYOUT: the body is a multi-line height:auto report. "
-        "FINDING (TASK-34991): the poll tail calls _sync_body every 0.5 s "
-        "with unchanged highlighted/selected state; wants an equality "
-        "gate (the Selection-driven edge is fine)."
+        "NOT-PER-TICK: equality-gated on `_last_body_text` (TASK-35028), "
+        "so the poll tail (_refresh_snapshot -> _sync_selection -> "
+        "_sync_body) with unchanged highlighted/selected state costs a "
+        "compare; a CHANGED body (user highlight/selection edges) keeps "
+        "the default layout pass because the body is a multi-line "
+        "height:auto report."
     ),
     # -- Widgets/Console/console_session_switcher_modal.py
     (
@@ -970,18 +981,22 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "True)` for the compact-label swap). Retires the former "
         "sync_cost_state row: the write moved here."
     ),
-    # -- Widgets/Console/console_workspace_files_modal.py (TASK-34991 FINDING)
+    # -- Widgets/Console/console_workspace_files_modal.py (TASK-34991
+    #    FINDING, gate fixed by TASK-35028)
     (
         "tldw_chatbook/Widgets/Console/console_workspace_files_modal.py",
         "ConsoleWorkspaceFilesModal.update_attention",
         "self.query_one('#console-workspace-files-attention', Static)",
     ): (
-        "NEEDS-LAYOUT: the attention row is a bare height:auto Static. "
-        "FINDING (TASK-34991): the publisher bumps its generation counter "
-        "on every Console sync tick, so update_attention's "
-        "`generation <=` guard never blocks a tick and the stable "
-        "status_copy is rewritten (and laid out) ~5x/s while the modal is "
-        "open; the gate wants to compare the snapshot, not the counter."
+        "NOT-PER-TICK: equality-gated on the WorkspaceFilesAttention "
+        "snapshot itself (`attention == self._attention`, TASK-35028) -- "
+        "the publisher bumps its generation counter on every Console sync "
+        "tick, so the counter alone never blocked one; an unchanged "
+        "snapshot now adopts the ordering stamp and writes nothing, while "
+        "a CHANGED snapshot keeps the default layout pass because the "
+        "attention row is a bare height:auto Static. The stale-generation "
+        "rejection (older counter, different content) is preserved behind "
+        "the equality check."
     ),
     # -- Widgets/Persona_Widgets/buddy_conversation_modal.py
     (
@@ -1019,38 +1034,43 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: the notice is part of the poll's gate_key, so an "
         "unchanged tick returns before this write."
     ),
-    # -- Widgets/Persona_Widgets/buddy_speech_controls.py (TASK-34991 FINDING)
+    # -- Widgets/Persona_Widgets/buddy_speech_controls.py (TASK-34991
+    #    FINDING, gated by TASK-35028)
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_speech_controls.py",
         "BuddySpeechControls.refresh_state",
         "self.query_one('#buddy-speech-status', Static)",
     ): (
-        "NEEDS-LAYOUT: the speech status line is height:auto in the "
-        "widget's own stylesheet. FINDING (TASK-34991): the 0.5 s self-poll "
-        "rewrites unchanged copy every tick -- the queue state rarely "
-        "moves; the writer wants an equality gate."
+        "NOT-PER-TICK: equality-gated on `_last_speech_status` "
+        "(TASK-35028), so the 0.5 s self-poll with an unchanged queue "
+        "state costs a compare; a CHANGED status keeps the default layout "
+        "pass because the speech status line is height:auto in the "
+        "widget's own stylesheet."
     ),
-    # -- Widgets/Persona_Widgets/buddy_workspace_modal.py (TASK-34991 FINDING x2)
+    # -- Widgets/Persona_Widgets/buddy_workspace_modal.py
+    #    (TASK-34991 FINDING x2, gated by TASK-35028)
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_workspace_modal.py",
         "BuddyWorkspaceModal.refresh_inbox",
         "self.query_one('#buddy-inbox-title', Static)",
     ): (
-        "NEEDS-LAYOUT: the inbox title is a bare height:auto Static. "
-        "FINDING (TASK-34991): the 1 s self-poll rewrites 'Buddy · <title>' "
-        "every tick, BEFORE the `entries == self._entries` gate that "
-        "guards the rest of the render; the title wants to move behind "
-        "that gate or its own equality check."
+        "NOT-PER-TICK: equality-gated on `_last_inbox_title` (TASK-35028), "
+        "so the 1 s self-poll no longer rewrites 'Buddy · <title>' before "
+        "the `entries == self._entries` gate that guards the rest of the "
+        "render; a CHANGED title keeps the default layout pass because "
+        "the inbox title is a bare height:auto Static."
     ),
     (
         "tldw_chatbook/Widgets/Persona_Widgets/buddy_workspace_modal.py",
         "BuddyWorkspaceModal.refresh_inbox",
         "self.query_one('#buddy-inbox-error', Static)",
     ): (
-        "NEEDS-LAYOUT: the error line is a bare height:auto Static. "
-        "FINDING (TASK-34991): the healthy 1 s tick rewrites '' into the "
-        "already-empty line every poll, before the entries gate; the "
-        "error arm wants an equality gate too."
+        "NOT-PER-TICK: equality-gated on `_last_inbox_error` (TASK-35028), "
+        "so the healthy 1 s tick no longer rewrites '' into the "
+        "already-empty line before the entries gate, and a persistent "
+        "failure stops rewriting the same message every poll; a CHANGED "
+        "message keeps the default layout pass because the error line is "
+        "a bare height:auto Static."
     ),
     # -- Widgets/Persona_Widgets/personas_inspector_pane.py
     (
@@ -1100,10 +1120,11 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "LlamaCppSnapshotManager._paint_elapsed",
         "self.query_one('#snapshot-operation-status', Static)",
     ): (
-        "NEEDS-LAYOUT: the elapsed suffix (' · Ns') advances on every 1 s "
-        "tick while a server operation is attached, and the status row is "
-        "a bare height:auto Static. FINDING (TASK-34991): genuine "
-        "per-second relayout for the lifetime of the operation."
+        "NOT-PER-TICK: equality-gated on `_last_operation_status` "
+        "(TASK-35028), so the 1 s tick between elapsed-second boundaries "
+        "(' · Ns') costs a compare; a CHANGED value keeps the default "
+        "layout pass because the status row is a bare height:auto Static. "
+        "_paint's non-tick path funnels through the same gated writer."
     ),
     # -- Widgets/splash_screen.py
     (
@@ -1416,8 +1437,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "_home_auto_refresh_tick",
         ),
         # Meetings screen: the 5 Hz level/clock tick and the 1 Hz enrollment
-        # countdown. The clock and countdown writes are NEEDS-LAYOUT findings
-        # (TASK-34991); the other two writes are one-shot/equality-gated.
+        # countdown. The clock and countdown writes are equality-gated
+        # (TASK-35028); the other two writes are one-shot/equality-gated.
         (
             "set_interval",
             "tldw_chatbook/UI/Screens/meetings_screen.py",
@@ -1454,11 +1475,13 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "SettingsScreen",
             "_poll_subscription_readiness",
         ),
-        # Skill recovery review modal: the root IS the site (a constant copy
-        # in the stale-selection state -- TASK-34991 finding).
+        # Skill recovery review modal (moved verbatim out of the retired
+        # UI/Screens/skills_screen.py by task-34893): the root IS the site
+        # (a constant copy in the stale-selection state, equality-gated by
+        # TASK-35028).
         (
             "set_interval",
-            "tldw_chatbook/UI/Screens/skills_screen.py",
+            "tldw_chatbook/UI/Library_Modules/skills_trust_modals.py",
             "SkillRecoveryReviewModal",
             "_check_selection",
         ),
@@ -1487,7 +1510,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "call_later",
         ),
         # Approval/question deadline countdowns (TASK-32288 and the question
-        # twin): 1 Hz NEEDS-LAYOUT countdown writes, documented at their rows.
+        # twin): 1 Hz countdown writes, equality-gated per TASK-35028 and
+        # documented at their rows.
         (
             "set_interval",
             "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",

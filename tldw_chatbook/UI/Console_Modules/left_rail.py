@@ -741,7 +741,16 @@ class ConsoleLeftRail(Vertical):
 
         try:
             title = self.query_one("#console-rail-section-title-model", Static)
-            title.update("Model ⚠" if has_warning else "Model")
+            # TASK-35028: per-write equality gates (same shape as
+            # `sync_model_section_values`' `recovery.content != word` guard
+            # two methods up) -- the tick path reaches this with unchanged
+            # copy, and each row is height:auto, so an unchanged write must
+            # not arm a layout pass. Comparing the widget's own stored
+            # content keeps the gate correct across a same-instance
+            # recompose (a fresh Static always differs or already matches).
+            title_copy = "Model ⚠" if has_warning else "Model"
+            if title.content != title_copy:
+                title.update(title_copy)
             generation_group = self.query_one("#console-generation-recovery-row")
             context_group = self.query_one("#console-context-recovery-row")
             default_group = self.query_one("#console-default-recovery-row")
@@ -775,13 +784,16 @@ class ConsoleLeftRail(Vertical):
             context_button.console_settings_revision = context.revision
             policy_label = context.policy_failure_label
             assert isinstance(policy_label, ConsoleSettingsPolicyFailureLabel)
-            self.query_one("#console-context-recovery-copy", Static).update(
-                f"Not saved: {policy_label.value}"
-            )
+            context_copy = f"Not saved: {policy_label.value}"
+            context_static = self.query_one("#console-context-recovery-copy", Static)
+            if context_static.content != context_copy:  # TASK-35028 gate
+                context_static.update(context_copy)
         generation_button.disabled = generation is None
         context_button.disabled = context is None
 
-        self.query_one("#console-default-recovery-copy", Static).update(default_copy)
+        default_static = self.query_one("#console-default-recovery-copy", Static)
+        if default_static.content != default_copy:  # TASK-35028 gate
+            default_static.update(default_copy)
         generation_token = default_state.newest_intent_generation
         for button in (
             retry_default,

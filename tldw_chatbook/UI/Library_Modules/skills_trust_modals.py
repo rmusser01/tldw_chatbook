@@ -22,6 +22,12 @@ from ...Widgets.modal_dismissal import SafeModalDismissMixin
 if TYPE_CHECKING:
     from ...Skills_Interop.recovery_activation import RecoveryReview
 
+#: TASK-35028: the stale-selection copy `SkillRecoveryReviewModal` writes when
+#: its 0.2 s poll finds the reviewed selection no longer current. A module
+#: constant (not an inline literal) so the poll's equality gate compares the
+#: exact string it wrote.
+STALE_SELECTION_COPY = "Selection changed. Cancel and capture a fresh review."
+
 
 class SkillTrustPassphraseModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for the local skill trust passphrase without logging it."""
@@ -214,9 +220,12 @@ class SkillRecoveryReviewModal(SafeModalDismissMixin, ModalScreen[bool]):
         current = self._is_current()
         if not current:
             self.query_one("#skills-recovery-continue", Button).disabled = True
-            self.query_one("#skills-recovery-status", Static).update(
-                "Selection changed. Cancel and capture a fresh review."
-            )
+            status = self.query_one("#skills-recovery-status", Static)
+            # TASK-35028: the stale-selection copy is a constant; a tick that
+            # finds it already shown must not repaint (and re-layout) the
+            # height:auto row 5x/s.
+            if status.content != STALE_SELECTION_COPY:
+                status.update(STALE_SELECTION_COPY)
         return current
 
     @on(Button.Pressed, "#skills-recovery-continue")

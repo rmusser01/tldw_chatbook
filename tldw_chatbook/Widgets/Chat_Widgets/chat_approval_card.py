@@ -758,6 +758,10 @@ class ChatApprovalCard(Container):
         #: timer` is the only place that clears it, so a batch clear or
         #: re-arm can never leave a previous round's interval running.
         self._deadline_timer: Timer | None = None
+        #: TASK-35028: the countdown copy `_render_deadline` last wrote into
+        #: `#approval-deadline`, so the 1 s tick compares one string instead
+        #: of repainting the height:auto row when M:SS has not moved.
+        self._last_deadline_text: str | None = None
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -1256,12 +1260,19 @@ class ChatApprovalCard(Container):
         """
         if self._deadline_at is None:
             self._stop_deadline_timer()
-            label.update("")
+            if self._last_deadline_text != "":
+                self._last_deadline_text = ""
+                label.update("")
             label.display = False
             return
         remaining = max(0.0, self._deadline_at - time.monotonic())
         text = format_approval_deadline(remaining)
-        label.update(text)
+        # TASK-35028: the tick fires once a second but the M:SS copy only
+        # moves once a second; #approval-deadline is height:auto, so an
+        # unchanged tick costs a compare instead of a repaint + layout.
+        if text != self._last_deadline_text:
+            self._last_deadline_text = text
+            label.update(text)
         label.display = bool(text)
         if not text:
             # Reached (or already past) zero: stop, don't arm another tick.

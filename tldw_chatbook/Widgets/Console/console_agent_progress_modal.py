@@ -55,6 +55,12 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
         self._poll_timer = None
         self._discarding = False
         self._discard_generation = 0
+        # TASK-35028: the copy each of the poll-driven rows last received,
+        # so an unchanged 0.5 s tick costs a compare instead of repainting
+        # (and re-laying out) the height:auto Statics.
+        self._last_status_text: str | None = None
+        self._last_count_text: str | None = None
+        self._last_body_text: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="agent-progress-dialog"):
@@ -133,6 +139,20 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
         if self._poll_timer is not None:
             self._poll_timer.stop()
 
+    def _set_status(self, text: str) -> None:
+        """Write the status line only when its copy actually changed.
+
+        Every writer of ``#agent-progress-status`` (the poll's error branch
+        and both discard outcomes) goes through this gate: the poll tick
+        reaches the error branch every 0.5 s with the same constant, and a
+        direct writer must still invalidate the gate so the next poll cannot
+        skip a needed repaint (TASK-35028).
+        """
+        if text == self._last_status_text:
+            return
+        self._last_status_text = text
+        self.query_one("#agent-progress-status", Static).update(text)
+
     def _refresh_snapshot(self) -> None:
         error = self._load_error
         try:
@@ -142,7 +162,7 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
         except MessageError as refusal:
             snapshot = ()
             error = refusal.code
-            self.query_one("#agent-progress-status", Static).update(
+            self._set_status(
                 "Saved reports remain queued. Close another chat to free live capacity, then reopen progress."
                 if error == "queue_full"
                 else "This inbox is unavailable. Close and reopen progress for the current session."
@@ -181,7 +201,7 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
                 if snapshot
                 else None
             )
-        self.query_one("#agent-progress-count", Static).update(
+        count_text = (
             f"{len(snapshot)} queued · select reports to discard"
             if snapshot
             else "Progress unavailable · live capacity is full"
@@ -190,6 +210,11 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
             if error is not None
             else "No queued progress in this view."
         )
+        # TASK-35028: the poll rewrites this every tick even when the
+        # snapshot (and so the copy) is unchanged; gate it.
+        if count_text != self._last_count_text:
+            self._last_count_text = count_text
+            self.query_one("#agent-progress-count", Static).update(count_text)
         self._sync_selection()
 
     @on(SelectionList.SelectionHighlighted, "#agent-progress-list")
@@ -212,7 +237,12 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
             if message
             else "Highlight a queued report to inspect its content."
         )
-        self.query_one("#agent-progress-body", Static).update(Text(text))
+        # TASK-35028: the poll tail (_refresh_snapshot -> _sync_selection ->
+        # _sync_body) reaches this every 0.5 s with unchanged
+        # highlighted/selected state; an unchanged body costs a compare.
+        if text != self._last_body_text:
+            self._last_body_text = text
+            self.query_one("#agent-progress-body", Static).update(Text(text))
 
     @on(SelectionList.SelectedChanged, "#agent-progress-list")
     def _sync_selection(self) -> None:
@@ -242,9 +272,7 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
         self._discarding = True
         self._discard_generation += 1
         self._sync_selection()
-        self.query_one("#agent-progress-status", Static).update(
-            "Discarding selected reports…"
-        )
+        self._set_status("Discarding selected reports…")
         self.run_worker(
             partial(self._discard_reports, selected, self._discard_generation),
             thread=True,
@@ -277,7 +305,7 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
             return
         self._discarding = False
         self._refresh_snapshot()
-        self.query_one("#agent-progress-status", Static).update(
+        self._set_status(
             "Discard could not be confirmed. Close and reopen progress before retrying."
             if error is not None
             else f"Discarded {count} queued report{'s' if count != 1 else ''}. Existing history copies remain."

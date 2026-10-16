@@ -206,6 +206,12 @@ class MeetingsScreen(BaseAppScreen):
         # goes back to once that engine reports itself ready.
         self._live_labels_line = ""
         self._live_engine_name = ""
+        # TASK-35028: the last text written into the two timer-driven rail
+        # lines, so a 5 Hz / 1 s tick whose copy is unchanged costs a string
+        # compare instead of a repaint (each row is a bare height:auto
+        # Static, so an ungated write arms a whole-screen relayout).
+        self._last_timer_text: str | None = None
+        self._enroll_progress_line: str | None = None
         # ---- self voiceprint (TASK-31826) ----
         # The store is built lazily, OFF the UI thread (the prepare worker),
         # and never imported at module scope: `Audio.voiceprint` pulls the
@@ -1054,7 +1060,13 @@ class MeetingsScreen(BaseAppScreen):
         if session is None or not self.is_mounted:
             return
         try:
-            self.query_one("#meetings-timer", Static).update(format_clock(float(session.capture.audio_position_s)))
+            # TASK-35028: the clock only repaints when the formatted time
+            # actually moved; #meetings-timer is height:auto, so an
+            # unchanged tick must not arm a layout pass.
+            timer_text = format_clock(float(session.capture.audio_position_s))
+            if timer_text != self._last_timer_text:
+                self._last_timer_text = timer_text
+                self.query_one("#meetings-timer", Static).update(timer_text)
             mic, sys_ = session.capture.levels()
             self.query_one("#meetings-level-mic", ProgressBar).progress = int(mic * 100)
             self.query_one("#meetings-level-sys", ProgressBar).progress = int(sys_ * 100)
@@ -1362,8 +1374,12 @@ class MeetingsScreen(BaseAppScreen):
             self._enroll_timer = None
 
     def _set_enroll_progress(self, copy: str) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or copy == self._enroll_progress_line:
+            # TASK-35028: unchanged countdown copy (the 1 s tick between
+            # whole-second boundaries) costs a compare, not a repaint of the
+            # height:auto row.
             return
+        self._enroll_progress_line = copy
         self.query_one("#meetings-enroll-progress", Static).update(copy)
 
     @on(Button.Pressed, "#meetings-enroll-cancel")
