@@ -14,7 +14,14 @@ from Tests.Chat.test_console_configuration_worker_lifetime import (
 from Tests.UI.test_console_hook_review_send_freeze import _until
 from Tests.UI.test_console_received_intent_feedback import _received_console_case
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+from tldw_chatbook.Chat.console_preparation_reads import (
+    _source_binding,
+    preparation_reads_for,
+)
+from tldw_chatbook.UI.Console_Modules.workspace import (
+    ConsoleWorkspaceController,
+    _WorkspaceAvailabilityObsolete,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -32,6 +39,22 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
         ).__code__
         self.operation = self.participant = None
         self.invocations = 0
+        self.read = None
+        publisher = ConsoleWorkspaceController._refresh_workspace_files_availability_snapshot
+        self.publisher_code = publisher.__code__
+        lines, first = inspect.getsourcelines(publisher)
+        self.publication_lines = frozenset(
+            first + index
+            for index, line in enumerate(lines)
+            if line.strip().startswith((
+                "self._workspace_files_availability_by_id =",
+                "self._workspace_files_runtime_bindings_by_id =",
+                "self._workspace_files_availability_cached_at =",
+            ))
+        )
+        assert len(self.publication_lines) == 3
+        self.publications = []
+        self.publication_overflow = False
 
     def _started(self, code, _offset):
         if (
@@ -41,6 +64,14 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
             self.invocations += 1
 
     def _line(self, code, _line):
+        if code is self.publisher_code:
+            frame = sys._getframe(1)
+            if _line in self.publication_lines and frame.f_locals.get("self") is self.workspace:
+                if len(self.publications) < 64:
+                    self.publications.append((asyncio.current_task(), _line))
+                else:
+                    self.publication_overflow = True
+            return
         if code is not self.code or self.entered.is_set():
             return
         frame = sys._getframe(1)
@@ -54,6 +85,9 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
             parent = parent.f_back
         if parent is None or parent.f_locals.get("self") is not self.workspace:
             return
+        binding = _source_binding.get()
+        assert binding is not None and binding.active
+        self.read = binding.read
         self.connection = frame.f_locals["conn"]
         self.thread = threading.current_thread()
         self.participant = self.registry.db._maintenance_participant
@@ -72,7 +106,7 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
     @contextlib.contextmanager
     def installed(self):
         monitoring = sys.monitoring
-        tool = next(value for value in range(6) if monitoring.get_tool(value) is None)
+        tool = next(value for value in range(1, 6) if monitoring.get_tool(value) is None)
         monitoring.use_tool_id(tool, "workspace-original-availability-shutdown")
         try:
             monitoring.register_callback(tool, monitoring.events.LINE, self._line)
@@ -80,6 +114,7 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
                 tool, monitoring.events.PY_START, self._started
             )
             monitoring.set_local_events(tool, self.code, monitoring.events.LINE)
+            monitoring.set_local_events(tool, self.publisher_code, monitoring.events.LINE)
             monitoring.set_local_events(
                 tool, self.caller_code, monitoring.events.PY_START
             )
@@ -87,6 +122,7 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
         finally:
             self.release.set()
             monitoring.set_local_events(tool, self.code, 0)
+            monitoring.set_local_events(tool, self.publisher_code, 0)
             monitoring.set_local_events(tool, self.caller_code, 0)
             monitoring.register_callback(tool, monitoring.events.LINE, None)
             monitoring.register_callback(tool, monitoring.events.PY_START, None)
@@ -181,7 +217,6 @@ async def test_held_availability_source_change_cannot_publish(monkeypatch, chang
         assert await _until(
             lambda: not workspace._workspace_files_availability_refresh_in_flight, 10
         )
-        before = workspace._workspace_files_availability_cached_at
         probe = _OriginalAvailabilityRead(workspace, registry)
         with probe.installed():
             try:
@@ -190,6 +225,7 @@ async def test_held_availability_source_change_cannot_publish(monkeypatch, chang
                 )
                 assert await _until(probe.entered.is_set, 10)
                 _assert_original_reader_live(probe)
+                read, producer = _held_preparation_read(probe)
                 if changed == "outer":
                     monkeypatch.setattr(workspace, "_capture_workspace_files_availability", lambda _ids: ({}, {}))
                 else:
@@ -200,4 +236,124 @@ async def test_held_availability_source_change_cannot_publish(monkeypatch, chang
                 assert await _until(
                     lambda: not workspace._workspace_files_availability_refresh_in_flight, 5
                 )
-        assert workspace._workspace_files_availability_cached_at == before
+        _assert_obsolete_read_did_not_publish(probe, read, producer)
+
+
+def _held_preparation_read(probe):
+    read = probe.read
+    assert read is not None and read.creator is probe.workspace
+    assert read.task is probe.workspace._workspace_files_availability_task
+    native_code = next(
+        code
+        for code in ConsoleWorkspaceController._read_owned_workspace_availability.__code__.co_consts
+        if inspect.iscode(code) and code.co_name == "read_captured_availability"
+    )
+    assert read.callback.__code__ is native_code
+    assert tuple(
+        item
+        for item in preparation_reads_for(probe.workspace._preparation_reads)
+        if item.creator is probe.workspace
+        and item.task is read.task
+        and getattr(item.callback, "__code__", None) is native_code
+    ) == (read,)
+    assert not read.retired.done()
+    producer = read._producer
+    assert producer is not None
+    assert not producer.done() and not producer.cancelled()
+    return read, producer
+
+
+def _assert_obsolete_read_did_not_publish(probe, read, producer):
+    assert read._producer is producer
+    assert read.retired.done() and not read.retired.cancelled()
+    assert read.retired.result() is None
+    assert producer.done() and not producer.cancelled()
+    error = producer.exception()
+    assert type(error) is _WorkspaceAvailabilityObsolete
+    assert error.args == ("workspace_availability_source_changed",)
+    assert not probe.publication_overflow
+    assert all(task is not read.task for task, _line in probe.publications)
+    with storage._lock:
+        assert probe.operation not in storage._operations
+        assert probe.connection not in probe.participant.connections
+        assert probe.lease not in storage._live_leases
+
+
+async def test_fresh_custom_availability_can_publish_after_source_refusal(
+    tmp_path,
+    monkeypatch,
+):
+    """A rejected old read does not freeze a separate current custom refresh."""
+    from types import SimpleNamespace
+
+    from Tests.UI.test_console_workspace_controller import (
+        _AsyncWorkerScreen,
+        _workspace_controller,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.models import (
+        RuntimeBindingKind,
+        RuntimeBindingStatus,
+        WorkspaceRuntimeBinding,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    database = WorkspaceDB(
+        tmp_path / "source-publication.sqlite", client_id="source-publication"
+    )
+    registry = LocalWorkspaceRegistryService(database)
+    for workspace_id in ("old", "fresh"):
+        registry.create_workspace(workspace_id=workspace_id, name=workspace_id)
+    database.close()
+    screen = _AsyncWorkerScreen()
+    workspace = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+    )
+    probe = _OriginalAvailabilityRead(workspace, registry)
+    calls = []
+
+    def folders(workspace_id):
+        calls.append(workspace_id)
+        return (
+            WorkspaceRuntimeBinding(
+                workspace_id=workspace_id,
+                binding_id="fresh-binding",
+                binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+                label="Fresh source",
+                locator=str(tmp_path),
+                status=RuntimeBindingStatus.READY,
+            ),
+        )
+
+    with probe.installed():
+        try:
+            before = workspace._workspace_files_availability_cached_at
+            workspace._request_workspace_files_availability_refresh(("old",))
+            assert await _until(probe.entered.is_set, 10)
+            _assert_original_reader_live(probe)
+            read, producer = _held_preparation_read(probe)
+            monkeypatch.setattr(registry, "list_folder_bindings", folders)
+            probe.release.set()
+            await asyncio.wait_for(asyncio.shield(read.task), 5)
+            assert await _until(probe.retired, 5)
+            _assert_obsolete_read_did_not_publish(probe, read, producer)
+            assert workspace._workspace_files_availability_cached_at == before
+            workspace._request_workspace_files_availability_refresh(("fresh",))
+            fresh_task = screen.workers[-1][0]
+            assert fresh_task is not read.task
+            await asyncio.wait_for(asyncio.shield(fresh_task), 5)
+            assert calls == ["fresh"]
+            assert workspace._workspace_files_availability_by_id == {"fresh": True}
+            assert workspace._workspace_files_runtime_bindings_by_id == {"fresh": ()}
+            assert {
+                line for task, line in probe.publications if task is fresh_task
+            } == probe.publication_lines
+            _assert_obsolete_read_did_not_publish(probe, read, producer)
+            assert workspace._workspace_files_availability_cached_at > before
+        finally:
+            probe.release.set()
+            await asyncio.gather(
+                *(row[0] for row in screen.workers), return_exceptions=True
+            )
+            database.close()

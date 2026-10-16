@@ -19905,3 +19905,18 @@ mounted/visible/enabled geometry and hit target before issuing one real click.
 Assert that click succeeded. Data-ready or a pause alone is not a mouse-target
 fence; do not retry clicks, press the Button directly, manually open a modal or
 replace the real composition-readiness check to obtain a passing route test.
+
+
+## A shared cache timestamp does not identify its publisher (PR3023, 2026-10-16)
+
+An original held Workspace source-change control failed once in a55-pass/1-fail
+cohort because the global cache timestamp advanced. Two passive observations did
+not reproduce or explain that historical failure. A deterministic real-SQLite
+control then proved the oracle ambiguous: the exact held producer rejected the
+changed source and retired without either map or timestamp publication, while a
+separate valid custom request legitimately advanced the timestamp. The old global
+equality failed only after that valid publication. Keep the precise native
+producer Future, its source-refusal outcome and positive retirement, and observe
+all publication sites for that issuing task. A global timestamp/counter freeze is
+valid only with proven exclusive ownership; a later passing rerun does not
+identify the earlier failure's cause.
