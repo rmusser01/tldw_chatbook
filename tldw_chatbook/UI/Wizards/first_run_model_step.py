@@ -435,9 +435,16 @@ class ModelStep(SetupStep):
                     models = []
                 elif evidence.endpoint == "unreachable":
                     discovery_state = "connection_failed"
+                    # A Test's 401 is the listing's "authentication", the
+                    # only name classify_discovery_failure reads as a key
+                    # problem; as "unauthorized" it read as "not reachable".
                     failure_category = (
-                        evidence.category or "connection_error"
-                    ).replace("_", " ")
+                        "authentication"
+                        if evidence.category == "unauthorized"
+                        else (evidence.category or "connection_error").replace(
+                            "_", " "
+                        )
+                    )
                     models = []
                 elif evidence.endpoint == "reachable" and not models:
                     models = list(evidence.model_ids)

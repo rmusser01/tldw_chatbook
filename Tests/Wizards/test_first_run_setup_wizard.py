@@ -13398,8 +13398,9 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
     """TASK-33008 capture 06a: llama.cpp with an empty Authentication section
     answered the model listing with a 401. No key was sent, yet the Model step
     said "this API key was rejected" while the Provider step said only that it
-    "Couldn't discover models". Every surface that reads the failed check now
-    says the server needs a key and none was set."""
+    "Couldn't discover models". Every surface that reads the failed listing
+    now says the server needs a key and none was set (a failed Test: see
+    test_a_401_to_a_test_reads_as_a_key_problem_after_next)."""
     import tldw_chatbook.config as config_module
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 
@@ -13570,6 +13571,80 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
         assert probe.await_args.kwargs["credential_source"] == "none"
         assert str(status.render()).startswith("✓")
         assert str(auth.title) == "Authentication (optional)"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed_key", "failure"), [("", "key_required"), ("sk-wrong", "authentication")]
+)
+async def test_a_401_to_a_test_reads_as_a_key_problem_after_next(
+    monkeypatch, typed_key, failure
+) -> None:
+    """TASK-33008 review: after a Test that got a 401, the Model line, Retry,
+    confirm, Summary and the pinned notice said the server "isn't reachable".
+    The Test's "unauthorized" never reached the "authentication" category the
+    listing path uses, so only the Provider line said a key was needed."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", dict)
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=_typed_model_discovery_result("llama_cpp"))
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        step._local_discover = AsyncMock(return_value=())
+        step._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="unreachable", summary="401 unauthorized", category="unauthorized"
+            )
+        )
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        step.query_one("#setup-provider-api-key", Input).value = typed_key
+        await pilot.pause()
+        status = step.query_one("#setup-provider-probe-status", Static)
+        step.query_one("#setup-provider-test", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if str(status.render()).startswith("✗"):
+                break
+        assert str(status.render()).startswith("✗")
+
+        await container._advance()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if container.provider_probe_failure() and model_step.query(
+                "#setup-model-connection-failed"
+            ):
+                break
+        copy = wizard_state.PROBE_FAILURE_COPY[failure]
+        assert container.provider_probe_failure() == failure
+        assert _model_status_line(
+            model_step, "setup-model-connection-failed"
+        ) == copy.model_line.format(display="llama.cpp")
+        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
+        assert model_step.confirm_before_advance() == copy.confirm
+
+        container.show_step(provider_index)
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert str(strip.render()) == copy.provider_notice
 
 
 @pytest.mark.asyncio
