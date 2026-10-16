@@ -19974,3 +19974,25 @@ entry control reproduced this order locally; the same control passed after
 only the test's original population-ready callback awaited actual thread entry.
 Keep that synchronization explicit instead of assuming worker start order. The
 original apply still runs once; no inventory, deadline or production guard changes.
+
+
+## A removed setup span does not establish whole-send improvement (TASK-34406.2, 2026-10-16)
+
+The Console profile attributed 126 ms to an unrelated global run-log selector.
+Removing it while separately admitting the actual explicit writer still repeated
+the profile/config/database admission pass. Four fresh baseline/candidate pairs
+then measured first-send post-save medians of 1006.5/1050 ms, with only two pairs
+improving. The refinement joined the actual root to the same initial fresh scope;
+it did not cache permission decisions. Keep the unsuccessful packet and compare
+the revised whole sends without a profiler. Inclusive diagnostic spans overlap,
+and async thread time includes other work on that loop; neither is self CPU or
+an additive speed budget. The refined comparison also split two pairs each way,
+so its small median reduction is descriptive, not a demonstrated cold-send win.
+
+The same task's Bridge lifetime fixture assumed the worker's thread-local handle
+would still exist after the reply. `operation_owned_connection` could already
+retire it, and the explicit writer no longer needed an incidental workspace DB
+lookup. The fixture now deliberately acquires both `_held_connection()` handles
+under the actual worker guard, then checks physical close, caller usability and
+native maintenance admission. `_get_connection()` creates a different lifetime;
+using it as a held-handle probe did not exercise the intended owner.

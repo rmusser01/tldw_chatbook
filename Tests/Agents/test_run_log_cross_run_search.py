@@ -166,6 +166,7 @@ def _plant_older_run(
     return older_run_id
 
 
+@pytest.mark.bootstrap_profile
 def test_hit_in_an_older_run_is_found_and_attributed(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
@@ -221,6 +222,7 @@ def test_hit_in_an_older_run_is_found_and_attributed(tmp_path, monkeypatch):
     assert f"an earlier run ({older_run_id})" in text
 
 
+@pytest.mark.bootstrap_profile
 def test_unresolvable_older_run_is_reported_not_silently_skipped(tmp_path, monkeypatch):
     """The one honest limitation (task-1273): a run whose log cannot be
     located under the current root must be counted and reported, never
@@ -282,6 +284,7 @@ def test_unresolvable_older_run_is_reported_not_silently_skipped(tmp_path, monke
     assert "No matching records." in text
 
 
+@pytest.mark.bootstrap_profile
 def test_multiple_older_runs_mixed_resolvable_and_not(tmp_path, monkeypatch):
     """Two older runs: one whose log is found (no marker hit, but counted
     as searched) and one whose log cannot be located -- both must be
@@ -346,6 +349,7 @@ def test_multiple_older_runs_mixed_resolvable_and_not(tmp_path, monkeypatch):
 # scope -- proving the gate holds independent of which scope is requested.
 
 
+@pytest.mark.bootstrap_profile
 def test_subagent_cannot_call_search_run_log_with_conversation_scope(
     tmp_path, monkeypatch
 ):
@@ -625,6 +629,7 @@ def test_format_cross_run_results_folds_omitted_run_count_into_not_attempted():
 # scan silently presented as complete.
 
 
+@pytest.mark.bootstrap_profile
 def test_more_runs_than_the_cap_reports_the_excess_correctly(tmp_path, monkeypatch):
     """Finding A: a conversation with more PRIMARY runs than
     MAX_CROSS_RUN_RUNS must still report an EXACT omitted count via the
