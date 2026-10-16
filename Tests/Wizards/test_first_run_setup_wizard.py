@@ -8740,10 +8740,13 @@ async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
 ):
     """TASK-33008.5: every status reads as text, and the picker's keys stay inert.
 
-    The line lives inside the RadioSet, which keeps its Tab stop. Space and
-    Enter on the focused set must neither pick the status nor crash: Textual's
-    ``RadioSet.action_toggle_button`` asserts its highlighted child is a
-    RadioButton, so an enabled text child there exits the app.
+    The line lives inside the RadioSet. While models load the set keeps its
+    Tab stop, and Space and Enter on it must neither pick the status nor
+    crash: Textual's ``RadioSet.action_toggle_button`` asserts its highlighted
+    child is a RadioButton, so an enabled text child there exits the app.
+    TASK-33008 review: any other status is no Tab stop (capture 06a drew the
+    box as a focused control around inert text), and a picker focused while
+    the list loaded hands focus to the model name field.
     TASK-33008 (capture 06a): with the app's CSS the box hugs the line; it
     kept the model list's five-row floor, two empty rows under the text.
     """
@@ -8767,17 +8770,22 @@ async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
         # Fence on_show's own no-provider render, so a slow one cannot land
         # after the state under test and replace it.
         step._cancel_model_discovery()
+        await step._render_models([], discovery_state="loading")
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        radio_set.focus()
+        await pilot.pause()
         await step._render_models([], **render_kwargs)
         await pilot.pause()
         assert _model_status_line(step, line_id) == expected_copy
 
-        radio_set = step.query_one("#setup-model-choice", RadioSet)
         [line] = radio_set.children
         assert radio_set.size.height == line.outer_size.height, (
             "empty rows under the status line"
         )
-        radio_set.focus()
-        await pilot.pause()
+        if render_kwargs.get("discovery_state") != "loading":
+            assert not radio_set.focusable
+            assert app.focused is step.query_one("#setup-model-custom", Input)
+            return
         assert app.focused is radio_set
         await pilot.press("space", "enter", "down", "space")
         await pilot.pause()

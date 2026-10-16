@@ -564,6 +564,13 @@ class ModelStep(SetupStep):
             discovery_state, failure_category, key_sent=key_sent
         )
         radio_set.set_class(not models, "-status")  # the box hugs a status line
+        # A status is not a Tab stop: the box drew as a focused control around
+        # inert text, ahead of the one field that works. Loading keeps the
+        # stop, so a list that follows still takes the step's first focus.
+        inert = not models and discovery_state != "loading"
+        radio_set.can_focus = not inert
+        if inert and radio_set.has_focus:
+            self.query_one("#setup-model-custom", Input).focus()
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
             # carries a "recommended" tag in its LABEL only; the clean model

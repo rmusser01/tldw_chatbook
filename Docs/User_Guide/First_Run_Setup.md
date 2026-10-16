@@ -72,8 +72,9 @@ plain text instead:
 - "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
 
 The line is a message, not an option: it has no radio marker, and the arrow
-keys, Space and Enter cannot select it. The **Or enter a model name** field
-below always works.
+keys, Space and Enter cannot select it. Tab skips it (while models load it
+holds the list's place), so focus goes to the **Or enter a model name** field
+below, which always works.
 
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the
