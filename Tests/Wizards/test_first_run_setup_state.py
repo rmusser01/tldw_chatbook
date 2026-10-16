@@ -2502,7 +2502,8 @@ class TestProviderTrustChain:
         listing unavailable…" on Model and "Couldn't discover models for
         llama.cpp. You can continue anyway." on Provider. One cause, while Next
         is allowed; a blocked Next keeps the step's refusal copy. Review round
-        3: Provider has no model ID field, so its line points at the next step."""
+        3: Provider has no model ID field, so its line points at the next step,
+        and reading the line changes nothing (the caller marks a refused key)."""
         from types import SimpleNamespace
 
         from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
@@ -2523,7 +2524,20 @@ class TestProviderTrustChain:
             ),
         )
 
-        def line(ready: bool) -> str:
+        refused = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="Llama.cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="unauthorized",
+            ),
+        )
+
+        def line(ready: bool, outcome=no_list) -> tuple[str, str]:
             owner = SimpleNamespace(
                 wizard=None,
                 _current_provider_readiness=lambda: SimpleNamespace(ready=ready),
@@ -2531,14 +2545,22 @@ class TestProviderTrustChain:
                     f"refusal for {display} ({failure!r})"
                 ),
             )
-            return first_run_model_discovery.failed_listing_line(
-                owner, "llama.cpp", no_list, None, None
+            before = dict(vars(owner))
+            told = first_run_model_discovery.failed_listing(
+                owner, "llama.cpp", outcome, None
             )
+            assert vars(owner) == before  # no key mark, no refresh
+            return told
 
         assert line(True) == (
-            "Model listing unavailable; you can enter the model ID on the next step."
+            "Model listing unavailable; you can enter the model ID on the next step.",
+            setup_state.PROVIDER_PROBE_NONE,
         )
-        assert line(False) == "refusal for llama.cpp ('')"
+        assert line(False) == ("refusal for llama.cpp ('')", "")
+        assert line(True, refused) == (
+            "refusal for llama.cpp ('authentication')",
+            setup_state.PROVIDER_PROBE_AUTH,
+        )
 
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(

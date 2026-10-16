@@ -1700,10 +1700,11 @@ class ProviderStep(SetupStep):
                 status.update(f"Found {len(models)} model(s) for {display}.")
                 model_discovery.note_probe_reached(self, discovery_key)
             elif failed:
-                line = model_discovery.failed_listing_line(
-                    self, display, model_outcome, provider_draft, discovery_key
+                line, failure = model_discovery.failed_listing(
+                    self, display, model_outcome, provider_draft
                 )
                 status.update(line)
+                model_discovery.note_probe_failure(self, failure, discovery_key)
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
                 if model_outcome is not None:  # the listing answered "success"
