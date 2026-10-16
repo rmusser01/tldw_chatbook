@@ -40,13 +40,11 @@ class Bench(MCPWorkbench):
 class Surface(Screen):
  def compose(self):
   self.workbench=Bench(host);yield self.workbench
- def _clear_footer_shortcuts(self):pass
  def on_screen_suspend(self):
-  # ADR-233: inlined from the retired MCP shell handler these journeys
-  # borrowed -- leaving the surface mid-review invalidates its UI receipt.
-  self._clear_footer_shortcuts()
-  if getattr(self,'workbench',None) is not None and self.workbench._mcp_recovery_busy:
-   self.workbench._mcp_recovery_token=None
+  # ADR-233: the retired MCP shell handler these journeys borrowed is now
+  # the REAL production method the Settings host calls on suspend -- no
+  # inlined copy of the semantics anymore.
+  self.workbench.suspend_recovery_review()
 class Host(App):pass
 app=Host();notices=[];app.notify=lambda message,**kwargs:notices.append(str(message))
 async def wait_for(predicate):

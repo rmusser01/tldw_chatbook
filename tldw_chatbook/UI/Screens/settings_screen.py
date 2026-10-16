@@ -30856,6 +30856,13 @@ class SettingsScreen(BaseAppScreen):
         # footer never advertises keys that are dead under it. Resume
         # re-registers the category-aware set (see on_screen_resume).
         self.clear_footer_shortcuts(source="settings-tools")
+        # Same port, second half: an accepted recovery review's UI receipt is
+        # invalidated when the user leaves this surface (the workbench method
+        # is the single owner of that semantics).
+        tools_pane = self._tools_hub_pane()
+        tools_workbench = tools_pane.workbench if tools_pane is not None else None
+        if tools_workbench is not None:
+            tools_workbench.suspend_recovery_review()
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
                 PersonalContextProvenanceDetails,
