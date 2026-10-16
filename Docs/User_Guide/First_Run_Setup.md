@@ -77,8 +77,9 @@ plain text instead:
   model check of that key found: "Key staged — the server rejected it; update
   it above." after a 401, and "Key staged — the server did not refuse it." when
   the server answered. Before any check of that key, or when the check could
-  not reach the server, it reads "Key staged — it will be checked when you
-  continue."
+  not reach the server or got no usable model list (as after a 403 to **Test
+  connection**: that key may not list models, which says nothing about
+  chatting), it reads "Key staged — it will be checked when you continue."
 - "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
 
 The line is a message, not an option: it has no radio marker, and the arrow
