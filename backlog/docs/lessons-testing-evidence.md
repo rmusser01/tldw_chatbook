@@ -19934,3 +19934,17 @@ fixed the full18-case module without changing product code or deadlines. Join
 workers after the events that issue them; a manager join alone does not settle
 queued UI input. The original OpenAI case passed locally, so retain its hosted
 negative separately from the causal held-worker control.
+
+
+## Mounted controls do not prove a held cached-hydration race ran (PR3023, 2026-10-16)
+
+A native Windows GGUF diagnostic passed while its fresh-read gate returned at
+1250ms and cached hydration began only at1265ms. The fixture had checked mounted
+controls and a pending handoff, then released the fresh read before observing the
+cached application it intended to test. Settle the real initial inventory, keep
+unrelated first-arrival work outside the hold, and witness the actual current
+cached application to the inactive mounted selector before release. Require the
+native hold still active: an unreleased Event also remains false after its wait
+expires. Preserve exact fresh selection and all deadlines. The earlier hosted
+selection failure remains unexplained; this receipt proves the missing race
+witness, not that historical failure's cause.

@@ -595,27 +595,89 @@ async def test_lazy_mount_cached_inventory_preserves_handoff_awaiting_fresh_read
         monkeypatch, choices=(choice_a,), mount_llamafile=False
     )
     release = threading.Event()
+    waiting = threading.Event()
+    cached_hydration = False
 
     def wait_for_fresh_inventory():
-        assert release.wait(timeout=10), "fresh inventory was never released"
-        return ()
+        waiting.set()
+        try:
+            assert release.wait(timeout=10), "fresh inventory was never released"
+            return ()
+        finally:
+            waiting.clear()
 
-    monkeypatch.setattr(service, "list_installed", wait_for_fresh_inventory)
-    monkeypatch.setattr(
-        window_module, "managed_gguf_choices", lambda _installed: (choice_a, choice_b)
-    )
     try:
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in app.workers
+                if worker.node is app and worker.group == "managed_gguf_inventory"
+            )
+        )
+        assert window._managed_gguf_choices == (choice_a,)
+        # Keep unrelated first-arrival work outside the held fresh inventory read.
+        window.active_view = "remote"
+        await _settle_pilot_until(
+            pilot,
+            lambda: bool(
+                window.query(
+                    "#remote-model-install-progress #model-install-progress-phase"
+                )
+            ),
+            message="Remote body did not finish its initial composition",
+        )
+        window.active_view = "llama-cpp"
+        await pilot.pause()
+        assert not window.query("#llamafile-gguf-managed-select")
+        original_apply = window._apply_managed_gguf_inventory
+
+        def observe_cached_hydration(
+            generation, choices, error, *, settle_handoff=True
+        ):
+            nonlocal cached_hydration
+            result = original_apply(
+                generation, choices, error, settle_handoff=settle_handoff
+            )
+            managed = window.query("#llamafile-gguf-managed-select")
+            if (
+                not settle_handoff
+                and generation == window._managed_gguf_inventory_generation
+                and choices == (choice_a,)
+                and not error
+                and window_module.current_llm_destination(app) is window
+                and window.is_attached
+                and window.active_view == "remote"
+                and managed
+                and managed.first().is_mounted
+                and managed.first().value == REF_A
+                and waiting.is_set()
+                and not release.is_set()
+            ):
+                cached_hydration = True
+            return result
+
+        monkeypatch.setattr(
+            window, "_apply_managed_gguf_inventory", observe_cached_hydration
+        )
+        monkeypatch.setattr(service, "list_installed", wait_for_fresh_inventory)
+        monkeypatch.setattr(
+            window_module,
+            "managed_gguf_choices",
+            lambda _installed: (choice_a, choice_b),
+        )
         assert window.configure_managed_gguf("llamafile", REF_B)
         window.active_view = "remote"
         await _settle_pilot_until(
             pilot,
             lambda: (
-                len(window.query("#llamafile-gguf-managed-select")) == 1
+                cached_hydration
+                and len(window.query("#llamafile-gguf-managed-select")) == 1
                 and window.query_one("#llamafile-gguf-managed-select").is_mounted
                 and "llamafile" not in window._populating_views
             ),
-            message="inactive llamafile controls did not finish mounting",
+            message="inactive llamafile controls did not finish cached hydration",
         )
+        assert waiting.is_set()
         assert window._pending_managed_gguf_handoff == ("llamafile", REF_B)
         release.set()
         managed = window.query_one("#llamafile-gguf-managed-select", Select)
