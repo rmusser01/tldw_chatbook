@@ -13712,6 +13712,63 @@ async def test_a_refused_key_is_told_as_checked_and_the_section_not_optional() -
 
 
 @pytest.mark.asyncio
+async def test_a_listing_that_refused_a_sent_key_makes_the_key_required() -> None:
+    """TASK-33008 review round 3: only a Test was shown to drop "(optional)"
+    after a 401 to a key that was sent. The model listing that runs with a
+    typed key, no Test first, is the same check and marks the section too."""
+    listing = AsyncMock(
+        return_value=ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="success",
+            models=(),
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(discover_models=listing)
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=AsyncMock())
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(pilot, lambda: step._selected_discovery_state == "complete")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        status = step.query_one("#setup-provider-probe-status", Static)
+        step.query_one("#setup-provider-api-key", Input).value = "sk-wrong"
+        await pilot.pause()
+        assert str(auth.title) == "Authentication (optional)"
+
+        listing.return_value = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="unauthorized",
+            ),
+        )
+        step._begin_selected_provider_discovery(step._effective_provider_draft())
+        await _until(pilot, lambda: step._selected_discovery_state == "failed")
+        assert step._test_evidence_for_discovery_key(
+            step._model_discovery_key(step._effective_provider_draft())
+        ) is None  # no Test ran
+        assert str(status.render()) == (
+            "llama.cpp rejected this API key. Update it, or continue anyway."
+        )
+        assert str(auth.title) == "Authentication"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("typed_key", "failure"), [("", "key_required"), ("sk-wrong", "authentication")]
 )
