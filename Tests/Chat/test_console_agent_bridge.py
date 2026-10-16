@@ -1749,9 +1749,16 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
 
 
 @pytest.mark.bootstrap_profile
-def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
+def test_run_reply_adds_the_honest_default_workspace_note(
     tmp_path, monkeypatch
 ):
+    """TASK-35080: the default workspace gets an explicit no-folders note.
+
+    The model in a default-workspace chat has no fs_*/git_* tools at all;
+    the note must say so (with the remediation) instead of staying silent —
+    silence is what let the model confabulate when asked to look at the
+    user's project folders.
+    """
     from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
     gateway = _RecordingGateway()
@@ -1771,6 +1778,11 @@ def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     assert outcome.status == "done"
     assert gateway.systems, "expected a primary model call"
     assert "NOT running in the default workspace" not in gateway.systems[0]
+    assert "no project folders are bound" in gateway.systems[0]
+    assert (
+        "No fs_*, git_* or virtual_cli workspace tools are available in this run"
+        in gateway.systems[0]
+    )
 
 
 def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(

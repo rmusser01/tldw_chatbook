@@ -121,6 +121,68 @@ _NOTE_REMOTE_HEADER = (
 #: The explicit degradation line (spec: "Degraded semantics" — the note
 #: says which remote bindings composition excluded this run).
 _NOTE_REMOTE_UNREACHABLE = "remote binding unreachable — excluded this run"
+#: TASK-35080: the default-workspace note. Default Console sessions carry
+#: workspace id "global" (``CONSOLE_GLOBAL_WORKSPACE_ID``) and default/
+#: global runs offer zero fs_*/git_* path tools (no folder is bound, so
+#: composition strips them). The note used to return "" for
+#: DEFAULT_WORKSPACE_ID and, worse, degrade to the false "details are
+#: currently unavailable" one-liner for "global" (no registry row has that
+#: id), leaving the model with neither capability nor awareness when the
+#: user asked it to look at project folders — it confabulated instead.
+#: The note now states the limitation and the remediation.
+_NOTE_DEFAULT_HEADER = (
+    "Note: This session is running in the default workspace; "
+    "no project folders are bound."
+)
+_NOTE_DEFAULT_NO_PATH_TOOLS = (
+    "No fs_*, git_* or virtual_cli workspace tools are available in this "
+    "run — you cannot see, list, or change files in any project folder. "
+    "If the user asks you to, say you cannot access them and suggest "
+    "binding the project folder under Workspaces settings."
+)
+_NOTE_DEFAULT_SOFT = (
+    "File tools, if any, are limited to this chat's private scratch space."
+)
+_NOTE_DEFAULT_ISOLATED = (
+    "Workspace-folder tools in this run address isolated working folders "
+    "only; the session has no project folders bound."
+)
+
+
+def _default_workspace_note(
+    aliases: frozenset[str] | None,
+    scratch_relative_tools: Iterable[str],
+) -> str:
+    """Build the default-workspace variant of the workspace-context note.
+
+    Args:
+        aliases: The ``root_alias`` values this run's fs_*/git_* tools
+            advertise; ``None`` means tool information was unavailable
+            (the note then makes no claim about tools either way), an
+            empty set means the run verifiably offers none.
+        scratch_relative_tools: Names of this run's tools whose relative
+            paths resolve in the chat's private scratch space.
+
+    Returns:
+        The note text; never empty (an empty note is exactly the
+        uninformed-model failure this variant exists to fix).
+    """
+    lines = [_NOTE_DEFAULT_HEADER]
+    if aliases:
+        # A default-workspace run with advertised path tools is addressing
+        # run-scoped agent worktrees, not session folder bindings.
+        lines.append(_NOTE_DEFAULT_ISOLATED)
+    elif aliases is not None:
+        lines.append(_NOTE_DEFAULT_NO_PATH_TOOLS)
+    else:
+        lines.append(_NOTE_DEFAULT_SOFT)
+    scratch_tools = sorted({str(tool) for tool in scratch_relative_tools})
+    if scratch_tools:
+        lines.append(
+            f"Relative paths in {', '.join(scratch_tools)} resolve inside this "
+            "chat's private scratch space, not in the workspace folders."
+        )
+    return "\n".join(lines)
 
 
 def _iter_valid_folder_bindings(
@@ -274,17 +336,21 @@ def workspace_context_note(
     path_tool_aliases: Iterable[str] | None = None,
     scratch_relative_tools: Iterable[str] = (),
 ) -> str:
-    """Build the agent system-prompt note for a non-default workspace.
+    """Build the agent system-prompt workspace note.
 
-    Returns an empty string for the default workspace (or when no workspace is
-    bound), so the common case adds nothing to the prompt. For a non-default
+    For the default workspace (``DEFAULT_WORKSPACE_ID``, no bound
+    workspace, or Console's ``"global"`` sentinel — TASK-35080) it returns
+    the honest no-folders note instead of an empty string: default runs
+    offer no path tools, and a silent prompt left the model to confabulate
+    when users asked it to look at project folders. For a non-default
     workspace it names the workspace and tells the agent how to reach each
     bound folder in the terms its tools resolve (TASK-33940.1): the
-    ``root_alias`` the fs_*/git_* tools accept, the folder's own name, and its
-    access, with paths relative to that folder. Absolute host paths are never
-    emitted. Roots are filtered exactly as ``allowed_file_roots`` filters them
-    (existing, non-symlink, non-drifted), so the note reflects what the file
-    tools will actually honor rather than what is merely configured.
+    ``root_alias`` the fs_*/git_* tools accept, the folder's own name, and
+    its access, with paths relative to that folder. Absolute host paths
+    are never emitted. Roots are filtered exactly as ``allowed_file_roots``
+    filters them (existing, non-symlink, non-drifted), so the note
+    reflects what the file tools will actually honor rather than what is
+    merely configured.
 
     Args:
         workspace_id: The run's workspace id, or ``None`` for none.
@@ -305,19 +371,30 @@ def workspace_context_note(
             list_directory, write_file); the note says so when any are given.
 
     Returns:
-        The note text, or ``""`` when no note applies. On any registry failure
-        (or an unknown workspace id) it degrades to a one-line note that still
-        tells the agent it is not in the default workspace.
+        The note text. On any registry failure (or an unknown workspace
+        id) it degrades to a one-line note that still tells the agent it
+        is not in the default workspace.
     """
     from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
-    if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
-        return ""
     aliases = (
         frozenset(str(alias) for alias in path_tool_aliases)
         if path_tool_aliases is not None
         else None
     )
+    if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
+        return _default_workspace_note(aliases, scratch_relative_tools)
+    # TASK-35080: default Console sessions carry the Console-global
+    # sentinel ("global"), for which no registry row exists — without
+    # this branch the lookup below degrades to the false "details are
+    # currently unavailable" note for the most common session kind.
+    # Lazy import per this module's existing Tools→Chat precedent
+    # (``_binding_matches_frozen_authority``'s project-instructions one);
+    # the sentinel is defined by the Chat models layer that owns it.
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+
+    if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+        return _default_workspace_note(aliases, scratch_relative_tools)
     if registry is None:
         try:
             registry = _registry_factory()
