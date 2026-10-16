@@ -4187,8 +4187,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 13,
-      "diagnostic_digest": "c96807b0b6779b8d0ee4",
+      "call_count": 14,
+      "diagnostic_digest": "21ef7e40e128c1135885",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/serve.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4198,6 +4198,20 @@
       "diagnostic_digest": "dceb7c082d5c8d5039a5",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/session_store.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 9,
+      "diagnostic_digest": "0006a334de1e902de77d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/webauthn_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "d7c160715fe9f0ff572b",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/webauthn_store.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
