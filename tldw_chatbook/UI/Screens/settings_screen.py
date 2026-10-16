@@ -333,6 +333,7 @@ from .settings_config_models import (
     SettingsOwnershipRecord,
 )
 from .settings_tools_hub import TOOLS_HUB_MODE_SHORTCUTS, ToolsHubPanel
+from ..MCP_Modules.mcp_workbench import MCP_HUB_MODES
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
 from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
@@ -6322,8 +6323,9 @@ class SettingsScreen(BaseAppScreen):
             return
         self.post_message(
             NavigateToScreen(
-                "mcp",
+                "settings",
                 {
+                    "category": "tools",
                     "mode": "permissions",
                     "tool_policy_profile_id": event.profile_id,
                     "profile_revision": event.revision,
@@ -25299,6 +25301,67 @@ class SettingsScreen(BaseAppScreen):
             self._clear_navigation_provider_context()
             self._select_category(category_value, restore_focus=True)
             self._after_category_panes(self._apply_speech_tts_navigation_context)
+            return
+        if category_value == SettingsCategoryId.TOOLS.value:
+            allowed_keys = {
+                "category",
+                "mode",
+                "tool_policy_profile_id",
+                "profile_revision",
+                "profile_policy_digest",
+            }
+            if not set(context).issubset(allowed_keys):
+                logger.debug("Ignoring unsafe Tools Settings navigation context")
+                return
+            view_state: dict[str, object] | None = None
+            mode = context.get("mode")
+            if mode is not None:
+                if not isinstance(mode, str) or mode not in MCP_HUB_MODES:
+                    logger.debug("Ignoring invalid Tools Settings mode: %r", mode)
+                    return
+                view_state = {"mode": mode}
+            profile_id = context.get("tool_policy_profile_id")
+            if profile_id is not None:
+                revision = context.get("profile_revision")
+                digest = context.get("profile_policy_digest")
+                # Same bounds the retired MCPScreen.apply_navigation_context
+                # enforced: non-empty id <=128 chars, revision None or >=1,
+                # digest exactly 64 hex chars.
+                if (
+                    type(profile_id) is not str
+                    or not profile_id
+                    or len(profile_id) > 128
+                    or (
+                        revision is not None
+                        and (type(revision) is not int or revision < 1)
+                    )
+                    or (
+                        type(digest) is not str
+                        or len(digest) != 64
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in digest
+                        )
+                    )
+                ):
+                    logger.debug(
+                        "Ignoring malformed Tools profile deep-link context"
+                    )
+                    return
+                view_state = {
+                    "mode": "permissions",
+                    "tool_policy_profile_id": profile_id,
+                    "profile_revision": revision,
+                    "profile_policy_digest": digest,
+                }
+            self._tools_hub_initial_view_state = (
+                dict(view_state) if view_state is not None else None
+            )
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            pane = self._tools_hub_pane()
+            if pane is not None:
+                pane.set_initial_view_state(self._tools_hub_initial_view_state)
             return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._clear_navigation_provider_context()

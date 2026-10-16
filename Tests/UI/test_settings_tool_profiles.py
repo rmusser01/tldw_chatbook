@@ -720,8 +720,9 @@ async def test_edit_policy_deep_link_captures_exact_profile_authority(request) -
         await pilot.click("#tool-profile-edit-0")
         await pilot.pause()
 
-    assert host.seen_routes[-1] == "mcp"
+    assert host.seen_routes[-1] == "settings"
     assert host.seen_contexts[-1] == {
+        "category": "tools",
         "mode": "permissions",
         "tool_policy_profile_id": "research",
         "profile_revision": 3,
