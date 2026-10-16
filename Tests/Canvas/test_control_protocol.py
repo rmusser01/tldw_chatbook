@@ -512,6 +512,198 @@ def test_late_response_after_timeout_does_not_disconnect_child() -> None:
     asyncio.run(scenario())
 
 
+RELAY_APPROVAL_RAISED_PAYLOAD = {
+    "round_id": "round-a",
+    "session_id": "session-a",
+    "calls": [
+        {
+            "name": "fs_write",
+            "arguments": {"path": "notes/scratch.md", "content": "hi"},
+            "options": {"mode": "overwrite"},
+        }
+    ],
+    "timeout_seconds": 300,
+}
+
+
+@pytest.mark.parametrize(
+    ("message_type", "payload"),
+    [
+        ("relay.approval.raised", dict(RELAY_APPROVAL_RAISED_PAYLOAD)),
+        (
+            "relay.approval.cleared",
+            {"round_id": "round-a", "resolution": "approved"},
+        ),
+        ("relay.run.status", {"session_id": "session-a", "status": "completed"}),
+        (
+            "relay.decide.request",
+            {"round_id": "round-a", "decisions": {"call-1": "approve"}},
+        ),
+        ("relay.decide.response", {"round_id": "round-a", "delivered": True}),
+    ],
+)
+def test_relay_message_types_round_trip(message_type: str, payload: dict) -> None:
+    message = _message(message_type, payload)
+
+    encoded = encode_control_frame(message)
+
+    assert decode_control_frame(encoded[4:]) == message
+
+
+def test_relay_family_rejects_unregistered_message_types() -> None:
+    with pytest.raises(ControlProtocolError, match="unsupported_type"):
+        _message("relay.approval.expired", {"round_id": "round-a"})
+
+
+@pytest.mark.parametrize(
+    ("message_type", "payload"),
+    [
+        ("relay.approval.raised", {**RELAY_APPROVAL_RAISED_PAYLOAD, "round_id": 7}),
+        (
+            "relay.approval.raised",
+            {**RELAY_APPROVAL_RAISED_PAYLOAD, "session_id": None},
+        ),
+        ("relay.approval.raised", {**RELAY_APPROVAL_RAISED_PAYLOAD, "calls": {}}),
+        ("relay.approval.raised", {**RELAY_APPROVAL_RAISED_PAYLOAD, "calls": [7]}),
+        (
+            "relay.approval.raised",
+            {**RELAY_APPROVAL_RAISED_PAYLOAD, "calls": ["fs_write"]},
+        ),
+        (
+            "relay.approval.raised",
+            {**RELAY_APPROVAL_RAISED_PAYLOAD, "timeout_seconds": True},
+        ),
+        (
+            "relay.approval.raised",
+            {**RELAY_APPROVAL_RAISED_PAYLOAD, "timeout_seconds": -1},
+        ),
+        ("relay.approval.cleared", {"round_id": "round-a", "resolution": 3}),
+        ("relay.run.status", {"session_id": "session-a", "status": 2}),
+        ("relay.decide.request", {"round_id": "round-a", "decisions": []}),
+        (
+            "relay.decide.request",
+            {"round_id": "round-a", "decisions": "call-1=approve"},
+        ),
+        ("relay.decide.response", {"round_id": "round-a", "delivered": "yes"}),
+        ("relay.decide.response", {"round_id": "round-a"}),
+        (
+            "relay.approval.cleared",
+            {"round_id": "round-a", "resolution": "approved", "detail": "extra"},
+        ),
+    ],
+)
+def test_relay_payloads_reject_wrong_or_unknown_fields(
+    message_type: str, payload: dict
+) -> None:
+    with pytest.raises(
+        ControlProtocolError,
+        match="missing_payload_field|invalid_payload_field|unknown_payload_field",
+    ):
+        _message(message_type, payload)
+
+
+def test_parent_relays_decisions_to_child_and_receives_delivery() -> None:
+    async def scenario() -> None:
+        seen: list[ControlMessage] = []
+
+        async def handler(message: ControlMessage) -> ControlMessage:
+            seen.append(message)
+            return _message(
+                "relay.decide.response",
+                {"round_id": message.payload["round_id"], "delivered": True},
+                request_id=message.request_id,
+            )
+
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        client = CanvasControlClient(
+            launch.environment, runtime_snapshot_id="a" * 64, handler=handler
+        )
+        await client.start()
+        await broker.wait_connected("child-a", timeout=1)
+        try:
+            response = await broker.request(
+                "child-a",
+                "relay.decide.request",
+                {"round_id": "round-a", "decisions": {"call-1": "approve"}},
+                timeout=1,
+            )
+            assert response.message_type == "relay.decide.response"
+            assert response.payload == {"round_id": "round-a", "delivered": True}
+            assert [message.message_type for message in seen] == [
+                "relay.decide.request"
+            ]
+        finally:
+            await client.aclose()
+            await broker.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_relay_events_are_queued_as_child_events_like_canvas_events() -> None:
+    async def scenario() -> None:
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+
+        reader, writer = await asyncio.open_connection(
+            launch.environment["CHATBOOK_CANVAS_CONTROL_HOST"],
+            int(launch.environment["CHATBOOK_CANVAS_CONTROL_PORT"]),
+            limit=MAX_CONTROL_FRAME_BYTES + 4,
+        )
+        writer.write(
+            encode_control_frame(
+                _message(
+                    "auth.request",
+                    {
+                        "child_id": "child-a",
+                        "secret": launch.environment["CHATBOOK_CANVAS_CONTROL_SECRET"],
+                        "runtime_snapshot_id": "a" * 64,
+                    },
+                    request_id="auth-relay",
+                )
+            )
+        )
+        await writer.drain()
+        size = struct.unpack(">I", await reader.readexactly(4))[0]
+        auth_response = decode_control_frame(await reader.readexactly(size))
+        assert auth_response.message_type == "auth.response"
+
+        relay_frames = [
+            _message(
+                "relay.approval.raised",
+                dict(RELAY_APPROVAL_RAISED_PAYLOAD),
+                request_id="relay-raised-1",
+            ),
+            _message(
+                "relay.approval.cleared",
+                {"round_id": "round-a", "resolution": "denied"},
+                request_id="relay-cleared-1",
+            ),
+            _message(
+                "relay.run.status",
+                {"session_id": "session-a", "status": "completed"},
+                request_id="relay-run-1",
+            ),
+        ]
+        for frame in relay_frames:
+            writer.write(encode_control_frame(frame))
+        await writer.drain()
+
+        try:
+            for expected in relay_frames:
+                event = await broker.next_event("child-a", timeout=1)
+                assert event.message_type == expected.message_type
+                assert event.payload == expected.payload
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await broker.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_revoked_channel_reports_disconnect_and_rejects_lost_events() -> None:
     async def scenario() -> None:
         broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
