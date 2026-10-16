@@ -328,12 +328,14 @@ class ConsoleSetupModal(Vertical):
 
         Every guidance sync calls this, so focus already on a shown action
         stays where Tab put it (TASK-33008.4). The one exception: a newly
-        offered detected action takes focus once.
+        offered detected action takes focus once. The card's own screen is
+        read, not the app's: under a dialog ``app.focused`` is the dialog's,
+        and the sync moved the Console's remembered Tab stop.
         """
         actions = self._displayed_actions()
         if not actions:
             return
-        if self.app.focused in actions and not self._detected_focus_pending:
+        if self.screen.focused in actions and not self._detected_focus_pending:
             return
         self._detected_focus_pending = False
         action_id = (

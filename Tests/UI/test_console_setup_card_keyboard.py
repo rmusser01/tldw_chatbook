@@ -125,6 +125,30 @@ async def test_tab_and_shift_tab_cycle_every_card_action_with_the_focus_cue(
 
 
 @pytest.mark.asyncio
+async def test_a_sync_under_a_dialog_keeps_the_cards_tab_stop() -> None:
+    """TASK-33008 review: the guard read ``app.focused``, which under a dialog
+    is the dialog's widget, so a sync moved the card's remembered Tab stop
+    back to the primary action and closing the dialog landed there."""
+    from textual.screen import ModalScreen
+
+    app = _StyledCardApp(detected=False)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        primary = app.query_one(_PRIMARY, Button)
+        await _until(pilot, lambda: app.focused is primary, "first focus")
+        await pilot.press("tab")
+        notes = app.query_one(_NOTES, Button)
+        await _until(pilot, lambda: app.focused is notes, "Tab to Notes")
+
+        await app.push_screen(ModalScreen())
+        await pilot.pause()
+        app.query_one("#console-setup-modal", ConsoleSetupModal).focus_primary_action()
+        app.pop_screen()
+        await pilot.pause()
+        assert app.focused is notes
+
+
+@pytest.mark.asyncio
 async def test_card_draws_on_a_plain_dim_fill_with_no_backdrop_widget() -> None:
     """AC#1: nothing but the card is drawn on the dim, and the dim is the
     modal's own flat token fill; the snow backdrop and its CSS are gone."""
