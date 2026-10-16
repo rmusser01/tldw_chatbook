@@ -318,7 +318,7 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
     "deferral", ["none", "rebuild", "maintenance", "no-controller"]
 )
 async def test_rule_phase_events_project_only_the_mounted_current_session(
-    tmp_path, deferral
+    tmp_path, deferral, monkeypatch
 ):
     if deferral == "no-controller":
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -359,6 +359,13 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             async with asyncio.timeout(5):
                 await case.helper_entered.wait()
             await case.pilot.pause()
+            async with asyncio.timeout(2):
+                while (
+                    not case.console._console_attach_reconciled
+                    or case.console._console_control_bar_sync_scheduled
+                ):
+                    await case.pilot.pause(0.01)
+            assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)
             stop = case.console.query_one("#console-stop-generation", Button)
@@ -390,6 +397,14 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 expired.set()
                 release.set()
 
+            sync_results = []
+            sync_control_bar = case.console._sync_console_control_bar
+
+            def observed_sync(*args, **kwargs):
+                result = sync_control_bar(*args, **kwargs)
+                sync_results.append(result)
+                return result
+
             holder = threading.Thread(target=hold_rebuild)
             watchdog = threading.Timer(2, unblock_failure)
             if deferral == "maintenance":
@@ -398,14 +413,35 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 holder.start()
                 assert held.wait(3)
                 watchdog.start()
-                started = time.monotonic()
-                case.rules._project(case.session_id, phase="testing")
-                elapsed = time.monotonic() - started
+                with monkeypatch.context() as observer:
+                    observer.setattr(case.console, "_sync_console_control_bar", observed_sync)
+                    started = time.monotonic()
+                    case.rules._project(case.session_id, phase="testing")
+                    elapsed = time.monotonic() - started
                 assert not expired.is_set(), (
                     f"rule event blocked on the config rebuild for {elapsed:.3f}s"
                 )
                 assert chip.display and "Testing rule" in str(chip.render())
-                assert case.console._console_control_bar_sync_scheduled
+                assert len(sync_results) == 1
+                assert type(sync_results[0]) is bool
+                if deferral == "maintenance":
+                    assert sync_results[0] is False
+                    assert case.console._console_control_bar_sync_scheduled
+                elif sync_results[0] is False:
+                    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+                        ConsoleReadinessConfigProjection,
+                    )
+
+                    projection = ConsoleReadinessConfigProjection.for_screen(case.console)
+                    assert case.console._console_control_bar_sync_scheduled or (
+                        projection.pending
+                        and any(
+                            worker.node is case.console
+                            and worker.group == "console-readiness-config"
+                            and not worker.is_finished
+                            for worker in case.console.workers
+                        )
+                    )
                 case.rules._project(other_session_id, phase="repairing")
                 assert "Testing rule" in str(chip.render())
                 # Exercise the armed timer before Stop, without relying on cadence.

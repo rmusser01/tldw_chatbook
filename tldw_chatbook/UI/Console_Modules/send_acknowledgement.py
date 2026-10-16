@@ -520,6 +520,26 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
     if request.guard is not None and not request.guard():
         screen._console_pending_send = None
         return
+    # A stock plain send can acquire runtime custody immediately. Its resident
+    # Preparing projection then owns feedback; the existing acknowledgement is
+    # still needed by custom, command and queue dispatch below.
+    text = _acknowledged_text(screen, request.stash, request.session_id)
+    if text is not None:
+        from .wiring import receive_console_visible_intent
+
+        try:
+            received = receive_console_visible_intent(
+                screen, text, request.session_id, request.stash
+            )
+        except (RuntimeError, ValueError):
+            screen.app_instance.notify(
+                "Draft or chat changed; Send again.", severity="warning"
+            )
+            received = ""
+        if received is not None:
+            if screen._console_pending_send is pending_send:
+                screen._console_pending_send = None
+            return
     flight.running = request.stash
     flight.running_image = (
         screen._console_pending_image_attachment() if request.stash is None else None

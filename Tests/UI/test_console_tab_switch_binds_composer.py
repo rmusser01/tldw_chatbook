@@ -135,7 +135,7 @@ async def _two_chats(host, pilot) -> Chats:
     """Mount the Console with B active (holding a leftover draft) and A stored."""
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
-    _select_llamacpp_console(console)
+    await _select_llamacpp_console(console)
     store = console._ensure_console_chat_store()
     b = next(item for item in store.sessions() if item.id == store.active_session_id)
     a = store.create_session(title="Chat A", settings=b.settings, activate=False)

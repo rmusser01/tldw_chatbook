@@ -32,6 +32,15 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_received_intent import (
+    ConsoleReceivedIntentInputMixin,
+    _replace_session_draft_locked,
+)
+from tldw_chatbook.Chat.console_received_turn import (
+    ConsoleReceivedTurnAdmissionMixin,
+    ConsoleReceivedTurnClaim,
+)
+
 # None is an explicit plain choice; omission alone permits workspace inheritance.
 UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
@@ -45,6 +54,7 @@ if TYPE_CHECKING:
         CanvasStagingOwner,
     )
 
+    from .console_native_commit import _ConsoleNativeBinding
     from .console_conversation_hydration import ConsoleConversationHydrationData
     from .console_session_settings import ConsoleAssistantStartup
 
@@ -135,7 +145,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     ContextPolicyWriteStatus,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
-    ConsoleAssistantSettlement,
+    ConsoleAssistantSettlement,  # noqa: F401 -- consumed through this original module by console_native_commit.
     ConsoleContinuationHandoff,
     ConsoleDispatchCheckpoint,
     ConsoleDispatchCheckpointState,
@@ -1471,6 +1481,9 @@ class ConsoleChatSession:
     #: serialize it.
     ephemeral_endpoint_policy: ConsoleEphemeralEndpointPolicy | None = None
     draft: str = ""
+    draft_revision: int = 0
+    _draft_authored_token: tuple[int, int] | None = field(default=None, repr=False)
+    attachment_revision: int = 0
     #: Session-lifetime evidence that the composer has held user-authored text.
     #: Clearing the draft does not make that work safe to overwrite.
     has_user_work: bool = False
@@ -1658,7 +1671,7 @@ class _ConsoleEphemeralPromotionReservation:
     canvas_settled: bool = False
 
 
-class ConsoleChatStore:
+class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentInputMixin):
     """Manage native Console sessions and messages before UI integration."""
 
     DURABLE_TOMBSTONE_CAP = 128
@@ -1911,7 +1924,10 @@ class ConsoleChatStore:
         self._first_identity_reservations: dict[
             str, tuple[str | None, ConsoleStagedConversationIdentity, bool]
         ] = {}
-        self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
+        self._received_turn_sequence = 0
+        self._preparations_by_session: dict[
+            str, ConsoleTurnPreparation | ConsoleReceivedTurnClaim
+        ] = {}
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
             str, ConsoleStagedConversationIdentity
@@ -1925,6 +1941,7 @@ class ConsoleChatStore:
         ] = {}
         self._durable_effects_in_flight: set[tuple[str, str]] = set()
         self._durable_commit_in_flight: dict[str, _ConsoleDurableCommitReservation] = {}
+        self._native_commit_owners_by_preparation: dict[str, object] = {}
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
@@ -3141,7 +3158,8 @@ class ConsoleChatStore:
                     elif "version" in handoff:
                         session.agent_handoff_state = "review_required"
             if handoff_draft is not None:
-                session.draft = handoff_draft
+                with self._preparation_lock:
+                    _replace_session_draft_locked(session, handoff_draft)
             if self.active_session_id == session.id:
                 # An ACTIVATING restore (the post-restart open path) activates
                 # inside `create_session` -- before the pending clear above was
@@ -3834,6 +3852,65 @@ class ConsoleChatStore:
         self._bump_payload_revision(session_id)
         return self._snapshot(message)
 
+    def _retain_native_commit_owner(self, preparation_id: str, owner: object) -> None:
+        """Protect queued cleanup with the controller's exact custody token."""
+        from .console_native_commit import _store_retain_native_commit_owner
+
+        return _store_retain_native_commit_owner(self, preparation_id, owner)
+
+
+    def _release_native_commit_owner(self, preparation_id: str, owner: object) -> bool:
+        """Release cleanup protection only for this same retired operation."""
+        from .console_native_commit import _store_release_native_commit_owner
+
+        return _store_release_native_commit_owner(self, preparation_id, owner)
+
+
+    def settle_accepted_durable_turn(
+        self,
+        preparation_id: str,
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+        terminal_state: str,
+        content: str,
+        metadata_json: str | None = None,
+    ) -> bool:
+        """Settle one live durable acceptance cancelled before provider entry.
+
+        Args:
+            preparation_id: Exact preparation retaining this committed turn.
+            fingerprint: Original app-lifetime acceptance owner.
+            terminal_state: Only stopped or failed; dispatch is never invented.
+            content: Assistant terminal content.
+            metadata_json: Optional terminal metadata object.
+
+        Returns:
+            True only after the existing atomic assistant/checkpoint settlement.
+            A refused or failed claim preserves its recovery owner.
+        """
+        from .console_native_commit import _native_commit_binding
+
+        binding = _native_commit_binding.get()
+        if (
+            binding is not None
+            and binding.store is self
+            and binding.settlement_helper is not None
+        ):
+            helper = binding.settlement_helper
+        else:
+            from .console_native_commit import _store_settle_accepted_durable_turn
+
+            helper = _store_settle_accepted_durable_turn
+        return helper(
+            self,
+            preparation_id,
+            fingerprint=fingerprint,
+            terminal_state=terminal_state,
+            content=content,
+            metadata_json=metadata_json,
+        )
+
+
     def settle_dispatch_recovery(
         self,
         session_id: str,
@@ -3874,166 +3951,12 @@ class ConsoleChatStore:
         provider_continuation: ProviderContinuationCheckpoint | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         on_durable_commit: Callable[[], object] | None = None,
+        _native_binding: _ConsoleNativeBinding | None = None,
     ) -> bool:
         """Settle dispatch state while holding its generation owner."""
+        from .console_native_commit import _store_settle_dispatch_recovery
 
-        with self._preparation_lock:
-            current = self._dispatch_recoveries_by_session.get(session_id)
-            if (
-                current is None
-                or not current.in_flight
-                or current.assistant_message_id != assistant_message_id
-                or current.checkpoint is None
-            ):
-                return False
-            checkpoint = current.checkpoint
-            ephemeral = current.kind in {
-                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
-                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
-            }
-        if terminal_state == "discarded":
-            self._invalidate_generation_attempt_locked(assistant_message_id)
-        try:
-            message = self._message_or_raise(assistant_message_id)
-        except KeyError:
-            message = None
-        receipt_metadata_before: (
-            tuple[MessageMetadata | None, VideoGenerationMetadata | None] | None
-        ) = None
-        terminal_receipt_id: str | None = None
-        if (
-            not ephemeral
-            and terminal_state in {"complete", "failed"}
-            and message is None
-        ):
-            return False
-        if (
-            not ephemeral
-            and terminal_state in {"complete", "failed"}
-            and message is not None
-        ):
-            merged_metadata = (
-                json.loads(metadata_json) if metadata_json is not None else None
-            )
-            if merged_metadata is not None and type(merged_metadata) is not dict:
-                raise ConsoleDispatchSettlementError(
-                    "Terminal metadata must be an object."
-                )
-            receipt_metadata_before = self._terminal_metadata_snapshot(message)
-            terminal_receipt_id = self._ensure_terminal_receipt(message.id)
-            receipt_metadata_json = (
-                message.video_metadata.to_json()
-                if message.video_metadata is not None
-                else message.metadata.to_json()
-                if message.metadata is not None
-                else None
-            )
-            # The caller may have joined Canvas cards or other local sidecars
-            # that have not yet been published on the live message.
-            if merged_metadata is None:
-                merged_metadata = json.loads(receipt_metadata_json or "{}")
-            merged_metadata["terminal_receipt_id"] = terminal_receipt_id
-            metadata_json = json.dumps(
-                merged_metadata, ensure_ascii=False, allow_nan=False
-            )
-        elif message is not None:
-            self._pending_terminal_receipts.pop(message.id, None)
-        committed_message_version: int | None = None
-        if not ephemeral:
-            repository = getattr(
-                self.persistence,
-                "console_dispatch_repository",
-                None,
-            )
-            if repository is None:
-                if message is not None and receipt_metadata_before is not None:
-                    self._restore_terminal_metadata(
-                        message,
-                        receipt_metadata_before,
-                    )
-                return False
-            try:
-                result = repository.settle_with_assistant(
-                    ConsoleAssistantSettlement(
-                        assistant_message_id=assistant_message_id,
-                        expected_checkpoint_state=checkpoint.state,
-                        expected_checkpoint_revision=checkpoint.checkpoint_revision,
-                        expected_user_message_version=checkpoint.user_message_version,
-                        expected_assistant_message_version=(
-                            checkpoint.assistant_message_version
-                        ),
-                        terminal_state=terminal_state,
-                        content=content,
-                        metadata_json=metadata_json,
-                        terminal_receipt_id=terminal_receipt_id,
-                        usage_json=(
-                            message.usage.to_json()
-                            if message is not None and message.usage is not None
-                            else None
-                        ),
-                        provider_continuation_json=provider_continuation_json,
-                        thinking_blocks_json=(
-                            dump_thinking_blocks_json(message.thinking)
-                            if message is not None
-                            else None
-                        ),
-                        contributions=tuple(contributions),
-                    )
-                )
-            except Exception:
-                # TASK-32801.3: this is the terminal-settlement write. The
-                # rollback below is correct and the caller's retry queue picks
-                # the turn up again, but the failure itself left no trace
-                # anywhere -- so a turn that never settles is indistinguishable
-                # from one that settled cleanly, in the log and to the user.
-                logger.warning(
-                    "Console terminal settlement failed; rolled back and "
-                    "returning False (session_id={}, assistant_message_id={}, "
-                    "terminal_state={})",
-                    session_id,
-                    assistant_message_id,
-                    terminal_state,
-                )
-                if message is not None and receipt_metadata_before is not None:
-                    self._restore_terminal_metadata(
-                        message,
-                        receipt_metadata_before,
-                    )
-                return False
-            if result.status is not ConsoleDispatchResultStatus.COMMITTED:
-                if message is not None and receipt_metadata_before is not None:
-                    self._restore_terminal_metadata(
-                        message,
-                        receipt_metadata_before,
-                    )
-                return False
-            committed_message_version = result.committed_message_version
-            if message is not None and terminal_receipt_id is not None:
-                self._commit_terminal_receipt(message.id)
-            if on_durable_commit is not None:
-                on_durable_commit()
-        if message is not None:
-            message.content = content
-            message.status = terminal_state
-            message.assistant_generation_state = terminal_state
-            if metadata_json is not None and message.video_metadata is None:
-                restored_metadata = MessageMetadata.from_json(metadata_json)
-                if restored_metadata is not None:
-                    message.metadata = restored_metadata
-            message.provider_continuation = provider_continuation
-            message.provider_continuation_message_version = committed_message_version
-            message.provider_continuation_actions_enabled = False
-            self._stream_chunks_by_message.pop(message.id, None)
-            self._stream_materialized_counts.pop(message.id, None)
-            self._bump_payload_revision(session_id)
-        with self._preparation_lock:
-            if self._dispatch_recoveries_by_session.get(session_id) is not current:
-                raise RuntimeError("Dispatch recovery owner changed during settlement.")
-            self._dispatch_recoveries_by_session.pop(session_id, None)
-            self._dispatch_recovery_message_baselines.pop(session_id, None)
-            self._dispatch_recovery_generation_tokens.pop(session_id, None)
-            self._dispatch_recovery_queue_hydration_pending.discard(session_id)
-        return True
+        return _store_settle_dispatch_recovery(self, session_id, assistant_message_id=assistant_message_id, terminal_state=terminal_state, content=content, metadata_json=metadata_json, provider_continuation_json=provider_continuation_json, provider_continuation=provider_continuation, contributions=contributions, on_durable_commit=on_durable_commit, _native_binding=_native_binding)
 
     def _settle_owned_dispatch_terminal(
         self,
@@ -5083,6 +5006,14 @@ class ConsoleChatStore:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
+        with self._preparation_lock:
+            if any(
+                preparation.session_id == session_id
+                for preparation_id, preparation in self._preparations_by_id.items()
+                if preparation_id in self._native_commit_owners_by_preparation
+                or preparation_id in self._durable_commit_in_flight
+            ):
+                raise RuntimeError("Durable acceptance commit is still owned.")
         with self._first_persistence_lock:
             self.invalidate_response_rule_source(session_id, "closed")
             return self._close_session_locked(session_id)
@@ -5252,6 +5183,9 @@ class ConsoleChatStore:
         self._cleanup_console_settings_lifecycle_if_idle(session_id)
         with self._preparation_lock:
             preparation = self._preparations_by_session.get(session_id)
+            if isinstance(preparation, ConsoleReceivedTurnClaim):
+                self.seal_received_turn(preparation)
+                preparation = None
             if preparation is not None:
                 fingerprint = self._durable_fingerprint_by_preparation.get(
                     preparation.preparation_id
@@ -5547,6 +5481,9 @@ class ConsoleChatStore:
             raise TypeError("preparation must be ConsoleTurnPreparation")
         self._session_or_raise(preparation.session_id)
         with self._preparation_lock:
+            current = self._preparations_by_session.get(preparation.session_id)
+            if isinstance(current, ConsoleReceivedTurnClaim):
+                return None
             existing_owner = self._preparations_by_id.get(preparation.preparation_id)
             if existing_owner is not None:
                 return existing_owner if existing_owner is preparation else None
@@ -5570,7 +5507,8 @@ class ConsoleChatStore:
         if not isinstance(session_id, str) or not session_id:
             return None
         with self._preparation_lock:
-            return self._preparations_by_session.get(session_id)
+            current = self._preparations_by_session.get(session_id)
+            return current if isinstance(current, ConsoleTurnPreparation) else None
 
     def preparation_by_id(self, preparation_id: str) -> ConsoleTurnPreparation | None:
         """Return one exact volatile owner, including during session teardown."""
@@ -5591,7 +5529,7 @@ class ConsoleChatStore:
             raise TypeError("transition must be ConsolePreparationTransition")
         with self._preparation_lock:
             current = self._preparations_by_session.get(session_id)
-            if current is None:
+            if not isinstance(current, ConsoleTurnPreparation):
                 return None
             updated = apply_preparation_transition(current, transition)
             if updated is current:
@@ -5619,7 +5557,10 @@ class ConsoleChatStore:
 
         with self._preparation_lock:
             current = self._preparations_by_id.get(preparation_id)
-            if current is None:
+            if (
+                current is None
+                or self._preparations_by_session.get(current.session_id) is not current
+            ):
                 return None
             session = self._sessions.get(current.session_id)
             if (
@@ -5661,6 +5602,7 @@ class ConsoleChatStore:
             current = self._preparations_by_id.get(preparation_id)
             if (
                 current is None
+                or self._preparations_by_session.get(current.session_id) is not current
                 or current.session_id != admitted.session_id
                 or current.pause_kind
                 is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
@@ -5692,8 +5634,10 @@ class ConsoleChatStore:
             new_attempt_id=None,
         )
         with self._preparation_lock:
+            if preparation_id in self._native_commit_owners_by_preparation or preparation_id in self._durable_commit_in_flight:
+                return None
             current = self._preparations_by_session.get(session_id)
-            if current is None:
+            if not isinstance(current, ConsoleTurnPreparation):
                 return None
             updated = apply_preparation_transition(current, transition)
             if updated is current:
@@ -5702,8 +5646,11 @@ class ConsoleChatStore:
             self._preparations_by_id[updated.preparation_id] = updated
             session = self._sessions.get(session_id)
             if session is not None:
-                if current.origin == "manual":
-                    session.draft = current.executed_draft
+                if current.origin == "manual" and (
+                    current.input_draft_revision is None
+                    or session.draft_revision == current.input_draft_revision
+                ):
+                    _replace_session_draft_locked(session, current.executed_draft)
                 if (
                     current.pre_send_conversation_id is None
                     or session.persisted_conversation_id
@@ -5732,9 +5679,11 @@ class ConsoleChatStore:
         """Remove one exact terminal or abandoned volatile preparation."""
 
         with self._preparation_lock:
+            if preparation_id in self._native_commit_owners_by_preparation or preparation_id in self._durable_commit_in_flight:
+                return None
             current = self._preparations_by_session.get(session_id)
             if (
-                current is None
+                not isinstance(current, ConsoleTurnPreparation)
                 or current.preparation_id != preparation_id
                 or current.state not in expected_states
             ):
@@ -6361,6 +6310,22 @@ class ConsoleChatStore:
 
         if not isinstance(acceptance, ConsoleDurableTurnAcceptance):
             raise TypeError("acceptance must be ConsoleDurableTurnAcceptance")
+        from .console_native_commit import _native_commit_binding
+
+        binding = _native_commit_binding.get()
+        if binding is not None and binding.store is self:
+            if binding.turn_owner is not acceptance:
+                raise RuntimeError("Durable Console acceptance owner changed.")
+            persistence = binding.persistence
+            database = binding.database
+            if (
+                self.persistence is not persistence
+                or getattr(persistence, "db", None) is not database
+            ):
+                raise RuntimeError("Durable Console persistence owner changed.")
+        else:
+            persistence = self.persistence
+            database = getattr(persistence, "db", None)
         reservation: _ConsoleDurableCommitReservation | None = None
         fingerprint: ConsoleDurableAcceptanceFingerprint | None = None
         try:
@@ -6592,7 +6557,7 @@ class ConsoleChatStore:
                 self._durable_fingerprint_by_preparation[acceptance.preparation_id] = (
                     fingerprint
                 )
-            durable_commit = getattr(self.persistence, "commit_durable_turn", None)
+            durable_commit = getattr(persistence, "commit_durable_turn", None)
             if not callable(durable_commit):
                 raise RuntimeError("Durable Console persistence is unavailable.")
             context_kwarg_supported = self._persistence_accepts_kwarg(
@@ -6607,6 +6572,11 @@ class ConsoleChatStore:
                 durable_commit, "project_context_json"
             )
             project_json = encode_project_context_json(project_state)
+            if (
+                self.persistence is not persistence
+                or getattr(persistence, "db", None) is not database
+            ):
+                raise RuntimeError("Durable Console persistence owner changed.")
             checkpoint = durable_commit(
                 acceptance=acceptance,
                 policy_candidate=policy_candidate,
@@ -6678,6 +6648,11 @@ class ConsoleChatStore:
             if first_persist and (  # a folder re-chosen mid-commit, or no kwarg
                 not project_stored or session.project_instruction_state != project_state
             ):
+                if (
+                    self.persistence is not persistence
+                    or getattr(persistence, "db", None) is not database
+                ):
+                    raise RuntimeError("Durable Console persistence owner changed.")
                 self._persist_project_instruction_state(session)
             return commit
         except Exception:
@@ -6877,6 +6852,8 @@ class ConsoleChatStore:
                     # the tombstone proves this is the SAME acceptance.
                     return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
+            if preparation_id in self._native_commit_owners_by_preparation or preparation_id in self._durable_commit_in_flight:
+                raise RuntimeError("Durable acceptance commit is still owned.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
             preparation = self._preparations_by_id.get(preparation_id)
             session_id = (
@@ -6982,6 +6959,8 @@ class ConsoleChatStore:
         with self._preparation_lock:
             if preparation_id in self._durable_commit_by_preparation:
                 raise RuntimeError("Committed durable acceptance cannot be discarded.")
+            if preparation_id in self._native_commit_owners_by_preparation or preparation_id in self._durable_commit_in_flight:
+                raise RuntimeError("Durable acceptance commit is still owned.")
             # ponytail: bounded by live sessions; keep cleanup independent of
             # preparation indexes because controller drop removes those first.
             for session_id, reservation in tuple(
@@ -9790,31 +9769,6 @@ class ConsoleChatStore:
         """Return the in-memory composer draft for a native Console session."""
         return self._session_or_raise(session_id).draft
 
-    def set_session_draft(self, session_id: str, draft: str) -> ConsoleChatSession:
-        """Replace a composer draft, persisting only pending version-2 handoffs."""
-        session = self._session_or_raise(session_id)
-        changed = session.draft != draft
-        session.draft = draft
-        if draft:
-            session.has_user_work = True
-        pending = self._agent_handoff_writes.get(session_id)
-        if changed and pending is not None and session.agent_handoff_state == "pending":
-            pending["revision"] += 1
-            pending["draft"] = draft
-            session.agent_handoff_revision = pending["revision"]
-            if self._agent_handoff_changed is not None:
-                self._agent_handoff_changed(session_id, "draft_changed")
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._write_agent_handoff_revision(pending)
-            else:
-                if pending["task"] is None or pending["task"].done():
-                    pending["task"] = loop.create_task(
-                        self._drain_agent_handoff_writer(pending)
-                    )
-        return session
-
     def _write_agent_handoff_revision(self, pending: dict[str, Any]) -> bool:
         revision, draft = pending["revision"], pending["draft"]
         expected = pending["durable_revision"]
@@ -9862,7 +9816,8 @@ class ConsoleChatStore:
             return
         self._agent_handoff_writes.pop(session_id, None)
         if pending["revision"] == revision:
-            session.draft = ""
+            with self._preparation_lock:
+                _replace_session_draft_locked(session, "")
         session.agent_handoff_state = "consumed"
         session.agent_handoff_revision = revision + 1
         # Typing after the accepted receipt belongs to the ordinary composer.
@@ -10415,18 +10370,20 @@ class ConsoleChatStore:
         self, session_id: str, prefill: str | None
     ) -> ConsoleChatSession:
         """Arm (or clear, with ``None``) the one-shot response prefill."""
-        session = self._session_or_raise(session_id)
-        session.one_shot_prefill = prefill
-        session.one_shot_prefill_revision += 1
-        return session
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            session.one_shot_prefill = prefill
+            session.one_shot_prefill_revision += 1
+            return session
 
     def session_one_shot_prefill_snapshot(
         self, session_id: str
     ) -> tuple[str | None, int]:
         """Return the current one-shot value and its opaque live revision."""
 
-        session = self._session_or_raise(session_id)
-        return session.one_shot_prefill, session.one_shot_prefill_revision
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            return session.one_shot_prefill, session.one_shot_prefill_revision
 
     def consume_session_one_shot_prefill(
         self, session_id: str, expected_revision: int
@@ -10435,12 +10392,13 @@ class ConsoleChatStore:
 
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
-        session = self._session_or_raise(session_id)
-        if session.one_shot_prefill_revision != expected_revision:
-            return False
-        session.one_shot_prefill = None
-        session.one_shot_prefill_revision += 1
-        return True
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if session.one_shot_prefill_revision != expected_revision:
+                return False
+            session.one_shot_prefill = None
+            session.one_shot_prefill_revision += 1
+            return True
 
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
         """Return the staged attachments for a session (stage order).
@@ -10454,7 +10412,8 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        return list(self._session_or_raise(session_id).pending_attachments)
+        with self._preparation_lock:
+            return list(self._session_or_raise(session_id).pending_attachments)
 
     def transfer_pending_attachments_to_turn(
         self,
@@ -10470,13 +10429,19 @@ class ConsoleChatStore:
         if not turn_id:
             raise ValueError("turn_id must be non-empty")
         expected = tuple(expected_attachment_ids)
-        pending = self._session_or_raise(session_id).pending_attachments
-        actual = tuple(item.attachment_id for item in pending[: len(expected)])
-        if actual != expected:
-            raise RuntimeError("Pending attachments changed before runtime custody.")
-        transferred = tuple(pending[: len(expected)])
-        del pending[: len(expected)]
-        return transferred
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            pending = session.pending_attachments
+            actual = tuple(item.attachment_id for item in pending[: len(expected)])
+            if actual != expected:
+                raise RuntimeError(
+                    "Pending attachments changed before runtime custody."
+                )
+            transferred = tuple(pending[: len(expected)])
+            if transferred:
+                del pending[: len(expected)]
+                session.attachment_revision += 1
+            return transferred
 
     def restore_transferred_pending_attachments(
         self,
@@ -10484,8 +10449,12 @@ class ConsoleChatStore:
         attachments: Sequence[PendingAttachment],
     ) -> None:
         """Prepend exact transferred objects without replacing newer staging."""
-        pending = self._session_or_raise(session_id).pending_attachments
-        pending[:0] = list(attachments)
+        restored = list(attachments)
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if restored:
+                session.pending_attachments[:0] = restored
+                session.attachment_revision += 1
 
     def add_pending_attachment(
         self, session_id: str, attachment: PendingAttachment
@@ -10502,11 +10471,13 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        if len(session.pending_attachments) >= MAX_PENDING_ATTACHMENTS:
-            return False
-        session.pending_attachments.append(attachment)
-        return True
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if len(session.pending_attachments) >= MAX_PENDING_ATTACHMENTS:
+                return False
+            session.pending_attachments.append(attachment)
+            session.attachment_revision += 1
+            return True
 
     def clear_pending_attachments(self, session_id: str) -> ConsoleChatSession:
         """Remove all staged attachments from a session.
@@ -10520,9 +10491,12 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        session.pending_attachments.clear()
-        return session
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if session.pending_attachments:
+                session.pending_attachments.clear()
+                session.attachment_revision += 1
+            return session
 
     def consume_pending_attachment(self, session_id: str, attachment_id: str) -> bool:
         """Remove only the currently staged attachment with the exact identity.
@@ -10538,12 +10512,14 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        pending = self._session_or_raise(session_id).pending_attachments
-        for index, attachment in enumerate(pending):
-            if attachment.attachment_id == attachment_id:
-                del pending[index]
-                return True
-        return False
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            for index, attachment in enumerate(session.pending_attachments):
+                if attachment.attachment_id == attachment_id:
+                    del session.pending_attachments[index]
+                    session.attachment_revision += 1
+                    return True
+            return False
 
     def pending_attachment(self, session_id: str) -> PendingAttachment | None:
         """Return the first staged attachment (legacy single accessor).
@@ -10557,8 +10533,9 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        pending = self._session_or_raise(session_id).pending_attachments
-        return pending[0] if pending else None
+        with self._preparation_lock:
+            pending = self._session_or_raise(session_id).pending_attachments
+            return pending[0] if pending else None
 
     def set_pending_attachment(
         self,
@@ -10577,9 +10554,11 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        session.pending_attachments[:] = [attachment]
-        return session
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            session.pending_attachments[:] = [attachment]
+            session.attachment_revision += 1
+            return session
 
     def clear_pending_attachment(self, session_id: str) -> ConsoleChatSession:
         """Alias of clear_pending_attachments (legacy name).

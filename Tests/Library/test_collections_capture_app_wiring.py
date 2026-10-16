@@ -351,3 +351,51 @@ async def test_capture_shutdown_deactivates_scope_and_cancels_extractions() -> N
     await TldwCli._shutdown_collections_capture_runtime(app)
 
     assert calls == ["deactivate", "cancel"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "closing_flag",
+    ["_collections_capture_initializer_closed", "_shutting_down", "_exit"],
+)
+async def test_startup_reconciliation_refuses_new_work_after_closing(closing_flag):
+    import asyncio
+
+    class Repository:
+        def interrupt_stale_extractions(self):
+            raise AssertionError("Reconciliation started after closing")
+
+    app = SimpleNamespace(collections_capture_repository=Repository())
+    setattr(app, closing_flag, True)
+    with pytest.raises(asyncio.CancelledError):
+        await TldwCli._reconcile_collections_capture_startup(app)
+    assert not getattr(app, "_collections_capture_reconciliation_reads", None)
+
+
+
+@pytest.mark.parametrize(
+    "closing_flag",
+    ["_collections_capture_initializer_closed", "_shutting_down", "_exit"],
+)
+def test_first_use_does_not_schedule_reconciliation_after_closing(
+    monkeypatch, closing_flag
+):
+    scope = object()
+    app = SimpleNamespace(
+        collections_capture_scope_service=None,
+        _collections_capture_initializer_task=SimpleNamespace(done=lambda: False),
+    )
+    setattr(app, closing_flag, True)
+
+    def compose(host):
+        host.collections_capture_scope_service = scope
+        host.collections_capture_repository = object()
+
+    def unexpected_reconciliation():
+        raise AssertionError(
+            "First use scheduled reconciliation after shutdown admission"
+        )
+
+    app._reconcile_collections_capture_startup = unexpected_reconciliation
+    monkeypatch.setattr(TldwCli, "_wire_collections_capture_services", compose)
+    assert TldwCli.ensure_collections_capture_services(app) is scope

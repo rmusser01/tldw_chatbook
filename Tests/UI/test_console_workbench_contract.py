@@ -1659,7 +1659,7 @@ async def test_console_workbench_send_action_disables_during_active_run():
                 "Streaming response.",
             )
         )
-        _sync_console_control_bar_now(console)
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
@@ -1792,7 +1792,7 @@ async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
         monkeypatch.setattr(inspector, "refresh", count_inspector_refresh)
 
         for _ in range(5):
-            _sync_console_control_bar_now(console)
+            await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert workbench_syncs == 0

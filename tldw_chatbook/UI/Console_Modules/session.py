@@ -271,10 +271,6 @@ from ...Widgets.Console import (
     ProjectInstructionSetupModal,
     ProjectInstructionSetupResult,
 )
-from ...Widgets.Console.console_reaction_picker_modal import (
-    ConsoleReactionPickerModal,
-    ReactionOption,
-)
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
@@ -298,6 +294,10 @@ if TYPE_CHECKING:
     from ...Chat.conversation_local_marks_service import (
         ConversationLocalMarksService,
         ManualUnreadToken,
+    )
+    from ...Widgets.Console.console_reaction_picker_modal import (
+        ConsoleReactionPickerModal,
+        ReactionOption,
     )
     from ..Screens.chat_screen import ChatScreen
 
@@ -810,6 +810,8 @@ def _visual_identity_options_for_db(
         return ()
     if graph is None:
         return ()
+    from ...Widgets.Console.console_reaction_picker_modal import ReactionOption
+
     return tuple(
         ReactionOption(
             expression_key=str(asset["expression_key"]),
@@ -1177,6 +1179,8 @@ class ConsoleSessionController:
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
+        self._console_visible_draft_revision: int | None = None
+        self._initial_composer_sync_pending = False
         self._visible_agent_handoff_draft: (
             tuple[str, str, int, ComposerDraftSnapshot] | None
         ) = None
@@ -2225,6 +2229,10 @@ class ConsoleSessionController:
                 "This actor has no reaction pack.", severity="information"
             )
             return
+        from ...Widgets.Console.console_reaction_picker_modal import (
+            ConsoleReactionPickerModal,
+        )
+
         self.push_screen(
             ConsoleReactionPickerModal(
                 options=options,
@@ -4439,8 +4447,14 @@ class ConsoleSessionController:
             "assistant_default_notice": startup.notice,
         }
 
+    def _build_console_turn_capture_selection(self, session_id: str, *, scratch_owner):
+        """Select detached mounted values through the current authority owner."""
+        from .turn_admission import select_configuration_values
+
+        return select_configuration_values(self, session_id, scratch_owner=scratch_owner)
+
     def _build_console_turn_execution_context(
-        self, session_id: str
+        self, session_id: str, *, mcp_definition_maximum: Mapping[str, str] | None = None
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session.
 
@@ -4449,19 +4463,20 @@ class ConsoleSessionController:
         ``turn_admission``: precaptured on a worker for the send being
         launched when its inputs still match, otherwise read here.
         """
-        from ...Chat.attachment_core import max_history_images
-        from ...model_capabilities import is_vision_capable
+        from ...Chat.console_configuration_capture import capture_console_turn_configuration
+        from ...Chat.attachment_core import max_history_images  # noqa: F401 - preserve the existing first-use import boundary.
+        from ...model_capabilities import is_vision_capable  # noqa: F401 - preserve the existing first-use import boundary.
         from ...Chat.console_agent_bridge import console_run_budget
         from ..Screens.settings_library_rag_defaults import (
             load_direct_library_tools,
         )
-        from .turn_admission import authority_for, authority_inputs
+        from .turn_admission import authority_for, authority_inputs, console_live_runtime_enabled
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
         store = self._ensure_console_chat_store()
-        settings = store.effective_session_settings(session_id)
-        model = selection.explicit_model or selection.configured_model
+        _unused_settings = store.effective_session_settings(session_id)
+        _unused_model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
@@ -4473,8 +4488,10 @@ class ConsoleSessionController:
         )
         session = next(item for item in store.sessions() if item.id == session_id)
         authority = authority_for(self, authority_inputs(self, session_id))
+        if mcp_definition_maximum is None:
+            mcp_definition_maximum = authority.mcp_definition_maximum
         held_scope = session.rag_scope_holder.scope
-        library_scope = ConsoleLibraryItemScopeSnapshot(
+        _unused_library_scope = ConsoleLibraryItemScopeSnapshot(
             note_ids=tuple(
                 str(item.source_id)
                 for item in held_scope.items
@@ -4495,39 +4512,34 @@ class ConsoleSessionController:
         # workspace's named permission profile and the persona policy rules
         # -- degrades to the identity posture on any failure; posture is
         # narrowing-only, so a degraded read can never widen access.
-        return ConsoleTurnConfigurationSnapshot.capture(
+        return capture_console_turn_configuration(
+            self.app_instance, store,
             session_id=session_id,
+            skill_workspace_id=None,
+            character_repository=None,
+            _captured_change_review=(
+                authority.workspace_roots,
+                authority.change_review_root_aliases,
+                authority.change_review_skipped_roots,
+            ),
             provider_selection=selection,
             scratch_space=authority.scratch_space,
-            session_settings=settings,
-            workspace_roots=authority.workspace_roots,
-            change_review_root_aliases=authority.change_review_root_aliases,
-            change_review_skipped_roots=authority.change_review_skipped_roots,
             persona_policy_rules=authority.persona_policy_rules,
             tool_policy_profile_id=authority.tool_policy_profile_id,
             presentation_context=presentation_context,
-            library_policy_maximum=session.library_policy_holder.snapshot,
-            library_scope_maximum=library_scope,
             project_authority=authority.project_authority,
-            character_authority=authority.character_authority,
-            prompt_transform_inputs=authority.prompt_transform_inputs,
-            skill_context_maximum=authority.skill_context_maximum,
-            mcp_tool_maximum=authority.mcp_definition_maximum,
-            mcp_definition_maximum=authority.mcp_definition_maximum,
-            capabilities={
-                "vision": bool(model)
-                and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(selection.provider, model),
-            },
+            _captured_character_authority=authority.character_authority,
+            _captured_prompt_transform_inputs=authority.prompt_transform_inputs,
+            _skill_context_maximum=authority.skill_context_maximum,
+            mcp_definition_maximum=mcp_definition_maximum,
             rag_defaults={
                 "source_types": tuple(self._rag_source_types_accessor()),
                 "top_k": authority.rag_top_k,
             },
             tool_configuration={
                 "session_ephemeral": bool(session.ephemeral),
-                "agent_runtime_enabled": coerce_bool_setting(
-                    console_config.get("agent_runtime", True),
-                    True,
+                "agent_runtime_enabled": console_live_runtime_enabled(
+                    getattr(self.app_instance, "app_config", None), console_config
                 ),
                 "native_tool_calls_enabled": coerce_bool_setting(
                     console_config.get("native_tool_calls", True),
@@ -4560,22 +4572,6 @@ class ConsoleSessionController:
                 "exchange_capture_enabled": coerce_bool_setting(
                     console_config.get("exchange_capture", True), True
                 ),
-            },
-            provider_payload_settings={
-                "streaming": selection.streaming,
-                "temperature": selection.temperature,
-                "top_p": selection.top_p,
-                "min_p": selection.min_p,
-                "top_k": selection.top_k,
-                "max_tokens": selection.max_tokens,
-                "seed": selection.seed,
-                "presence_penalty": selection.presence_penalty,
-                "frequency_penalty": selection.frequency_penalty,
-                "reasoning_effort": selection.reasoning_effort,
-                "reasoning_summary": selection.reasoning_summary,
-                "verbosity": selection.verbosity,
-                "thinking_effort": selection.thinking_effort,
-                "thinking_budget_tokens": selection.thinking_budget_tokens,
             },
         )
 
@@ -4735,6 +4731,8 @@ class ConsoleSessionController:
         self,
         store: ConsoleChatStore,
         session: ConsoleChatSession,
+        *,
+        checked_config: Mapping | None = None,
     ) -> ConsoleSessionSettings | None:
         """Converge a pristine session on the currently saved defaults.
 
@@ -4750,13 +4748,18 @@ class ConsoleSessionController:
         before a Console "Make default for new chats" are never touched.
         """
         settings = session.settings
+        projection = getattr(self._screen, "_console_readiness_projection_active", None)
+        if projection is not None and projection[0] == threading.get_ident():
+            # Display reuse never converges durable defaults from an old map.
+            return settings
         # TASK-33007.4: the same predicate tells Settings who a save reaches.
         if not follows_saved_defaults(
             store, session, self._console_new_chat_default_generation()
         ):
             return settings
         if settings is None:
-            settings = self._blank_console_session_settings()
+            settings = (blank_console_session_settings(checked_config)
+                if checked_config is not None else self._blank_console_session_settings())
             store.replace_session_settings(
                 session.id,
                 settings,
@@ -4769,7 +4772,8 @@ class ConsoleSessionController:
         # This path is different: full Settings may have updated the config
         # cache without replacing ``app.app_config``, so read the fresh
         # mapping and converge without an app restart (task-177).
-        app_config = self._provider_readiness_app_config()
+        app_config = (checked_config if checked_config is not None
+            else self._provider_readiness_app_config())
         # This runs on every provider/model display rebuild and composer
         # keystroke. A published config write replaces the mapping, so one
         # derivation per (session, mapping) is exact between two saves.
@@ -5599,6 +5603,36 @@ class ConsoleSessionController:
             if composer.commit_captured_draft(composer.capture_draft_for_send()):
                 self._console_draft_switch_snapshot = None
 
+    def initialize_composer_draft(self, composer: Any) -> None:
+        """Bind the initial visible draft before the composer accepts edits."""
+        store = self._console_chat_store
+        session = self._active_native_console_session()
+        if store is None or session is None:
+            return
+        try:
+            draft = store.session_draft(session.id)
+            revision = store.session_input_snapshot(session.id).draft_revision
+        except KeyError:
+            return
+        composer.load_draft(draft)
+        composer.restore_undo_history(self._console_undo_histories.get(session.id))
+        self._console_visible_draft_session_id = session.id
+        self._console_visible_draft_revision = revision
+        self._visible_agent_handoff_draft = (
+            (
+                session.id,
+                session.incarnation_id,
+                session.agent_handoff_revision,
+                composer.capture_draft_snapshot(),
+            )
+            if session.agent_handoff_state == "pending"
+            else None
+        )
+        # Mount-time config work may defer the first full sync. Its UI/hook
+        # effects still run there, but early typing already has an exact owner.
+        self._initial_composer_sync_pending = True
+
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
@@ -5640,12 +5674,29 @@ class ConsoleSessionController:
         self._consume_visible_agent_handoff(store, composer)
         visible_session_id = self._console_visible_draft_session_id
         if visible_session_id == active_session_id:
+            actual_revision = store.session_input_snapshot(active_session_id).draft_revision
+            if (
+                self._console_visible_draft_revision is not None
+                and self._console_visible_draft_revision != actual_revision
+            ):
+                observer = getattr(composer, "_authored_draft_observer", None)
+                composer._authored_draft_observer = None
+                try:
+                    composer.load_draft(store.session_draft(active_session_id))
+                    self._console_visible_draft_revision = actual_revision
+                finally:
+                    composer._authored_draft_observer = observer
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
             if visible_session_id is not None:
                 try:
                     store.set_session_draft(visible_session_id, composer.draft_text())
                 except KeyError:
                     pass
+            if self._initial_composer_sync_pending:
+                self._sync_console_command_popup()
+                if self._on_draft_session_changed is not None:
+                    self._on_draft_session_changed()
+                self._initial_composer_sync_pending = False
             return
         snapshot = self._console_draft_switch_snapshot
         self._console_draft_switch_snapshot = None
@@ -5674,6 +5725,8 @@ class ConsoleSessionController:
             self._console_undo_histories[visible_session_id] = (
                 composer.export_undo_history()
             )
+        observer = getattr(composer, "_authored_draft_observer", None)
+        composer._authored_draft_observer = None
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
@@ -5694,6 +5747,23 @@ class ConsoleSessionController:
         ):
             self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
+        self._initial_composer_sync_pending = False
+        composer._authored_draft_observer = observer
+        self._console_visible_draft_revision = store.session_input_snapshot(
+            active_session_id
+        ).draft_revision
+        if typed_suffix:
+            store.set_session_draft(
+                active_session_id,
+                composer.draft_text(),
+                authored_token=(
+                    composer.capture_draft_snapshot().generation,
+                    composer.edit_serial,
+                ),
+            )
+            self._console_visible_draft_revision = store.session_input_snapshot(
+                active_session_id
+            ).draft_revision
         self._visible_agent_handoff_draft = (
             (
                 session.id,
@@ -6780,3 +6850,21 @@ class ConsoleSessionController:
                 else None
             ),
         )
+
+
+# Original explicit mounted capture callback; no native authority retained.
+_CONSOLE_TURN_CONTEXT_BUILDER = ConsoleSessionController._build_console_turn_execution_context
+
+_CONSOLE_TURN_CAPTURE_SELECTOR = (
+    ConsoleSessionController._build_console_turn_capture_selection,
+    ConsoleSessionController._build_console_turn_capture_selection.__code__,
+)
+
+
+# Direct callback definitions for optional manual Preparing display selection.
+_CONSOLE_PREPARING_SESSION_READERS = tuple(
+    (name, method, method.__code__, method.__defaults__, method.__kwdefaults__,
+     tuple((method.__kwdefaults__ or {}).items()))
+    for name in ('_build_console_turn_execution_context', '_build_console_turn_capture_selection')
+    for method in (getattr(ConsoleSessionController, name),)
+)

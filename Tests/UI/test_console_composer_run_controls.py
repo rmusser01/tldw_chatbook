@@ -105,7 +105,7 @@ async def _type(pilot, text: str) -> None:
 async def _mounted(host, pilot):
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
-    _select_llamacpp_console(console)
+    await _select_llamacpp_console(console)
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     return console, composer
 

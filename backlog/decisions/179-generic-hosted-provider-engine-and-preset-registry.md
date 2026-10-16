@@ -49,3 +49,8 @@ ADR-146.
 - [ADR-062: Hosted Chat Completions Provider Boundary](062-hosted-chat-completions-provider-boundary.md)
 - [ADR-063: Use a neutral hosted wire boundary with durable tool continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
 - [ADR-146: Console custom endpoint registry](146-console-custom-endpoint-registry.md)
+
+
+## Current-owner integration amendment (2026-10-13)
+
+Documented Groq and OpenRouter envelope fields are normalized by call-owned adapter functions before the strict neutral boundary; Together, Fireworks and Cerebras allowances remain scoped to their preset records. Preserve registry-owned zero-retry sessions, streaming filtering, usage taps, endpoint reconstruction and actual dispatch parameter mapping. Offline fixtures qualify wire contracts only, never current provider availability or quality.

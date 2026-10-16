@@ -394,7 +394,7 @@ async def test_deadline_tick_repaints_only_when_the_countdown_copy_moves(
         # Freeze the card's clock mid-countdown: the first tick paints (or
         # matches whatever the mount painted), and any further tick within
         # the same second must not repaint at all.
-        clock = [payload["deadline_monotonic"]]
+        clock = [payload["deadline_monotonic"] - 60.0]
         monkeypatch.setattr(
             module, "time", SimpleNamespace(monotonic=lambda: clock[0])
         )

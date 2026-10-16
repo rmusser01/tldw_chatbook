@@ -1542,3 +1542,80 @@ async def test_a_store_that_refuses_the_start_read_holds_dreams_work_and_says_so
     finally:
         logger.remove(sink)
         stores.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_refused_boot_read_retires_only_its_temporary_dreams_owner(
+        tmp_path, settings, egress_seams, monkeypatch, enabled):
+    import sqlite3
+
+    stores = _RealStores(tmp_path, monkeypatch)
+    owned = []
+    borrowed = None
+    try:
+        await stores.track()
+        settings["enabled"] = enabled
+        if enabled:
+            borrowed = DreamsDB(stores.dreams_path, "boot-app")
+        borrowed_connections = tuple(borrowed._opened) if borrowed is not None else ()
+        original_init = DreamsDB.__init__
+
+        def capture(db, *args, **kwargs):
+            original_init(db, *args, **kwargs)
+            owned.append((db, tuple(db._opened)))
+
+        monkeypatch.setattr(DreamsDB, "__init__", capture)
+        refused = RuntimeError("profile awaiting review")
+
+        def refuse(*args, **kwargs):
+            raise refused
+
+        monkeypatch.setattr(stores.subs_db, "run_states", refuse)
+        gate = track_reconcile.DreamsDispatchGate()
+        await track_reconcile.reconcile_at_boot(stores.app(borrowed), gate)
+        assert gate.is_set() and not gate.dispatch_ready
+        if enabled:
+            assert not owned and borrowed_connections
+            for connection in borrowed_connections:
+                assert connection.execute("SELECT 1").fetchone()[0] == 1
+            assert borrowed.live_tracked_suspensions()
+        else:
+            assert len(owned) == 1 and owned[0][1]
+            for connection in owned[0][1]:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                    connection.execute("SELECT 1")
+    finally:
+        for db, _ in owned:
+            db.close_all()
+        if borrowed is not None:
+            borrowed.close_all()
+        stores.close()
+
+
+@pytest.mark.asyncio
+async def test_boot_cleanup_error_does_not_replace_the_store_read_refusal(
+        tmp_path, settings, egress_seams, monkeypatch):
+    stores = _RealStores(tmp_path, monkeypatch)
+    original_close = DreamsDB.close_all
+    try:
+        await stores.track()
+        settings["enabled"] = False
+        failure = RuntimeError("private refusal detail")
+
+        def refuse(*args, **kwargs):
+            raise failure
+
+        def close_then_fail(db):
+            original_close(db)
+            raise OSError("private cleanup detail")
+
+        monkeypatch.setattr(stores.subs_db, "run_states", refuse)
+        monkeypatch.setattr(DreamsDB, "close_all", close_then_fail)
+        with pytest.raises(track_reconcile._StoreReadRefused) as caught:
+            await asyncio.to_thread(track_reconcile._boot_db, stores.app())
+        assert caught.value.__cause__ is failure
+        assert caught.value.__notes__ == ["Dreams boot cleanup failed: OSError"]
+        assert _open_handles_on(stores.dreams_path) == 0
+    finally:
+        stores.close()

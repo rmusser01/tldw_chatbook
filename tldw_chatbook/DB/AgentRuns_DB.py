@@ -8,8 +8,10 @@ and ``transaction()`` (BEGIN IMMEDIATE) for writes.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
+import sys
 import uuid
 from dataclasses import dataclass
 from functools import cached_property
@@ -27,6 +29,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Chat.sampling_params import params_to_dict
+from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
 
@@ -2892,6 +2895,28 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             rows = conn.execute(query, params).fetchall()
             return self._rows_to_dicts(conn, rows)
 
+    def list_change_review_run_anchors(self, conversation_id: str) -> list[dict]:
+        """Read primary run anchors without loading unrelated history payloads.
+
+        Args:
+            conversation_id: Console conversation whose markers are projected.
+
+        Returns:
+            Non-superseded primary IDs and assistant anchors, oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, assistant_message_id FROM agent_runs
+                WHERE conversation_id = ? AND agent_kind = 'primary'
+                    AND status != 'superseded'
+                ORDER BY created_at ASC, id ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+
     def list_subagent_run_headers(
         self,
         conversation_id: str,
@@ -3501,3 +3526,181 @@ BEGIN SELECT RAISE(ABORT, 'goal launch is immutable'); END;
 
 COMMIT;
 """
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_AGENT_BASES = AgentRunsDB.__bases__
+_RUN_LOG_PROBE_INHERITED = (
+    "_init_store_kernel",
+    "_get_connection",
+    "_held_connection",
+    "connection",
+    "transaction",
+    "close",
+    "_transaction_immediate_default",
+)
+_AGENT_RUNS_FACTORY_SLOTS = (
+    (globals(), "AgentRunsDB", AgentRunsDB),
+    (globals(), "BaseDB", BaseDB),
+    (globals(), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (globals(), "_store_kernel", _store_kernel),
+    (globals(), "_RUN_LOG_PROBE_AGENT_BASES", _RUN_LOG_PROBE_AGENT_BASES),
+    (globals(), "_RUN_LOG_PROBE_INHERITED", _RUN_LOG_PROBE_INHERITED),
+    (globals(), "__file__", __file__),
+    (globals(), "__spec__", __spec__),
+    (__spec__, "origin", getattr(__spec__, "origin", None)),
+    (sys.modules, __name__, sys.modules[__name__]),
+    (sys.modules, _store_kernel.__name__, _store_kernel),
+    (vars(_store_kernel), "__name__", _store_kernel.__name__),
+    (vars(_store_kernel), "__file__", _store_kernel.__file__),
+    (vars(_store_kernel), "__spec__", _store_kernel.__spec__),
+    (_store_kernel.__spec__, "origin", getattr(_store_kernel.__spec__, "origin", None)),
+    (vars(_store_kernel), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (BaseDB, "_get_connection", vars(BaseDB)["_get_connection"]),
+    (
+        BaseDB._get_connection.__globals__,
+        "connect_private_sqlite",
+        BaseDB._get_connection.__globals__["connect_private_sqlite"],
+    ),
+    *(
+        (AgentRunsDB, name, inspect.getattr_static(AgentRunsDB, name))
+        for name in (
+            "__init__",
+            "_open_connection",
+            "_configure_connection",
+            "_kernel_sqlite_owner",
+            "__getattribute__",
+            "__dict__",
+            *_RUN_LOG_PROBE_INHERITED,
+        )
+    ),
+    *(
+        (SQLiteStoreKernel, name, vars(SQLiteStoreKernel)[name])
+        for name in (*_RUN_LOG_PROBE_INHERITED, "is_memory_db")
+    ),
+    *(
+        (vars(_store_kernel), name, vars(_store_kernel)[name])
+        for name in (
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_core_closing",
+        )
+    ),
+)
+_RUN_LOG_PROBE_SLOTS = (
+    *_AGENT_RUNS_FACTORY_SLOTS,
+    *(
+        (AgentRunsDB, name, inspect.getattr_static(AgentRunsDB, name))
+        for name in (
+            "get_run_metadata",
+            "latest_primary_run_metadata",
+            "_metadata_row_to_dict",
+        )
+    ),
+)
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    _RUN_LOG_PROBE_SLOTS,
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in _RUN_LOG_PROBE_SLOTS
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+_CHANGE_REVIEW_FACTORY_SOURCES = tuple(
+    ((function, code, defaults, kwdefaults, items), defining, closure, cells, wrapped)
+    for function, code, defining, defaults, kwdefaults, items, closure, cells, wrapped
+    in _RUN_LOG_PROBE_SOURCE[5]
+)
+
+
+# Exact current badge callbacks; custom callbacks retain their original path.
+from inspect import getattr_static as _badge_count_getattr_static
+
+_CONVERSATION_SUBAGENT_COUNT_CALLBACK = (
+    AgentRunsDB,
+    "count_subagents_by_conversation",
+    AgentRunsDB.count_subagents_by_conversation,
+    AgentRunsDB.count_subagents_by_conversation.__code__,
+    AgentRunsDB.count_subagents_by_conversation.__globals__,
+    AgentRunsDB.__getattribute__,
+    _badge_count_getattr_static(AgentRunsDB, "__dict__"),
+)
+del _badge_count_getattr_static
+
+
+# Bind the preceding public reader in its defining module before bridge use.
+_CHANGE_REVIEW_LIST_RUNS_SOURCE = (
+    AgentRunsDB.list_runs, AgentRunsDB.list_runs.__code__,
+    AgentRunsDB.list_runs.__defaults__,
+)
+
+
+# Direct defining callbacks for finite marker presentation.
+_CHANGE_REVIEW_READ_SOURCES = tuple(
+    (
+        name,
+        inspect.getattr_static(AgentRunsDB, name),
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            )
+            for function in (
+                outer,
+                *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+                *(
+                    (outer.__wrapped__.__wrapped__,)
+                    if hasattr(outer, "__wrapped__")
+                    and hasattr(outer.__wrapped__, "__wrapped__")
+                    else ()
+                ),
+            )
+        ),
+    )
+    for name in (
+        "list_runs",
+        "list_change_review_run_anchors",
+        "change_snapshots_for_conversation",
+        "_open_connection",
+        "_configure_connection",
+        "connection",
+        "_held_connection",
+        "_get_connection",
+        "close",
+    )
+    for outer in (inspect.getattr_static(AgentRunsDB, name),)
+)

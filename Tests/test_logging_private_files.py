@@ -225,6 +225,7 @@ def test_existing_private_handler_removes_the_legacy_metadata_filter(
         handler.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_successful_install_writes_its_own_first_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

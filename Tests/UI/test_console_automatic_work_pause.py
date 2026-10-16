@@ -86,7 +86,7 @@ async def _rig(host, pilot):
     controller = console._ensure_console_chat_controller()
     bridge = console._ensure_console_agent_bridge()
     assert bridge is not None
-    _select_llamacpp_console(console)
+    await _select_llamacpp_console(console)
     gateway = _ConcurrentGateway()
     console._console_provider_gateway = gateway
     controller.provider_gateway = gateway

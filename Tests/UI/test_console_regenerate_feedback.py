@@ -89,7 +89,7 @@ async def test_console_regenerate_streams_first_chunk_while_in_flight():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         source = await _seed_selected_assistant_message(console, pilot)
         await _wait_for_selector(
             console, pilot, f"#console-message-action-regenerate-{source.id}"
@@ -119,7 +119,7 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         controller = console._ensure_console_chat_controller()
         source = await _seed_selected_assistant_message(console, pilot)
@@ -210,7 +210,7 @@ async def test_console_retry_streams_first_chunk_while_in_flight():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         # Retry is only offered for failed messages: seed a pending
         # assistant reply and mark it failed (run-gate recipe).
         store = console._ensure_console_chat_store()
@@ -251,7 +251,7 @@ async def test_console_continue_streams_first_chunk_while_in_flight():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         source = await _seed_selected_assistant_message(console, pilot)
         await _wait_for_selector(
             console, pilot, f"#console-message-action-continue-{source.id}"

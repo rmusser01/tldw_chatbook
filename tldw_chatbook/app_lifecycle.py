@@ -544,25 +544,19 @@ class LifecycleMixin:
         if task is None:
 
             async def settle_view_and_dispose() -> None:
-                view_workers = [
-                    worker
-                    for worker in tuple(getattr(self, "workers", ()))
-                    if worker.group in {
-                        "console-sync",
-                        "console-resume-navigation-startup",
-                        "console-resume-navigation-dispatch",
-                    }
-                ]
-                for worker in view_workers:
-                    if not worker.is_finished and not worker.is_cancelled:
-                        worker.cancel()
-                # Cancelled view workers finish their rollback before the
-                # runtime and screens disappear. Accepted execution remains
-                # owned by the runtime's existing disposal policy.
-                await asyncio.gather(
-                    *(worker.wait() for worker in view_workers),
-                    return_exceptions=True,
+                from .UI.Console_Modules.view_workers import (
+                    capture_console_view_workers,
+                    drain_console_view_workers,
                 )
+
+                # Include already-detached nodes whose native reads still belong
+                # to this App's original manager before runtime disposal.
+                captured = capture_console_view_workers(self)
+                runtime = getattr(self, "console_runtime", None)
+                view = getattr(runtime, "view", None)
+                if view is not None:
+                    view._console_chat_tearing_down = True
+                await drain_console_view_workers(captured)
                 await dispose_console_runtime(self)
 
             task = asyncio.create_task(
@@ -699,6 +693,7 @@ class LifecycleMixin:
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True
@@ -714,7 +709,9 @@ class LifecycleMixin:
             await tool_profiles.close_and_drain()
         recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
-        recovery_cancellation = recovery_cancellation or monitor_cancellation
+        recovery_cancellation = (
+            actor_recovery_cancellation or recovery_cancellation or monitor_cancellation
+        )
         workflow_error = None
         workflow_authoring = getattr(self, "_workflow_authoring", None)
         if workflow_authoring is not None:
@@ -732,13 +729,6 @@ class LifecycleMixin:
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
-        # Pooled egress sessions are closed LAST among resource owners:
-        # every durable shutdown above may still issue a final network
-        # call (receipts, notices) through the shared pool (review
-        # follow-up: the pool previously lived until process exit).
-        from .Utils.egress import close_pooled_default_sessions
-
-        close_pooled_default_sessions()
         await self._shutdown_collections_capture_runtime()
         await self._shutdown_notes_sync_runtime()
         await self._shutdown_actor_pack_import()
@@ -769,12 +759,17 @@ class LifecycleMixin:
             await asyncio.to_thread(meeting_session_owner.shutdown)
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
-        if recovery_cancellation is not None:
-            raise recovery_cancellation
-        if lab_error is not None:
-            raise lab_error
-        if workflow_error is not None:
-            raise workflow_error
+        # Live owners may use shared sessions until their drains finish.
+        from .Utils.egress import close_pooled_default_sessions
+
+        pool_error = None
+        try:
+            close_pooled_default_sessions()
+        except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
+            pool_error = exc
+        for error in (recovery_cancellation, lab_error, workflow_error, pool_error):
+            if error is not None:
+                raise error
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
@@ -1011,6 +1006,8 @@ class LifecycleMixin:
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
 
+        # Settle boot-owned native work before any other owner can advance.
+        actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         # Do not close Notes or arm forced-exit cleanup while its worker is live.
         await self._shutdown_workflow_session()
         recovery_cleanup_cancellation = await TldwCli._shutdown_recovery_service(self)
@@ -1018,7 +1015,8 @@ class LifecycleMixin:
         self._speech_initialization_closed = True
         speech_cleanup_cancellation = await self._settle_speech_initialization()
         speech_cleanup_cancellation = (
-            recovery_cleanup_cancellation
+            actor_recovery_cancellation
+            or recovery_cleanup_cancellation
             or monitor_cleanup_cancellation
             or speech_cleanup_cancellation
         )
@@ -1438,7 +1436,7 @@ class LifecycleMixin:
 
             # Clean up any lingering subprocess
             for proc in (
-                subprocess._active.copy()
+                (subprocess._active or []).copy()
             ):  # Make a copy to avoid modification during iteration
                 try:
                     if proc.poll() is None:  # Process is still running

@@ -1302,6 +1302,169 @@ class ConsoleContextRepository:
         return tuple(dict(row) for row in rows)
 
 
+PRESENTATION_GLOBAL_POLICY_UNSET = object()
+
+
+async def read_context_presentation_inputs(
+    controller: Any, session_id: str, *,
+    global_overrides: Any = PRESENTATION_GLOBAL_POLICY_UNSET,
+) -> tuple:
+    """Read a detached display with the current no-memory fast path.
+
+    The first finite read shares policy and the existing memory-presence probe.
+    Only a possible memory captures lineage on the loop and reads its versions
+    in a second finite callback. Neither result grants action authority.
+    """
+    import copy
+    from contextlib import ExitStack
+    from types import MethodType, SimpleNamespace
+
+    from ..Backup_Recovery.participants import _core_operation
+    from ..DB.base_db import operation_owned_connection
+    from .console_context_compaction import (
+        NO_LEGACY_MEMORY,
+        EffectiveMemoryKind,
+        EffectiveMemoryResult,
+        LegacyMemorySnapshot,
+        select_effective_memory,
+    )
+    from .console_preparation_reads import run_preparation_read
+    from .chat_persistence_service import ChatPersistenceService
+
+    if (global_overrides is not PRESENTATION_GLOBAL_POLICY_UNSET
+        and global_overrides is not None
+        and not isinstance(global_overrides, ConsoleContextPolicyOverrides)):
+        raise TypeError("Invalid Console presentation policy.")
+    from .console_chat_controller import (
+        _CONTEXT_DISPLAY_CALLBACKS,
+        ConsoleChatController,
+    )
+
+    def callbacks_current():
+        for name, function, code, defaults, kwdefaults, static in _CONTEXT_DISPLAY_CALLBACKS:
+            bound = getattr(controller, name, None)
+            original_binding = (bound is function if static else (
+                type(bound) is MethodType and bound.__self__ is controller
+                and bound.__func__ is function
+            ))
+            if (not original_binding or function.__code__ is not code
+                or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not kwdefaults):
+                return False
+        return True
+
+    if getattr(controller, "_disposed", False):
+        raise RuntimeError("Console context display owner changed.")
+    if type(controller) is not ConsoleChatController or not callbacks_current():
+        return controller.context_control_inputs(session_id)
+    store = controller.store
+    owner = next((item for item in store.sessions() if item.id == session_id), None)
+    if owner is None:
+        raise KeyError(session_id)
+    repository = controller._context_repository
+    persistence = getattr(store, "persistence", None)
+    repository_db = getattr(repository, "db", None)
+    persistence_db = getattr(persistence, "db", None)
+    conversation_id = owner.persisted_conversation_id
+    overrides = owner.context_policy_overrides
+    summary, boundary = store.session_context_summary(session_id)
+    policy_reader = controller._global_context_policy_overrides
+    snapshots_reader = controller._durable_context_snapshots
+    branch_reader = controller._applicable_branch_memory_state
+    captured = SimpleNamespace(
+        _context_repository=repository,
+        store=SimpleNamespace(session_context_summary=lambda _id: (summary, boundary)),
+    )
+
+    def current():
+        if (not callbacks_current() or controller._disposed or controller.store is not store
+            or controller._context_repository is not repository
+            or getattr(store, "persistence", None) is not persistence
+            or getattr(repository, "db", None) is not repository_db
+            or getattr(persistence, "db", None) is not persistence_db
+            or not any(item is owner for item in store.sessions())):
+            raise RuntimeError("Console context display owner changed.")
+
+    databases = tuple(dict.fromkeys(
+        db for db in (repository_db, persistence_db)
+        if type(db) is CharactersRAGDB and not db.is_memory_db
+    ))
+
+    worker_eligible = (
+        (repository is None or type(repository) is ConsoleContextRepository)
+        and (persistence is None or type(persistence) is ChatPersistenceService)
+        and all(
+            database is None
+            or (type(database) is CharactersRAGDB and not database.is_memory_db)
+            for database in (repository_db, persistence_db)
+        )
+    )
+
+    async def finite(read):
+        if not worker_eligible:
+            current()
+            result = read()
+            current()
+            return result
+        def native():
+            with ExitStack() as stack:
+                for database in databases:
+                    stack.enter_context(operation_owned_connection(database))
+                    stack.enter_context(_core_operation(database))
+                return read()
+        return await run_preparation_read(
+            native, creator=controller, session_id=session_id,
+            reads=controller._preparation_reads, require_current=current,
+        )
+
+    def probe():
+        policy = global_overrides
+        if policy is PRESENTATION_GLOBAL_POLICY_UNSET:
+            try:
+                policy = policy_reader()
+            except Exception:  # noqa: BLE001 - preserve the existing optional presentation-policy fallback.
+                policy = None
+        return policy, may_hold_branch_memory(captured, session_id, conversation_id)
+
+    policy, possible_memory = await finite(probe)
+    effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    if not possible_memory:
+        return overrides, policy, effective
+    active_ids = tuple(store.active_path_message_ids(session_id))
+    messages = {message.id: copy.deepcopy(message)
+                for message in store.messages_for_session(session_id)}
+    parents = {native_id: store.durable_parent_for_message(native_id)
+               for native_id in active_ids}
+    lineage = persistence, active_ids, messages, parents, controller._held_send_echo_id(session_id)
+    boundary_row = messages.get(boundary)
+    legacy = NO_LEGACY_MEMORY
+    if (conversation_id is not None and isinstance(summary, str) and summary.strip()
+        and boundary in active_ids and boundary_row is not None
+        and boundary_row.persisted_message_id is not None):
+        legacy = LegacyMemorySnapshot(
+            conversation_id=conversation_id, summary_text=summary,
+            boundary_message_id=boundary_row.persisted_message_id,
+        )
+
+    def read():
+        effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+        snapshots = snapshots_reader(session_id, _presentation_lineage=lineage)
+        if snapshots:
+            head, memory, scope = branch_reader(
+                repository, conversation_id,
+                frozenset(snapshot.message_id for snapshot in snapshots),
+            )
+            effective = select_effective_memory(
+                conversation_id, snapshots,
+                memories=(memory,) if memory is not None else (),
+                scopes=(scope,) if scope is not None else (),
+                selection_candidates=(head,) if head is not None else (), legacy=legacy,
+            )
+        return overrides, policy, effective
+
+    return await finite(read)
+
+
 def may_hold_branch_memory(
     controller: Any,
     session_id: str,

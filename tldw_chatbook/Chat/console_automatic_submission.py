@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from typing import Any
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
@@ -200,6 +201,14 @@ async def prepare_submission_hooks(
     session_id = session.id
     hook_runtime = getattr(controller, "_hooks_v2_runtime", None)
     if hook_runtime is not None:
+        # Recheck the actual receipt before any capacity reuse, including Goal.
+        from .console_received_turn import received_turn_claim_for
+
+        bound_claim = received_turn_claim_for(controller.store, session_id)
+        received = controller.store.received_turn_for_session(session_id)
+        owns_received = controller._owns_received_turn(session_id)
+        if (bound_claim is not None or received is not None) and not owns_received:
+            return ConsoleSubmitResult(False, False, "A turn is already preparing.")
         # Recheck after awaited reference expansion; reserve without an await.
         busy = hook_busy_sessions(
             controller,
@@ -209,6 +218,8 @@ async def prepare_submission_hooks(
             chat_start_authorization,
             recovery,
         )
+        if owns_received:
+            busy = [identity for identity in busy if identity != session_id]
         if session_id in busy or len(busy) >= controller.max_parallel_runs:
             return ConsoleSubmitResult(False, False, "A run is already preparing.")
         controller._set_run_state(
@@ -297,8 +308,27 @@ def hook_admission_reason(controller) -> str | None:
     from tldw_chatbook.config import read_hooks_config_snapshot
 
     try:
-        if controller._hook_permissions_accessor is not None:
-            return controller._hook_permissions_accessor().snapshot().blocked_reason
+        from .console_hook_preparation import hook_preparation_source_for
+
+        source = hook_preparation_source_for(controller)
+        accessor = (
+            source.accessor
+            if isinstance(source, _HookAdmissionReadSource)
+            else controller._hook_permissions_accessor
+        )
+        if accessor is not None:
+            if isinstance(source, _HookAdmissionReadSource) and source.managed:
+                # Keep cold construction inside the exact original native read.
+                with source.runtime._run_hooks_lock:
+                    permissions = (
+                        source.permissions if source.permissions is not None else accessor()
+                    )
+                    source.permissions = permissions
+            else:
+                permissions = accessor()
+                if isinstance(source, _HookAdmissionReadSource):
+                    source.permissions = permissions
+            return permissions.snapshot().blocked_reason
         saved = read_hooks_config_snapshot()
         inventory = inspect_hooks_config(
             {"hooks": saved.section} if saved.section_present else {}
@@ -341,3 +371,119 @@ def run_owned_chat_operation(controller, call, /, *args, **kwargs):
     database = getattr(controller.store.persistence, "db", None)
     with scope, operation_owned_connection(database):
         return call(*args, **kwargs)
+
+
+@dataclass(slots=True)
+class _HookAdmissionReadSource:
+    accessor: Any = field(repr=False)
+    permissions: Any = field(repr=False)
+    runtime: Any = field(default=None, repr=False)
+    managed: bool = False
+
+
+async def read_hook_admission(self) -> str | None:
+    """Retain the original finite authority read without changing callback shape."""
+    from types import MethodType
+
+    from .console_hook_preparation import (
+        hook_preparation_session_for,
+        run_hook_preparation_read,
+    )
+
+    def same(left, right):
+        return left is right or (
+            isinstance(left, MethodType)
+            and isinstance(right, MethodType)
+            and left.__func__ is right.__func__
+            and left.__self__ is right.__self__
+        )
+
+    try:
+        session_id = hook_preparation_session_for(self)
+        store, app = self.store, self.app
+        session = (
+            next((row for row in store.sessions() if row.id == session_id), None)
+            if session_id is not None
+            else None
+        )
+        identity = (
+            getattr(session, "incarnation_id", None),
+            getattr(session, "conversation_binding_revision", None),
+            getattr(session, "ephemeral", None),
+            getattr(session, "workspace_id", None),
+        )
+        accessor = self._hook_permissions_accessor
+        callback = self._hook_admission_reason
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        runtime_store = getattr(runtime, "_chat_store", None)
+        runtime_controller = getattr(runtime, "_chat_controller", None)
+        permissions = None
+        managed = False
+        if runtime is not None:
+            from .console_runtime import _HOOK_PERMISSION_ACCESSOR_ORIGINAL
+
+            function, code = _HOOK_PERMISSION_ACCESSOR_ORIGINAL
+            if (
+                isinstance(accessor, MethodType)
+                and accessor.__self__ is runtime
+                and accessor.__func__ is function
+                and function.__code__ is code
+            ):
+                managed = True
+                permissions = runtime._hook_permissions
+        source = _HookAdmissionReadSource(accessor, permissions, runtime, managed)
+
+        def require_current():
+            current = (
+                next(
+                    (row for row in store.sessions() if row.id == session_id), None
+                )
+                if session_id is not None
+                else None
+            )
+            if (
+                self._disposed
+                or self.store is not store
+                or self.app is not app
+                or not same(self._hook_permissions_accessor, accessor)
+                or not same(self._hook_admission_reason, callback)
+                or current is not session
+                or (
+                    getattr(current, "incarnation_id", None),
+                    getattr(current, "conversation_binding_revision", None),
+                    getattr(current, "ephemeral", None),
+                    getattr(current, "workspace_id", None),
+                )
+                != identity
+                or (
+                    runtime is not None
+                    and (
+                        getattr(self, "_hooks_v2_runtime", None) is not runtime
+                        or runtime._disposed
+                        or runtime._chat_store is not runtime_store
+                        or runtime._chat_controller is not runtime_controller
+                        or session_id in runtime._admission_fenced_sessions
+                        or (
+                            source.managed
+                            and source.permissions is not None
+                            and runtime._hook_permissions is not source.permissions
+                        )
+                    )
+                )
+            ):
+                raise RuntimeError("Console hook admission owner changed.")
+
+        observers = () if runtime is None else (runtime._preparation_reads,)
+        return await run_hook_preparation_read(
+            callback,
+            creator=self,
+            session_id=session_id,
+            reads=self._preparation_reads,
+            observers=observers,
+            require_current=require_current,
+            source=source,
+        )
+    except Exception:  # noqa: BLE001 - preserve public hook refusal while cancellation retains native custody.
+        # Keep the existing public reason-return contract; cancellation is
+        # BaseException and escapes only after its real native read retires.
+        return "Hooks unavailable; review or disable hooks before sending."

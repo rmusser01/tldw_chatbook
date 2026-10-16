@@ -842,6 +842,7 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -894,6 +895,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_log_probe_is_cached_per_run_id_while_open():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1407,6 +1409,7 @@ async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
     import threading
 

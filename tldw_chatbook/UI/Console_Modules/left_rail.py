@@ -749,6 +749,9 @@ class ConsoleLeftRail(Vertical):
             # content keeps the gate correct across a same-instance
             # recompose (a fresh Static always differs or already matches).
             title_copy = "Model ⚠" if has_warning else "Model"
+            self.query_one(
+                "#console-rail-section-header-model", DestinationRailSectionHeader
+            ).title = title_copy
             if title.content != title_copy:
                 title.update(title_copy)
             generation_group = self.query_one("#console-generation-recovery-row")

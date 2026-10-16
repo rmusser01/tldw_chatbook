@@ -328,7 +328,33 @@ async def test_f9_snapshot_controls_paint_and_keyboard_save(request, size, monke
         save = screen.query_one("#settings-save-category", Button)
         save.focus()
         await pilot.wait_for_scheduled_animations()
+        before_enter = (
+            save.has_focus,
+            save.disabled,
+            screen._snapshot_preferences_dirty(),
+            screen._snapshot_preferences_saving,
+        )
         await pilot.press("enter")
-        async with asyncio.timeout(5):
-            while not preferences.load_snapshot_preferences().enabled:
-                await pilot.pause(0.01)
+        try:
+            async with asyncio.timeout(5):
+                while not preferences.load_snapshot_preferences().enabled:
+                    await pilot.pause(0.01)
+        except TimeoutError as exc:
+            after_timeout = (
+                save.has_focus,
+                save.disabled,
+                screen._snapshot_preferences_dirty(),
+                screen._snapshot_preferences_saving,
+            )
+            save_workers = [
+                worker.state.name for worker in app.workers
+                if worker.group == "settings-snapshot-save"
+            ]
+            loaded_enabled = getattr(screen._snapshot_preferences_loaded, "enabled", None)
+            exc.add_note(
+                f"Snapshot Save before Enter (focused, disabled, dirty, saving): "
+                f"{before_enter}; after timeout: "
+                f"{after_timeout}; checkbox enabled: {checkbox.value}; "
+                f"loaded enabled: {loaded_enabled}; save workers: {save_workers}"
+            )
+            raise

@@ -1050,7 +1050,7 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
             ),
         )
 
-        _sync_console_control_bar_now(screen)
+        await _sync_console_control_bar_now(screen)
 
         assert builds == [snapshot]
         assert summary_states == [snapshot]
@@ -1110,7 +1110,7 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
         )
 
         with pytest.raises(ownership.UnownedInspectorContentError):
-            _sync_console_control_bar_now(screen)
+            await _sync_console_control_bar_now(screen)
 
         assert summary.last_state is prior
 

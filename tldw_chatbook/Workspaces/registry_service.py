@@ -8,12 +8,15 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import inspect
 import json
 from pathlib import Path, PurePosixPath
 import re
 from secrets import token_urlsafe
 import sqlite3
+import sys
 import threading
+from types import ModuleType
 from typing import Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
@@ -26,6 +29,7 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -916,7 +920,7 @@ class LocalWorkspaceRegistryService:
                 """
             params = (0,)
         try:
-            with self.db.connection() as conn:
+            with operation_owned_connection(self.db), self.db.connection() as conn:
                 rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -927,7 +931,7 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            with operation_owned_connection(self.db), self.db.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT *
@@ -3811,3 +3815,291 @@ def next_local_workspace_identity(
         if workspace_id not in existing_ids and workspace_name not in existing_names:
             return workspace_id, workspace_name
         index += 1
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+        (globals(), "WorkspaceDB", WorkspaceDB),
+        *(
+            (
+                LocalWorkspaceRegistryService,
+                name,
+                vars(LocalWorkspaceRegistryService)[name],
+            )
+            for name in (
+                "__init__",
+                "get_active_workspace",
+                "list_folder_bindings",
+                "list_runtime_bindings",
+            )
+        ),
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_workspace_from_row",
+                "_runtime_binding_from_row",
+                "_filesystem_binding_missing",
+                "_assistant_defaults_from_json",
+                "_metadata_from_json",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+            (globals(), "WorkspaceDB", WorkspaceDB),
+            *(
+                (
+                    LocalWorkspaceRegistryService,
+                    name,
+                    vars(LocalWorkspaceRegistryService)[name],
+                )
+                for name in (
+                    "__init__",
+                    "get_active_workspace",
+                    "list_folder_bindings",
+                    "list_runtime_bindings",
+                )
+            ),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_workspace_from_row",
+                    "_runtime_binding_from_row",
+                    "_filesystem_binding_missing",
+                    "_assistant_defaults_from_json",
+                    "_metadata_from_json",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+_HOOK_WORKSPACE_READERS = tuple(
+    (
+        LocalWorkspaceRegistryService,
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        function.__closure__,
+    )
+    for name in ('get_workspace', 'read_change_review_consent')
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)
+
+
+_DEFAULT_BINDING_DISPLAY_MISSING = object()
+
+
+def _stock_default_bindings_are_empty(
+    service: object,
+    workspace_id: object,
+    source: tuple,
+) -> bool:
+    """Qualify only the immutable stock Default policy for disposable display."""
+    try:
+        if (
+            source is not _DEFAULT_BINDING_DISPLAY_SOURCE
+            or type(workspace_id) is not str
+        ):
+            return False
+        namespace, path, spec, origin, bindings, descriptors, functions = source
+        module = sys.modules.get(namespace.get("__name__"))
+        if (
+            type(module) is not ModuleType
+            or vars(module) is not namespace
+            or namespace.get("__file__") != path
+            or namespace.get("__spec__") is not spec
+            or getattr(spec, "origin", None) != origin
+            or any(namespace.get(name) is not value for name, value in bindings)
+        ):
+            return False
+        if (
+            type(service) is not LocalWorkspaceRegistryService
+            or workspace_id != DEFAULT_WORKSPACE_ID
+        ):
+            return False
+        if any(
+            inspect.getattr_static(owner, name, _DEFAULT_BINDING_DISPLAY_MISSING)
+            is not value
+            for owner, name, value in descriptors
+        ):
+            return False
+        for (
+            function,
+            code,
+            defining,
+            defaults,
+            keywords,
+            items,
+            closure,
+            cells,
+            wrapped,
+        ) in functions:
+            if (
+                function.__code__ is not code
+                or function.__globals__ is not defining
+                or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not keywords
+                or len(function.__kwdefaults__ or {}) != len(items)
+                or any(
+                    (function.__kwdefaults__ or {}).get(key) is not value
+                    for key, value in items
+                )
+                or function.__closure__ is not closure
+                or any(cell.cell_contents is not value for cell, value in cells)
+                or vars(function).get("__wrapped__") is not wrapped
+            ):
+                return False
+        fields = vars(service)
+        if type(fields) is not dict or any(
+            name in fields
+            for owner, name, _value in descriptors
+            if owner is LocalWorkspaceRegistryService and name != "db"
+        ):
+            return False
+        database = fields.get("db")
+        return (
+            type(database) is WorkspaceDB
+            and inspect.getattr_static(database, "is_memory_db", None) is False
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+# Producer-owned originals survive custom changes installed before UI import.
+_DEFAULT_BINDING_DISPLAY_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (name, globals()[name])
+        for name in (
+            "LocalWorkspaceRegistryService",
+            "WorkspaceDB",
+            "DEFAULT_WORKSPACE_ID",
+            "_normalize_required_text",
+            "_stock_default_bindings_are_empty",
+            "_DEFAULT_BINDING_DISPLAY_MISSING",
+        )
+    ),
+    tuple(
+        (
+            owner,
+            name,
+            inspect.getattr_static(owner, name, _DEFAULT_BINDING_DISPLAY_MISSING),
+        )
+        for owner, names in (
+            (
+                LocalWorkspaceRegistryService,
+                (
+                    "__getattribute__",
+                    "__getattr__",
+                    "__dict__",
+                    "db",
+                    "list_runtime_bindings",
+                    "list_folder_bindings",
+                    "_delete_default_runtime_bindings",
+                ),
+            ),
+            (
+                WorkspaceDB,
+                ("__getattribute__", "__getattr__", "__dict__", "is_memory_db"),
+            ),
+        )
+        for name in names
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for outer in (
+            _normalize_required_text,
+            _stock_default_bindings_are_empty,
+            LocalWorkspaceRegistryService.list_runtime_bindings,
+            LocalWorkspaceRegistryService.list_folder_bindings,
+            LocalWorkspaceRegistryService._delete_default_runtime_bindings,
+        )
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+_DEFAULT_BINDING_DISPLAY_POLICY = (
+    _stock_default_bindings_are_empty,
+    _stock_default_bindings_are_empty.__code__,
+    _DEFAULT_BINDING_DISPLAY_SOURCE,
+)
+
+
+def _default_binding_display_current(
+    service: object,
+    workspace_id: object,
+    policy: tuple = _DEFAULT_BINDING_DISPLAY_POLICY,
+) -> bool:
+    """Retain the definition-owned policy even before a display module imports."""
+    if _DEFAULT_BINDING_DISPLAY_POLICY is not policy:
+        return False
+    checker, code, source = policy
+    return checker.__code__ is code and checker(service, workspace_id, source)
+
+
+_DEFAULT_BINDING_DISPLAY_CHECK = (
+    _default_binding_display_current,
+    _default_binding_display_current.__code__,
+    _default_binding_display_current.__defaults__,
+    _default_binding_display_current.__kwdefaults__,
+)

@@ -104,6 +104,20 @@ def prepared(db, checkpoint):
     )
 
 
+def assert_payload_root(db, request_id, revision, *, retained):
+    mark = db.get_connection().execute(
+        "SELECT 1 FROM console_trace_gc_marks WHERE request_id=? "
+        "AND entity_kind='console_trace_payload_revisions' AND entity_id=?",
+        (request_id, revision),
+    ).fetchone()
+    assert (mark is not None) is retained
+    # A still-live canonical message keeps metadata independently of admission.
+    assert db.get_connection().execute(
+        "SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=?",
+        (revision,),
+    ).fetchone()
+
+
 def settle(repository, checkpoint):
     result = repository.settle_with_assistant(
         ConsoleAssistantSettlement(
@@ -127,7 +141,9 @@ def test_collect_between_admission_and_reservation_retains_exact_live_revision(
     db, repository, checkpoint = admitted
     revision, request = prepared(db, checkpoint)
     collector = TraceGarbageCollector(db)
-    result = collector.collect(request_id="admission-gap")
+    collector.mark(request_id="admission-gap")
+    assert_payload_root(db, "admission-gap", revision, retained=True)
+    result = collector.sweep(request_id="admission-gap")
     assert result.status == "completed"
     # Real factory must find the originally admitted revision, not recreate a replacement.
     boundary = ConsoleTraceBoundaryFactory(db)(request, None, ConsoleRequestRoute.FRESH)
@@ -168,22 +184,15 @@ def test_settlement_revokes_unreserved_root_and_invalidates_old_mark(admitted):
         )
         .fetchone()
     )
-    collector.collect(request_id="revoked-root")
-    assert (
-        db.get_connection()
-        .execute(
-            "SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=?",
-            (revision,),
-        )
-        .fetchone()
-        is None
-    )
+    collector.mark(request_id="revoked-root")
+    assert_payload_root(db, "revoked-root", revision, retained=False)
+    assert collector.sweep(request_id="revoked-root").status == "completed"
 
 
 @pytest.mark.parametrize(
     "invalid", ["version", "payload", "parent", "off_path", "orphan"]
 )
-def test_invalid_or_unowned_admissions_do_not_retain_revisions(admitted, invalid):
+def test_invalid_or_unowned_admissions_do_not_retain_payload_roots(admitted, invalid):
     db, repository, checkpoint = admitted
     revision, _ = prepared(db, checkpoint)
     if invalid == "orphan":
@@ -214,16 +223,10 @@ def test_invalid_or_unowned_admissions_do_not_retain_revisions(admitted, invalid
                 cursor.execute(
                     "UPDATE console_dispatch_checkpoints SET user_message_id=assistant_message_id"
                 )
-    TraceGarbageCollector(db).collect(request_id="invalid-owner")
-    assert (
-        db.get_connection()
-        .execute(
-            "SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=?",
-            (revision,),
-        )
-        .fetchone()
-        is None
-    )
+    collector = TraceGarbageCollector(db)
+    collector.mark(request_id="invalid-owner")
+    assert_payload_root(db, "invalid-owner", revision, retained=False)
+    assert collector.sweep(request_id="invalid-owner").status == "completed"
 
 
 def test_admission_after_mark_invalidates_sweep_and_new_mark_retains_it(tmp_path):
@@ -271,6 +274,19 @@ async def test_automatic_collector_revisits_settled_checkpoint_epoch(
         return outcome
 
     monkeypatch.setattr(PhysicalTraceCompactor, "run_after_gc", compact)
+    marked_roots = {}
+    original_mark = TraceGarbageCollector.mark
+
+    def mark(self, **kwargs):
+        result = original_mark(self, **kwargs)
+        marked_roots[result.request_id] = self.db.get_connection().execute(
+            "SELECT 1 FROM console_trace_gc_marks WHERE request_id=? "
+            "AND entity_kind='console_trace_payload_revisions' AND entity_id=?",
+            (result.request_id, revision),
+        ).fetchone() is not None
+        return result
+
+    monkeypatch.setattr(TraceGarbageCollector, "mark", mark)
     collected = []
     original = TraceGarbageCollector.collect
 
@@ -293,17 +309,10 @@ async def test_automatic_collector_revisits_settled_checkpoint_epoch(
             )
             .fetchone()
         )
+        assert marked_roots[collected[-1].request_id]
         first_epoch = collected[-1].marked_epoch
         settle(repository, checkpoint)
         await _until(lambda: any(row.marked_epoch > first_epoch for row in collected))
-        assert (
-            db.get_connection()
-            .execute(
-                "SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=?",
-                (revision,),
-            )
-            .fetchone()
-            is None
-        )
+        assert not marked_roots[collected[-1].request_id]
     finally:
         await runtime.dispose()

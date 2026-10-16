@@ -325,7 +325,7 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
             await _wait_for_selector(screen, pilot, "#console-native-composer")
             assert screen._ensure_console_chat_controller() is controller
             composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
-            _select_llamacpp_console(screen)
+            await _select_llamacpp_console(screen)
             selector = (
                 "#console-collapsed-stop-generation"
                 if collapsed

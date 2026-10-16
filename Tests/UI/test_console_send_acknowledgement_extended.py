@@ -136,6 +136,14 @@ async def test_failed_durable_commit_releases_the_row_and_restores_send():
                 await until(gate.entered.is_set)
                 held = paint_state(host)
                 assert held.user_row and held.sending, held
+                gate.release.set()
+                await until(gateway.validation_started.is_set)
+                claim = store.received_turn_for_session(store.active_session_id)
+                assert claim is not None and claim.draft_revision is not None
+                assert claim._draft_transfer_revision == store.session_input_snapshot(
+                    store.active_session_id
+                ).draft_revision
+                assert claim._draft_transfer_revision > claim.draft_revision
             finally:
                 gate.release.set()
                 # The durable commit comes after provider validation.
@@ -218,7 +226,7 @@ async def test_a_tab_switch_before_the_paint_never_acknowledges_the_shown_tab(
         with eager_tasks():
             console = host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-composer")
-            _select_llamacpp_console(console)
+            await _select_llamacpp_console(console)
             store = console._ensure_console_chat_store()
             sent_from = store.active_session_id
             await pilot.click("#console-new-chat-tab")

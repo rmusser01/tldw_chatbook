@@ -1345,3 +1345,18 @@ report; `ruff check --isolated --select F811 --config 'lint.dummy-variable-rgx =
 does (identical bodies are flagged too, probed on ruff 0.16.6). An AST pass over
 the class body that lists duplicate method names (skipping property
 getter/setter pairs) is the other way to see them.
+
+## A successful append-plan can reformat the task outside its plan (PR3023, 2026-10-14)
+
+`backlog-py task edit34563.28 --append-plan` returned0 and appended the approved
+plan exactly once, but also normalized YAML indentation/date quoting and removed
+one blank separator. A postcheck that allowed only updated_date drift refused
+that output after the successful write. The preserved raw file, parsed metadata
+and exact PLAN comparison showed no other semantic changes. Root retained the
+CLI-owned date, restored the original representation/separator and completed
+the checks without another CLI call.
+
+Archive the actual output before postchecking. Treat a successful or uncertain
+mutation as already attempted: inspect the task before retrying, compare the
+exact plan append and metadata values, and preserve any formatting recovery as
+a separate snapshot. A failed postcheck is not authorization to append twice.

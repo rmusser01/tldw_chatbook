@@ -15,8 +15,8 @@ from Tests.UI.app_factory import (
     drain_active_service_patches,
     drain_created_dirs,
 )
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -32,6 +32,9 @@ class ProductionConsoleHarness(ConsoleHarness):
 
 
 def _pending_card(console, round_id="compact-round"):
+    assert console._console_attach_reconciled, (
+        "synthetic approval preceded Console attachment"
+    )
     console.set_task_resume_state(
         TaskResumeState(
             pending_approval={
@@ -55,7 +58,19 @@ def _pending_card(console, round_id="compact-round"):
 
 def _assert_painted(host, card, button):
     region = button.region
-    assert region.width >= len(button.label.plain), (button.id, region)
+    assert region.width >= len(button.label.plain), (
+        button.id,
+        region,
+        {
+            "mounted": button.is_mounted,
+            "display": button.display,
+            "card_display": card.display,
+            "generation": card._batch_generation,
+            "current_fast_button": button in card._batch_fast_buttons,
+            "card_region": card.content_region,
+            "parent_region": button.parent.region if button.parent is not None else None,
+        },
+    )
     assert region.height > 0, button.id
     assert card.content_region.contains_region(region), (
         button.id,
@@ -84,8 +99,7 @@ async def _verify_every_approval_action_is_painted_and_focusable(request):
     _configure_native_ready_console(app)
     host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 24)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         for size, inspect_open in (
             ((80, 24), True),
             ((90, 30), True),
@@ -130,8 +144,7 @@ async def _verify_reflow_preserves_decision_and_reused_round_controls(request):
     _configure_native_ready_console(app)
     host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 24)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         console._set_console_rail_preference(left_open=False, right_open=True)
         _pending_card(console)
         await pilot.pause(0.3)
@@ -178,8 +191,7 @@ async def _verify_height_only_resize_reflows_existing_controls(request):
     _configure_native_ready_console(app)
     host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 40)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         console._set_console_rail_preference(left_open=False, right_open=False)
         _pending_card(console)
         await pilot.pause(0.3)

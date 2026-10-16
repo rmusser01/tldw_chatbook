@@ -286,7 +286,7 @@ async def _second_tab(console, pilot, *, ready: bool) -> tuple[str, str]:
     if ready:
         await console._session._activate_native_console_session(session_b)
         await pilot.pause(0.2)
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         await pilot.pause(0.2)
     store.set_session_draft(session_b, B_DRAFT)
     await console._session._activate_native_console_session(session_a)

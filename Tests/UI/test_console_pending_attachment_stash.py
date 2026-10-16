@@ -156,7 +156,7 @@ async def test_pending_attachments_survive_screen_recreation():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session_id = store.ensure_session().id
         assert store.add_pending_attachment(session_id, disk_pending)
@@ -197,7 +197,7 @@ async def test_stash_prunes_dead_sessions_and_empties_after_adoption():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session_id = store.ensure_session().id
         assert store.add_pending_attachment(
@@ -489,7 +489,7 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         await _wait_for_h3_state(
             pilot,
             lambda: not console._console_setup_modal_blocking(),

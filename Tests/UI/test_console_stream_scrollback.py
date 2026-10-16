@@ -38,7 +38,7 @@ async def test_wheel_scrollback_detaches_follow_during_stream():
     async with host.run_test(size=(120, 30)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         # Overflow the transcript so there is real scrollback.
         store = console._ensure_console_chat_store()
@@ -102,7 +102,7 @@ async def test_send_after_scrollback_still_jumps_to_tail():
     async with host.run_test(size=(120, 30)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
         for n in range(30):
@@ -147,7 +147,7 @@ async def test_wheel_accepted_while_layout_transiently_collapsed():
     async with host.run_test(size=(120, 30)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
         store.append_message(

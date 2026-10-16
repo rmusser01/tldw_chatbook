@@ -264,12 +264,20 @@ async def test_canonical_disposal_detaches_before_original_database_retirement(
 
     database = CharactersRAGDB(tmp_path / "disposal.sqlite", "disposal-control")
     connections = tuple(database._maintenance_participant.connections)
-    app = SimpleNamespace(
-        chachanotes_db=database,
-        workers=(),
-        _console_runtime_shutdown_task=None,
-        _plugin_service=None,
-    )
+    if production_shutdown:
+        from textual.app import App
+
+        app = App()
+        app.chachanotes_db = database
+        app._console_runtime_shutdown_task = None
+        app._plugin_service = None
+    else:
+        app = SimpleNamespace(
+            chachanotes_db=database,
+            workers=(),
+            _console_runtime_shutdown_task=None,
+            _plugin_service=None,
+        )
     runtime = ConsoleRuntime(app)
     app.console_runtime = runtime
     runtime.ensure_chat_store().create_session(ephemeral=True)

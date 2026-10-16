@@ -191,6 +191,7 @@ def test_writer_failure_logs_do_not_persist_private_scratch_locator(
     assert "secret-token" not in warning_text
 
 
+@pytest.mark.bootstrap_profile
 def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_path):
     scratch = tmp_path / "private-scratch"
     scratch.mkdir()
@@ -480,6 +481,7 @@ def test_disabled_writer_leaves_the_run_untouched(wired, monkeypatch):
     assert not (root / "agent-runs").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired, inline_spawns):
     """Round-1 review fix: the prior version of this suite only ever proved
     sharing by manually calling ``writer.append`` on the object the test
@@ -527,6 +529,7 @@ def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired, inline_
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_spawn_tool_call_record_precedes_the_childs_own_records(
     wired, inline_spawns
 ):

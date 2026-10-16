@@ -4076,6 +4076,17 @@ as well as pytest; a stdlib-only checker can still require the project's
 Python grammar. This incident did not justify changing source syntax or
 regenerating the inventory without reviewing its result.
 
+
+**Recurrence, PR3023 warm-Send diagnostic, 2026-10-14.** A source-only preparation
+used host Python3.9 to fingerprint `_maintenance_boundary`. The actual3.12
+diagnostic refused before test entry because three empty `type_params=[]` AST
+fields changed that digest. Removing only those fields reproduced the old hash;
+no application source had changed. Compile-as-data had not validated the saved
+fingerprint. Derive and validate consumed AST metadata with the actual target
+interpreter, and retain a pre-test observer refusal separately from a product
+failure. The corrected3.12 binding subsequently reached the original warm
+timeout; correcting metadata did not turn that result green.
+
 ---
 
 ## A suite that no gate runs can rot invisibly for days
@@ -19894,3 +19905,54 @@ mounted/visible/enabled geometry and hit target before issuing one real click.
 Assert that click succeeded. Data-ready or a pause alone is not a mouse-target
 fence; do not retry clicks, press the Button directly, manually open a modal or
 replace the real composition-readiness check to obtain a passing route test.
+
+
+## A shared cache timestamp does not identify its publisher (PR3023, 2026-10-16)
+
+An original held Workspace source-change control failed once in a55-pass/1-fail
+cohort because the global cache timestamp advanced. Two passive observations did
+not reproduce or explain that historical failure. A deterministic real-SQLite
+control then proved the oracle ambiguous: the exact held producer rejected the
+changed source and retired without either map or timestamp publication, while a
+separate valid custom request legitimately advanced the timestamp. The old global
+equality failed only after that valid publication. Keep the precise native
+producer Future, its source-refusal outcome and positive retirement, and observe
+all publication sites for that issuing task. A global timestamp/counter freeze is
+valid only with proven exclusive ownership; a later passing rerun does not
+identify the earlier failure's cause.
+
+
+## Deliver queued changes before joining their workers (PR3023, 2026-10-16)
+
+UI9's permission-summary journey read the old provider while its real atomic
+save completed during teardown. The fixture joined WorkerManager before
+delivering a queued Select.Changed event; that join snapshots current workers
+and could return before the event created its writer. A held-real-writer control
+proved the helper returned while the exact issued save Worker remained held.
+Reordering the same existing event drain, bounded worker join and final UI drain
+fixed the full18-case module without changing product code or deadlines. Join
+workers after the events that issue them; a manager join alone does not settle
+queued UI input. The original OpenAI case passed locally, so retain its hosted
+negative separately from the causal held-worker control.
+
+
+## Mounted controls do not prove a held cached-hydration race ran (PR3023, 2026-10-16)
+
+A native Windows GGUF diagnostic passed while its fresh-read gate returned at
+1250ms and cached hydration began only at1265ms. The fixture had checked mounted
+controls and a pending handoff, then released the fresh read before observing the
+cached application it intended to test. Settle the real initial inventory, keep
+unrelated first-arrival work outside the hold, and witness the actual current
+cached application to the inactive mounted selector before release. Require the
+native hold still active: an unreleased Event also remains false after its wait
+expires. Preserve exact fresh selection and all deadlines. The earlier hosted
+selection failure remains unexplained; this receipt proves the missing race
+witness, not that historical failure's cause.
+
+The stronger witness then failed on native Windows with default fd capture:
+valid cached application at3578ms preceded fresh thread entry at3688ms, so its
+waiting condition was false and no later cached callback replayed. A delayed
+entry control reproduced this order locally; the same control passed after
+only the test's original population-ready callback awaited actual thread entry.
+Keep that synchronization explicit instead of assuming worker start order. The
+original apply still runs once; no inventory, deadline or production guard changes.

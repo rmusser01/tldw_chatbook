@@ -24,6 +24,7 @@ from textual.message import Message
 from textual.pilot import OutOfBounds
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -503,7 +504,8 @@ async def test_clicking_a_rail_section_toggle_moves_focus_to_the_toggle_button()
 
 
 @pytest.mark.asyncio
-async def test_sync_model_recovery_repaints_only_rows_whose_copy_changed() -> None:
+@private_profile_test
+async def test_sync_model_recovery_repaints_only_rows_whose_copy_changed(request) -> None:
     """The Console sync tick reached sync_model_recovery unconditionally, so
     unchanged recovery state repainted 'Model' and the (usually empty)
     default-copy row on every tick (TASK-34991 findings). TASK-35028 gates
@@ -553,8 +555,8 @@ async def test_sync_model_recovery_repaints_only_rows_whose_copy_changed() -> No
             )
         # Content that differs (e.g. a same-instance recompose left the fresh
         # Statics at their defaults) is repainted exactly once per sync.
-        rows["title"].update("Model X")
-        rows["default"].update("a stuck default-save sentence")
+        originals["title"]("Model X")
+        originals["default"]("a stuck default-save sentence")
         rail.sync_model_recovery(**kwargs)
         assert len(calls["title"]) == baseline["title"] + 1
         assert str(rows["title"].content) == "Model"

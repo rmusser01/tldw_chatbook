@@ -463,14 +463,23 @@ def _boot_db(app: Any) -> tuple[Any, bool, bool, bool, _Drift]:
         owned = True
     if dreams_db is None:
         return None, False, False, False, _Drift()
-    rows, gone, backfill = dreams_db.tracking_boot_rows(retired=not enabled)
-    switch = _records_need_switch(
-        [row.get("suspension") for row in rows], enabled=enabled)
-    drift = _read_drift(app, rows, gone, enabled=enabled) if (
-        rows or gone) else _Drift()
-    if switch or backfill or drift:
-        return (dreams_db, owned, switch or bool(drift.records), backfill,
-                drift)
+    try:
+        rows, gone, backfill = dreams_db.tracking_boot_rows(retired=not enabled)
+        switch = _records_need_switch(
+            [row.get("suspension") for row in rows], enabled=enabled)
+        drift = _read_drift(app, rows, gone, enabled=enabled) if (
+            rows or gone) else _Drift()
+        if switch or backfill or drift:
+            return (dreams_db, owned, switch or bool(drift.records), backfill,
+                    drift)
+    except BaseException as error:
+        if owned:
+            try:
+                dreams_db.close_all()
+            except Exception as cleanup_error:  # noqa: BLE001 - retain the read refusal.
+                error.add_note(
+                    f"Dreams boot cleanup failed: {type(cleanup_error).__name__}")
+        raise
     if owned:
         dreams_db.close_all()
     return None, False, False, False, _Drift()

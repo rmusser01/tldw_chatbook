@@ -998,7 +998,7 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         console = app.screen
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         target = controller.store.ensure_session()
         binding = BuddyBinding.for_session(target)

@@ -1459,6 +1459,7 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._actor_pack_recovery_reads: set = set()
         # Portable Tool Packs are unavailable until first Tool Profiles use
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
@@ -1476,6 +1477,7 @@ class TldwCli(
         self._initial_screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
+        self._initial_screen_pushed = False
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
@@ -4768,20 +4770,7 @@ class TldwCli(
         """
 
         def start_actor_pack_recovery() -> Worker:
-            # task-21106: Actor Pack crash recovery, moved out of __init__ --
-            # synchronous SQLite has no place on the construction path. A
-            # thread worker (not a coroutine) because recovery does blocking
-            # DB I/O; the coordinator's own once-guard makes every later
-            # surface-side call (Personas mount, create_persona) a cached
-            # no-op -- which is also why this may be staggered at all.
-            return self.run_worker(
-                self.ensure_actor_pack_recovery,
-                name="deferred_actor_pack_recovery",
-                group="actor_pack_recovery",
-                thread=True,
-                exclusive=True,
-                exit_on_error=False,
-            )
+            return self._start_actor_pack_recovery_worker(self.ensure_actor_pack_recovery)
 
         def start_actor_pack_staging_sweep() -> Worker:
             # task-22216: the Actor Pack staging crash-sweep, moved out of
@@ -5822,3 +5811,13 @@ if __name__ == "__main__":
 #
 # End of app.py
 #######################################################################################################################
+
+
+# Defining callbacks for checked stock Console preparation; no IO.
+_CONSOLE_SKILL_APP_SOURCE = (
+    TldwCli,
+    globals(),
+    TldwCli._create_deferred_startup_task,
+    TldwCli._create_deferred_startup_task.__code__,
+    ConsoleRuntime,
+)

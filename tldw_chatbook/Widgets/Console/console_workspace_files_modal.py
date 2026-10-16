@@ -416,9 +416,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         # so update the attached screen's static rather than dropping a real
         # Console sync tick in that window.
         if self.is_attached:
-            self.query_one("#console-workspace-files-attention", Static).update(
-                attention.status_copy
-            )
+            label = self.query_one("#console-workspace-files-attention", Static)
+            if label.content != attention.status_copy:
+                label.update(attention.status_copy)
         return True
 
     async def on_mount(self) -> None:  # type: ignore[override]

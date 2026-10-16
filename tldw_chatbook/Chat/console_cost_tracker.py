@@ -598,6 +598,7 @@ def build_cost_snapshot(
     fleet_tokens: int = 0,
     estimate_cache: Optional[TokenEstimateCache] = None,
     auxiliary_usage: Sequence[ProviderUsage | None] = (),
+    pricing_catalog: Any | None = None,
 ) -> ConsoleCostSnapshot:
     """Sum dollar/token totals across a Console session's transcript rows.
 
@@ -655,7 +656,7 @@ def build_cost_snapshot(
         failure is logged and degrades to an empty/unknown snapshot.
     """
     try:
-        catalog = get_pricing_catalog()
+        catalog = get_pricing_catalog() if pricing_catalog is None else pricing_catalog
         provider_key = provider_config_key(provider)
         total_usd_accum = 0.0
         usd_known = True
@@ -1091,3 +1092,7 @@ def build_cost_rows_totals(rows: Sequence[ConsoleCostRow]) -> ConsoleCostRowTota
 #
 # End of console_cost_tracker.py
 #######################################################################################################################
+
+
+_COST_SNAPSHOT_SOURCE = (build_cost_snapshot, build_cost_snapshot.__code__,
+    build_cost_snapshot.__defaults__, build_cost_snapshot.__kwdefaults__)
