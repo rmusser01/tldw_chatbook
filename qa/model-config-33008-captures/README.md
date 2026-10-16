@@ -60,9 +60,11 @@ unchanged from the first set.
 | `05e-live-switch-deepseek-to-openai` | 211x44 only: after `05c`, **Enter** applied DeepSeek · deepseek-v4-flash (chip "Context 0%"), then **Alt+M**, "gpt-5.6-terra" typed, **Enter** on OpenAI's row. No resize before the shot: the cost chip reads "Ctx 0% · Now $0.00", whole, the same as after a 235x52 round trip. |
 | `06a-wizard-model-step-key-required` | First-run wizard, llama.cpp against a server that answered 401 to a request that sent no key, Model step: "llama.cpp needs an API key and none was set. Go Back to add one, or enter a model ID below." in a one-line status box. |
 | `06b-wizard-provider-step-test-key-required` | **Ctrl+B** back to Provider, **Tab** ×3 to Test connection, the step scrolled to its top with the mouse wheel (Authentication below the fold), **Enter** on Test connection: "✗ llama.cpp needs an API key and none was set. Add one under Authentication, or continue anyway.", with the inset pinned notice "The last connection check failed: … Add one under Authentication, or continue anyway.". The step scrolled so the whole Authentication section shows, titled "Authentication" (no "(optional)"), at both sizes; focus stays on Test connection. |
+| `06c-wizard-model-step-key-refused` | First-run wizard, llama.cpp against a server that answered 401 to a request that sent a key: the endpoint set to the stub, the made-up key typed under Authentication, **Enter** on Test connection (`06d`), then **Ctrl+N** to the Model step: "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." in a one-line status box, no Retry button, focus on the model name field. |
+| `06d-wizard-provider-step-test-key-refused` | The Provider step after that Test: "✗ Unauthorized - the server rejected this API key. Check the Authentication section on this step.", Authentication open with the masked key and "Key staged — it will be checked when you continue.", focus on Test connection. The section is still titled "Authentication (optional)". At 211x44 the step is scrolled so the provider list's top rows are above the fold; the 235x52 shot shows the whole step. |
 
-`02d` is new in the `4f2bffa20f` set and `05e` in the `e5e5855ab5` set; every other
-file is retaken under its old name.
+`02d` is new in the `4f2bffa20f` set, `05e` in the `e5e5855ab5` set, and `06c` and
+`06d` at `f6db56bb4a`; every other file is retaken under its old name.
 
 ## Retaken at 8b97eeb05f
 
@@ -142,6 +144,26 @@ Seen:
   endpoint answering first, appear on both trees, and the next read has no blank row
   (0.04 s later where the reads were that close). It is not the resting list, and the
   wave did not change it.
+
+## Taken at f6db56bb4a
+
+New: `06c` and `06d`, the key-sent-and-refused state (TASK-33008.5 AC#5), taken after
+`efe420252d` made a Test's 401 read as a key problem after Next. Nothing else was
+retaken. This one launch differed from the procedure below:
+
+- **Launch.** `python -m tldw_chatbook` (the package entry point). `python -m
+  tldw_chatbook.app` exited at startup, about 2 s after the wizard mounted (its log),
+  on an unhandled `AttributeError` from `_capture_deferred_collections_setup`
+  (`app_collections_wiring.py:188`): app.py defines `_CONSOLE_SKILL_APP_SOURCE` after
+  its `if __name__ == "__main__":` block, so that name does not exist yet while the
+  module runs as `__main__`.
+- **Isolation.** A fresh scratch `HOME` and `XDG_*` directories, `TLDW_CONFIG_PATH`,
+  `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` unset, and a `sandbox-exec` profile denying
+  writes to the real profile directories. No profile template: the app wrote its own
+  default config, so the wizard opened and the splash showed.
+- **Stub.** 127.0.0.1:18432, answering 401 with a JSON error body to every request.
+  Its log shows two requests, both `GET /v1/models` with an Authorization header: one
+  from Test connection and one from **Ctrl+N**.
 
 ## Procedure
 
