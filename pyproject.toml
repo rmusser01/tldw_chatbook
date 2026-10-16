@@ -363,7 +363,7 @@ subscriptions = [
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
     "qrcode",  # ASCII pairing QR for `tldw-serve --pair` (ADR-233)
-    "python-fido2>=1.1,<2",  # WebAuthn passkeys for served login (ADR-235)
+    "fido2>=2,<3",  # WebAuthn passkeys for served login (ADR-235)
 ]
 
 # Combined installation option for all optional features
@@ -478,7 +478,7 @@ all-tools = [
     # === Web Server ===
     "textual-serve",
     "qrcode",
-    "python-fido2>=1.1,<2",
+    "fido2>=2,<3",
 ]
 # IMPORTANT: For Higgs Audio TTS support, you must manually install boson-multimodal:
 #   git clone https://github.com/boson-ai/higgs-audio.git
