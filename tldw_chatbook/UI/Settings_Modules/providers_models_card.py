@@ -62,6 +62,7 @@ from ...config import is_valid_provider_api_key, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from ...Utils.input_validation import escape_markup
 from ...Widgets.model_search_picker import (
     _BLUR_RESTORE_DELAY_SECONDS,
     ModelSearchPicker,

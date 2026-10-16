@@ -13821,14 +13821,14 @@ class SettingsScreen(BaseAppScreen):
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).disabled = self._provider_return_actions_disabled()
-            # The target can change kind without a recompose, so the two
-            # returns that name their destination are relabelled here.
+            # The target can change kind without a recompose: relabel both returns.
+            label = escape_markup(f"Return to {self._provider_return_destination()}")
             for selector in (
                 "#settings-provider-return",
                 "#settings-provider-conflict-return",
             ):
                 button = self.query_one(selector, Button)
-                button.label = f"Return to {self._provider_return_destination()}"
+                button.label = label
                 button.disabled = self._provider_return_actions_disabled()
         except QueryError:
             return

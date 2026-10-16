@@ -1,10 +1,10 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 604759,
+  "total": 604860,
   "per_source": {
     "screen_css_scoped.tcss": 13852,
     "screen_css_self.tcss": 2458,
-    "tldw_cli_modular.tcss": 418045,
+    "tldw_cli_modular.tcss": 418146,
     "widget_defaults_scoped.tcss": 80384,
     "widget_defaults_self.tcss": 90020
   },
@@ -85,7 +85,7 @@
     "tldw_cli_modular.tcss::features/_splash.tcss": 2041,
     "tldw_cli_modular.tcss::features/_tab_dropdown.tcss": 1654,
     "tldw_cli_modular.tcss::features/_watchlists.tcss": 1823,
-    "tldw_cli_modular.tcss::features/_wizards.tcss": 27476,
+    "tldw_cli_modular.tcss::features/_wizards.tcss": 27577,
     "tldw_cli_modular.tcss::features/_workflows.tcss": 1870,
     "tldw_cli_modular.tcss::features/_writing.tcss": 239,
     "tldw_cli_modular.tcss::features/config_search.tcss": 2106,
