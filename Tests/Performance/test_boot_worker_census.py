@@ -164,6 +164,13 @@ ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
             "tldw_chatbook.Backup_Recovery.storage_admission",
             "_Hold._run",
         ),
+        # TASK-32708: the post-reconciliation credential poll may start its
+        # existing single-flight readiness reader on a cold or expired cache.
+        (
+            "claude-credential-readiness",
+            "tldw_chatbook.LLM_Calls.anthropic_subscription",
+            "_SubscriptionReadinessCache._refresh",
+        ),
         # The parallel service-init pool (app startup).
         ("ThreadPoolExecutor-#_#", "concurrent.futures.thread", "_worker"),
         # asyncio's default executor: Textual thread workers land here.
