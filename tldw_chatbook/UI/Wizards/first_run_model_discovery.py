@@ -211,14 +211,21 @@ def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
         )
 
 
-def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:
+def note_probe_reached(
+    owner: Any, checked: Any, *, key_sent: bool, endpoint: str = "reachable"
+) -> None:
     """Forget ``note_probe_failure``'s mark once a check of that connection
     sent no key and got through: the server no longer asks for one (it was
-    restarted without --api-key), so the section is optional again."""
+    restarted without --api-key), so the section is optional again.
+
+    ``key_sent`` is the rule that set the mark (``discovery_sends_a_key``):
+    a stored key being cleared is source "draft" with no text, and reading
+    the source alone kept the mark for good on the listing path.
+    """
 
     if (
         endpoint == "reachable"
-        and checked.credential_source == "none"
+        and not key_sent
         and owner._key_required_at == checked.connection_identity
     ):
         owner._key_required_at = None

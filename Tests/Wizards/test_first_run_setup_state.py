@@ -2435,6 +2435,36 @@ class TestProviderTrustChain:
                 == setup_state.PROVIDER_PROBE_CONNECTION
             )
 
+    def test_a_cleared_key_is_a_keyless_check_that_lifts_the_key_mark(self):
+        """TASK-33008 review: clearing a stored key stages source "draft" with
+        no text. That check sends no key, so when it gets through, the
+        "Authentication" mark a keyless refusal set is lifted again."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        def draft(source, value=""):
+            credential = setup_state.ProviderCredentialDraft(source, value, 1)
+            return setup_state.FirstRunProviderDraft("llama_cpp", "", credential)
+
+        sends = setup_state.discovery_sends_a_key
+        assert sends(draft("draft")) is False
+        assert sends(draft("draft", "sk-local")) is True
+        assert sends(draft("none")) is False
+        assert sends(draft("stored")) is True
+
+        identity = ("llama_cpp", "http://127.0.0.1:8080")
+        owner = SimpleNamespace(
+            _key_required_at=identity, _refresh_auth_readiness=lambda: None
+        )
+        checked = SimpleNamespace(credential_source="draft", connection_identity=identity)
+        first_run_model_discovery.note_probe_reached(owner, checked, key_sent=True)
+        assert owner._key_required_at == identity
+        first_run_model_discovery.note_probe_reached(
+            owner, checked, key_sent=sends(draft("draft"))
+        )
+        assert owner._key_required_at is None
+
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
             provider_configured=True,

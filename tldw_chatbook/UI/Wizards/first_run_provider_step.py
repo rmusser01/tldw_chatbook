@@ -1698,9 +1698,12 @@ class ProviderStep(SetupStep):
 
             display = provider_display_name(provider_key)
             status = self.query_one("#setup-provider-probe-status", Static)
+            key_sent = wizard_state.discovery_sends_a_key(provider_draft)
             if models:
                 status.update(f"Found {len(models)} model(s) for {display}.")
-                model_discovery.note_probe_reached(self, discovery_key)
+                model_discovery.note_probe_reached(
+                    self, discovery_key, key_sent=key_sent
+                )
             elif failed:
                 failure = model_discovery.probe_failure(
                     model_outcome,
@@ -1712,7 +1715,9 @@ class ProviderStep(SetupStep):
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
                 if model_outcome is not None:  # the listing answered "success"
-                    model_discovery.note_probe_reached(self, discovery_key)
+                    model_discovery.note_probe_reached(
+                        self, discovery_key, key_sent=key_sent
+                    )
             else:
                 status.update("")
         finally:
@@ -2352,7 +2357,12 @@ class ProviderStep(SetupStep):
             display = provider_display_name(identity.provider_key)
             detail = self._discovery_failure_status(display, failure)
             model_discovery.note_probe_failure(self, failure, identity)
-        model_discovery.note_probe_reached(self, identity, evidence.endpoint)
+        model_discovery.note_probe_reached(
+            self,
+            identity,
+            key_sent=identity.credential_source != "none",
+            endpoint=evidence.endpoint,
+        )
         prefix = {"reachable": "✓ ", "unreachable": "✗ "}.get(evidence.endpoint, "")
         self.query_one("#setup-provider-probe-status", Static).update(prefix + detail)
 
