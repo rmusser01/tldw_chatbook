@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-06 21:51
-updated_date: 2026-10-15 20:40
+updated_date: 2026-10-16 00:51
 labels:
 - console
 - architecture
@@ -81,6 +81,7 @@ Current dev636fb0 integration, 2026-10-15: preserve incoming restore/re-arm, not
 2. Move the existing pool close after resource-owner drains; defer its error behind existing primary error priority. Close only the locally-created Dreams DB when its read phase raises, then re-raise the original error with a type-only cleanup note if needed.
 3. Run these controls plus reviewed incoming restore/re-arm, source-worker, finite-owner, speech/persistence and OPML/module-budget cases. Preserve earlier platform/live negatives and scoped positives; record changed source relationships without relabelling historical receipts.
 The adjacent shared pool drain must attempt every retained session before propagating its first close error. Real two-session RED (one adapter close fails) shows the second session is currently skipped. Preserve lock ownership, LIFO order, direct Session.close and error identity; no retries, pool API or creation/eviction policy change.
+2026-10-15 resumed incremental release: the user wants verified improvements merged while numerical latency reductions continue. ADR required: no new ADR; existing ADR-230/126 and incoming ADR-228 apply. Reason: current-base reconciliation and release qualification within already approved preparation, finite ownership and SQLite kernel boundaries. Preserve all unmet numerical/rendered/platform criteria and historical source-specific evidence. First freeze clean private 91c710a and explicit live dev b8c6024, retain a recovery ref, and rebase the existing private integration onto actual dev without merging dev into it. Resolve only real overlap; retain incoming TASK-33132 kernel MRO, default BEGIN policy, explicit-immediate semantics and TASK-3125 retry outcome behavior. Update consumed exact-definer records for the inherited kernel rather than restoring deleted copies or loosening checks; qualify original native/caller/custom/source-change/retirement controls and existing kernel composition tests. Reuse unchanged component receipts and review only affected relationships; inspect unresolved structural ratchets and preserve their caps. Freeze the intended release, obtain independent spec and quality review, publish a truthful improvement description with latency target open, and require current-head protected PR CI/all threads before any authorized merge. Root owns all source/test execution; no full suite or native Terminal action. Latest matched served DeepSeek Flash timing packet measures earlier candidate1b057, six requests per arm: input-to-POST median2.233s candidate versus1.760s baseline, range1.253-4.183s versus1.160-6.665s. It is descriptive, includes browser/transport/app work and does not establish general speedup or first-output timing; current91c has no current timing qualification.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
