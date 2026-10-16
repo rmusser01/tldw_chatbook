@@ -1,4 +1,5 @@
-/* Chatbook mobile companion — /m (ADR-234 Phase 1b).
+/* Chatbook mobile companion — /m (ADR-234 Phase 1b; reading surface
+   Phase 2b).
    Phone-first single-column layout with notch safe areas; dark surface. */
 
 :root {
@@ -271,7 +272,8 @@ textarea:focus {
   white-space: nowrap;
 }
 
-.folder-badge {
+.folder-badge,
+.entry-type {
   flex: none;
   font-size: 11px;
   color: var(--accent-strong);
@@ -416,6 +418,134 @@ textarea:focus {
   color: var(--text-dim);
   font-size: 13px;
   margin: 6px 0 0;
+}
+
+/* --- Library reading surface (Phase 2b, read-only) --------------------- */
+
+/* Bottom tab bar (Chats | Library). It sits after #app-main in the body
+   column: the two tab-root list views end above it, while detail views
+   (chat, note, item, approvals) hide it — there the composer/scroll view
+   owns the bottom edge and its own safe-area inset. While visible, the
+   bar carries the notch inset. Same divider hairline as the header. */
+.tab-bar {
+  flex: none;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 10;
+}
+
+.tab-button {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  padding: 14px 8px;
+}
+
+.tab-button.tab-active {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* Notes/Media section switch inside the Library tab. */
+.library-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.switch-button {
+  flex: 1;
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 14px;
+  padding: 8px 10px;
+}
+
+.switch-button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Entry rows: one wrapping flex line so a note's preview (flex-basis
+   100%) drops to its own line under the title while a media row's type
+   chip shares the title's line, right-aligned. */
+.entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entry-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.entry-list li:active {
+  background: var(--surface-raised);
+}
+
+.entry-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-preview {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* "Load more" pagination affordance (page n+1 via ?page=). */
+.load-more-button {
+  display: block;
+  width: 100%;
+  margin: 12px 0 4px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 15px;
+  padding: 10px 14px;
+}
+
+/* Reading detail views: metadata line + plain-text bodies. Content is
+   rendered via textContent only; pre-wrap is the formatting. */
+.detail-meta {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 2px 10px;
+  overflow-wrap: anywhere;
+}
+
+.reading-content {
+  margin: 0;
+  padding: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .visually-hidden {

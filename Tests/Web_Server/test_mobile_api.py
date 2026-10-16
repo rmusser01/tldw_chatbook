@@ -1058,6 +1058,7 @@ async def test_invalid_page_and_item_answer_400(tmp_path, mobile_surface_gate) -
             "/api/v1/mobile/notes?page=-1",
             "/api/v1/mobile/notes?page=abc",
             "/api/v1/mobile/notes?page=1.5",
+            "/api/v1/mobile/notes?page=10001",  # route-layer page ceiling (rider)
             "/api/v1/mobile/library?page=0",
             "/api/v1/mobile/library?page=abc",
         ):

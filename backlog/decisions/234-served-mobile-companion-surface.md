@@ -77,6 +77,8 @@ Console engine App-free) works for agent-mode including tool approvals.
   the only planned path by which desktop activity (approvals, run-status)
   reaches the phone, since v1's conversation polling cannot cross the
   isolated-DB boundary.
+- Amended 2026-10-16: read-only notes + library browsing landed on /m
+  (Phase 2b); write paths remain out of scope.
 
 ## Alternatives considered
 

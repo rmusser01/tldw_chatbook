@@ -80,6 +80,14 @@ MOBILE_MAX_BODY_BYTES = 200 * 1024
 #: Small-body ceiling shared with the Phase-1a device endpoints.
 _SMALL_BODY_BYTES = 4096
 
+#: Route-layer page ceiling for the paginated reading routes (Phase 2b
+#: rider, task-3 review): a page beyond 10,000 can only compute row
+#: offsets far past any real table and, for pathological inputs, an
+#: offset whose product exceeds SQLite's int64 binding range
+#: (``OverflowError``). Rejected as the uniform ``400 invalid_page``
+#: before the service is touched.
+_MAX_PAGE = 10_000
+
 _NO_STORE = {"Cache-Control": "no-store"}
 
 #: Title used when a new-conversation POST carries no usable title.
@@ -354,15 +362,15 @@ def _parse_page(raw: str | None) -> int | None:
     """Read one 1-based ``?page=`` value; ``None`` when unusable.
 
     Missing or empty reads as the default page 1; anything that is not a
-    decimal integer, or is below 1, is a caller mistake (the uniform
-    ``400 invalid_page``).
+    decimal integer, is below 1, or exceeds ``_MAX_PAGE`` is a caller
+    mistake (the uniform ``400 invalid_page``).
     """
     if raw is None or raw == "":
         return 1
     if not (raw.isascii() and raw.isdigit()):
         return None
     page = int(raw)
-    return page if page >= 1 else None
+    return page if 1 <= page <= _MAX_PAGE else None
 
 
 async def handle_notes_page(server: Any, request) -> Any:

@@ -218,6 +218,18 @@ screens) or at `/m` directly. It uses the same browser sign-in as the rest
 of the served app. `tldw-serve --pair` prints a one-use QR that signs a
 phone in before serving (this requires `public_url`).
 
+**Library tab (Phase 2b).** Next to Chats, a bottom-tab **Library** view
+offers read-only browsing of the main desktop libraries — unlike the chat
+engine, it reads the app's own notes and media databases, not the
+mobile-only data dir. Notes (`GET /api/v1/mobile/notes`, full reader at
+`/notes/{id}`) and media items (`GET /api/v1/mobile/library`, detail with
+transcripts at `/library/{media_id}`) list 50/25 per page with a
+Load-more button. These four GET routes are the surface's only library
+access: no write, create, edit, delete, or ingest path to notes or media
+exists on `/m`, and reading views refresh on open only (no extra
+polling). Everything renders as plain text (`textContent` only), so note
+and transcript bodies are always inert.
+
 v1 limits:
 
 - Approvals cover mobile-initiated conversations only; desktop-initiated

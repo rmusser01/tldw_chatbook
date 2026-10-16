@@ -390,6 +390,79 @@ async def test_unknown_mobile_asset_is_404(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mobile_page_offers_the_library_tab(tmp_path) -> None:
+    """Phase 2b: the authed page carries the Chats/Library tab switch.
+
+    The switch is a bottom tab bar (not header buttons — the header's
+    narrow-viewport fit is measured and pinned by
+    ``test_mobile_css_header_fits_narrow_viewports``), and the reading
+    destinations (library list + note reader + media detail) are guarded
+    sections in the same ``[hidden]`` view system.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/m")
+        assert response.status == 200
+        body = await response.text()
+
+    assert 'id="tab-bar"' in body
+    assert 'id="tab-chats"' in body and ">Chats</button>" in body
+    assert 'id="tab-library"' in body and ">Library</button>" in body
+    assert 'id="view-library"' in body
+    assert 'id="notes-list"' in body
+    assert 'id="media-list"' in body
+    assert 'id="view-note"' in body
+    assert 'id="view-item"' in body
+
+
+@pytest.mark.asyncio
+async def test_mobile_app_js_carries_the_library_surface(tmp_path) -> None:
+    """The served client contains the library markers + the four fetch paths.
+
+    Grep-style pinning over ``/static/mobile/app.js`` (the client's
+    behavior is not executed here): the reading surface must ride the
+    existing ``api()`` helper against exactly the four Task-2 GET routes.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.js")
+        assert response.status == 200
+        js = await response.text()
+
+    for marker in (
+        "tab-chats",
+        "tab-library",
+        "notes-list",
+        "media-list",
+        "notes-more-button",
+        "media-more-button",
+    ):
+        assert marker in js, marker
+    # The four reading fetch paths, as literal path fragments.
+    assert '"/notes?page="' in js
+    assert '"/notes/"' in js
+    assert '"/library?page="' in js
+    assert '"/library/"' in js
+
+
+@pytest.mark.asyncio
+async def test_mobile_css_styles_the_reading_surface(tmp_path) -> None:
+    """The served stylesheet carries the tab bar + pre-wrap reading rules.
+
+    Note/transcript bodies are plain text rendered via ``textContent``;
+    the plan's no-HTML-injection contract relies on ``white-space:
+    pre-wrap`` (never innerHTML) for formatting.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.css")
+        assert response.status == 200
+        body = await response.text()
+
+    assert ".tab-bar" in body
+    assert ".load-more-button" in body
+    assert ".reading-content" in body
+    assert "white-space: pre-wrap" in body
+
+
+@pytest.mark.asyncio
 async def test_mobile_surface_false_leaves_the_page_unregistered(
     tmp_path, mobile_surface_gate
 ) -> None:
@@ -397,9 +470,11 @@ async def test_mobile_surface_false_leaves_the_page_unregistered(
     async with _logged_in_client(tmp_path) as client:
         page = await client.get("/m")
         manifest = await client.get("/static/mobile/manifest.webmanifest")
+        app_js = await client.get("/static/mobile/app.js")
 
     assert page.status == 404
     assert manifest.status == 404
+    assert app_js.status == 404
 
 
 @pytest.mark.asyncio

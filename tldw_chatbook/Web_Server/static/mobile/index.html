@@ -61,7 +61,39 @@
       <ul id="approvals-list" class="approvals-list"></ul>
       <p id="approvals-empty" class="empty-note" hidden>No pending approvals.</p>
     </section>
+
+    <section id="view-library" class="view" aria-label="Library" hidden>
+      <div class="library-switch" role="group" aria-label="Library sections">
+        <button type="button" id="library-notes-button" class="switch-button"
+                aria-pressed="true">Notes</button>
+        <button type="button" id="library-media-button" class="switch-button"
+                aria-pressed="false">Media</button>
+      </div>
+      <ul id="notes-list" class="entry-list" aria-label="Your notes"></ul>
+      <p id="notes-empty" class="empty-note" hidden>No notes yet.</p>
+      <button type="button" id="notes-more-button" class="load-more-button" hidden>Load more</button>
+      <ul id="media-list" class="entry-list" aria-label="Your media" hidden></ul>
+      <p id="media-empty" class="empty-note" hidden>No media yet.</p>
+      <button type="button" id="media-more-button" class="load-more-button" hidden>Load more</button>
+    </section>
+
+    <section id="view-note" class="view" aria-label="Note" hidden>
+      <h2 id="note-title" class="chat-title"></h2>
+      <p id="note-meta" class="detail-meta"></p>
+      <pre id="note-content" class="reading-content"></pre>
+    </section>
+
+    <section id="view-item" class="view" aria-label="Media item" hidden>
+      <h2 id="item-title" class="chat-title"></h2>
+      <p id="item-meta" class="detail-meta"></p>
+      <pre id="item-transcripts" class="reading-content"></pre>
+    </section>
   </main>
+
+  <nav class="tab-bar" id="tab-bar" aria-label="Primary">
+    <button type="button" id="tab-chats" class="tab-button">Chats</button>
+    <button type="button" id="tab-library" class="tab-button">Library</button>
+  </nav>
 
   <script src="/static/mobile/app.js" defer></script>
 </body>

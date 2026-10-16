@@ -1,10 +1,13 @@
-// Chatbook mobile companion — /m (ADR-234 Phase 1b).
+// Chatbook mobile companion — /m (ADR-234 Phase 1b; reading surface
+// Phase 2b).
 //
 // Vanilla, dependency-free client over the /api/v1/mobile REST table and
 // the /api/v1/mobile/stream WebSocket. Every dynamic string is rendered
 // via textContent/createElement — never innerHTML — so wire text is always
 // inert. Wire shapes match the Task 4/5 contracts exactly; unknown error
-// codes and frame types are shown/ignored, never fatal.
+// codes and frame types are shown/ignored, never fatal. The Phase-2b
+// Library tab (notes + media) is read-only and refreshes on open only —
+// it hooks into none of the polling/visibility logic below.
 "use strict";
 
 (() => {
@@ -21,7 +24,14 @@
 
   const $ = (id) => document.getElementById(id);
   const els = {
-    views: { list: $("view-list"), chat: $("view-chat"), approvals: $("view-approvals") },
+    views: {
+      list: $("view-list"),
+      chat: $("view-chat"),
+      approvals: $("view-approvals"),
+      library: $("view-library"),
+      note: $("view-note"),
+      item: $("view-item"),
+    },
     backButton: $("back-button"),
     statusLine: $("status-line"),
     sessionList: $("session-list"),
@@ -40,6 +50,23 @@
     approvalsBadge: $("approvals-badge"),
     approvalsList: $("approvals-list"),
     approvalsEmpty: $("approvals-empty"),
+    tabBar: $("tab-bar"),
+    tabChats: $("tab-chats"),
+    tabLibrary: $("tab-library"),
+    libraryNotesButton: $("library-notes-button"),
+    libraryMediaButton: $("library-media-button"),
+    notesList: $("notes-list"),
+    notesEmpty: $("notes-empty"),
+    notesMoreButton: $("notes-more-button"),
+    mediaList: $("media-list"),
+    mediaEmpty: $("media-empty"),
+    mediaMoreButton: $("media-more-button"),
+    noteTitle: $("note-title"),
+    noteMeta: $("note-meta"),
+    noteContent: $("note-content"),
+    itemTitle: $("item-title"),
+    itemMeta: $("item-meta"),
+    itemTranscripts: $("item-transcripts"),
   };
 
   const state = {
@@ -55,6 +82,12 @@
     ws: null,
     wsAttempt: 0,
     statusTimer: 0,
+    activeTab: "list", // bottom-tab root: "list" (Chats) | "library"
+    librarySection: "notes", // library sub-list: "notes" | "media"
+    notesPage: 0, // last loaded notes page (0 = nothing loaded)
+    notesHasMore: false,
+    mediaPage: 0,
+    mediaHasMore: false,
   };
 
   // --- API helper — {"error": code} bodies become thrown codes            ---
@@ -109,11 +142,27 @@
 
   // --- Views                                                              ---
 
+  // The two bottom-tab roots: every other view (chat, approvals, note,
+  // item) is a detail reached from one of them and returns via Back.
+  const TAB_ROOTS = new Set(["list", "library"]);
+
   function showView(name) {
     for (const [key, section] of Object.entries(els.views)) {
       section.hidden = key !== name;
     }
-    els.backButton.hidden = name === "list";
+    const atRoot = TAB_ROOTS.has(name);
+    els.backButton.hidden = atRoot;
+    els.tabBar.hidden = !atRoot;
+    const chatsActive = state.activeTab === "list";
+    els.tabChats.classList.toggle("tab-active", chatsActive);
+    els.tabLibrary.classList.toggle("tab-active", !chatsActive);
+    if (chatsActive) {
+      els.tabChats.setAttribute("aria-current", "page");
+      els.tabLibrary.removeAttribute("aria-current");
+    } else {
+      els.tabChats.removeAttribute("aria-current");
+      els.tabLibrary.setAttribute("aria-current", "page");
+    }
   }
 
   // --- Session list                                                       ---
@@ -358,6 +407,193 @@
     }
   }
 
+  // --- Library (Phase 2b, read-only)                                      ---
+
+  // Notes + media browsing over the four reading GETs. Refresh happens on
+  // open only (tab/section entry, Back); nothing here joins the polling,
+  // visibility, or stream logic above. All rendering is textContent-only.
+
+  function showTab(tab) {
+    state.activeTab = tab;
+    if (tab === "library") {
+      showView("library");
+      showLibrarySection(state.librarySection === "media" ? "media" : "notes");
+    } else {
+      showView("list");
+      refreshSessions();
+    }
+  }
+
+  function showLibrarySection(section) {
+    state.librarySection = section;
+    const notes = section === "notes";
+    els.libraryNotesButton.setAttribute("aria-pressed", String(notes));
+    els.libraryMediaButton.setAttribute("aria-pressed", String(!notes));
+    els.notesList.hidden = !notes;
+    els.mediaList.hidden = notes;
+    // The loaders re-derive each section's empty note + Load-more state;
+    // hide everything until their responses land.
+    els.notesEmpty.hidden = true;
+    els.mediaEmpty.hidden = true;
+    els.notesMoreButton.hidden = true;
+    els.mediaMoreButton.hidden = true;
+    if (notes) {
+      loadNotes(true);
+    } else {
+      loadMedia(true);
+    }
+  }
+
+  async function loadNotes(reset) {
+    const nextPage = reset ? 1 : state.notesPage + 1;
+    let data;
+    try {
+      data = await api("GET", API_BASE + "/notes?page=" + nextPage);
+    } catch (code) {
+      showError(code);
+      return;
+    }
+    state.notesPage = typeof data.page === "number" ? data.page : nextPage;
+    state.notesHasMore = Boolean(data.has_more);
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (reset) els.notesList.replaceChildren();
+    for (const note of items) {
+      els.notesList.append(renderNoteRow(note));
+    }
+    els.notesEmpty.hidden = els.notesList.children.length > 0;
+    els.notesMoreButton.hidden = !state.notesHasMore;
+  }
+
+  function renderNoteRow(note) {
+    const row = document.createElement("li");
+    row.dataset.noteId = String(note.id);
+    const title = document.createElement("span");
+    title.className = "entry-title";
+    title.textContent = note.title || "Untitled note";
+    const preview = document.createElement("span");
+    preview.className = "entry-preview";
+    preview.textContent = typeof note.preview === "string" ? note.preview : "";
+    row.append(title, preview);
+    row.addEventListener("click", () => openNote(note));
+    return row;
+  }
+
+  async function loadMedia(reset) {
+    const nextPage = reset ? 1 : state.mediaPage + 1;
+    let data;
+    try {
+      data = await api("GET", API_BASE + "/library?page=" + nextPage);
+    } catch (code) {
+      showError(code);
+      return;
+    }
+    state.mediaPage = typeof data.page === "number" ? data.page : nextPage;
+    state.mediaHasMore = Boolean(data.has_more);
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (reset) els.mediaList.replaceChildren();
+    for (const item of items) {
+      els.mediaList.append(renderMediaRow(item));
+    }
+    els.mediaEmpty.hidden = els.mediaList.children.length > 0;
+    els.mediaMoreButton.hidden = !state.mediaHasMore;
+  }
+
+  function renderMediaRow(item) {
+    const row = document.createElement("li");
+    row.dataset.mediaId = String(item.media_id);
+    const title = document.createElement("span");
+    title.className = "entry-title";
+    title.textContent = item.title || "Untitled media";
+    const type = document.createElement("span");
+    type.className = "entry-type";
+    type.textContent =
+      typeof item.media_type === "string" && item.media_type
+        ? item.media_type
+        : "media";
+    row.append(title, type);
+    row.addEventListener("click", () => openMediaItem(item));
+    return row;
+  }
+
+  function detailMeta(fields, keys) {
+    const parts = [];
+    for (const key of keys) {
+      const value = fields ? fields[key] : null;
+      if (value !== null && value !== undefined && String(value) !== "") {
+        parts.push(key.replace(/_/g, " ") + ": " + String(value));
+      }
+    }
+    return parts.join(" · ");
+  }
+
+  async function openNote(note) {
+    showView("note");
+    els.noteTitle.textContent = note.title || "Untitled note";
+    els.noteMeta.textContent = "";
+    els.noteContent.textContent = "";
+    let data;
+    try {
+      data = await api(
+        "GET",
+        API_BASE + "/notes/" + encodeURIComponent(String(note.id))
+      );
+    } catch (code) {
+      showError(code);
+      return;
+    }
+    const detail = (data && data.note) || {};
+    els.noteTitle.textContent = detail.title || note.title || "Untitled note";
+    els.noteMeta.textContent = detailMeta(detail, [
+      "created_at",
+      "last_modified",
+    ]);
+    els.noteContent.textContent =
+      typeof detail.content === "string" ? detail.content : "";
+  }
+
+  async function openMediaItem(item) {
+    showView("item");
+    els.itemTitle.textContent = item.title || "Untitled media";
+    els.itemMeta.textContent = "";
+    els.itemTranscripts.textContent = "";
+    let data;
+    try {
+      data = await api(
+        "GET",
+        API_BASE + "/library/" + encodeURIComponent(String(item.media_id))
+      );
+    } catch (code) {
+      showError(code);
+      return;
+    }
+    const detail = (data && data.item) || {};
+    els.itemTitle.textContent = detail.title || item.title || "Untitled media";
+    els.itemMeta.textContent = detailMeta(detail, [
+      "media_type",
+      "media_id",
+      "ingestion_date",
+      "last_modified",
+    ]);
+    const transcripts = Array.isArray(detail.transcripts)
+      ? detail.transcripts
+      : [];
+    const texts = transcripts
+      .map((entry) =>
+        entry && typeof entry.transcription === "string"
+          ? entry.transcription
+          : ""
+      )
+      .filter(Boolean);
+    if (texts.length > 0) {
+      els.itemTranscripts.textContent = texts.join("\n\n—\n\n");
+    } else {
+      els.itemTranscripts.textContent =
+        transcripts.length > 0
+          ? "No transcript text available."
+          : "No transcripts yet.";
+    }
+  }
+
   // --- Approvals                                                          ---
 
   async function refreshApprovals() {
@@ -585,9 +821,18 @@
   function wireUi() {
     els.backButton.addEventListener("click", () => {
       state.openSessionId = null;
-      showView("list");
-      refreshSessions();
+      showTab(state.activeTab); // Back returns to the active tab's root
     });
+    els.tabChats.addEventListener("click", () => showTab("list"));
+    els.tabLibrary.addEventListener("click", () => showTab("library"));
+    els.libraryNotesButton.addEventListener("click", () =>
+      showLibrarySection("notes")
+    );
+    els.libraryMediaButton.addEventListener("click", () =>
+      showLibrarySection("media")
+    );
+    els.notesMoreButton.addEventListener("click", () => loadNotes(false));
+    els.mediaMoreButton.addEventListener("click", () => loadMedia(false));
     els.newChatButton.addEventListener("click", () => {
       els.newChatForm.hidden = !els.newChatForm.hidden;
       if (!els.newChatForm.hidden) els.newChatTitle.focus();
