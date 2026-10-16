@@ -1846,6 +1846,10 @@ class LifecycleMixin:
         """Preserve Ctrl+6 as a Library route outside permanent shell destinations."""
         self.post_message(NavigateToScreen(TAB_ARTIFACTS))
 
+    def action_settings_tools_hub(self) -> None:
+        """Preserve Ctrl+9 as a Tools & MCP route outside the shell strip."""
+        self.post_message(NavigateToScreen("mcp"))
+
     def action_shell_destination(self, destination_id: str) -> None:
         """Navigate to the shell destination identified by a stable ID.
 

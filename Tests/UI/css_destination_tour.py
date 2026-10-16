@@ -11,7 +11,7 @@ DESTINATION_BODIES = {
     "watchlists_collections": "#wl-workbench-body",
     "schedules": "#scheduling-task-table",
     "workflows": "#workflows-editor",
-    "mcp": "#mcp-mode-canvas-servers",
+    # ADR-233: the MCP destination retired into Settings > Tools & MCP.
     "acp": "#acp-detail-pane",
     "lab": "#lab-body LLMManagementWindow",
     "logs": "#logs-window",

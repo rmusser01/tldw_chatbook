@@ -5241,6 +5241,10 @@ class SettingsScreen(BaseAppScreen):
                 continue
 
     def on_screen_resume(self) -> None:
+        # ADR-233: re-assert the category-aware footer registration the
+        # suspend path cleared (the "settings-tools" source) -- mirrors the
+        # retired MCP destination's resume re-registration.
+        self._register_footer_shortcuts()
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
                 PersonalContextProvenanceDetails,
@@ -25324,7 +25328,7 @@ class SettingsScreen(BaseAppScreen):
             if profile_id is not None:
                 revision = context.get("profile_revision")
                 digest = context.get("profile_policy_digest")
-                # Same bounds the retired MCPScreen.apply_navigation_context
+                # Same bounds the retired MCP destination's apply_navigation_context
                 # enforced: non-empty id <=128 chars, revision None or >=1,
                 # digest exactly 64 hex chars.
                 if (
@@ -30847,6 +30851,11 @@ class SettingsScreen(BaseAppScreen):
             isinstance(self.app.screen, ModalScreen)
             and self._active_category_id() is SettingsCategoryId.THEME
         )
+        # ADR-233 (port of the retired MCP destination's suspend behavior): clear
+        # the Tools & MCP hint set while an overlay owns the screen, so the
+        # footer never advertises keys that are dead under it. Resume
+        # re-registers the category-aware set (see on_screen_resume).
+        self.clear_footer_shortcuts(source="settings-tools")
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
                 PersonalContextProvenanceDetails,

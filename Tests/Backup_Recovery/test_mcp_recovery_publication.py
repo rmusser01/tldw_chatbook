@@ -8,7 +8,6 @@ from Tests.Backup_Recovery.test_mcp_recovery_review import _SETUP
 _JOURNEY = r"""
 from textual.app import App
 from textual.screen import Screen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from textual.widgets import Button,DataTable,Select
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
@@ -42,7 +41,12 @@ class Surface(Screen):
  def compose(self):
   self.workbench=Bench(host);yield self.workbench
  def _clear_footer_shortcuts(self):pass
- on_screen_suspend=MCPScreen.on_screen_suspend
+ def on_screen_suspend(self):
+  # ADR-233: inlined from the retired MCP shell handler these journeys
+  # borrowed -- leaving the surface mid-review invalidates its UI receipt.
+  self._clear_footer_shortcuts()
+  if getattr(self,'workbench',None) is not None and self.workbench._mcp_recovery_busy:
+   self.workbench._mcp_recovery_token=None
 class Host(App):pass
 app=Host();notices=[];app.notify=lambda message,**kwargs:notices.append(str(message))
 async def wait_for(predicate):

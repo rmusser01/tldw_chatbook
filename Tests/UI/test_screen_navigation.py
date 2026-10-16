@@ -512,7 +512,6 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations(request):
         "schedules": "SchedulesWorkbench",
         "workflows": "WorkflowsScreen",
         "meetings": "MeetingsScreen",
-        "mcp": "MCPScreen",
         "acp": "ACPScreen",
         "llm": "LLMScreen",
         "logs": "LogsScreen",
@@ -567,16 +566,37 @@ def test_conversation_route_uses_library_conversation_context():
     assert screen_class.__name__ == "LibraryConversationsScreen"
 
 
-def test_legacy_tools_settings_route_uses_mcp_context():
+@private_profile_test
+def test_legacy_mcp_routes_alias_to_settings_tools(request):
     app = _build_test_app()
 
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
-        "tools_settings"
+    for route in ("mcp", "tools_settings"):
+        screen_name, current_tab, screen_class = (
+            app._resolve_screen_navigation_target(route)
+        )
+        assert screen_name == "settings"
+        assert current_tab == "settings"
+        assert screen_class.__name__ == "SettingsScreen"
+
+
+def test_mcp_shell_routes_resolve_to_settings_destination():
+    from tldw_chatbook.UI.Navigation.shell_destinations import resolve_shell_route
+
+    for route in ("mcp", "tools_settings"):
+        resolved = resolve_shell_route(route)
+        assert resolved.destination_id == "settings"
+        assert resolved.canonical_route == "settings"
+
+
+def test_ctrl9_is_tools_compatibility_binding():
+    from tldw_chatbook.UI.Navigation.shell_destinations import (
+        SHELL_DESTINATION_SHORTCUTS,
+        MCP_COMPATIBILITY_SHORTCUT,
     )
 
-    assert screen_name == "tools_settings"
-    assert current_tab == "mcp"
-    assert screen_class.__name__ == "MCPScreen"
+    assert MCP_COMPATIBILITY_SHORTCUT == "ctrl+9"
+    assert "mcp" not in SHELL_DESTINATION_SHORTCUTS
+    assert "ctrl+9" not in set(SHELL_DESTINATION_SHORTCUTS.values())
 
 
 @pytest.mark.asyncio
@@ -4104,7 +4124,6 @@ async def test_main_navigation_copy_and_order(request):
         ("nav-watchlists_collections", "\u23035 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
-        ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F2 Lab"),
         ("nav-logs", "F3 Logs"),

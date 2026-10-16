@@ -972,9 +972,10 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 /* A1: focus must not impersonate .is-active above (bold underline). Kept in
-   lockstep with the lower-specificity baseline copy in MCPScreen.DEFAULT_CSS
-   (mcp_screen.py) -- see that copy's comment for why it uses raw
-   $surface/$text/$text-muted tokens instead of these $ds- aliases. */
+   lockstep with the lower-specificity baseline copy in
+   ToolsHubPanel.DEFAULT_CSS (settings_tools_hub.py) -- see that copy's
+   comment for why it uses raw $surface/$text/$text-muted tokens instead of
+   these $ds- aliases. */
 #mcp-mode-strip .mcp-mode-chip:focus,
 #mcp-mode-strip .mcp-mode-chip:hover:focus {
   background: $ds-focus-bg;
@@ -1062,8 +1063,9 @@ ListItem.personas-library-row.is-active.-highlight {
    least 2 lines to render, so on a height-1 button it consumes the row's
    only line and the content area collapses to height 0 -- the label never
    renders, leaving a blank bordered box for the selected row. Mirrors the
-   sibling `.mcp-mode-chip.is-active` rule below (and MCPScreen.DEFAULT_CSS's
-   copy of it), which already carries this same `border: none` override. */
+   sibling `.mcp-mode-chip.is-active` rule below (and
+   ToolsHubPanel.DEFAULT_CSS's copy of it), which already carries this same
+   `border: none` override. */
 #mcp-hub-rail Button.mcp-rail-row.is-active {
   border: none;
   text-style: bold;
