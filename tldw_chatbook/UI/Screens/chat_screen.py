@@ -9256,7 +9256,12 @@ class ChatScreen(BaseAppScreen):
             "response_rules_changed": partial(refresh_rule_controls, self),
             "set_pending_decision": self._set_console_pending_decision,
             "follow_watchlists_operations": self._follow_console_watchlists_operations,
-            "set_pending_approval": self._set_console_pending_approval,
+            # ADR-236: the served child mirrors this approval hook onto the
+            # parent relay (call-through-first — card behavior unchanged).
+            # The wrap decision lives on the app, where served mode is
+            # detected; native runs get this screen's callable back
+            # untouched, identity included.
+            "set_pending_approval": self._served_relay_routed_pending_approval(),
             # ADR-090: UI-thread bridge to patch a mounted approval card's
             # advisory summary line in place (never re-runs set_batch).
             "update_pending_approval_summary": self._update_console_approval_summary,
@@ -23178,6 +23183,22 @@ class ChatScreen(BaseAppScreen):
         return self.set_task_resume_state(
             replace(self._task_resume_state, pending_approval=approval)
         )
+
+    def _served_relay_routed_pending_approval(self) -> Callable[..., Any]:
+        """The approval hook value for ``console_view_hooks`` (ADR-236).
+
+        Routes this screen's binding through the app's served-relay wrapper
+        at the exact site the runtime binds ``controller.set_pending_approval``
+        from. ``served_relay_wrap_pending_approval`` returns the original
+        callable untouched (identity included) unless this process is a
+        served child, so native runs and controller doubles without the app
+        method are unaffected.
+        """
+
+        original = self._set_console_pending_approval
+        app = getattr(self, "app_instance", None)
+        wrap = getattr(app, "served_relay_wrap_pending_approval", None)
+        return wrap(original) if callable(wrap) else original
 
     def _update_console_approval_summary(self, round_id: str, text: str) -> None:
         """ADR-090: patch the mounted approval card's summary line in place."""

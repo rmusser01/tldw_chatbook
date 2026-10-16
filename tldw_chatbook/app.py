@@ -1089,6 +1089,9 @@ class TldwCli(
         )
         self.served_canvas_handler = None
         self.served_canvas_control = None
+        # ADR-236: approval/run relay publisher; only ever non-None inside
+        # the served-child block below, so native runs never wrap a seam.
+        self.served_relay_publisher = None
         self._served_canvas_mode = "CHATBOOK_SERVED_CHILD" in os.environ or any(
             key in os.environ for key in canvas_control_keys
         )
@@ -1102,6 +1105,7 @@ class TldwCli(
                 load_application_profile_snapshot,
                 runtime_snapshot_id,
             )
+            from .Web_Server.served_relay_publisher import ServedRelayPublisher
 
             self._canvas_profile_snapshot = load_application_profile_snapshot()
             self.served_canvas_handler = ServedCanvasControlHandler()
@@ -1117,6 +1121,10 @@ class TldwCli(
                 loguru_logger.warning(
                     "Served Canvas control disabled code=invalid_spawn_environment"
                 )
+            # None-safe: without a transport the relay stays inert.
+            self.served_relay_publisher = ServedRelayPublisher(
+                self.served_canvas_control
+            )
         self._served_canvas_control_start_task: asyncio.Task[None] | None = None
 
         # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
@@ -3624,6 +3632,16 @@ class TldwCli(
         """Attach this authoritative child to its parent transport."""
 
         client = self.served_canvas_control
+        # ADR-236: the relay publisher rides the same loop/lifetime as the
+        # control client. Run statuses are read from the app-owned Console
+        # controller's run-state map — the same read seam the TUI polls for
+        # terminal transitions — through the lazy `chat_controller` handle,
+        # so the poller tolerates the controller not existing yet.
+        # `getattr`: the start/stop pair is driven on partially-specified
+        # app doubles in tests (see test_canvas_control_spawn).
+        publisher = getattr(self, "served_relay_publisher", None)
+        if publisher is not None and client is not None:
+            publisher.attach(run_state_source=self._served_relay_run_states)
         if client is None or self._served_canvas_control_start_task is not None:
             return
         task = asyncio.create_task(client.start(), name="start_served_canvas_control")
@@ -3642,6 +3660,33 @@ class TldwCli(
 
         task.add_done_callback(observe)
 
+    def _served_relay_run_states(self):
+        """Current ``{session_id: run state}`` for the relay poller, if built."""
+
+        runtime = self.console_runtime
+        controller = runtime.chat_controller if runtime is not None else None
+        if controller is None:
+            return None
+        try:
+            return controller.run_states
+        except Exception:  # noqa: BLE001 - a poll tick must never break the relay
+            return None
+
+    def served_relay_wrap_pending_approval(self, original):
+        """Wrap one ``set_pending_approval`` binding for the relay (served only).
+
+        The Console screen routes its approval hook value through here at
+        the binding site (``console_view_hooks``). Native runs have no
+        publisher and get the original callable back untouched — including
+        identity — so nothing outside served mode changes behavior.
+        """
+
+        from .Web_Server.served_relay_publisher import wrap_pending_approval_hook
+
+        if self.served_relay_publisher is None:
+            return original
+        return wrap_pending_approval_hook(self.served_relay_publisher, original)
+
     async def _stop_served_canvas_control(self) -> None:
         """Close the private child channel without affecting terminal exit."""
 
@@ -3650,6 +3695,9 @@ class TldwCli(
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        publisher = getattr(self, "served_relay_publisher", None)
+        if publisher is not None:
+            await publisher.aclose()
         client = self.served_canvas_control
         if client is not None:
             await client.aclose()

@@ -161,6 +161,10 @@ _CHILD_EVENT_TYPES = frozenset(
         "relay.run.status",
     }
 )
+# The relay subset a child may push through `CanvasControlClient.send_relay_event`
+# (ADR-236). `canvas.events` stays on `send_event`, which derives its request
+# id from the payload's own `event_id`.
+_RELAY_EVENT_TYPES = frozenset(_CHILD_EVENT_TYPES - {"canvas.events"})
 
 
 class ControlProtocolError(RuntimeError):
@@ -911,6 +915,38 @@ class CanvasControlClient:
                 CONTROL_PROTOCOL_VERSION,
                 "canvas.events",
                 request_id,
+                None,
+                payload,
+            ),
+        )
+
+    async def send_relay_event(
+        self, message_type: str, payload: Mapping[str, Any]
+    ) -> None:
+        """Push one ADR-236 relay event to the parent over this connection.
+
+        Mirrors :meth:`send_event` (authenticated connection reuse, frame
+        limits) for the ``relay.*`` child→parent event kinds; payload
+        validation rides ``ControlMessage``'s constructor exactly as there.
+        """
+
+        if message_type not in _RELAY_EVENT_TYPES:
+            raise ControlProtocolError("unsupported_relay_type")
+        writer = self._writer
+        if (
+            writer is None
+            or self._reader_task is None
+            or self._reader_task.done()
+            or self._disconnected.is_set()
+        ):
+            raise ControlProtocolError("client_not_connected")
+        await _write_message(
+            writer,
+            self._write_lock,
+            ControlMessage(
+                CONTROL_PROTOCOL_VERSION,
+                message_type,
+                f"relay-{uuid4().hex}",
                 None,
                 payload,
             ),

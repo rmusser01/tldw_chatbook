@@ -704,6 +704,77 @@ def test_relay_events_are_queued_as_child_events_like_canvas_events() -> None:
     asyncio.run(scenario())
 
 
+def test_child_sends_relay_events_through_the_control_client() -> None:
+    async def scenario() -> None:
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
+        await client.start()
+        await broker.wait_connected("child-a", timeout=1)
+        try:
+            await client.send_relay_event(
+                "relay.approval.raised", dict(RELAY_APPROVAL_RAISED_PAYLOAD)
+            )
+            await client.send_relay_event(
+                "relay.approval.cleared",
+                {"round_id": "round-a", "resolution": "approved"},
+            )
+            await client.send_relay_event(
+                "relay.run.status", {"session_id": "session-a", "status": "completed"}
+            )
+            expected = [
+                ("relay.approval.raised", dict(RELAY_APPROVAL_RAISED_PAYLOAD)),
+                (
+                    "relay.approval.cleared",
+                    {"round_id": "round-a", "resolution": "approved"},
+                ),
+                ("relay.run.status", {"session_id": "session-a", "status": "completed"}),
+            ]
+            for message_type, payload in expected:
+                event = await broker.next_event("child-a", timeout=1)
+                assert event.message_type == message_type
+                assert event.payload == payload
+            # Only the relay kinds ride this path; canvas.events stays on
+            # send_event, and anything else is refused before the wire.
+            with pytest.raises(
+                ControlProtocolError, match="unsupported_relay_type"
+            ):
+                await client.send_relay_event(
+                    "canvas.events",
+                    {
+                        "event_id": "e-1",
+                        "kind": "updated",
+                        "canvas_id": "canvas-a",
+                        "revision_id": "revision-a",
+                        "metadata": {},
+                    },
+                )
+        finally:
+            await client.aclose()
+            await broker.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_relay_send_requires_an_authenticated_connection() -> None:
+    async def scenario() -> None:
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
+        try:
+            with pytest.raises(ControlProtocolError, match="client_not_connected"):
+                await client.send_relay_event(
+                    "relay.run.status", {"session_id": "session-a", "status": "idle"}
+                )
+        finally:
+            await client.aclose()
+            await broker.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_revoked_channel_reports_disconnect_and_rejects_lost_events() -> None:
     async def scenario() -> None:
         broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
