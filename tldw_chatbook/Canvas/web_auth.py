@@ -33,6 +33,12 @@ WEBSOCKET_PROTOCOL = "chatbook-v1"
 _DEFAULT_BOOTSTRAP_TTL_SECONDS = 120.0
 _DEFAULT_IDLE_TIMEOUT_SECONDS = 30 * 86400.0
 _DEFAULT_ABSOLUTE_TIMEOUT_SECONDS = 180 * 86400.0
+# A non-persisted session ("Remember this device" unchecked, or the loopback
+# auto-login) downgrades to the legacy short browser session — 30-minute
+# idle, 8-hour absolute — regardless of the configured device-session
+# windows (Spec §3.3, ADR-233 decision 5).
+_LEGACY_IDLE_TIMEOUT_SECONDS = 30 * 60.0
+_LEGACY_ABSOLUTE_TIMEOUT_SECONDS = 8 * 60 * 60.0
 _TOUCH_PERSIST_INTERVAL_SECONDS = 300.0
 _DEFAULT_LOGIN_ATTEMPTS_PER_MINUTE = 8
 _DEFAULT_MAX_SESSIONS = 512
@@ -121,6 +127,11 @@ class BrowserSession:
     revoked: bool = False
     device_label: str = ""
     persist: bool = True
+    # Per-session lifetime windows: set at creation so idle/absolute expiry
+    # is enforced with the values the session was granted (legacy short pair
+    # for non-persisted sessions), not the manager's current configuration.
+    idle_timeout_seconds: float = _DEFAULT_IDLE_TIMEOUT_SECONDS
+    absolute_timeout_seconds: float = _DEFAULT_ABSOLUTE_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -425,7 +436,12 @@ def _to_stored(session: BrowserSession) -> StoredSession:
     )
 
 
-def _from_stored(record: StoredSession) -> BrowserSession:
+def _from_stored(
+    record: StoredSession,
+    *,
+    idle_timeout_seconds: float = _DEFAULT_IDLE_TIMEOUT_SECONDS,
+    absolute_timeout_seconds: float = _DEFAULT_ABSOLUTE_TIMEOUT_SECONDS,
+) -> BrowserSession:
     """Revive one disk record as a persistent live session."""
 
     return BrowserSession(
@@ -438,6 +454,8 @@ def _from_stored(record: StoredSession) -> BrowserSession:
         absolute_expires_at=record.absolute_expires_at,
         device_label=record.device_label,
         persist=True,
+        idle_timeout_seconds=idle_timeout_seconds,
+        absolute_timeout_seconds=absolute_timeout_seconds,
     )
 
 
@@ -492,7 +510,15 @@ class WebAuthManager:
                 pruned = True
                 continue
             try:
-                revived.append(_from_stored(record))
+                # Persisted records are always minted with the configured
+                # device-session pair, so they revive under it.
+                revived.append(
+                    _from_stored(
+                        record,
+                        idle_timeout_seconds=self._idle_timeout,
+                        absolute_timeout_seconds=self._absolute_timeout,
+                    )
+                )
             except ValueError:  # malformed digest hex: drop, keep the rest
                 pruned = True
         revived.sort(key=lambda session: session.last_seen_at)
@@ -631,7 +657,16 @@ class WebAuthManager:
             self._revoke_session(eviction_candidate)
         cookie = self._token_factory(32)
         csrf = self._token_factory(24)
-        absolute_expiry = now + self._absolute_timeout
+        if persist:
+            idle_timeout = self._idle_timeout
+            absolute_timeout = self._absolute_timeout
+        else:
+            # Unchecked "Remember" is the legacy short session — 30-minute
+            # idle, 8-hour absolute — never the configured device windows
+            # (Spec §3.3, ADR-233 decision 5).
+            idle_timeout = _LEGACY_IDLE_TIMEOUT_SECONDS
+            absolute_timeout = _LEGACY_ABSOLUTE_TIMEOUT_SECONDS
+        absolute_expiry = now + absolute_timeout
         digest = _cookie_digest(cookie)
         self._sessions[digest] = BrowserSession(
             session_id=self._token_factory(18),
@@ -643,6 +678,8 @@ class WebAuthManager:
             absolute_expires_at=absolute_expiry,
             device_label=device_label,
             persist=persist,
+            idle_timeout_seconds=idle_timeout,
+            absolute_timeout_seconds=absolute_timeout,
         )
         if persist:
             self._persist_all()
@@ -654,7 +691,7 @@ class WebAuthManager:
             for session in self._sessions.values()
             if now
             >= min(
-                session.last_seen_at + self._idle_timeout,
+                session.last_seen_at + session.idle_timeout_seconds,
                 session.absolute_expires_at,
             )
         ]
@@ -805,7 +842,7 @@ class WebAuthManager:
         """Return the bounded delay until a session's next expiry boundary."""
 
         deadline = min(
-            session.last_seen_at + self._idle_timeout,
+            session.last_seen_at + session.idle_timeout_seconds,
             session.absolute_expires_at,
         )
         return max(0.0, deadline - self._clock())

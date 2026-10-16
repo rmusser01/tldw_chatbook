@@ -1,6 +1,7 @@
 # Tests/Web_Server/test_session_store.py
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tldw_chatbook.Web_Server.session_store import StoredSession, WebSessionStore
@@ -19,6 +20,23 @@ def _record(digest_hex: str = "ab12", **overrides) -> StoredSession:
     )
     fields.update(overrides)
     return StoredSession(**fields)
+
+
+def _payload(key: str = "ab12", **overrides) -> dict:
+    """One decodable store payload with a single record, per-field overrides."""
+
+    record: dict = {
+        "digest_hex": key,
+        "session_id": "sid-1",
+        "csrf_token": "csrf-1",
+        "client_ip": "127.0.0.1",
+        "device_label": "iPhone · Safari",
+        "created_at": 1000.0,
+        "last_seen_at": 1000.0,
+        "absolute_expires_at": 2000.0,
+    }
+    record.update(overrides)
+    return {key: record}
 
 
 def test_round_trip_preserves_records(tmp_path: Path) -> None:
@@ -58,3 +76,43 @@ def test_load_valid_json_non_object_top_level_fails_safe(tmp_path: Path) -> None
     for payload in ("[1, 2]", '"x"', "null"):
         target.write_text(payload)
         assert WebSessionStore(target).load() == {}
+
+
+def test_load_skips_wrong_typed_records_and_keeps_valid_ones(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "web_sessions.json"
+    target.write_text(
+        json.dumps(
+            {
+                **_payload(),  # fully valid: floats
+                **_payload(  # ints are numerics too
+                    "int-ok",
+                    created_at=1000,
+                    last_seen_at=1000,
+                    absolute_expires_at=2000,
+                ),
+                **_payload("bad-str-field", session_id=7),  # str field not str
+                **_payload("bad-numeric", last_seen_at="soon"),  # str timestamp
+                **_payload("bad-bool", created_at=True),  # bool is not a number
+            }
+        )
+    )
+
+    loaded = WebSessionStore(target).load()
+
+    assert set(loaded) == {"ab12", "int-ok"}
+
+
+def test_load_all_wrong_typed_records_fails_safe_to_empty(tmp_path: Path) -> None:
+    target = tmp_path / "web_sessions.json"
+    target.write_text(
+        json.dumps(
+            {
+                **_payload("bad-numeric", last_seen_at="soon"),
+                **_payload("bad-str-field", device_label=None),
+            }
+        )
+    )
+
+    assert WebSessionStore(target).load() == {}

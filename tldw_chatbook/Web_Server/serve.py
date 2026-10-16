@@ -900,6 +900,10 @@ class ChatbookWebServerMixin:
                         device_label=_device_label_from_user_agent(
                             request.headers.get("User-Agent", "")
                         ),
+                        # Spec §3.1: loopback auto-login stays the in-memory
+                        # session it always was; it must never mint a disk
+                        # record (ADR-233).
+                        persist=False,
                     )
                 except AuthenticationError:
                     raise web.HTTPUnauthorized(text="Authentication denied") from None
@@ -948,7 +952,7 @@ class ChatbookWebServerMixin:
                     '<label>Access token <input type="password" name="access_token" '
                     'autocomplete="current-password" required></label> '
                     '<label><input type="checkbox" name="remember" value="1" checked> '
-                    "Remember this device — checked signs in a persistent 30-day "
+                    "Remember this device — checked signs in a persistent "
                     "device session; unchecked uses a short-lived in-memory "
                     "session that ends when the server stops (safest on shared "
                     "machines)</label>"

@@ -742,6 +742,61 @@ def test_short_login_is_not_persisted(tmp_path) -> None:
     assert store.load() == {}
 
 
+def test_short_login_downgrades_to_the_legacy_short_session_timeouts(
+    tmp_path,
+) -> None:
+    manager, _store, now = _persisted_manager(tmp_path)
+    short = manager.login_with_access_token(
+        "tok", client_ip="192.168.1.9", persist=False
+    )
+    persisted = manager.login_with_access_token("tok", client_ip="192.168.1.9")
+
+    # Unchecked "Remember" is the legacy 30-minute idle / 8-hour absolute
+    # session (Spec §3.3, ADR-233 decision 5); checked keeps the configured
+    # 30-day/180-day device windows.
+    assert short.expires_at == now[0] + 8 * 60 * 60.0
+    assert persisted.expires_at == now[0] + 180 * 86400.0
+
+
+def test_short_session_idle_window_is_enforced_per_session(tmp_path) -> None:
+    manager, _store, now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token(
+        "tok", client_ip="192.168.1.9", persist=False
+    )
+
+    now[0] += 20 * 60  # inside the legacy 30-minute idle window: touch refreshes
+    assert manager.authenticate_request(_facts(grant)).session_id
+    # 31 idle minutes later the legacy window has closed, even though the
+    # manager's configured idle window (30 days) is far from over.
+    now[0] += 31 * 60
+    with pytest.raises(AuthenticationError, match="expired"):
+        manager.authenticate_request(_facts(grant))
+
+
+def test_loopback_auto_login_contract_mints_no_disk_record(tmp_path) -> None:
+    """Spec §3.1 pin: cookieless loopback entry is the in-memory auto-login."""
+
+    policy = build_web_auth_policy(host="127.0.0.1", port=8000, access_token=None)
+    store = WebSessionStore(tmp_path / "web_sessions.json")
+    manager = WebAuthManager(policy, session_store=store)
+    grant = manager.authenticate_local(
+        client_ip="127.0.0.1", device_label="Laptop", persist=False
+    )
+
+    session = manager.authenticate_request(
+        RequestFacts(
+            method="GET",
+            path="/",
+            peer_ip="127.0.0.1",
+            scheme="http",
+            host="127.0.0.1:8000",
+            cookie_value=grant.cookie_value,
+        )
+    )
+    assert session.persist is False
+    assert store.load() == {}
+
+
 def test_default_clock_is_wall_clock() -> None:
     import time as _time
 

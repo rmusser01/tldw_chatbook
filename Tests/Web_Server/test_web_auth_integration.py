@@ -433,6 +433,7 @@ async def _logged_in_client(tmp_path, *, remember: str | None = "1"):
         )
         assert login.status == 303
         assert login.headers["Location"] == "/"
+        client.chatbook_login_response = login
         yield client
 
 
@@ -659,10 +660,32 @@ async def test_pair_issues_one_use_bootstrap_url(tmp_path) -> None:
 async def test_login_without_remember_stays_short_lived(tmp_path) -> None:
     async with _logged_in_client(tmp_path, remember=None) as client:
         assert (await client.get("/auth/devices")).status == 200
+        cookie = SimpleCookie(
+            client.chatbook_login_response.headers["Set-Cookie"]
+        )[SESSION_COOKIE_NAME]
+        # The unchecked box downgrades to the legacy short session (Spec
+        # §3.3, ADR-233 decision 5): the cookie's lifetime is bounded by the
+        # 8-hour absolute window, never the configured device window.
+        assert int(cookie["max-age"]) <= 8 * 3600 + 1
 
     # The unchecked box leaves the session in memory only: nothing that
     # would survive a restart reaches the disk store.
     assert WebSessionStore(tmp_path / "web_sessions.json").load() == {}
+
+
+@pytest.mark.asyncio
+async def test_login_with_remember_keeps_the_configured_device_cookie_window(
+    tmp_path,
+) -> None:
+    async with _logged_in_client(tmp_path, remember="1") as client:
+        cookie = SimpleCookie(
+            client.chatbook_login_response.headers["Set-Cookie"]
+        )[SESSION_COOKIE_NAME]
+
+    # "Checked" keeps the configured device-session windows (defaults here:
+    # 30-day idle / 180-day absolute), so the cookie far outlives the
+    # legacy 8-hour downgrade.
+    assert abs(int(cookie["max-age"]) - 180 * 86400) <= 5
 
 
 @pytest.mark.asyncio
@@ -688,9 +711,11 @@ async def test_login_form_offers_remember_checkbox_with_accurate_copy(
     assert page.status == 200
     assert '<input type="checkbox" name="remember" value="1" checked' in body
     # The copy must describe both states accurately (task-3 review ruling):
-    # checked = persistent 30-day device session; unchecked = short-lived
-    # in-memory session that ends when the server stops.
-    assert "persistent 30-day" in body
+    # checked = persistent device session (the window is configurable, so no
+    # hard-coded day count); unchecked = short-lived in-memory session that
+    # ends when the server stops.
+    assert "persistent device session" in body
+    assert "30-day" not in body
     assert "short-lived in-memory session" in body
     assert "ends when the server stops" in body
 

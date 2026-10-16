@@ -29,6 +29,34 @@ _FIELDS = (
     "last_seen_at",
     "absolute_expires_at",
 )
+_STRING_FIELDS = (
+    "digest_hex",
+    "session_id",
+    "csrf_token",
+    "client_ip",
+    "device_label",
+)
+_NUMERIC_FIELDS = ("created_at", "last_seen_at", "absolute_expires_at")
+
+
+def _is_well_typed_record(value: object) -> bool:
+    """Whether one decoded record carries the scalar types it claims.
+
+    A wrong-typed record (e.g. ``"last_seen_at": "soon"``) must be skipped
+    like a malformed one: letting it through would surface later as a
+    ``TypeError`` inside the manager's numeric expiry comparisons.
+    """
+
+    if not isinstance(value, dict):
+        return False
+    for name in _STRING_FIELDS:
+        if not isinstance(value.get(name), str):
+            return False
+    for name in _NUMERIC_FIELDS:
+        number = value.get(name)
+        if isinstance(number, bool) or not isinstance(number, (int, float)):
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -65,6 +93,8 @@ class WebSessionStore:
             return {}
         records: dict[str, StoredSession] = {}
         for key, value in raw.items():
+            if not _is_well_typed_record(value):
+                continue  # skip wrong-typed entries, keep the rest
             try:
                 records[key] = StoredSession(**{name: value[name] for name in _FIELDS})
             except (KeyError, TypeError):
