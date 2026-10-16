@@ -272,6 +272,55 @@ finally:
     }
 
 
+@pytest.mark.parametrize("module", ["coordinator", "inspection", "schemas"])
+def test_deferred_plugin_import_failure_settles_readiness(tmp_path, module):
+    """First-use import failure reaches every waiter and leaves no live worker."""
+    code = """
+import asyncio
+import importlib.abc
+import json
+import sys
+from pathlib import Path
+
+from tldw_chatbook.Plugins.service import PluginService
+
+blocked = BLOCKED_MODULE
+assert blocked not in sys.modules
+class RefuseImport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            raise ImportError("deliberate deferred import failure")
+
+sys.meta_path.insert(0, RefuseImport())
+root = Path.home() / "plugin-profile"
+service = PluginService(root, workspace_lookup=lambda _: None)
+ready = service._start()
+assert service._start() is ready
+try:
+    for _ in range(2):
+        try:
+            ready.result(timeout=5)
+        except ImportError as error:
+            assert str(error) == "deliberate deferred import failure"
+        else:
+            raise AssertionError("startup must fail")
+finally:
+    service._thread.join(timeout=5)
+    assert not service._thread.is_alive()
+    if ready.done():
+        asyncio.run(service.aclose())
+assert service._closed
+assert not (root / "plugins").exists()
+print(json.dumps({"failure_published": True, "worker_stopped": True}))
+""".replace("BLOCKED_MODULE", repr("tldw_chatbook.Plugins." + module))
+    result = _run_isolated_python(tmp_path, code)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "failure_published": True,
+        "worker_stopped": True,
+    }
+
+
 def test_app_import_defers_advanced_tool_readiness(tmp_path: Path) -> None:
     """Importing the app must not load Advanced-only readiness."""
     modules = _measure_app_import(tmp_path)["tldw_modules"]

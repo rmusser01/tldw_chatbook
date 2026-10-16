@@ -7,6 +7,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 | File | Role |
 | --- | --- |
 | `tldw_chatbook/app.py` | `TldwCli` — composition root (ADR-036): config load, service graphs, navigation dispatch, global bindings, boot worker fleet, quit flow |
+| `tldw_chatbook/app_startup.py` | Delegated startup timers and footer wiring; app methods retain named dependency and callback routes |
 | `tldw_chatbook/Constants.py` | `TAB_*` route ids, `TAB_DISPLAY_LABELS`, navigation-context contract keys, subscription/splash constants |
 | `tldw_chatbook/UI/Navigation/shell_destinations.py` | `ShellDestination` dataclass, `SHELL_DESTINATION_ORDER`, `SHELL_DESTINATION_SHORTCUTS`, `resolve_shell_route()` |
 | `tldw_chatbook/UI/Navigation/screen_registry.py` | `ScreenRoute`, lazy `_SCREEN_ROUTES` map (~30 routes), `_SCREEN_ALIASES`, `resolve_screen_target()` |

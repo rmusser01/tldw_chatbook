@@ -7918,10 +7918,10 @@ class AgentService:
                                 if standard_resolver:
                                     directory = (
                                         resolve_existing_log_dir(
-                                        candidate_id, root=history_root
-                                    )
+                                            candidate_id, root=history_root
+                                        )
                                         if history_root is not None
-                                    else None
+                                        else None
                                     )
                                 else:
                                     directory = resolve_existing_log_dir(candidate_id)

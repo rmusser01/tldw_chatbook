@@ -418,6 +418,8 @@ async def test_screen_preimport_scheduled_only_after_ui_ready_flips(monkeypatch)
     monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", "0")  # only the ordering matters here
     app = _build_test_app()
 
+    app._cli_no_splash = True  # compose() runs after the factory patches end.
+
     ui_ready_at_call_time: list[bool] = []
     real_schedule = type(app)._schedule_screen_preimport
 
@@ -428,6 +430,7 @@ async def test_screen_preimport_scheduled_only_after_ui_ready_flips(monkeypatch)
     monkeypatch.setattr(type(app), "_schedule_screen_preimport", spy_schedule)
 
     async with app.run_test(size=(120, 36)) as pilot:
+        assert app.splash_screen_active is False
         await _wait_until(
             lambda: ui_ready_at_call_time, pause=pilot.pause, timeout_seconds=5.0
         )
