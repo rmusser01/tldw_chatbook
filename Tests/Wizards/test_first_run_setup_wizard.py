@@ -1628,8 +1628,11 @@ async def test_next_button_click_drives_quick_track_to_summary():
 
         seen_step_ids = []
         for _ in range(10):
+            before = container.current_step
             await pilot.click("#wizard-next")
-            await pilot.pause(0.2)
+            # TASK-33008 review round 2: a fixed 0.2 s read a half-done Next.
+            await _until(pilot, lambda left=before: container.current_step != left)
+            await pilot.pause(0.2)  # room for a second, double-dispatched advance
             step = container.steps[container.current_step]
             seen_step_ids.append(step.config.id if step.config else None)
             if isinstance(step, SummaryStep):
