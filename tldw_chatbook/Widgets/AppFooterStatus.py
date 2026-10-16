@@ -359,7 +359,8 @@ class AppFooterStatus(Widget):
 
         Returns:
             The tier's hints, minus any whose key the active context
-            already advertises under its own (available) label -- task-2860.
+            already advertises under its own (available) label -- task-2860
+            -- and, at every tier, any key the screen lists as unavailable.
         """
         visible_actions = self._context_actions if actions is None else actions
         covered = {action.key.lower() for action in visible_actions if action.available}
@@ -419,9 +420,12 @@ class AppFooterStatus(Widget):
         self,
         *,
         source: str,
-        shortcuts: tuple[tuple[str, str], ...],
+        shortcuts: tuple[tuple[str, str] | tuple[str, str, bool], ...],
     ) -> None:
-        """Render Workbench shortcut hints through the footer context model."""
+        """Render Workbench shortcut hints through the footer context model.
+
+        A ``(key, label, False)`` triple lists a key that does nothing here.
+        """
         context = ShortcutContext(
             source=source,
             # A third False marks a key that does nothing here (no hint at all).
