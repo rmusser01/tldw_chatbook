@@ -3,13 +3,16 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from .coordinator import PluginCoordinator
 from .models import PackageInspection
 from .package_files import canonical_json
 from .recovery import retained_inspections
 from .revocation import RevocationTarget
+
+if TYPE_CHECKING:
+    from .coordinator import PluginCoordinator
 
 
 def effective_activation(default: bool, override: str) -> bool:
@@ -234,7 +237,7 @@ class PluginAdmission:
 
     def __init__(
         self,
-        coordinator: PluginCoordinator,
+        coordinator: "PluginCoordinator",
         workspace_lookup: Callable,
         *,
         fences: LivePluginFences | None = None,
@@ -332,6 +335,7 @@ class PluginAdmission:
             unavailable = set()
             if owned_mappings:
                 from tldw_chatbook.MCP.credential_bindings import CredentialError
+
                 for mapping in owned_mappings:
                     try:
                         self.coordinator.validate_mapping(
