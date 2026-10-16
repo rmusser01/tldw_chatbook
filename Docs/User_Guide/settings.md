@@ -464,8 +464,9 @@ deleted endpoint whatever you save here. If a chat is still on it when you go
 back to the Console, move that chat to another model in Switch model
 (**Alt+M**).
 
-From Chat settings nothing shows until you save; the button then reads **Return
-to Chat settings** and reopens the dialog with your unsaved edits. From the
+From Chat settings no **Return to Chat settings** shows until you save (Return
+without saving shows while you have unsaved edits, below); the button then
+reopens the dialog with your unsaved edits. From the
 Console the button reads **Return to Console** and is there as soon as you
 arrive, so a visit that saves nothing, such as a key test with **t**, can go
 straight back: the status names the chat, as in "No unsaved changes. Return to
