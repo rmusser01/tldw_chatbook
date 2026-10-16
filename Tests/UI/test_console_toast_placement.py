@@ -67,6 +67,10 @@ def _shown_toasts(screen) -> list[str]:
 
 
 @pytest.mark.asyncio
+# TASK-33008 review round 2: _build_test_app reads guarded config, so under the
+# per-test sandbox it raises RecoveryRequired("raw_source_selection_changed");
+# the node keeps the bootstrap profile and runs in the admission-sensitive step.
+@pytest.mark.bootstrap_profile
 async def test_a_dialog_over_the_console_draws_each_notice_once() -> None:
     """Capture finding 7: a notice posted just before Switch model reopened
     drew twice, in full at the dialog's bottom right and clipped behind the

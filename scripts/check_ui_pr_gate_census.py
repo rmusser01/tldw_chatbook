@@ -325,7 +325,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # a second or less: about 225 s in all, 13-36 s a shard. Their files are too
 # slow whole (the return file runs ~13 min, Use detected's ~4.5 min); the 33
 # passed 3 of 3 serial runs together (243 s each).
-MINIMUM_FILES = 315
+# Its review round 2 raised it by 2, to 317: two more of the phase's Tests/UI
+# tests ran in no lane, appended after the 33 (Use detected keeps the saved
+# endpoint, ~5 s; the footer under a dialog, ~10 s), each 3 of 3 serial.
+MINIMUM_FILES = 317
 
 
 def read_census(path: Path) -> list[str]:

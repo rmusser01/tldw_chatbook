@@ -93,6 +93,11 @@ def test_the_active_steps_readiness_word_gets_its_own_line():
     assert max(cell_len(row) for row in line.split("\n")) <= _card_content_width()
 
 
+# Gated in the admission-sensitive PR step (TASK-33008 review round 2): Tests/UI's
+# autouse _disable_model_catalog_refresh imports the app, which loads guarded
+# config. Under the per-test sandbox that import fails fixture setup with
+# RecoveryRequired("raw_source_selection_changed") unless the app came first.
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("provider_key", "blocker", "category", "url", "word"),
     [
@@ -175,6 +180,7 @@ def test_a_long_provider_name_never_wraps_the_readiness_word(
     assert max(cell_len(row) for row in rows) <= _card_content_width()
 
 
+@pytest.mark.bootstrap_profile  # as above: the app import reads guarded config
 def test_the_name_budget_constant_matches_the_card_rule():
     """Capture fix round 3: the fit checks above only catch a narrower card;
     a wider one kept cutting names to the old 60-cell budget, all green."""

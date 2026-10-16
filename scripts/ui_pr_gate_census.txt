@@ -552,3 +552,7 @@ Tests/UI/test_console_switcher_local_probe.py::test_the_not_running_line_wraps_s
 Tests/UI/test_console_switcher_local_probe.py::test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers
 # Capture fix: Find counts one listed provider in the singular.
 Tests/UI/test_console_switcher_local_probe.py::test_find_counts_one_listed_provider_in_the_singular
+# TASK-33008 review round 2: adopting a detected server keeps the configured endpoint (5 s).
+Tests/UI/test_console_provider_persistence_regressions.py::test_detected_server_adoption_keeps_configured_endpoint
+# TASK-33008 review round 2: under a dialog the footer names only the keys that act (10 s).
+Tests/UI/test_console_switch_model_entry_points.py::test_a_dialog_over_a_ready_console_names_only_the_keys_that_act
