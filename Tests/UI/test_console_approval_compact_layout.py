@@ -55,7 +55,19 @@ def _pending_card(console, round_id="compact-round"):
 
 def _assert_painted(host, card, button):
     region = button.region
-    assert region.width >= len(button.label.plain), (button.id, region)
+    assert region.width >= len(button.label.plain), (
+        button.id,
+        region,
+        {
+            "mounted": button.is_mounted,
+            "display": button.display,
+            "card_display": card.display,
+            "generation": card._batch_generation,
+            "current_fast_button": button in card._batch_fast_buttons,
+            "card_region": card.content_region,
+            "parent_region": button.parent.region if button.parent is not None else None,
+        },
+    )
     assert region.height > 0, button.id
     assert card.content_region.contains_region(region), (
         button.id,
