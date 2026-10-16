@@ -1,11 +1,11 @@
 ---
 id: TASK-32693
 title: Add Plugins navigation and source-qualified browsing
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:32'
-updated_date: '2026-10-16 01:08'
+updated_date: '2026-10-16 01:35'
 labels:
   - plugins
   - implementation
@@ -27,12 +27,12 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Plugins is reachable through shell navigation, command palette and canonical Settings without reassigning existing shortcuts or using deprecated settings surfaces.
-- [ ] #2 Installed, Browse and Marketplaces views provide bounded search/details, scope/effective activation, compatibility axes and source provenance with explicit empty/error/stale states.
-- [ ] #3 Search, page, selection and focus survive wide/narrow transitions; obsolete responses and row reordering cannot retarget an action.
-- [ ] #4 Token-governed controls and keyboard-only 80x24 and 120x35 layouts keep scope, disabled explanations and actions reachable without automatic remote previews.
-- [ ] #5 The current shared screen-route and shell-destination metadata covers every registered route, including Plugins and the existing Meetings and Research Workspace destinations, without weakening its coverage checks.
-- [ ] #6 Plugins integration satisfies the unchanged startup and whole-registry preimport budgets while unopened Settings categories stay deferred and their actual first-use behavior, exported object identities and existing module patch points remain functional.
+- [x] #1 Plugins is reachable through shell navigation, command palette and canonical Settings without reassigning existing shortcuts or using deprecated settings surfaces.
+- [x] #2 Installed, Browse and Marketplaces views provide bounded search/details, scope/effective activation, compatibility axes and source provenance with explicit empty/error/stale states.
+- [x] #3 Search, page, selection and focus survive wide/narrow transitions; obsolete responses and row reordering cannot retarget an action.
+- [x] #4 Token-governed controls and keyboard-only 80x24 and 120x35 layouts keep scope, disabled explanations and actions reachable without automatic remote previews.
+- [x] #5 The current shared screen-route and shell-destination metadata covers every registered route, including Plugins and the existing Meetings and Research Workspace destinations, without weakening its coverage checks.
+- [x] #6 Plugins integration satisfies the unchanged startup and whole-registry preimport budgets while unopened Settings categories stay deferred and their actual first-use behavior, exported object identities and existing module patch points remain functional.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -71,7 +71,24 @@ Ruling: R99 — reconcile I5 metadata-only listing and bounded README with the m
 Ruling: R100 — keep AC6 category-first-use behavior and move deferred Settings symbol resolution behind its actual matching category, field, saved-content or nonempty-query branch, preserving original object identity, assigned module patch points and draft restoration semantics — resolving every category symbol at the top of a shared render, restore or event method satisfies preimport counting but loads unopened categories, contrary to the approved acceptance outcome — cost if wrong: revise the narrow existing Settings initialization/use wiring and rerun cold Overview absence, later category identity and relevant draft/category controls before accepting I5; do not weaken AC6, omit routes, prewarm startup, raise caps or replace event classes.
 Current dev integration (TASK32695 AC15): the removed UI/Workbench/route_inventory.py remains absent. Current Navigation/screen_registry.py and shell_destinations.py retain route/owner coverage, Meetings/Research and all existing shortcuts. The source facade stays with current lazy app skill wiring. Original validation counts and review notes are historical; qualify the rebased source through AC15.
 Current dev styling (R15/ADR097): use existing SCREEN_OWNED_SPLITS with plugins-only ownership and current route CSS map. Shared/singular/modal styles remain boot-loaded; no cap increase/new loader/modal owner. Existing builder regenerates exact approved outputs, preserving unrelated generated siblings. New-base tests remain integration AC15.
+15. CLI6 documentation closeout scope after fresh Fix1review I1–I4 ADDRESSED/0new: authorize existing backlog/docs/lessons-testing-evidence.md (already exact originalBASE captured), now30eligible paths, for the actual TASK32693 incident: whole-path body read bounds, cold actual category use, held load ownership, actual paint contrast and the root historical-dispatch overwrite. This is required DoD knowledge capture, not new product behavior or architecture; existing ADR162/150/097 remain. Root may append this concise incident and Implementation Notes/AC/status via CLI, verify docs diff and source invariance, then make a local closeout commit. No product/test changes, test reruns or added review seat; preserve the historical artifact gap and I7 warning/static/headroom qualifications.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Historical delivery closeout below: counts/review describe the original branch. The current dev rebase is qualified separately by TASK32695 AC15 under R14/R15.
+
+Added Plugins at F8 through shared shell/palette metadata and canonical F4 Settings, with lazy app-owned services. Installed, Browse and Marketplaces preserve scope, stable selection, drafts, pagination and focus across narrow/wide layouts. Repository, import and source previews use existing facades; installation, activation, recorded eligibility and provenance remain distinct.
+
+Passive listing uses authenticated records from the same SQLite/current-authority projection and shared eligibility logic, without retained-body reads or display-issued admissions. Explicit literal README reads only its selected member: at most 65,537 bytes including the sentinel, with at most 65,536 returned UTF-8 bytes. Runtime retains complete byte and permission checks. Fix1 also corrects category first use, pending-load ownership and scoped title/placeholder contrast. Recorded the actual incident in backlog/docs/lessons-testing-evidence.md.
+
+ADR required: yes. Existing backlog/decisions/162-managed-agent-plugins.md documents the corrected display contract; backlog/decisions/150-design-token-system-and-design-language.md and backlog/decisions/097-boot-budget-ratchets.md govern UI tokens and budgets. R99/R100 resolve the initial plan conflicts. No new owner, schema, dependency, permission grant or raised cap.
+
+Validation is phase-qualified: the original exact-five run passed 32 tests. Final Fix1 controls passed eight owner tests, 15 UI tests and 21 guard tests, with one visible headroom warning. Both isolated terminal sizes were captured; title/placeholder contrast measures 14.191/12.749. The earlier 97-pass/2-fixture-failure owner run and two corrected controls remain separate. Fix1 Ruff has 118/118 exact-base diagnostic parity and no changed-hunk Ruff/Black issues; inherited whole-file formatting debt remains under R10. Fresh scoped review marks all four Important findings ADDRESSED, with no new breakage.
+
+Qualifications remain explicit: preimport uses 499/500 modules and 378349/378740 LOC; the unchanged optional-pydub cold-warning failure, earlier diagnostics and I7 triage remain. No full-suite, external-network or additional-platform qualification. Root verified all 124 Fix1 artifacts and frozen source. Of 408 historical initial entries, 407 remain verifiable after one root-overwritten preparatory dispatch; the actual reviewed dispatch, source and raw tests survive. The unrecovered metadata gap is documented. I6 review/commit/reference-discard and management workflows are the next approved increment.
+<!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
 
