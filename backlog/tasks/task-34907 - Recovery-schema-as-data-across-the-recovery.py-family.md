@@ -1,13 +1,13 @@
 ---
 id: TASK-34907
 title: Recovery schema-as-data across the recovery.py family
-status: In Progress
+status: To Do
 created_date: 2026-10-12 17:54
 labels:
 - simplification
 assignee:
 - '@zcode'
-updated_date: 2026-10-15 21:04
+updated_date: 2026-10-16 00:32
 ---
 
 ## Description
@@ -32,9 +32,8 @@ Evidence (verified on dev df4985e): Examples: Kanban_Interop/local_kanban_db.py 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+PRECISE CENSUS DONE (supersedes the task's '21 recovery.py files' premise): of 22 */recovery.py files only 9 embed SQLite DDL; 3 more domains live in DB/recovery_operations.py (1,616 LOC 344KB); 4 domains ALREADY single-sourced via leaf modules (guardian_schema.py 36 LOC / recovery_core_schema.py 1008 / recovery_goal_schema.py 148 / recovery_response_rules + shim) - these are the exact target pattern: runtime AND recovery import a leaf that itself imports neither. KEY MECHANICAL FACT: recovery DDL is the SQLite STORED CATALOG (SELECT sql ORDER BY type,name with IF NOT EXISTS stripped + fts5 shadow tables + sqlite_sequence) NOT the runtime script text - any single-source design must model that transformation. The drift detectors (test_operational_owners.py::test_operational_schema_matches_actual_constructor over 9 stores + test_domain_owners.py::test_real_domain_complete_capture_and_current_schema) are GREEN in the 3h14m baseline (385F/5787P known env; /tmp/base-34907.txt) - they are the executable correctness definition. FEASIBILITY TABLE: EASY (kanban notifications.client runtime.event_state runtime.sync_state notes.file_notes) = single clean runtime owner + stored-catalog relation; MEDIUM (scheduled_tasks ALTER-accumulated; tts spread across migrations pkg; research/writing hand-rolled adapters should also rebase onto _SQLiteDeclaration); HARD (evals computed v7 catalog + FTS triggers; agent_runs programmatic delta catalogs; subscriptions ~8 byte-exact alternative catalog families coupled to chachanotes). SEPARABLE SUBTASK: the 6 _SQLiteDeclaration adapter bodies are copy-paste identical modulo (label, version_query, one TypeError) - an adapter dedup is independent of the DDL dedup. PRIVATE-SYMBOL BLAST RADIUS: _SCHEMA pinned by Tests (TTS + Evals), 12+ private adapter classes imported cross-module by Backup_Recovery destinations/restore_plan/later_rollback/staging - renames have a concrete list in the extraction map (recorded in the agent transcript). Implementation: start with the EASY five following guardian_schema.py precedent; verify with the two drift detectors + domain guard files only (fast), NOT the 3h full suite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
