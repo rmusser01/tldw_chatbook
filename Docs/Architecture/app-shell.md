@@ -7,6 +7,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 | File | Role |
 | --- | --- |
 | `tldw_chatbook/app.py` | `TldwCli` — composition root (ADR-036): config load, service graphs, navigation dispatch, global bindings, boot worker fleet, quit flow |
+| `tldw_chatbook/app_startup.py` | Delegated startup timers and footer wiring; app methods retain named dependency and callback routes |
 | `tldw_chatbook/Constants.py` | `TAB_*` route ids, `TAB_DISPLAY_LABELS`, navigation-context contract keys, subscription/splash constants |
 | `tldw_chatbook/UI/Navigation/shell_destinations.py` | `ShellDestination` dataclass, `SHELL_DESTINATION_ORDER`, `SHELL_DESTINATION_SHORTCUTS`, `resolve_shell_route()` |
 | `tldw_chatbook/UI/Navigation/screen_registry.py` | `ScreenRoute`, lazy `_SCREEN_ROUTES` map (~30 routes), `_SCREEN_ALIASES`, `resolve_screen_target()` |
@@ -70,7 +71,7 @@ Worker completions funnel through one hook: `on_worker_state_changed` releases s
 
 Conventions: `run_worker(coro, group="<kebab-group>", exclusive=True|False, exit_on_error=False)`; `exit_on_error=False` on anything that must not kill the app; `@work(thread=True)` for blocking work with `call_from_thread` for UI updates.
 
-Boot background work is governed by `Utils/boot_worker_policy.py`: an IMMEDIATE tier (scheduler loop, ingest restore) and a STAGGERED tier (actor-pack recovery/staging, FTS backfills for ChaChaNotes and subscriptions) capped at one concurrent worker, strictly serial, released through `StaggeredBootWorkerGate` after `_ui_ready`, with a backstop reconcile timer. A separate daemon-thread screen-module pre-importer (deliberately not a Textual worker) warms the priority routes (`chat`, `library`, `settings`) 0.2 s after mount.
+Boot background work is governed by `Utils/boot_worker_policy.py`: an IMMEDIATE tier (scheduler loop, ingest restore) and a STAGGERED tier (actor-pack recovery/staging, FTS backfills for ChaChaNotes and subscriptions) capped at one concurrent worker, strictly serial, released through `StaggeredBootWorkerGate` after `_ui_ready`, with a backstop reconcile timer. A separate daemon-thread screen-module pre-importer (deliberately not a Textual worker) warms the priority routes (`chat`, `library`, `settings`) 0.2 s after mount. Between routes it yields to the existing app-owned Console custody projection, including received intent before controller setup; it resumes once turns settle and stops promptly on shutdown. A long response may delay speculative warming; direct navigation and the single-route initial splash warmup retain their normal loader. See ADR-230, TASK-34406.4.
 
 The model-catalog refresh worker group is named by `Constants.MODEL_CATALOG_REFRESH_WORKER_GROUP` so dispatch sites and the worker-handler acknowledgement set cannot drift.
 

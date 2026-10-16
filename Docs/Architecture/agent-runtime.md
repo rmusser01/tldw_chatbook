@@ -64,6 +64,17 @@ permission denials count toward the separate denial circuit breaker (ADR-154).
 
 Steps land in `AgentRunsDB`; the full-fidelity run log is a per-run-tree on-disk TREE with latched `bind()`, eviction, and search (`search_run_log`, `run_log_stats`, `run_log_slice` — surfaced to the agent as read-only tools). Run state is per-run; cross-session memory is owned elsewhere: the pinned personal-context profile block is appended to the system prompt by the bridge (see [console.md](./console.md)), and long-lived "Agent Lessons" cross sessions only through the human-reviewed promotion path (`Agents/agent_lesson_promotion.py` — lesson text stays untrusted evidence and grants no authority by itself).
 
+
+`Agents/activation.py::guarded` passively qualifies an already loaded stock
+injected writer and includes its actual explicit root in the initial fresh agent
+admission. Implicit, custom or changed writers keep the admitted global-root
+fallback. Conversation-history search in `AgentService` uses
+`activation.history_execution` to retain fresh source admission through root
+selection, directory probes and segment loading; only the recorded canonical
+reader receives that admitted root explicitly. Custom readers retain their
+one-argument contract. No admission result is cached (ADR-126/ADR-230,
+TASK-34406.2).
+
 ## Failure behavior summary
 
 | Case | Behavior |

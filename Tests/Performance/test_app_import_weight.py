@@ -54,7 +54,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The full heavy-dependency guard set from the task 163 plan. NONE of these
@@ -200,7 +199,7 @@ def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProce
     )
 
 
-_MEASURE_SNIPPET = """
+_MEASURE_SNIPPET = f"""
 import json
 import sys
 import time
@@ -209,7 +208,7 @@ t0 = time.perf_counter()
 import tldw_chatbook.app
 elapsed = time.perf_counter() - t0
 
-loaded = sorted(m for m in {heavy_modules!r} if m in sys.modules)
+loaded = sorted(m for m in {HEAVY_MODULES!r} if m in sys.modules)
 tldw_modules = sorted(
     m for m in sys.modules
     if m.startswith("tldw_chatbook") and sys.modules[m] is not None
@@ -221,7 +220,7 @@ print(json.dumps({{
     "tldw_modules": tldw_modules,
     "loaded_heavy": loaded,
 }}))
-""".format(heavy_modules=HEAVY_MODULES)
+"""
 
 
 def _measure_app_import(tmp_path: Path) -> dict:
@@ -234,6 +233,92 @@ def _measure_app_import(tmp_path: Path) -> dict:
     # and, in some configurations, to stdout before the print()).
     last_line = result.stdout.strip().splitlines()[-1]
     return json.loads(last_line)
+
+
+def test_plugin_facade_defers_package_management_until_use(tmp_path):
+    """A metadata facade must not import inspection or open its storage worker."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+from tldw_chatbook.Plugins.service import PluginService
+
+root = Path.home() / "plugin-profile"
+service = PluginService(root, workspace_lookup=lambda _: None)
+try:
+    print(json.dumps({
+        "loaded_management": sorted(name for name in (
+            "tldw_chatbook.Plugins.coordinator",
+            "tldw_chatbook.Plugins.inspection",
+            "tldw_chatbook.Plugins.schemas",
+        ) if name in sys.modules),
+        "worker_started": service._thread is not None,
+        "storage_created": root.exists(),
+    }))
+finally:
+    asyncio.run(service.aclose())
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    observed = json.loads(result.stdout.strip().splitlines()[-1])
+    assert observed == {
+        "loaded_management": [],
+        "worker_started": False,
+        "storage_created": False,
+    }
+
+
+@pytest.mark.parametrize("module", ["coordinator", "inspection", "schemas"])
+def test_deferred_plugin_import_failure_settles_readiness(tmp_path, module):
+    """First-use import failure reaches every waiter and leaves no live worker."""
+    code = """
+import asyncio
+import importlib.abc
+import json
+import sys
+from pathlib import Path
+
+from tldw_chatbook.Plugins.service import PluginService
+
+blocked = BLOCKED_MODULE
+assert blocked not in sys.modules
+class RefuseImport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            raise ImportError("deliberate deferred import failure")
+
+sys.meta_path.insert(0, RefuseImport())
+root = Path.home() / "plugin-profile"
+service = PluginService(root, workspace_lookup=lambda _: None)
+ready = service._start()
+assert service._start() is ready
+try:
+    for _ in range(2):
+        try:
+            ready.result(timeout=5)
+        except ImportError as error:
+            assert str(error) == "deliberate deferred import failure"
+        else:
+            raise AssertionError("startup must fail")
+finally:
+    service._thread.join(timeout=5)
+    assert not service._thread.is_alive()
+    if ready.done():
+        asyncio.run(service.aclose())
+assert service._closed
+assert not (root / "plugins").exists()
+print(json.dumps({"failure_published": True, "worker_stopped": True}))
+""".replace("BLOCKED_MODULE", repr("tldw_chatbook.Plugins." + module))
+    result = _run_isolated_python(tmp_path, code)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "failure_published": True,
+        "worker_stopped": True,
+    }
 
 
 def test_app_import_defers_advanced_tool_readiness(tmp_path: Path) -> None:

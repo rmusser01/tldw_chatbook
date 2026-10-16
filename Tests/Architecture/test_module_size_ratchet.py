@@ -74,6 +74,8 @@ _BUDGETS: dict[str, int] = {
     # app_command_providers.py: 7,467 -> 6,403; per-feature glue ->
     # app_feature_glue.py: 6,403 -> 5,712).
     "tldw_chatbook/app.py": 5712,
+    # TASK-34406.5: unchanged startup/footer wiring, born governed.
+    "tldw_chatbook/app_startup.py": 176,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;

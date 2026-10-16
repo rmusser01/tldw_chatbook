@@ -2879,7 +2879,7 @@ def test_lazy_persona_buddy_property_defers_and_ensure_constructs():
 
 @pytest.mark.unit
 @pytest.mark.bootstrap_profile
-def test_actor_pack_recovery_precedes_character_persona_surfaces():
+def test_actor_pack_recovery_precedes_character_persona_surfaces(monkeypatch):
     """Cross-store recovery is gated ahead of every affected surface.
 
     task-21106 rewrote what this pin means. Recovery no longer runs inside
@@ -2926,10 +2926,20 @@ def test_actor_pack_recovery_precedes_character_persona_surfaces():
     # on the event loop -- and the behavioral proof that it actually runs
     # after first paint lives in Tests/UI/test_actor_pack_recovery_seam.py
     # and Tests/App/test_boot_worker_stagger_policy.py.
+    from tldw_chatbook import app_startup
     from tldw_chatbook.Utils.boot_worker_policy import STAGGERED_BOOT_WORKER_KEYS
 
-    deferred = inspect.getsource(TldwCli._schedule_deferred_startup_work)
+    deferred = inspect.getsource(app_startup._schedule_deferred_startup_work)
     assert "_start_staggered_boot_workers" in deferred, deferred
+    delegated = []
+    monkeypatch.setattr(
+        app_startup,
+        "_schedule_deferred_startup_work",
+        lambda app, **dependencies: delegated.append(app),
+    )
+    app = object()
+    TldwCli._schedule_deferred_startup_work(app)
+    assert delegated == [app]
     assert STAGGERED_BOOT_WORKER_KEYS[0] == "actor_pack_recovery", (
         f"recovery must stay first in the staggered boot order; observed "
         f"{STAGGERED_BOOT_WORKER_KEYS!r}"

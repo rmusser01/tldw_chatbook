@@ -1,5 +1,21 @@
 # Lessons: what counts as evidence a change works
 
+## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
+
+**Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule
+Stop under a deliberately held config rebuild lock. The watchdog found an ordinary
+FULL refresh, queued after attach reconciliation, reading config before Stop could
+run. Both the screen and test matched dev; the exact local test and two forced-queue
+attempts passed. The test had waited for attach-ready and the control-bar flag,
+which did not witness retirement of that separately queued callback.
+
+**What to do.** When a test holds a lock after mount, wait for an actual same-screen
+post-refresh completion barrier within its existing setup deadline. Preserve the
+critical held-lock action, watchdog and timing assertions. This settles setup; it
+does not establish that ordinary FULL reconciliation is nonblocking or prove an
+intermittent hosted failure was reproduced locally. The focused 15-case UI file
+passed with this barrier; hosted qualification remains separate.
+
 ## A local red is only evidence after a same-tree baseline (TASK-35080/35081, 2026-10-15)
 
 **Incident.** While fixing the workspace-note and fs_mkdir gaps, this machine's
@@ -120,6 +136,21 @@ competing work. Report the first-send number even when the median is flat.
 **Outcome.** The hop was replaced by composing on the loop and reusing the
 catalog while nothing it read changed. Over 10 paired launches, first sends
 then reached the provider a median 88 ms sooner than the base.
+
+**Follow-up (TASK-34406.4, 2026-10-16).** Giving the existing speculative
+screen preimporter the runtime's received/accepted-turn custody signal let
+it wait between routes during Console work. Four balanced fresh first
+Sends per version, on one busy host through served CDP, measured post-save
+preparation at 6288 -> 3934 ms median; all four pairs improved with equal
+content, 27 tool schemas and verified traces. This is a scoped comparison,
+not a native-paint, population-p95 or later-send claim. A separate
+instrumented candidate was slower than its diagnostic baseline
+(5497 versus 3772 ms), with a permission callback at 422 ms wall/29 ms CPU
+and only about 12 ms from submission to invoke. Keep those unfavorable
+profile observations too: worker wall is not isolated disk time, and an
+inclusive function profile cannot replace unprofiled critical-path pairs.
+The existing permission/admission checks stayed intact; long or held turns
+can delay speculative warming until custody clears.
 
 ## The guard, not the read, was the cost: a correct cache keeps paying the guard (TASK-33620.15.1, 2026-10-09)
 
@@ -19974,3 +20005,45 @@ entry control reproduced this order locally; the same control passed after
 only the test's original population-ready callback awaited actual thread entry.
 Keep that synchronization explicit instead of assuming worker start order. The
 original apply still runs once; no inventory, deadline or production guard changes.
+
+
+## A removed setup span does not establish whole-send improvement (TASK-34406.2, 2026-10-16)
+
+The Console profile attributed 126 ms to an unrelated global run-log selector.
+Removing it while separately admitting the actual explicit writer still repeated
+the profile/config/database admission pass. Four fresh baseline/candidate pairs
+then measured first-send post-save medians of 1006.5/1050 ms, with only two pairs
+improving. The refinement joined the actual root to the same initial fresh scope;
+it did not cache permission decisions. Keep the unsuccessful packet and compare
+the revised whole sends without a profiler. Inclusive diagnostic spans overlap,
+and async thread time includes other work on that loop; neither is self CPU or
+an additive speed budget. The refined comparison also split two pairs each way,
+so its small median reduction is descriptive, not a demonstrated cold-send win.
+
+The same task's Bridge lifetime fixture assumed the worker's thread-local handle
+would still exist after the reply. `operation_owned_connection` could already
+retire it, and the explicit writer no longer needed an incidental workspace DB
+lookup. The fixture now deliberately acquires both `_held_connection()` handles
+under the actual worker guard, then checks physical close, caller usability and
+native maintenance admission. `_get_connection()` creates a different lifetime;
+using it as a held-handle probe did not exercise the intended owner.
+
+
+## Cold composition and served input need separate evidence (TASK-34406.3, 2026-10-16)
+
+A 232 ms inclusive first-send composition span repeated at 43 ms on identical
+production bytes. Removing two of three manifest parses then measured
+10.668 to 3.953 ms in a balanced manifest-only benchmark, while four fresh
+first-send pairs measured post-save medians of 3980 to 4064 ms. Host load rose
+10.67 to 37.06 on 18 logical CPUs, and a separate diagnostic observed a concurrent
+Personas import. Keep parser savings, async overlap and whole-Send measurements
+separate; the span is not an additive CPU budget or proof of a cold-Send gain.
+
+The same experiment's contiguous prompt predicate failed with wrapped/cursor
+rendering, while one diagnostic persisted its first prompt exactly. Its HTTP
+close plus two seconds still showed Queue/Stop, and a later synthetic Send click
+on baseline accepted no second message. The final first-only protocol used
+atomic insertion and Enter, waited for actual rendered Send readiness, and kept
+exact persisted prompts/replies, schemas and verified traces as the content
+oracles. Failed packets remain separate. This does not establish that historical
+failed drafts were valid or that any product input behavior was fixed.

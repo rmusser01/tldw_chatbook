@@ -70,6 +70,8 @@ The loop owns several tools itself (ids `runtime:<name>`, schemas in `tool_catal
 
 `MCPToolProvider.compose_catalog()` builds the agent-visible MCP tools: kill switch → empty catalog; otherwise local external records plus the builtin inventory, one batched `effective_tool_states` resolution, `deny` states dropped, persona maximums enforced, names deduplicated. Invocation serializes on a per-provider lock (the stdio session is not proven multiplex-safe), peeks per-run approval stamps, applies the persona floor, and routes execution onto the main loop bounded by the configured tool timeout. The full permission decision lifecycle is in [mcp-hub.md](./mcp-hub.md).
 
+The stock local MCP capability manifest reads and parses its registration source once per manifest call, sharing that fresh AST across the tool, resource and prompt walkers. Independent calls still read fresh source and return detached schema values; this introduces no parser cache.
+
 The Console run-start helper may install a kept MCP composition into a fresh provider when the service, catalog fingerprint identity, connection states and provider composition key still match. Only a plain `MCPToolProvider` is eligible for this reuse. Incomplete inventory composition is not kept; a valid empty inventory can be reused. `install_composition()` clears approval stamps. This cache belongs to the run-start helper; the full registry and persona call caps remain run scoped.
 
 ## Config keys

@@ -1617,3 +1617,34 @@ runtime, publication and cancellation checks, and recheck policy before acceptin
 the derived snapshot. A previously issued native callback still retires through
 its original owner. No TTL, admission, native authority, deadline or census budget
 changes follow from this exception.
+
+### TASK-34406.2 — Admit explicit run writers and saved history at use (2026-10-16)
+
+A stock Console run whose actual injected stock writer has an explicit root
+admits that root before binding, instead of resolving an unrelated global
+history root. Initial config/profile, database, workspace and permission admission
+and physical worker/resource lifetimes still apply. Exact writer class, original
+path/bind callbacks and consumed root must qualify; implicit, custom, changed or
+stale public writers retain the global entry route. No admission decision is cached.
+
+Conversation-scope saved-run search selects its current global root while the
+profile/workspace scope is held, then retains history admission through directory
+probes and actual segment loading. The canonical resolver consumes that admitted
+root explicitly; a missing root never triggers a second implicit selection.
+Custom readers retain their preceding one-argument ABI under the same scope.
+This deliberately moves refusal for an unrelated global history source to its
+actual search; refusal for the live writer remains before bind/provider entry.
+Prompt-history persistence, audit order and durable checkpoints are unchanged.
+
+Rejected: simply skipping global entry admission without guarding older-history
+loads, or admitting one root and then reselecting another. Qualify real native
+refusal/retirement and matched first/later sends; a successful reply alone does
+not establish the broad latency or platform targets. See TASK-34406.2 and the
+companion ADR-126/ADR-230 amendment.
+
+The explicit writer root may be passively qualified from already loaded stock
+source objects before entry and included in the initial admission observation.
+That single execution scope still freshly admits every actual source before the
+run body starts; it avoids re-admitting the same profile/config/database sources
+in a nested scope. Qualification never imports or calls an optional source before
+admission. Missing or custom source objects keep the admitted global fallback.
