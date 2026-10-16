@@ -44,6 +44,7 @@ from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion,
     SensitivePathContext,
     merge_sensitive_context,
+    refuses_new_directory_chain,
     resolve_sensitive_context,
     sensitive_exclusions_under,
 )
@@ -533,17 +534,28 @@ class WorkspaceToolExecutor:
                     if type(raw_pattern) is not str:
                         raise ValueError("invalid glob pattern")
                     normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
-            if operation in {"fs_write", "fs_edit"} and type(arguments) is dict:
+            if (
+                operation in {"fs_write", "fs_edit", "fs_mkdir"}
+                and type(arguments) is dict
+            ):
                 raw_path = arguments.get("path")
                 if type(raw_path) is not str:
                     raise ValueError("invalid mutation path")
                 context = self._call_context()
-                resolve_workspace_path(
+                resolved = resolve_workspace_path(
                     raw_path,
                     chain.canonical_root,
                     intent="write",
                     context=context,
                 )
+                if operation == "fs_mkdir" and refuses_new_directory_chain(
+                    resolved, context=context
+                ):
+                    # The write-intent choke point guards the ancestors of
+                    # a FILE target; mkdir's leaf IS a new directory, so
+                    # the shadow-directory walk must start at the target
+                    # itself (TASK-849 guard, applied per fs_mkdir).
+                    raise ValueError("invalid mutation path")
                 normalized["path"] = _normalize_relative_path(raw_path)
                 exclusions, _ = _parent_read_exclusions(chain.canonical_root, context)
                 normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
@@ -702,7 +714,10 @@ class WorkspaceToolExecutor:
                     if type(raw_pattern) is not str:
                         raise ValueError("invalid glob pattern")
                     normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
-            if operation in {"fs_write", "fs_edit"} and type(arguments) is dict:
+            if (
+                operation in {"fs_write", "fs_edit", "fs_mkdir"}
+                and type(arguments) is dict
+            ):
                 raw_path = arguments.get("path")
                 if type(raw_path) is not str:
                     raise ValueError("invalid mutation path")

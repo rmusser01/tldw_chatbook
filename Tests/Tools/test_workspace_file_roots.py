@@ -424,21 +424,77 @@ def test_set_launch_cwd_is_first_write_wins(tmp_path, monkeypatch) -> None:
 # --- Workspace-context note (feat/workspace-agent-context-note) ---
 
 
-def test_note_empty_for_default_workspace(tmp_path) -> None:
-    registry = _registry(tmp_path)
-    assert (
-        wfr.workspace_context_note(
-            DEFAULT_WORKSPACE_ID, registry=registry
-        )
-        == ""
-    )
+# TASK-35080: the default-workspace note used to be "" (and Console's
+# "global" sentinel degraded to the false "details are currently
+# unavailable" one-liner), leaving the model with zero fs_* tools, no
+# explanation, and nothing to do but confabulate when the user asked it
+# to look at project folders. The note now states the limitation and the
+# remediation instead.
+_DEFAULT_NOTE_NO_FOLDERS = "no project folders are bound"
+_DEFAULT_NOTE_NO_TOOLS = (
+    "No fs_*, git_* or virtual_cli workspace tools are available in this run"
+)
 
 
-def test_note_empty_for_no_workspace(tmp_path) -> None:
+def test_note_for_default_workspace_states_no_folder_access(tmp_path) -> None:
     registry = _registry(tmp_path)
-    assert (
-        wfr.workspace_context_note(None, registry=registry) == ""
+    note = wfr.workspace_context_note(
+        DEFAULT_WORKSPACE_ID,
+        registry=registry,
+        path_tool_aliases=(),
+        scratch_relative_tools=("read_file", "list_directory", "write_file"),
     )
+    assert _DEFAULT_NOTE_NO_FOLDERS in note
+    assert _DEFAULT_NOTE_NO_TOOLS in note
+    assert "private scratch space" in note
+    assert "NOT running in the default workspace" not in note
+
+
+def test_note_for_global_console_workspace_matches_default(tmp_path) -> None:
+    # TASK-35080: default Console sessions carry CONSOLE_GLOBAL_WORKSPACE_ID
+    # ("global"), which no registry row exists for -- the note must not
+    # degrade to the false "details are currently unavailable" line.
+    registry = _registry(tmp_path)
+    note = wfr.workspace_context_note(
+        "global", registry=registry, path_tool_aliases=()
+    )
+    assert "unavailable" not in note
+    assert _DEFAULT_NOTE_NO_FOLDERS in note
+
+
+def test_note_for_no_workspace_matches_default(tmp_path) -> None:
+    registry = _registry(tmp_path)
+    note = wfr.workspace_context_note(None, registry=registry, path_tool_aliases=())
+    assert _DEFAULT_NOTE_NO_FOLDERS in note
+    assert "unavailable" not in note
+
+
+def test_note_default_workspace_without_tool_information_stays_soft(
+    tmp_path,
+) -> None:
+    # ``path_tool_aliases=None`` means the caller could not inspect the
+    # run's tools; the note must not claim tools are absent.
+    registry = _registry(tmp_path)
+    note = wfr.workspace_context_note(DEFAULT_WORKSPACE_ID, registry=registry)
+    assert _DEFAULT_NOTE_NO_FOLDERS in note
+    assert "scratch" in note
+    assert _DEFAULT_NOTE_NO_TOOLS not in note
+
+
+def test_note_default_workspace_with_path_aliases_names_isolation(
+    tmp_path,
+) -> None:
+    # A default-workspace run may still carry run-scoped agent-worktree
+    # authorities; those tools exist, so the note must not claim absence.
+    registry = _registry(tmp_path)
+    note = wfr.workspace_context_note(
+        DEFAULT_WORKSPACE_ID,
+        registry=registry,
+        path_tool_aliases=("worktree-1",),
+    )
+    assert _DEFAULT_NOTE_NO_FOLDERS in note
+    assert _DEFAULT_NOTE_NO_TOOLS not in note
+    assert "isolated working folders" in note
 
 
 def test_note_names_workspace_and_states_non_default(tmp_path) -> None:

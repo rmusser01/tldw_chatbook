@@ -55,6 +55,7 @@ def _arguments_for(operation: str) -> dict[str, object]:
             "new_string": "after",
             "sensitive_exclusions": [],
         },
+        "fs_mkdir": {"path": "new/dir", "sensitive_exclusions": []},
         "fs_patch": {
             "diff": "--- a/file\n+++ b/file\n",
             "sensitive_exclusions": [],
@@ -104,6 +105,7 @@ def test_request_round_trip_uses_the_closed_exact_schema() -> None:
         ("fs_read", "read"),
         ("fs_write", "write"),
         ("fs_edit", "write"),
+        ("fs_mkdir", "write"),
         ("fs_patch", "write"),
         ("fs_glob", "read"),
         ("fs_grep", "read"),

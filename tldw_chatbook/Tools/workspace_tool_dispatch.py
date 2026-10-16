@@ -29,6 +29,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
     _grep_relative_files,
     _edit_relative_file,
     _list_relative_directory,
+    _mkdir_relative_directory,
     _read_relative_file,
     _relative_target_is_safe,
     _stat_relative_path,
@@ -177,6 +178,18 @@ def execute_pinned_operation(
             display_path=request.arguments["path"],
             content_stamps=True,
         )
+    if request.operation == "fs_mkdir":
+        # Directory-classified twin of the mutation-target check: the
+        # target IS a directory, so name/direct-children exclusion rules
+        # that apply to files must not fire and subtree rules must.
+        return _mkdir_relative_directory(
+            _request_directory_target(request, root),
+            workspace=Path("."),
+            sensitive_exclusions=_request_exclusions(
+                request, "sensitive_exclusions"
+            ),
+            display_path=request.arguments["path"],
+        )
     if request.operation == "fs_patch":
         return _patch_request(request, root)
     if request.operation in {
@@ -320,6 +333,23 @@ def _request_mutation_path(
         Path("."),
         _request_exclusions(request, "sensitive_exclusions"),
         is_directory=False,
+    ):
+        raise WorkspaceToolDispatchError(
+            "invalid_request", "workspace mutation target is invalid"
+        )
+    return relative
+
+
+def _request_directory_target(
+    request: _PinnedOperationRequest, root: PinnedWorkspaceRoot
+) -> Path:
+    """Validate a directory-creation target's live lexical and resolved location."""
+    relative = _request_relative_path(request, root)
+    if not _relative_target_is_safe(
+        relative,
+        Path("."),
+        _request_exclusions(request, "sensitive_exclusions"),
+        is_directory=True,
     ):
         raise WorkspaceToolDispatchError(
             "invalid_request", "workspace mutation target is invalid"

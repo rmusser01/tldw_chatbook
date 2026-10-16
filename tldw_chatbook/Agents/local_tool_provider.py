@@ -344,6 +344,7 @@ _PATH_AUTHORITY_LOCAL_NAMES = frozenset(
         "fs_read",
         "fs_write",
         "fs_edit",
+        "fs_mkdir",
         "fs_patch",
         "fs_glob",
         "fs_grep",
@@ -1497,6 +1498,14 @@ class LocalToolProvider:
             if type(raw_path) is not str:
                 raise ValueError("invalid read path")
             return exact(_normalize_remote_relative_path(raw_path))
+        if name == "fs_mkdir":
+            raw_path = raw_args.get("path")
+            if type(raw_path) is not str:
+                raise ValueError("invalid mutation path")
+            relative = _normalize_remote_relative_path(raw_path, intent="write")
+            if refused(relative, is_directory=True):
+                raise refuse(relative)
+            return (ToolPathTarget(path=base / relative, kind="directory"),)
         if name in {"fs_write", "fs_edit"}:
             raw_path = raw_args.get("path")
             if type(raw_path) is not str:
@@ -1550,6 +1559,7 @@ class LocalToolProvider:
         from tldw_chatbook.Utils.sensitive_paths import (
             SensitivePathContext,
             merge_sensitive_context,
+            refuses_new_directory_chain,
             resolve_sensitive_context,
         )
 
@@ -1581,6 +1591,19 @@ class LocalToolProvider:
                 args["path"], root, intent="read", context=context
             )
             return (ToolPathTarget(path=path, kind="exact"),)
+        if name == "fs_mkdir":
+            path = resolve_workspace_path(
+                args["path"], root, intent="write", context=context
+            )
+            if refuses_new_directory_chain(path, context=context):
+                # Mirror the executor's extra admission (a mkdir's leaf IS
+                # a new directory) so the preflight never renders an
+                # approval card the dispatch would then refuse.
+                raise LocalToolError(
+                    f"Refused: creating '{args['path']}' would collide with "
+                    "a protected path"
+                )
+            return (ToolPathTarget(path=path, kind="directory"),)
         if name in {"fs_write", "fs_edit"}:
             path = resolve_workspace_path(
                 args["path"], root, intent="write", context=context
@@ -4113,6 +4136,34 @@ def _default_specs(
             },
             handler=lambda args: workspace_executor.execute(
                 "fs_write", args, intent="write"
+            ),
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            tags=("mutates",),
+        ),
+        LocalToolSpec(
+            name="fs_mkdir",
+            description=(
+                "Create a directory, including any missing parent "
+                "directories, relative to the workspace root. Creating a "
+                "directory that already exists is a success no-op; a "
+                "non-directory at the target path is refused."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Directory path to create, relative to the "
+                            "workspace root."
+                        ),
+                    },
+                },
+                "required": ["path"],
+            },
+            handler=lambda args: workspace_executor.execute(
+                "fs_mkdir", args, intent="write"
             ),
             exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
             approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),

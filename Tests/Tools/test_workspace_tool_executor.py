@@ -1458,6 +1458,49 @@ def test_unsupported_closed_operation_is_a_stable_worker_refusal(
     assert caught.value.code == "unsupported_operation"
 
 
+def test_fs_mkdir_admits_creates_and_retries_through_the_real_worker(
+    tmp_path: Path,
+) -> None:
+    """TASK-35081: fs_mkdir end to end -- admission, creation with missing
+    parents, and the already-exists success no-op a retried call needs."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = WorkspaceToolExecutor(workspace)
+
+    created = _run_worker_request(
+        executor._build_request(
+            "fs_mkdir", {"path": "reports/2026/oct"}, intent="write"
+        )
+    )
+    assert created.outcome == "success"
+    assert "created directory" in (created.result or "")
+    assert (workspace / "reports" / "2026" / "oct").is_dir()
+
+    retried = _run_worker_request(
+        executor._build_request(
+            "fs_mkdir", {"path": "reports/2026/oct"}, intent="write"
+        )
+    )
+    assert retried.outcome == "success"
+    assert "already exists" in (retried.result or "")
+
+
+def test_fs_mkdir_admission_refuses_a_git_metadata_target(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = WorkspaceToolExecutor(workspace)
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request(
+            "fs_mkdir", {"path": ".git/hooks"}, intent="write"
+        )
+
+    assert caught.value.code == "invalid_request"
+    assert not (workspace / ".git").exists()
+
+
 @pytest.mark.parametrize("pattern", ("../outside/*.txt", "safe\x00name/*.txt"))
 def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern(pattern: str) -> None:
     chain = capture_directory_chain(Path.cwd())
@@ -2804,6 +2847,37 @@ def test_remote_request_carries_cached_identity_without_laptop_capture(
 
 def blow_up_on_disk(*_args: Any, **_kwargs: Any) -> Any:
     raise AssertionError("remote request building must not touch the laptop disk")
+
+
+def test_remote_fs_mkdir_request_normalizes_and_carries_exclusions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-35081 review follow-up: fs_mkdir's remote admission is lexical."""
+    monkeypatch.setattr(
+        workspace_tool_executor_module, "capture_directory_chain", blow_up_on_disk
+    )
+    executor = _remote_executor()
+
+    request = executor._build_request(
+        "fs_mkdir", {"path": "deploy/v2"}, intent="write"
+    )
+
+    assert request.arguments["path"] == "deploy/v2"
+    assert request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"},
+        {"kind": "name", "value": ".env"},
+    ]
+
+
+def test_remote_fs_mkdir_request_rejects_git_metadata_lexically() -> None:
+    """The one lexically-checkable hidden-path write rule the remote
+    builder enforces: a ``.git`` path component refuses admission."""
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_mkdir", {"path": ".git/hooks"}, intent="write")
+
+    assert caught.value.code == "invalid_request"
 
 
 @pytest.mark.parametrize(

@@ -298,6 +298,71 @@ def test_mixed_access_roots_refuse_mutation_on_read_only_alias(tmp_path):
     ]
 
 
+def test_fs_mkdir_creates_a_directory_through_an_admitted_rw_root(tmp_path):
+    """TASK-35081: the incident's "create a folder" ask, end to end."""
+    root = admitted_root(
+        alias="folder-rw",
+        root=tmp_path,
+        allow_write=True,
+        executor=InProcessWorkspaceExecutor(tmp_path),
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(root,))
+
+    created = provider.invoke("local:fs_mkdir", {"path": "reports/2026"})
+    retried = provider.invoke("local:fs_mkdir", {"path": "reports/2026"})
+
+    assert created.ok and "created directory" in created.content
+    assert retried.ok and "already exists" in retried.content
+    assert (tmp_path / "reports" / "2026").is_dir()
+
+
+def test_fs_mkdir_is_stripped_when_no_root_is_writable(tmp_path):
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path,
+                allow_write=False,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+    names = {entry.name for entry in provider.list_catalog()}
+
+    assert "fs_mkdir" not in names
+    assert "fs_write" not in names
+    assert "fs_read" in names
+
+
+def test_fs_mkdir_refused_on_read_only_alias_mixed_roots(tmp_path):
+    read_executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path / "ro",
+                allow_write=False,
+                executor=read_executor,
+            ),
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path / "rw",
+                allow_write=True,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+
+    refused = provider.invoke(
+        "local:fs_mkdir", {"root_alias": "folder-ro", "path": "new"}
+    )
+
+    assert not refused.ok and refused.outcome == "blocked"
+    assert read_executor.calls == []
+
+
 def test_admitted_root_guard_revokes_before_executor(tmp_path):
     executor = RecordingWorkspaceExecutor()
     provider = make_provider(
