@@ -1012,3 +1012,114 @@ async def test_actual_submit_refuses_opaque_edits_to_live_plugin_material(
             )
         assert not rig.agent_gateway.payloads
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_management_projection_separates_installation_scope_and_component_readiness(
+    native_console,
+    native_package,
+):
+    rig = native_console
+    package = native_package()
+    (package / "mcp.json").write_text(
+        '{"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",'
+        '"mcpServers":{"docs":{"type":"streamable-http","url":"https://example.test/mcp"}}}'
+    )
+    review = await rig.service.review_install(
+        package, selection=("skill:review", "mcp:docs"), workspace_id="workspace-a"
+    )
+    assert (await rig.service.commit(review, review.operation_id)).committed
+    rows = await rig.service.management_snapshot("workspace-a")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.installation_id == review.installation_id
+    assert not row.effective_active
+    assert not row.ready_components
+    assert {component.kind for component in row.components} >= {"skill", "mcp"}
+    trust = await rig.service.review_trust(review.installation_id)
+    await rig.service.commit(trust, trust.operation_id)
+    enable = await rig.service.review_activation(
+        review.installation_id, workspace_id="workspace-a", intent="enabled"
+    )
+    await rig.service.commit(enable, enable.operation_id)
+    active = (await rig.service.management_snapshot("workspace-a"))[0]
+    assert active.effective_active
+    assert active.ready_components == ("skill:review",)
+    assert active.selected_components == ("mcp:docs", "skill:review")
+    assert not (await rig.service.management_snapshot("workspace-b"))[
+        0
+    ].effective_active
+    assert await rig.service.management_snapshot("workspace-a", offset=1) == ()
+    assert (
+        await rig.service.management_snapshot("workspace-a", query="missing-alias")
+        == ()
+    )
+    assert active.components[0].evidence
+    with pytest.raises(ValueError):
+        await rig.service.management_snapshot("workspace-a", limit=0)
+
+
+@pytest.mark.asyncio
+async def test_management_readme_requires_current_revision_and_keeps_display_grant_free(
+    native_console,
+    native_package,
+):
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    rig = native_console
+    package = native_package()
+    (package / "README.md").write_text(
+        "# untrusted\n![remote](https://example.test/image.png)\n"
+    )
+    review = await rig.service.review_install(
+        package, selection=("skill:review",), workspace_id="workspace-a"
+    )
+    await rig.service.commit(review, review.operation_id)
+    before = (len(rig.service._snapshots), len(rig.service.live_runs()))
+    row = (await rig.service.management_snapshot("workspace-a"))[0]
+    assert "untrusted" in await rig.service.management_readme(
+        row.installation_id, row.revision_digest, workspace_id="workspace-a"
+    )
+    assert before == (len(rig.service._snapshots), len(rig.service.live_runs()))
+    with pytest.raises(PluginUnavailable, match="plugin_details_unavailable"):
+        await rig.service.management_readme(
+            row.installation_id, "0" * 64, workspace_id="workspace-a"
+        )
+    with pytest.raises(PluginUnavailable, match="plugin_details_unavailable"):
+        await rig.service.management_readme(
+            row.installation_id, row.revision_digest, workspace_id="missing-workspace"
+        )
+
+
+@pytest.mark.asyncio
+async def test_management_readme_marks_bounded_unicode_preview_without_changing_source(
+    native_console, native_package
+):
+    import hashlib
+
+    from tldw_chatbook.UI.Plugins_Modules.details import display_text
+
+    rig = native_console
+    package = native_package()
+    body = ("x" * 65490 + "\x1b]52;c;hidden\x07" + "界" * 1000).encode()
+    source = package / "README.md"
+    source.write_bytes(body)
+    before = hashlib.sha256(body).hexdigest()
+    review = await rig.service.review_install(
+        package, selection=("skill:review",), workspace_id="workspace-a"
+    )
+    await rig.service.commit(review, review.operation_id)
+    row = (await rig.service.management_snapshot("workspace-a"))[0]
+    text = await rig.service.management_readme(
+        review.installation_id,
+        row.revision_digest,
+        workspace_id="workspace-a",
+    )
+    assert len(text.encode()) <= 65536
+    assert text.endswith("[truncated]")
+    assert "\ufffd" not in text
+    assert "hidden" not in display_text(text, limit=65536)
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+    assert (await rig.service.management_snapshot("workspace-a"))[
+        0
+    ].revision_digest == row.revision_digest

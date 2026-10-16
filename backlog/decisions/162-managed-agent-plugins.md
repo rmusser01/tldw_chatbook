@@ -654,3 +654,45 @@ special files still refuse. This fixes independently demonstrated enumeration/
 stat deletion races without relaxing quota limits or cleanup ownership. An earlier
 native OS failure was not reproduced with errno capture and remains unclassified;
 the controlled race evidence does not establish that failure's cause.
+
+
+### I5 display projections and I6 management handoff
+
+`PluginService.management_snapshot(workspace_id, *, query="", offset=0, limit=50)`
+runs on the existing storage worker and returns immutable metadata only. It
+validates the captured workspace, reads current authenticated publication and
+retained inspections, filters a bounded query before paging, and separates device
+installation, default/override/effective activation, trust, selected components,
+support and inspection evidence. Eligible component IDs come from the existing
+`PluginAdmission.capture(fresh=False)` policy, without registering a run, token,
+lease or execution grant. No UI projection supplies mutation authority.
+
+`management_readme(installation_id, revision_digest, *, workspace_id)` is an
+explicit selected-details read. It revalidates current authority and the exact
+revision/workspace, reads only retained README.md through the existing no-follow
+reader, and returns at most64KiB. Missing README is an empty result; unavailable,
+changed or oversized content is a bounded failure, never a raw path/config error.
+List loading never preloads package bodies, credentials or hook definitions.
+
+Plugins uses the standard app constructor and shared shell metadata (R13/R97),
+with one lazy app-owned SourceService wrapping the existing PluginService. The
+three views preserve stable IDs, query/page/focus and reject stale generation or
+scope results. Repository acquisition and explicit Cursor/Codex import preview
+retain actual in-session objects; I6 supplies exact review/commit/operation panels.
+Persisted candidate listing and reviewed reference discard are I6 work through
+SourceService, authenticating terminal custody/bytes and full dependency evidence.
+Compact references must not fabricate full AcquiredSnapshot DTOs; pending or
+reboot custody cannot become destructive cleanup authority.
+
+I5 selected README reads reuse the descriptor-pinned no-follow package reader
+primitives and regular-file/change checks. They read at most 64 KiB plus one
+sentinel byte, return a UTF-8-safe prefix with `[truncated]` inside the 64 KiB
+display budget, and preserve retained source bytes. Oversized regular README
+files are previewable; unsafe or changed sources remain closed errors.
+
+I5 also applies the existing [ADR097 boot-budget ratchet](097-boot-budget-ratchets.md)
+under R98: private Plugins display/state imports and the twelve measured Settings
+category import groups are deferred to actual constructor/category use. Settings
+keeps original exported objects and explicitly assigned module patch points;
+event classes remain eager. All registered routes remain in the preimport walk,
+and no payload moves to app startup or receives a raised cap.

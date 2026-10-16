@@ -124,6 +124,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-settings", "F4 Settings"),
         ("nav-research", "F5 Research"),
         ("nav-meetings", "F7 Meetings"),
+        ("nav-plugins", "F8 Plugins"),
     ]
 
 
@@ -137,6 +138,7 @@ def test_nav_button_label_numbering_scheme():
     assert nav_button_label("settings", "Settings") == "F4 Settings"
     assert nav_button_label("research", "Research") == "F5 Research"
     assert nav_button_label("meetings", "Meetings") == "F7 Meetings"
+    assert nav_button_label("plugins", "Plugins") == "F8 Plugins"
 
 
 @pytest.mark.asyncio
@@ -537,6 +539,7 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "settings": "f4",
         "research": "f5",
         "meetings": "f7",
+        "plugins": "f8",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for binding in hotkey_bindings:

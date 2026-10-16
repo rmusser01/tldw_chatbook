@@ -66,6 +66,12 @@ class ScreenRoute:
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
+    "plugins": ScreenRoute(
+        "plugins",
+        "plugins",
+        "tldw_chatbook.UI.Screens.plugins_screen",
+        "PluginsScreen",
+    ),
     "chunking_lab": ScreenRoute(
         "chunking_lab", "library",
         "tldw_chatbook.UI.Screens.chunking_lab_screen", "ChunkingLabScreen",

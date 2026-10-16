@@ -253,6 +253,7 @@ CSS_MODULES = [
     # verbatim to components/_shared_components.tcss to preserve them.
     "features/_llm-management.tcss",
     "features/_tools-settings.tcss",
+    "features/_plugins.tcss",
     "features/_ingest.tcss",
     # task-745: "features/_ingest_tldw_api_tabs.tcss" removed -- it styled the
     # standalone ingest window's tab strip and API form, deleted in task-684.4.

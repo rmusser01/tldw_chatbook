@@ -14,6 +14,9 @@ from tldw_chatbook.UI.Navigation.shell_destinations import registered_shell_rout
 
 WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "home": "home",
+    "plugins": "plugins",
+    "meetings": "meetings",
+    "research_workspace": "research",
     "chat": "console",
     "console": "console",
     "library": "library",

@@ -20,7 +20,42 @@ from .revocation import RevocationRequest, RevocationTarget
 if TYPE_CHECKING:
     from .data_cleanup import DataRootRef, RootReview
     from .git_source import SourceLocator
-    from .models import AcquiredSnapshot
+    from .models import AcquiredSnapshot, InspectionEvidence
+
+
+@dataclass(frozen=True)
+class ManagementComponent:
+    """Display metadata without executable definitions or host mappings."""
+
+    component_id: str
+    kind: str
+    support: str
+    evidence: tuple[InspectionEvidence, ...]
+    dependencies: tuple[str, ...]
+    blockers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ManagementInstallation:
+    """Captured display state; never an admission or mutation capability."""
+
+    installation_id: str
+    revision_digest: str
+    alias: str
+    workspace_id: str | None
+    activation_default: bool
+    override: str
+    effective_active: bool
+    trusted: bool
+    selected_components: tuple[str, ...]
+    ready_components: tuple[str, ...]
+    components: tuple[ManagementComponent, ...]
+    readiness_error: str | None
+    source_id: str | None
+    origin: str
+    ref: str | None
+    commit: str | None
+    dialect: str | None
 
 
 @dataclass(frozen=True)
@@ -194,6 +229,211 @@ class PluginService:
             self._refresh()
 
         await self._call(operation)
+
+    async def management_snapshot(
+        self,
+        workspace_id: str | None,
+        *,
+        query: str = "",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[ManagementInstallation, ...]:
+        """Read one bounded page of current metadata on the existing worker."""
+        from .registry import validate_page
+
+        validate_page(limit, offset)
+        if not isinstance(query, str) or len(query) > 1024:
+            raise ValueError("plugin_query_invalid")
+
+        def operation():
+            from .admission import effective_activation
+            from .recovery import retained_inspections
+
+            self._admission._workspace(workspace_id)
+            authority = self._coordinator.published_snapshot()
+            installed = sorted(
+                (
+                    row
+                    for row in authority["installations"]
+                    if query.casefold()
+                    in (row.get("alias") or row["installation_id"]).casefold()
+                ),
+                key=lambda row: row["installation_id"],
+            )[offset : offset + limit]
+            identities = {row["installation_id"] for row in installed}
+            inspections = retained_inspections(
+                {
+                    **authority,
+                    "revisions": [
+                        row
+                        for row in authority["revisions"]
+                        if row["installation_id"] in identities
+                    ],
+                },
+                coordinator=self._coordinator,
+            )
+            result = []
+            for row in installed:
+                identity, revision = row["installation_id"], row["revision_digest"]
+                inspection = inspections[(identity, revision)]
+                override = next(
+                    (
+                        item["intent"]
+                        for item in authority["activation"]
+                        if item["installation_id"] == identity
+                        and item["workspace_id"] == workspace_id
+                    ),
+                    "inherit",
+                )
+                selected = tuple(
+                    sorted(
+                        item["component_id"]
+                        for item in authority["selections"]
+                        if item["installation_id"] == identity
+                        and item["revision_digest"] == revision
+                        and item["selected"]
+                    )
+                )
+                trusted = any(
+                    item["installation_id"] == identity
+                    and item["revision_digest"] == revision
+                    and item["reviewed"]
+                    for item in authority["revision_trust"]
+                )
+                ready, error = (), None
+                try:
+                    ready = self._admission.capture(
+                        identity, workspace_id, "management-display", fresh=False
+                    ).selection
+                except PluginUnavailable:
+                    error = "plugin_components_unavailable"
+                binding = inspection.catalog_binding
+                reference = (
+                    binding.package if binding else inspection.acquisition_reference
+                )
+                result.append(
+                    ManagementInstallation(
+                        identity,
+                        revision,
+                        row.get("alias") or identity,
+                        workspace_id,
+                        bool(row["activation_default"]),
+                        override,
+                        effective_activation(bool(row["activation_default"]), override),
+                        trusted,
+                        selected,
+                        ready,
+                        tuple(
+                            ManagementComponent(
+                                item.component_id,
+                                item.kind,
+                                item.support,
+                                item.evidence,
+                                item.dependencies,
+                                item.activation_blockers,
+                            )
+                            for item in sorted(
+                                inspection.inventory.values(),
+                                key=lambda item: item.component_id,
+                            )
+                        ),
+                        error,
+                        binding.source_id if binding else None,
+                        (
+                            reference.origin + reference.repository
+                            if reference
+                            else inspection.source_identity
+                        ),
+                        reference.ref if reference else None,
+                        reference.commit if reference else None,
+                        inspection.dialect,
+                    )
+                )
+            return tuple(result)
+
+        try:
+            return await self._call(operation)
+        except (OSError, ValueError, PermissionError) as error:
+            raise PluginUnavailable("plugin_management_unavailable") from error
+
+    async def management_readme(
+        self,
+        installation_id: str,
+        revision_digest: str,
+        *,
+        workspace_id: str | None,
+    ) -> str:
+        """Read only the explicitly selected current revision's bounded README."""
+
+        def operation():
+            import os
+            import stat
+
+            from .package_files import (
+                _directory_fd,
+                _member_fd,
+                validate_relative_member,
+            )
+            from .recovery import retained_inspections
+
+            self._admission._workspace(workspace_id)
+            authority = self._coordinator.published_snapshot()
+            if not any(
+                row["installation_id"] == installation_id
+                and row["revision_digest"] == revision_digest
+                for row in authority["installations"]
+            ):
+                raise ValueError("plugin_details_changed")
+            inspection = retained_inspections(
+                {
+                    **authority,
+                    "revisions": [
+                        row
+                        for row in authority["revisions"]
+                        if row["installation_id"] == installation_id
+                        and row["revision_digest"] == revision_digest
+                    ],
+                },
+                coordinator=self._coordinator,
+            )[(installation_id, revision_digest)]
+            try:
+                with (
+                    _directory_fd(Path(inspection.materialized_identity)) as root_fd,
+                    _member_fd(root_fd, validate_relative_member("README.md")) as fd,
+                ):
+                    before = os.fstat(fd)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise ValueError("plugin_readme_invalid")
+                    preview = bytearray()
+                    while len(preview) <= 65536:
+                        chunk = os.read(fd, 65537 - len(preview))
+                        if not chunk:
+                            break
+                        preview.extend(chunk)
+                    after = os.fstat(fd)
+                    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                        after.st_size,
+                        after.st_mtime_ns,
+                        after.st_ctime_ns,
+                    ):
+                        raise ValueError("plugin_readme_changed")
+                # Bound rendered UTF-8 too: replacement characters can expand
+                # malformed source bytes. Never split a displayed code point.
+                encoded = bytes(preview).decode("utf-8", errors="replace").encode()
+                if len(encoded) > 65536:
+                    marker = b"\n[truncated]"
+                    return (
+                        encoded[: 65536 - len(marker)].decode("utf-8", errors="ignore")
+                        + marker.decode()
+                    )
+                return encoded.decode()
+            except FileNotFoundError:
+                return ""
+
+        try:
+            return await self._call(operation)
+        except (OSError, ValueError, PermissionError) as error:
+            raise PluginUnavailable("plugin_details_unavailable") from error
 
     async def review_install(
         self, root: Path, *, selection: tuple[str, ...], workspace_id: str | None

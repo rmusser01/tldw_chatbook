@@ -8670,6 +8670,17 @@ class TldwCli(
             self._plugin_service = service
         return service
 
+    @property
+    def plugin_source_service(self) -> Any:
+        """One lazy source facade, with no construction-time storage or fetching."""
+        service = getattr(self, "_plugin_source_service", None)
+        if service is None:
+            from tldw_chatbook.Plugins.source_service import SourceService
+
+            service = SourceService(self._build_plugin_service())
+            self._plugin_source_service = service
+        return service
+
     def _build_local_skills_stack(self) -> None:
         """Build the local skills service + scope facade. Idempotent.
 

@@ -181,6 +181,14 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         palette_aliases=("meeting", "record", "transcribe"),
         navigation_priority=75,
     ),
+    ShellDestination(
+        "plugins",
+        "Plugins",
+        "plugins",
+        "Installed plugins, source-qualified browsing, and marketplaces.",
+        "Browse plugins and inspect device installation and workspace activation.",
+        palette_aliases=("marketplaces", "plugin repositories"),
+    ),
 )
 
 _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
@@ -216,6 +224,7 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "settings": "f4",
         "research": "f5",
         "meetings": "f7",
+        "plugins": "f8",
     }
 )
 

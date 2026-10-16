@@ -1735,3 +1735,22 @@ rebinding remains a separate reviewed action. During active acquisition only,
 quota monitoring tolerates a vanished descendant inside its physically qualified
 staging leaf. Final acceptance and all non-acquisition capacity scans remain strict;
 this exception does not grant deletion authority or suppress other storage errors.
+
+### I5 navigation and display implementation
+
+The Plugins destination uses standard `PluginsScreen(app)` construction and
+shared shell metadata (F8; Settings remains F4). The app owns one lazy
+`SourceService` around its existing `PluginService`; imports, construction and
+startup do not refresh catalogs. Installed metadata uses the paged, read-only
+`management_snapshot` facade. Explicit README details use
+`management_readme(installation_id, revision_digest, *, workspace_id)` against
+current authority, descriptor-pinned retained bytes, and the display limits in
+section 10. Source text is literal, controls are stripped and images are not
+loaded. Display data never supplies execution or mutation authority.
+
+In-session repository/import/catalog previews retain actual public service
+objects for I6 review. I6's management increment owns protected persisted
+terminal candidate enumeration and reviewed reference discard, including the
+full dependency union and boot-qualified destructive release. Compact source
+or candidate summaries cannot reconstruct full acquisition evidence or justify
+pending/reboot adoption. See ADR162 and the I5/I6 implementation plan handoff.
