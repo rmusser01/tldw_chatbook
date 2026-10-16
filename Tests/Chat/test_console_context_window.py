@@ -444,9 +444,9 @@ async def test_real_http_transport_reads_serving_capacity(
     [
         # Real llama.cpp /v1/models record: serving window and training bound.
         ({"n_vocab": 151936, "n_ctx": 8192, "n_ctx_train": 32768, "n_embd": 4096}, 8192),
-        # Router mode with the model registered but not yet loaded: only the
-        # training bound is served (slot n_ctx reads 0 and is rejected).
-        ({"n_vocab": 151936, "n_ctx_train": 32768}, 32768),
+        # Router mode with the model registered but not yet loaded: the slot
+        # n_ctx serves 0 (rejected) and only the training bound remains.
+        ({"n_vocab": 151936, "n_ctx": 0, "n_ctx_train": 32768}, 32768),
     ],
 )
 async def test_llama_cpp_custom_endpoint_model_list_reports_nested_meta(
@@ -481,6 +481,58 @@ async def test_llama_cpp_custom_endpoint_model_list_reports_nested_meta(
         "server metadata",
         True,
     )
+
+
+@pytest.mark.asyncio
+async def test_flat_model_keys_outrank_nested_meta():
+    """TASK-35079 review: proxies (LiteLLM etc.) merge shapes -- a record can
+    carry both a flat max_model_len and llama.cpp's meta.n_ctx. The flat
+    serving value keeps precedence."""
+    record = {
+        "id": "selected",
+        "max_model_len": 16384,
+        "meta": {"n_ctx": 8192, "n_ctx_train": 32768},
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"object": "list", "data": [record]}
+            )
+        )
+    ) as client:
+        result = await ContextWindowCache().resolve(
+            ContextWindowTarget(
+                "custom", "custom", "http://localhost:9000", "selected"
+            ),
+            client,
+        )
+    assert (result.tokens, result.source, result.verified) == (
+        16384,
+        "server metadata",
+        True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", ["8192", ["n_ctx", 8192], 8192, None])
+async def test_non_dict_meta_is_skipped(meta):
+    """TASK-35079 review: a meta of any non-dict shape must not crash the
+    scan or yield a window; the record simply carries none."""
+    record = {"id": "selected", "meta": meta}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"object": "list", "data": [record]}
+            )
+        )
+    ) as client:
+        result = await ContextWindowCache().resolve(
+            ContextWindowTarget(
+                "custom", "custom", "http://localhost:9000", "selected"
+            ),
+            client,
+        )
+    assert (result.tokens, result.verified) == (32000, False)
 
 
 @pytest.mark.asyncio
