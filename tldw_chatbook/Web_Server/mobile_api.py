@@ -148,6 +148,26 @@ def build_mobile_routes(server: Any) -> list:
             name="mobile_decide",
         ),
         web.get(
+            "/api/v1/mobile/notes",
+            partial(handle_notes_page, server),
+            name="mobile_notes",
+        ),
+        web.get(
+            "/api/v1/mobile/notes/{note_id}",
+            partial(handle_note_detail, server),
+            name="mobile_note_detail",
+        ),
+        web.get(
+            "/api/v1/mobile/library",
+            partial(handle_library_page, server),
+            name="mobile_library",
+        ),
+        web.get(
+            "/api/v1/mobile/library/{media_id}",
+            partial(handle_library_detail, server),
+            name="mobile_library_detail",
+        ),
+        web.get(
             MOBILE_STREAM_PATH,
             partial(handle_mobile_stream, server),
             name="mobile_stream",
@@ -328,6 +348,72 @@ async def handle_decide(server: Any, request) -> Any:
     except KeyError:
         delivered = False
     return web.json_response({"ok": bool(delivered)}, headers=_NO_STORE)
+
+
+def _parse_page(raw: str | None) -> int | None:
+    """Read one 1-based ``?page=`` value; ``None`` when unusable.
+
+    Missing or empty reads as the default page 1; anything that is not a
+    decimal integer, or is below 1, is a caller mistake (the uniform
+    ``400 invalid_page``).
+    """
+    if raw is None or raw == "":
+        return 1
+    if not (raw.isascii() and raw.isdigit()):
+        return None
+    page = int(raw)
+    return page if page >= 1 else None
+
+
+async def handle_notes_page(server: Any, request) -> Any:
+    """List one page of notes; answers the service's page envelope."""
+    from aiohttp import web
+
+    page = _parse_page(request.query.get("page"))
+    if page is None:
+        return _error(400, "invalid_page")
+    service = server._get_mobile_service()
+    return web.json_response(service.notes_page(page=page), headers=_NO_STORE)
+
+
+async def handle_note_detail(server: Any, request) -> Any:
+    """Return one note's full row, or ``404 unknown_note``."""
+    from aiohttp import web
+
+    service = server._get_mobile_service()
+    note = service.note_detail(request.match_info["note_id"])
+    if note is None:
+        return _error(404, "unknown_note")
+    return web.json_response({"note": note}, headers=_NO_STORE)
+
+
+async def handle_library_page(server: Any, request) -> Any:
+    """List one page of media items; answers the service's page envelope."""
+    from aiohttp import web
+
+    page = _parse_page(request.query.get("page"))
+    if page is None:
+        return _error(400, "invalid_page")
+    service = server._get_mobile_service()
+    return web.json_response(service.library_page(page=page), headers=_NO_STORE)
+
+
+async def handle_library_detail(server: Any, request) -> Any:
+    """Return one media item with transcripts, or ``404 unknown_item``.
+
+    The path segment must be a plain decimal integer — anything else is
+    the uniform ``400 invalid_item`` before the service is touched.
+    """
+    from aiohttp import web
+
+    raw_media_id = request.match_info["media_id"]
+    if not (raw_media_id.isascii() and raw_media_id.isdigit()):
+        return _error(400, "invalid_item")
+    service = server._get_mobile_service()
+    item = service.library_detail(int(raw_media_id))
+    if item is None:
+        return _error(404, "unknown_item")
+    return web.json_response({"item": item}, headers=_NO_STORE)
 
 
 class _StreamEngineError(Exception):

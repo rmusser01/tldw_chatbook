@@ -278,6 +278,67 @@ class FakeMobileService:
         )
         return round_id == "r1"
 
+    # Task 2 (reading routes): recording stubs mirroring the Task-1
+    # service methods — one known note ("n1") and one known media item
+    # (media_id 7); anything else reads as missing.
+
+    def notes_page(self, *, page: int = 1, per_page: int = 50) -> dict[str, Any]:
+        self.calls.append(("notes_page", {"page": page}))
+        return {
+            "items": [
+                {
+                    "id": "n1",
+                    "title": "First note",
+                    "preview": "first lines…",
+                    "created_at": None,
+                    "last_modified": None,
+                }
+            ],
+            "page": page,
+            "has_more": True,
+        }
+
+    def note_detail(self, note_id: str) -> dict[str, Any] | None:
+        self.calls.append(("note_detail", {"note_id": note_id}))
+        if note_id != "n1":
+            return None
+        return {
+            "id": "n1",
+            "title": "First note",
+            "content": "the full body",
+            "created_at": None,
+            "last_modified": None,
+        }
+
+    def library_page(self, *, page: int = 1, per_page: int = 25) -> dict[str, Any]:
+        self.calls.append(("library_page", {"page": page}))
+        return {
+            "items": [
+                {
+                    "media_id": 7,
+                    "title": "Demo clip",
+                    "media_type": "video",
+                    "ingestion_date": None,
+                    "last_modified": None,
+                }
+            ],
+            "page": page,
+            "has_more": False,
+        }
+
+    def library_detail(self, media_id: int) -> dict[str, Any] | None:
+        self.calls.append(("library_detail", {"media_id": media_id}))
+        if media_id != 7:
+            return None
+        return {
+            "media_id": 7,
+            "title": "Demo clip",
+            "media_type": "video",
+            "ingestion_date": None,
+            "last_modified": None,
+            "transcripts": [{"content": "transcript text"}],
+        }
+
     async def shutdown(self) -> None:
         self.shutdown_count += 1
 
@@ -514,8 +575,17 @@ async def test_mobile_routes_require_an_authenticated_session(
         headers=dict(_MOBILE_REQUEST_HEADERS),
     ) as client:
         response = await client.get("/api/v1/mobile/conversations")
+        assert response.status == 401
 
-    assert response.status == 401
+        for path in (
+            "/api/v1/mobile/notes",
+            "/api/v1/mobile/notes/n1",
+            "/api/v1/mobile/library",
+            "/api/v1/mobile/library/7",
+        ):
+            reading = await client.get(path)
+            assert reading.status == 401, path
+
     assert service.calls == []
 
 
@@ -893,6 +963,124 @@ async def test_send_returns_202_while_the_turn_is_still_pending(
     await _assert_subscribers_drained(service)
 
 
+# --------------------------------------------------------------------- #
+# Task 2: read-only notes + library GETs                                #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_unknown_note_and_item_answer_404(tmp_path, mobile_surface_gate) -> None:
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        note = await client.get("/api/v1/mobile/notes/nope")
+        assert note.status == 404
+        assert note.headers["Cache-Control"] == "no-store"
+        assert (await note.json()) == {"error": "unknown_note"}
+
+        item = await client.get("/api/v1/mobile/library/999")
+        assert item.status == 404
+        assert item.headers["Cache-Control"] == "no-store"
+        assert (await item.json()) == {"error": "unknown_item"}
+
+    assert ("note_detail", {"note_id": "nope"}) in service.calls
+    assert ("library_detail", {"media_id": 999}) in service.calls
+
+
+@pytest.mark.asyncio
+async def test_notes_and_library_page_shapes(tmp_path, mobile_surface_gate) -> None:
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        notes = await client.get("/api/v1/mobile/notes")
+        assert notes.status == 200
+        assert notes.headers["Cache-Control"] == "no-store"
+        body = await notes.json()
+        assert body["items"][0]["id"] == "n1"
+        assert body["items"][0]["preview"] != "the full body"
+        assert body["page"] == 1
+        assert body["has_more"] is True
+        assert set(body) == {"items", "page", "has_more"}
+        assert ("notes_page", {"page": 1}) in service.calls
+
+        page_two = await client.get("/api/v1/mobile/notes?page=2")
+        assert page_two.status == 200
+        assert (await page_two.json())["page"] == 2
+        assert ("notes_page", {"page": 2}) in service.calls
+
+        library = await client.get("/api/v1/mobile/library")
+        assert library.status == 200
+        assert library.headers["Cache-Control"] == "no-store"
+        library_body = await library.json()
+        assert library_body["items"][0]["media_id"] == 7
+        assert library_body["items"][0]["media_type"] == "video"
+        assert library_body["page"] == 1
+        assert library_body["has_more"] is False
+        assert set(library_body) == {"items", "page", "has_more"}
+        assert ("library_page", {"page": 1}) in service.calls
+
+        library_two = await client.get("/api/v1/mobile/library?page=3")
+        assert (await library_two.json())["page"] == 3
+        assert ("library_page", {"page": 3}) in service.calls
+
+
+@pytest.mark.asyncio
+async def test_note_and_library_detail_shapes(tmp_path, mobile_surface_gate) -> None:
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        note = await client.get("/api/v1/mobile/notes/n1")
+        assert note.status == 200
+        assert note.headers["Cache-Control"] == "no-store"
+        body = await note.json()
+        assert body == {
+            "note": {
+                "id": "n1",
+                "title": "First note",
+                "content": "the full body",
+                "created_at": None,
+                "last_modified": None,
+            }
+        }
+
+        item = await client.get("/api/v1/mobile/library/7")
+        assert item.status == 200
+        assert item.headers["Cache-Control"] == "no-store"
+        item_body = await item.json()
+        assert item_body["item"]["media_id"] == 7
+        assert item_body["item"]["transcripts"] == [{"content": "transcript text"}]
+        assert set(item_body) == {"item"}
+
+
+@pytest.mark.asyncio
+async def test_invalid_page_and_item_answer_400(tmp_path, mobile_surface_gate) -> None:
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        for path in (
+            "/api/v1/mobile/notes?page=0",
+            "/api/v1/mobile/notes?page=-1",
+            "/api/v1/mobile/notes?page=abc",
+            "/api/v1/mobile/notes?page=1.5",
+            "/api/v1/mobile/library?page=0",
+            "/api/v1/mobile/library?page=abc",
+        ):
+            response = await client.get(path)
+            assert response.status == 400, path
+            assert response.headers["Cache-Control"] == "no-store"
+            assert (await response.json()) == {"error": "invalid_page"}, path
+
+        for path in (
+            "/api/v1/mobile/library/abc",
+            "/api/v1/mobile/library/-1",
+            "/api/v1/mobile/library/1.5",
+            "/api/v1/mobile/library/1x",
+        ):
+            response = await client.get(path)
+            assert response.status == 400, path
+            assert response.headers["Cache-Control"] == "no-store"
+            assert (await response.json()) == {"error": "invalid_item"}, path
+
+    # Validation answers before the service is touched.
+    assert service.calls == []
+
+
 @pytest.mark.asyncio
 async def test_mobile_surface_false_leaves_the_routes_unregistered(
     tmp_path, mobile_surface_gate
@@ -926,6 +1114,10 @@ async def test_mobile_surface_false_leaves_the_routes_unregistered(
                 "/api/v1/mobile/approvals/r1",
                 {"json": {"decisions": {}}},
             ),
+            ("GET", "/api/v1/mobile/notes", {}),
+            ("GET", "/api/v1/mobile/notes/n1", {}),
+            ("GET", "/api/v1/mobile/library", {}),
+            ("GET", "/api/v1/mobile/library/7", {}),
         ):
             headers = dict(_MOBILE_REQUEST_HEADERS)
             if method == "POST":
