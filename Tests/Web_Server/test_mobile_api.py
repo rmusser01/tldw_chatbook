@@ -292,8 +292,19 @@ _MOBILE_REQUEST_HEADERS = {
 }
 
 
-def _mobile_server(tmp_path, policy, *, service: FakeMobileService):
-    """Build a config-free served server with the fake service injected."""
+def _mobile_server(
+    tmp_path,
+    policy,
+    *,
+    service: FakeMobileService | None = None,
+    provider_gateway: Any | None = None,
+):
+    """Build a config-free served server, injecting only what is given.
+
+    ``service``/``provider_gateway`` left ``None`` reproduce the
+    production ``create_server`` wiring (no mobile kwargs): the mobile
+    service is constructed lazily on first use.
+    """
 
     templates = tmp_path / "templates"
     statics = tmp_path / "static"
@@ -308,6 +319,11 @@ def _mobile_server(tmp_path, policy, *, service: FakeMobileService):
     )
     (statics / "js" / "textual.js").write_text("fixed-runtime", encoding="utf-8")
     cls = serve.build_chatbook_web_server_class(_FakeBaseServer)
+    mobile_kwargs: dict[str, Any] = {}
+    if service is not None:
+        mobile_kwargs["mobile_service"] = service
+    if provider_gateway is not None:
+        mobile_kwargs["mobile_provider_gateway"] = provider_gateway
     return cls(
         command="python -m tldw_chatbook.app",
         host=policy.bind_host,
@@ -321,7 +337,7 @@ def _mobile_server(tmp_path, policy, *, service: FakeMobileService):
             {}, environ={"TLDW_CANVAS_ENABLED": "false"}
         ),
         session_store=WebSessionStore(tmp_path / "web_sessions.json"),
-        mobile_service=service,
+        **mobile_kwargs,
     )
 
 
@@ -371,6 +387,65 @@ async def _csrf(client) -> str:
     )
     assert match is not None
     return match.group(1)
+
+
+def _loopback_policy():
+    """Minimal loopback auth policy for construction-level tests."""
+    return build_web_auth_policy(
+        host="127.0.0.1", port=8000, access_token="construction-only"
+    )
+
+
+def test_production_mobile_service_gets_real_gateway_without_override(
+    tmp_path, monkeypatch
+) -> None:
+    """C1 regression: the lazy production path binds the REAL gateway.
+
+    ``create_server`` passes no mobile kwargs, so the first mobile request
+    used to construct ``MobileChatService`` with a ``None``
+    ``provider_gateway`` — every production send then died inside the
+    engine's provider resolution. Without the override the lazily
+    constructed service must carry a real ``ConsoleProviderGateway``.
+    """
+
+    # The gateway's owned httpx client reads ``[network] ssl_verify``
+    # through the guarded loader at construction time
+    # (``tls_trust.httpx_verify`` — the same read every TUI-side gateway
+    # construction performs). The per-test sandbox fails guarded reads
+    # closed (the standing web_auth baseline's environmental cause), so
+    # patch the module-local reference exactly like the
+    # ``mobile_surface_gate`` fixture does.
+    from tldw_chatbook.Utils import tls_trust
+
+    monkeypatch.setattr(
+        tls_trust,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if (section, key) == ("network", "ssl_verify") else default
+        ),
+    )
+    monkeypatch.setattr(serve, "get_user_data_dir", lambda: tmp_path)
+    server = _mobile_server(tmp_path, _loopback_policy())
+
+    service = server._get_mobile_service()
+
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    assert isinstance(service.provider_gateway, ConsoleProviderGateway)
+
+
+def test_mobile_provider_gateway_override_wins(tmp_path, monkeypatch) -> None:
+    """The injected ``mobile_provider_gateway`` seam still wins."""
+
+    monkeypatch.setattr(serve, "get_user_data_dir", lambda: tmp_path)
+    sentinel = object()
+    server = _mobile_server(
+        tmp_path, _loopback_policy(), provider_gateway=sentinel
+    )
+
+    service = server._get_mobile_service()
+
+    assert service.provider_gateway is sentinel
 
 
 async def _current_session_id(client) -> str:
@@ -631,6 +706,37 @@ async def test_send_text_bounds(tmp_path, mobile_surface_gate) -> None:
             headers={CSRF_HEADER_NAME: csrf},
         )
         assert boundary.status == 202
+
+
+@pytest.mark.asyncio
+async def test_oversized_body_answers_uniform_413_shape(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """A body over the route's byte cap gets the uniform JSON 413, not text.
+
+    ``_read_mobile_json`` used to raise aiohttp's plain-text
+    ``HTTPRequestEntityTooLarge``; the surface contract says every caller
+    mistake answers ``{"error": ...}`` JSON.
+    """
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+
+        oversized_small_route = await client.post(
+            "/api/v1/mobile/conversations",
+            json={"title": "x" * 5000},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert oversized_small_route.status == 413
+        assert (await oversized_small_route.json()) == {"error": "body_too_large"}
+
+        oversized_send = await client.post(
+            "/api/v1/mobile/conversations/s-known/messages",
+            json={"text": "x" * mobile_api.MOBILE_MAX_BODY_BYTES},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert oversized_send.status == 413
+        assert (await oversized_send.json()) == {"error": "body_too_large"}
 
 
 @pytest.mark.asyncio
