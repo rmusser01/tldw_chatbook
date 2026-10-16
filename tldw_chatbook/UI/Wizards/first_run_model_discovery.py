@@ -220,12 +220,14 @@ def failed_listing_line(
         state, category, key_sent=wizard_state.discovery_sends_a_key(provider_draft)
     )
     note_probe_failure(owner, failure, checked)
-    if state == "listing_unavailable":
-        try:
-            if owner._current_provider_readiness().ready:
-                return wizard_state.MODEL_LISTING_UNAVAILABLE_LINE
-        except Exception:  # noqa: BLE001 - the step's own fallback copy follows
-            pass
+    try:  # Model's line only while Next is allowed
+        unavailable = state == "listing_unavailable" and bool(
+            owner._current_provider_readiness().ready
+        )
+    except Exception:  # noqa: BLE001 - unreadable readiness: the step's own copy
+        unavailable = False
+    if unavailable:
+        return wizard_state.MODEL_LISTING_UNAVAILABLE_LINE
     return owner._discovery_failure_status(display, failure)
 
 
