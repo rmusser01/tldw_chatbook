@@ -13585,7 +13585,7 @@ class SettingsScreen(BaseAppScreen):
         return values if isinstance(values, Mapping) else {}
 
     def _provider_display_setting_values(self) -> dict[str, object]:
-        """Return provider values for rendering without staging navigation context."""
+        """Return values to render, staging no draft; a no-model route resolves once."""
         values = dict(self._provider_setting_values_mapping())
         if self._provider_draft() is not None or not self._navigation_provider:
             return values
