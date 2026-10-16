@@ -4871,7 +4871,10 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
         ConsoleReadinessConfigProjection,
     )
 
-    assert await ConsoleReadinessConfigProjection.for_screen(console).warm()
+    projection = ConsoleReadinessConfigProjection.for_screen(console)
+    if not await projection.warm():
+        # A mount read may still belong to the pre-selection settings revision.
+        assert await projection.warm()
     with config_module._settings_rebuild_lock(), config_module._config_file_lock():
         rendered = console._sync_console_control_bar(*rail_state)
     assert rendered

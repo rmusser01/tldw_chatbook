@@ -63,6 +63,59 @@ def _read_result(value, before=None):
     return spend.ConsoleReadinessConfigRead(before or identity, value, identity)
 
 
+@pytest.mark.asyncio
+async def test_control_bar_helper_refreshes_after_joining_an_old_revision(monkeypatch):
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    reads, rendered = [], []
+
+    def read():
+        revision = owner.revision
+        reads.append(revision)
+        if len(reads) == 1:
+            entered.set()
+            assert release.wait(3)
+        return _read_result({"revision": revision})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: rendered.append(projection.value) or True
+    helper = None
+    try:
+        assert projection.run(lambda: None) is False
+        assert await asyncio.to_thread(entered.wait, 3)
+        owner.revision += 1
+        helper = asyncio.create_task(_sync_console_control_bar_now(screen))
+        await asyncio.sleep(0)
+        assert not helper.done() and rendered == []
+        release.set()
+        await helper
+        assert reads == [1, 2]
+        assert rendered == [{"revision": 2}]
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if helper is not None:
+            await asyncio.gather(helper, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_still_refuses_an_unavailable_owner(monkeypatch):
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, _owner, _identity, _tasks, _published = _screen(monkeypatch)
+    screen._closing = True
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: pytest.fail("closed owner read")
+    )
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("closed owner rendered")
+    with pytest.raises(AssertionError):
+        await _sync_console_control_bar_now(screen)
+
+
 def test_checked_config_source_tags_require_active_matching_operation():
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
     from tldw_chatbook.Backup_Recovery.config_participants import (
