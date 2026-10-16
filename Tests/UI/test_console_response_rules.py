@@ -365,6 +365,10 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     or case.console._console_control_bar_sync_scheduled
                 ):
                     await case.pilot.pause(0.01)
+                # Attach readiness precedes its queued full-refresh callback.
+                refreshed = asyncio.Event()
+                case.console.call_after_refresh(refreshed.set)
+                await refreshed.wait()
             assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)

@@ -1,5 +1,21 @@
 # Lessons: what counts as evidence a change works
 
+## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
+
+**Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule
+Stop under a deliberately held config rebuild lock. The watchdog found an ordinary
+FULL refresh, queued after attach reconciliation, reading config before Stop could
+run. Both the screen and test matched dev; the exact local test and two forced-queue
+attempts passed. The test had waited for attach-ready and the control-bar flag,
+which did not witness retirement of that separately queued callback.
+
+**What to do.** When a test holds a lock after mount, wait for an actual same-screen
+post-refresh completion barrier within its existing setup deadline. Preserve the
+critical held-lock action, watchdog and timing assertions. This settles setup; it
+does not establish that ordinary FULL reconciliation is nonblocking or prove an
+intermittent hosted failure was reproduced locally. The focused 15-case UI file
+passed with this barrier; hosted qualification remains separate.
+
 ## A local red is only evidence after a same-tree baseline (TASK-35080/35081, 2026-10-15)
 
 **Incident.** While fixing the workspace-note and fs_mkdir gaps, this machine's
