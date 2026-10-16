@@ -197,22 +197,36 @@ def subscription_cannot_list(
     return anthropic_auth_source(settings) == "claude_subscription"
 
 
-def probe_failure(owner: Any, outcome: object, provider_draft: object) -> str:
-    """Classify a discovery outcome as the Model step does, for the Provider step.
+def failed_listing_line(
+    owner: Any, display: str, outcome: object, provider_draft: object, checked: Any
+) -> str:
+    """The Provider step's line for a failed listing, told as the Model step tells it.
 
-    TASK-33008 (capture 06a): the two steps told one 401 two ways. A missing
-    or untyped outcome reads as a connection failure.
+    TASK-33008 (capture 06a): the two steps told one 401 two ways. Review
+    round 2: a listing Model reads as "Model listing unavailable" (no model
+    list, or a Claude subscription's) read "Couldn't discover models for
+    {display}. You can continue anyway." here; it reads Model's line now,
+    while Next is allowed. A missing or untyped outcome reads as a
+    connection failure. A refused check marks the key (``note_probe_failure``).
     """
 
     try:
         _models, state, category = _model_discovery_ui_outcome(outcome)
     except ValueError:
-        return wizard_state.PROVIDER_PROBE_CONNECTION
+        state, category = "connection_failed", ""
     if subscription_cannot_list(owner, provider_draft, state, category):
-        return wizard_state.PROVIDER_PROBE_NONE
-    return wizard_state.classify_discovery_failure(
+        state = "listing_unavailable"
+    failure = wizard_state.classify_discovery_failure(
         state, category, key_sent=wizard_state.discovery_sends_a_key(provider_draft)
     )
+    note_probe_failure(owner, failure, checked)
+    if state == "listing_unavailable":
+        try:
+            if owner._current_provider_readiness().ready:
+                return wizard_state.MODEL_LISTING_UNAVAILABLE_LINE
+        except Exception:  # noqa: BLE001 - the step's own fallback copy follows
+            pass
+    return owner._discovery_failure_status(display, failure)
 
 
 def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:

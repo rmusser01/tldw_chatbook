@@ -2497,6 +2497,46 @@ class TestProviderTrustChain:
             step, keyless, "connection_failed", "authentication"
         )
 
+    def test_provider_tells_a_listing_that_cannot_list_as_model_does(self):
+        """TASK-33008 review round 2: a server with no model list read "Model
+        listing unavailable…" on Model and "Couldn't discover models for
+        llama.cpp. You can continue anyway." on Provider. One cause, one line,
+        while Next is allowed; a blocked Next keeps the step's refusal copy."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+            ModelDiscoveryError,
+            ModelDiscoveryResult,
+        )
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        no_list = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="Llama.cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="unsupported",
+            error=ModelDiscoveryError(
+                kind="unsupported_endpoint",
+                message="Models route returned 404.",
+                recovery_hint="Enter the model manually.",
+            ),
+        )
+
+        def line(ready: bool) -> str:
+            owner = SimpleNamespace(
+                wizard=None,
+                _current_provider_readiness=lambda: SimpleNamespace(ready=ready),
+                _discovery_failure_status=lambda display, failure: (
+                    f"refusal for {display} ({failure!r})"
+                ),
+            )
+            return first_run_model_discovery.failed_listing_line(
+                owner, "llama.cpp", no_list, None, None
+            )
+
+        assert line(True) == setup_state.MODEL_LISTING_UNAVAILABLE_LINE
+        assert line(False) == "refusal for llama.cpp ('')"
+
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
             provider_configured=True,

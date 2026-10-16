@@ -629,6 +629,13 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
 }
 
 
+#: A listing that cannot list (no model list, or a Claude subscription's):
+#: the Model step's status line, and the Provider step's line for it too.
+MODEL_LISTING_UNAVAILABLE_LINE = (
+    "Model listing unavailable; enter the model ID used by this endpoint."
+)
+
+
 def probe_failure_copy(probe_failure: str) -> ProbeFailureCopy:
     """Copy for a failed check; an unclassified one reads as a connection failure."""
     return PROBE_FAILURE_COPY.get(

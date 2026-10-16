@@ -578,7 +578,7 @@ class ModelStep(SetupStep):
         elif discovery_state == "listing_unavailable":
             await radio_set.mount(
                 _status_line(
-                    "Model listing unavailable; enter the model ID used by this endpoint.",
+                    wizard_state.MODEL_LISTING_UNAVAILABLE_LINE,
                     "setup-model-listing-unavailable",
                 )
             )

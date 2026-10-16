@@ -13698,7 +13698,9 @@ async def test_a_claude_subscription_is_never_told_to_add_an_api_key(monkeypatch
     """TASK-33008 review: discovery never carries a Claude subscription, so
     Anthropic refuses the keyless model list. Both steps said the server
     "needs an API key and none was set", for a sign-in that works for chat.
-    The listing reads as unavailable, and no failed check is recorded."""
+    The listing reads as unavailable, and no failed check is recorded.
+    Review round 2: Provider said "Couldn't discover models for Anthropic.
+    You can continue anyway." for that cause; both steps now say Model's line."""
     import tldw_chatbook.config as config_module
     import tldw_chatbook.LLM_Calls.anthropic_subscription as subscription
 
@@ -13746,17 +13748,19 @@ async def test_a_claude_subscription_is_never_told_to_add_an_api_key(monkeypatch
                 break
         assert step._current_provider_readiness().subscription_status == "ready"
         status = step.query_one("#setup-provider-probe-status", Static)
-        assert str(status.render()) == (
-            "Couldn't discover models for Anthropic. You can continue anyway."
+        unavailable = (
+            "Model listing unavailable; enter the model ID used by this endpoint."
         )
+        assert str(status.render()) == unavailable
 
         await container._advance()
         for _ in range(60):
             await pilot.pause(0.05)
             if model_step.query("#setup-model-listing-unavailable"):
                 break
-        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
-            "Model listing unavailable; enter the model ID used by this endpoint."
+        assert (
+            _model_status_line(model_step, "setup-model-listing-unavailable")
+            == unavailable
         )
         assert container.provider_probe_failure() == ""
         assert model_step.confirm_before_advance() is None
