@@ -393,7 +393,10 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     from ...Chat.console_settings_apply import QUICK_MODEL_DEFAULT_FIELDS
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
 
-    if screen._console_setup_modal_blocking():
+    # TASK-34720: one dialog however many queued requests reach here.
+    if screen._console_setup_modal_blocking() or not (
+        screen._owns_console_screen_stack()
+    ):
         return
     store = screen._ensure_console_chat_store()
     session_id = store.active_session_id

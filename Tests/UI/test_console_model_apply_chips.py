@@ -264,6 +264,8 @@ async def test_model_apply_exact_origin_is_captured_before_catalog_await() -> No
 
     fake = SimpleNamespace(
         _console_setup_modal_blocking=lambda: False,
+        # TASK-34720: the opener pushes only while the Console is on top.
+        _owns_console_screen_stack=lambda: True,
         _ensure_console_chat_store=lambda: store,
         _ensure_console_chat_controller=lambda: SimpleNamespace(
             rebase_console_settings_draft=lambda state, **_kwargs: state,
