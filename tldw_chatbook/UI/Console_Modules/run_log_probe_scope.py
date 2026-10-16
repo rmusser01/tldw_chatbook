@@ -136,12 +136,22 @@ def _stock_default_probe(bridge: object) -> bool:
         or inspect.getattr_static(workspace_type, "is_memory_db", _MISSING) is not False
     ):
         return False
+    agent_type = AgentRuns_DB.AgentRunsDB
+    if (
+        agent_type.__bases__ is not AgentRuns_DB._RUN_LOG_PROBE_AGENT_BASES
+        or any(
+            name in vars(agent_type)
+            for name in (*AgentRuns_DB._RUN_LOG_PROBE_INHERITED, "is_memory_db")
+        )
+        or inspect.getattr_static(agent_type, "is_memory_db", _MISSING) is not False
+    ):
+        return False
     database = fields.get("_db")
     if not _plain(
         database,
         AgentRuns_DB.AgentRunsDB,
         AgentRuns_DB._RUN_LOG_PROBE_SOURCE,
-        ("is_memory_db", "_thread_local"),
+        ("_thread_local",),
     ) or (
         vars(database).get("is_memory_db") is not False
         or type(vars(database).get("_thread_local")) is not _local

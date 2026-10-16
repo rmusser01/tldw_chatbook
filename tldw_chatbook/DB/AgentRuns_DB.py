@@ -8,8 +8,10 @@ and ``transaction()`` (BEGIN IMMEDIATE) for writes.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
+import sys
 import uuid
 from dataclasses import dataclass
 from functools import cached_property
@@ -27,6 +29,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Chat.sampling_params import params_to_dict
+from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
 
@@ -3526,26 +3529,82 @@ COMMIT;
 
 
 # Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_AGENT_BASES = AgentRunsDB.__bases__
+_RUN_LOG_PROBE_INHERITED = (
+    "_init_store_kernel",
+    "_get_connection",
+    "_held_connection",
+    "connection",
+    "transaction",
+    "close",
+    "_transaction_immediate_default",
+)
+_AGENT_RUNS_FACTORY_SLOTS = (
+    (globals(), "AgentRunsDB", AgentRunsDB),
+    (globals(), "BaseDB", BaseDB),
+    (globals(), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (globals(), "_store_kernel", _store_kernel),
+    (globals(), "_RUN_LOG_PROBE_AGENT_BASES", _RUN_LOG_PROBE_AGENT_BASES),
+    (globals(), "_RUN_LOG_PROBE_INHERITED", _RUN_LOG_PROBE_INHERITED),
+    (globals(), "__file__", __file__),
+    (globals(), "__spec__", __spec__),
+    (__spec__, "origin", getattr(__spec__, "origin", None)),
+    (sys.modules, __name__, sys.modules[__name__]),
+    (sys.modules, _store_kernel.__name__, _store_kernel),
+    (vars(_store_kernel), "__name__", _store_kernel.__name__),
+    (vars(_store_kernel), "__file__", _store_kernel.__file__),
+    (vars(_store_kernel), "__spec__", _store_kernel.__spec__),
+    (_store_kernel.__spec__, "origin", getattr(_store_kernel.__spec__, "origin", None)),
+    (vars(_store_kernel), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (BaseDB, "_get_connection", vars(BaseDB)["_get_connection"]),
+    (
+        BaseDB._get_connection.__globals__,
+        "connect_private_sqlite",
+        BaseDB._get_connection.__globals__["connect_private_sqlite"],
+    ),
+    *(
+        (AgentRunsDB, name, inspect.getattr_static(AgentRunsDB, name))
+        for name in (
+            "__init__",
+            "_open_connection",
+            "_configure_connection",
+            "_kernel_sqlite_owner",
+            "__getattribute__",
+            "__dict__",
+            *_RUN_LOG_PROBE_INHERITED,
+        )
+    ),
+    *(
+        (SQLiteStoreKernel, name, vars(SQLiteStoreKernel)[name])
+        for name in (*_RUN_LOG_PROBE_INHERITED, "is_memory_db")
+    ),
+    *(
+        (vars(_store_kernel), name, vars(_store_kernel)[name])
+        for name in (
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_core_closing",
+        )
+    ),
+)
+_RUN_LOG_PROBE_SLOTS = (
+    *_AGENT_RUNS_FACTORY_SLOTS,
+    *(
+        (AgentRunsDB, name, inspect.getattr_static(AgentRunsDB, name))
+        for name in (
+            "get_run_metadata",
+            "latest_primary_run_metadata",
+            "_metadata_row_to_dict",
+        )
+    ),
+)
 _RUN_LOG_PROBE_SOURCE = (
     globals(),
     __file__,
     __spec__,
     getattr(__spec__, "origin", None),
-    (
-        (globals(), "AgentRunsDB", AgentRunsDB),
-        *(
-            (AgentRunsDB, name, vars(AgentRunsDB)[name])
-            for name in (
-                "get_run_metadata",
-                "latest_primary_run_metadata",
-                "_metadata_row_to_dict",
-                "connection",
-                "_held_connection",
-                "_get_connection",
-                "close",
-            )
-        ),
-    ),
+    _RUN_LOG_PROBE_SLOTS,
     tuple(
         (
             function,
@@ -3558,21 +3617,7 @@ _RUN_LOG_PROBE_SOURCE = (
             tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
             vars(function).get("__wrapped__"),
         )
-        for _owner, _name, descriptor in (
-            (globals(), "AgentRunsDB", AgentRunsDB),
-            *(
-                (AgentRunsDB, name, vars(AgentRunsDB)[name])
-                for name in (
-                    "get_run_metadata",
-                    "latest_primary_run_metadata",
-                    "_metadata_row_to_dict",
-                    "connection",
-                    "_held_connection",
-                    "_get_connection",
-                    "close",
-                )
-            ),
-        )
+        for _owner, _name, descriptor in _RUN_LOG_PROBE_SLOTS
         if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
         for outer in (
             descriptor.__func__
@@ -3591,6 +3636,11 @@ _RUN_LOG_PROBE_SOURCE = (
             ),
         )
     ),
+)
+_CHANGE_REVIEW_FACTORY_SOURCES = tuple(
+    ((function, code, defaults, kwdefaults, items), defining, closure, cells, wrapped)
+    for function, code, defining, defaults, kwdefaults, items, closure, cells, wrapped
+    in _RUN_LOG_PROBE_SOURCE[5]
 )
 
 
@@ -3620,7 +3670,7 @@ _CHANGE_REVIEW_LIST_RUNS_SOURCE = (
 _CHANGE_REVIEW_READ_SOURCES = tuple(
     (
         name,
-        vars(AgentRunsDB)[name],
+        inspect.getattr_static(AgentRunsDB, name),
         tuple(
             (
                 function,
@@ -3645,10 +3695,12 @@ _CHANGE_REVIEW_READ_SOURCES = tuple(
         "list_runs",
         "list_change_review_run_anchors",
         "change_snapshots_for_conversation",
+        "_open_connection",
+        "_configure_connection",
         "connection",
         "_held_connection",
         "_get_connection",
         "close",
     )
-    for outer in (vars(AgentRunsDB)[name],)
+    for outer in (inspect.getattr_static(AgentRunsDB, name),)
 )

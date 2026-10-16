@@ -179,9 +179,9 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
     assert result[0] is messages[0]
     assert [message.change_review_run_id for message in result[1:]] == ["run"]
     assert captured and not runtime._preparation_reads
-    assert (
-        progress
-    ), "original marker SELECT blocked its caller loop while native work was held"
+    assert progress, (
+        "original marker SELECT blocked its caller loop while native work was held"
+    )
     assert after_product == (
         True,
         False,
@@ -204,11 +204,12 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
         "foreign_cache",
         "database",
         "reader_defaults",
+        "factory_global",
     ],
 )
 @private_profile_test
 async def test_marker_read_keeps_native_custody_and_current_publication(
-    request, action
+    request, action, monkeypatch
 ):
     from tldw_chatbook import config
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
@@ -368,6 +369,16 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
             elif action == "database":
                 replacement_db = AgentRunsDB(":memory:")
                 bridge._db = replacement_db
+            elif action == "factory_global":
+                defining = AgentRunsDB._open_connection.__globals__[
+                    "BaseDB"
+                ]._get_connection.__globals__
+                original_connector = defining["connect_private_sqlite"]
+
+                def connector(*args, **kwargs):
+                    return original_connector(*args, **kwargs)
+
+                monkeypatch.setitem(defining, "connect_private_sqlite", connector)
             elif action == "reader_defaults":
                 original_reader.__defaults__ = (None,)
             elif action == "dispose":
@@ -413,6 +424,7 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
         "foreign_cache",
         "database",
         "reader_defaults",
+        "factory_global",
     }:
         assert outcomes[0] is False and projection._key is None
         if dispose is not None:

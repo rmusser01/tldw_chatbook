@@ -11,7 +11,7 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB import store_kernel
+from tldw_chatbook.DB import AgentRuns_DB, store_kernel
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Tools import workspace_file_roots as roots
@@ -33,7 +33,19 @@ try:
             def changed(self):
                 raise AssertionError("changed database callback was invoked")
 
-            if route == "inherited_code":
+            if route == "agent_class_hook":
+                patch.setattr(AgentRunsDB, "_configure_connection", changed)
+            elif route == "agent_instance_hook":
+                patch.setattr(runs, "_open_connection", changed.__get__(runs))
+            elif route == "agent_inherited_alias":
+                patch.setattr(AgentRunsDB, "_held_connection", AgentRunsDB._held_connection)
+            elif route == "agent_module_kernel":
+                patch.setattr(AgentRuns_DB, "SQLiteStoreKernel", object())
+            elif route == "kernel_default":
+                patch.setattr(store_kernel.SQLiteStoreKernel, "_transaction_immediate_default", False)
+            elif route == "workspace_default":
+                patch.setattr(WorkspaceDB, "_transaction_immediate_default", True)
+            elif route == "inherited_code":
                 original = store_kernel.SQLiteStoreKernel._get_connection.__wrapped__
                 patch.setattr(original, "__code__", changed.__code__)
             elif route == "inherited_defaults":
@@ -87,6 +99,12 @@ print("retired and reopened")
 @pytest.mark.parametrize(
     "route",
     [
+        "agent_class_hook",
+        "agent_instance_hook",
+        "agent_inherited_alias",
+        "agent_module_kernel",
+        "kernel_default",
+        "workspace_default",
         "inherited_code",
         "inherited_defaults",
         "kernel_global",

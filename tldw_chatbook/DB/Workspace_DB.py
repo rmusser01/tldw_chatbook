@@ -761,6 +761,8 @@ _RUN_LOG_PROBE_SLOTS = (
     (vars(_store_kernel), "SQLiteStoreKernel", SQLiteStoreKernel),
     (SQLiteStoreKernel, "is_memory_db", vars(SQLiteStoreKernel)["is_memory_db"]),
     (WorkspaceDB, "_kernel_sqlite_owner", vars(WorkspaceDB)["_kernel_sqlite_owner"]),
+    (WorkspaceDB, "_transaction_immediate_default", False),
+    (SQLiteStoreKernel, "_transaction_immediate_default", True),
     (BaseDB, "_get_connection", vars(BaseDB)["_get_connection"]),
     (
         BaseDB._get_connection.__globals__,

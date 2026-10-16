@@ -9,9 +9,24 @@ import pytest
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
-@pytest.mark.parametrize("route", ["memory", "body", "defaults", "custom"])
+@pytest.mark.parametrize(
+    "route",
+    [
+        "memory",
+        "body",
+        "defaults",
+        "custom",
+        "open_body",
+        "configure_body",
+        "base_getter_body",
+        "connector_global",
+        "custom_cache",
+        "getter_closure",
+        "getter_wrapped",
+    ],
+)
 async def test_marker_projection_declines_before_capture_and_preserves_live_abi(
-    tmp_path, monkeypatch, route
+    tmp_path, monkeypatch, route, request
 ):
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
@@ -32,6 +47,7 @@ async def test_marker_projection_declines_before_capture_and_preserves_live_abi(
     database = AgentRunsDB(
         ":memory:" if route == "memory" else tmp_path / "markers.sqlite"
     )
+    request.addfinalizer(database.close)
     database.create_run(
         run_id="run",
         conversation_id="chat",
@@ -72,7 +88,44 @@ async def test_marker_projection_declines_before_capture_and_preserves_live_abi(
     if route != "memory":
         assert capture_marker_read(runtime, coordinator, bridge, "chat") is not None
     custom_calls = []
-    if route == "body":
+    if route == "custom_cache":
+        monkeypatch.setattr(
+            database, "_thread_local", SimpleNamespace(**vars(database._thread_local))
+        )
+    elif route in {"getter_closure", "getter_wrapped"}:
+        factory = AgentRunsDB._get_connection
+        original = factory.__wrapped__
+
+        def getter(*args, **kwargs):
+            return original(*args, **kwargs)
+
+        if route == "getter_wrapped":
+            monkeypatch.setattr(factory, "__wrapped__", getter)
+        else:
+            cell = dict(
+                zip(factory.__code__.co_freevars, factory.__closure__, strict=True)
+            )["function"]
+            monkeypatch.setattr(cell, "cell_contents", getter)
+    elif route in {"open_body", "configure_body", "base_getter_body"}:
+        if route == "base_getter_body":
+            factory = AgentRunsDB._open_connection.__globals__["BaseDB"]._get_connection
+        else:
+            factory = getattr(
+                AgentRunsDB,
+                "_open_connection" if route == "open_body" else "_configure_connection",
+            )
+        monkeypatch.setattr(factory, "__code__", factory.__code__.replace())
+    elif route == "connector_global":
+        defining = AgentRunsDB._open_connection.__globals__[
+            "BaseDB"
+        ]._get_connection.__globals__
+        original_connector = defining["connect_private_sqlite"]
+
+        def connector(*args, **kwargs):
+            return original_connector(*args, **kwargs)
+
+        monkeypatch.setitem(defining, "connect_private_sqlite", connector)
+    elif route == "body":
         monkeypatch.setattr(reader, "__code__", reader.__code__.replace())
     elif route == "defaults":
         monkeypatch.setattr(reader, "__defaults__", (None,))

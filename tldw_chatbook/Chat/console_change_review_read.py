@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from _thread import _local
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,12 +12,20 @@ from ..Backup_Recovery.participants import (
     _core_closing,
     _core_operation,
 )
-from ..DB.AgentRuns_DB import _CHANGE_REVIEW_READ_SOURCES, AgentRunsDB
+from ..DB.AgentRuns_DB import (
+    _AGENT_RUNS_FACTORY_SLOTS,
+    _CHANGE_REVIEW_FACTORY_SOURCES,
+    _CHANGE_REVIEW_READ_SOURCES,
+    _RUN_LOG_PROBE_AGENT_BASES,
+    _RUN_LOG_PROBE_INHERITED,
+    AgentRunsDB,
+)
 from . import console_agent_bridge as bridge_module
 from .console_preparation_reads import run_preparation_read
 
 _BRIDGE_SOURCES = bridge_module._CHANGE_REVIEW_MARKER_SOURCES
 _HELPER_SOURCE = bridge_module._CHANGE_REVIEW_MARKER_HELPER_SOURCE
+_MISSING = object()
 
 
 class MarkerReadObsolete(RuntimeError):
@@ -40,6 +49,45 @@ def _sources_current(receiver, sources):
         if not all(_function_current(record) for record in records):
             return False
     return True
+
+
+def _factory_sources_current(database):
+    try:
+        return (
+            type(database) is AgentRunsDB
+            and AgentRunsDB.__bases__ is _RUN_LOG_PROBE_AGENT_BASES
+            and not any(
+                name in vars(AgentRunsDB)
+                for name in (*_RUN_LOG_PROBE_INHERITED, "is_memory_db", "__getattr__")
+            )
+            and inspect.getattr_static(AgentRunsDB, "is_memory_db", None) is False
+            and inspect.getattr_static(AgentRunsDB, "__getattr__", _MISSING) is _MISSING
+            and inspect.getattr_static(AgentRunsDB, "_thread_local", _MISSING)
+            is _MISSING
+            and vars(database).get("is_memory_db") is False
+            and type(vars(database).get("_thread_local")) is _local
+            and all(
+                name not in vars(database)
+                for owner, name, _value in _AGENT_RUNS_FACTORY_SLOTS
+                if owner is AgentRunsDB
+            )
+            and all(
+                owner.get(name, _MISSING) is value
+                if type(owner) is dict
+                else inspect.getattr_static(owner, name, _MISSING) is value
+                for owner, name, value in _AGENT_RUNS_FACTORY_SLOTS
+            )
+            and all(
+                _function_current(record)
+                and record[0].__globals__ is defining
+                and record[0].__closure__ is closure
+                and all(cell.cell_contents is value for cell, value in cells)
+                and vars(record[0]).get("__wrapped__") is wrapped
+                for record, defining, closure, cells, wrapped in _CHANGE_REVIEW_FACTORY_SOURCES
+            )
+        )
+    except (AttributeError, ValueError):
+        return False
 
 
 @dataclass
@@ -68,6 +116,7 @@ class _MarkerRead:
                 self.active_connection is not None
                 and getattr(self.local, "conn", None) is not self.active_connection
             )
+            or not _factory_sources_current(self.database)
             or not _sources_current(self.database, _CHANGE_REVIEW_READ_SOURCES)
             or not _sources_current(self.bridge, _BRIDGE_SOURCES)
             or bridge_module._CHANGE_REVIEW_MARKER_SOURCES is not _BRIDGE_SOURCES
@@ -136,6 +185,7 @@ def capture_marker_read(runtime, coordinator, bridge, conversation_id):
         or database.is_memory_db
         or conversation_id is None
         or coordinator is None
+        or not _factory_sources_current(database)
         or not _sources_current(database, _CHANGE_REVIEW_READ_SOURCES)
         or not _sources_current(bridge, _BRIDGE_SOURCES)
         or bridge_module._CHANGE_REVIEW_MARKER_SOURCES is not _BRIDGE_SOURCES

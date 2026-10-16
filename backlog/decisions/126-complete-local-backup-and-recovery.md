@@ -1585,3 +1585,18 @@ The existing optional finite stock run-log probe follows Workspace's current Ker
 Cold and cached stock admission recognize only the canonical inherited `is_memory_db=False` layout, with no local field/method shadow and the same exact instance fields/native owner. Memory/custom/subclass/replaced source, body/default/global or class/instance shadow routes retain the original direct callback once with original return/error and lifetime. Generic source/function-current checks, Kernel implementation, `db.base` provenance, transactions, finite worker and owned/borrowed/uncertain retirement contracts remain unchanged; no permission or cleanup authority comes from this metadata.
 
 The rebase incident is a saved-path collection `KeyError('_get_connection')` at Workspace's old own-class registry, before any test body; inherited-False cached eligibility is a separate source-supported mismatch, not evidence of a native leak. Existing cold/cached native and custom controls plus a small inherited-source refusal family qualify the repair. No whole-platform, latency or branch acceptance follows.
+
+
+### AgentRuns inherited kernel qualification — PR3023 current integration
+
+After TASK-33132 moves AgentRuns onto SQLiteStoreKernel, finite run-log and
+Change Review reads retain the incoming MRO, db.base provenance and transaction
+policy. Their existing exact stock qualification records the actual inherited
+and defining kernel callbacks, own connection hooks, BaseDB connector and
+consumed module globals. Fixed factory slots are shared as data by the two
+existing readers; this adds no general MRO registry or new authority. Changed
+sources decline before capture or invalidate an issued read through its existing
+obsolete-result path, after the acquired handle retires. Borrowed, custom and
+memory routes retain their preceding lifetimes and errors. Workspace's deferred
+default and the kernel/AgentRuns immediate default remain unchanged; explicit
+transaction keywords still win. Existing ADR-230 governs preparation ownership.
