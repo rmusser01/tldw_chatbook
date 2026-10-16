@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
+from types import FunctionType, ModuleType
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
 from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
@@ -94,14 +95,32 @@ def execution(service=None, *, sources=()):
 
 def _explicit_writer_root(service):
     """Select only the unchanged writer that stock run_turn will actually bind."""
-    from .agent_service import AgentService
-    from .run_log import _RUN_LOG_PATH_WRITER_ORIGINAL
-
-    writer_class, methods = _RUN_LOG_PATH_WRITER_ORIGINAL
+    service_source = sys.modules.get("tldw_chatbook.Agents.agent_service")
+    log_source = sys.modules.get("tldw_chatbook.Agents.run_log")
+    if type(service_source) is not ModuleType or type(log_source) is not ModuleType:
+        return None
+    AgentService = vars(service_source).get("AgentService")
+    record = vars(log_source).get("_RUN_LOG_PATH_WRITER_ORIGINAL")
+    if type(record) is not tuple or len(record) != 2:
+        return None
+    writer_class, methods = record
     if (
-        type(service) is not AgentService
-        or AgentService.__getattribute__ is not object.__getattribute__
-        or writer_class.__getattribute__ is not object.__getattribute__
+        type(AgentService) is not type
+        or type(writer_class) is not type
+        or type(methods) is not tuple
+        or len(methods) != 3
+        or not all(
+            type(row) is tuple
+            and len(row) == 4
+            and type(row[0]) is str
+            and type(row[1]) is FunctionType
+            for row in methods
+        )
+        or type(service) is not AgentService
+        or inspect.getattr_static(AgentService, "__getattribute__")
+        is not object.__getattribute__
+        or inspect.getattr_static(writer_class, "__getattribute__")
+        is not object.__getattribute__
     ):
         return None
     writer = inspect.getattr_static(service, "_injected_run_log_writer", None)
@@ -171,19 +190,20 @@ def guarded(function):
         log_dir = getattr(kwargs.get("run_log_writer"), "log_dir", None)
         if log_dir is not None:
             sources += (("agents.history", profile_paths.lexical_path(log_dir)),)
+        # Passive stock-source observation joins the initial fresh admission;
+        # custom writers still resolve global history inside the admitted scope.
+        explicit_root = (
+            _explicit_writer_root(self)
+            if function.__name__ == "run_turn" and function.__code__ is original_code
+            else None
+        )
+        if explicit_root is not None:
+            sources += (("agents.history", explicit_root),)
         with execution(self, sources=sources):
-            if function.__name__ == "run_turn":
+            if function.__name__ == "run_turn" and explicit_root is None:
                 from .run_log import resolve_log_root
 
-                # The Console supplies its live writer root; unrelated saved
-                # history is selected and admitted only when a search reads it.
-                root = (
-                    _explicit_writer_root(self)
-                    if function.__code__ is original_code
-                    else None
-                )
-                if root is None:
-                    root = resolve_log_root()
+                root = resolve_log_root()
                 if root is not None:
                     with execution(self, sources=(("agents.history", root),)):
                         return function(self, *args, **kwargs)

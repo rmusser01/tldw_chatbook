@@ -538,16 +538,27 @@ service = AgentService(db, ToolCatalogRegistry(), chat_call=chat,
     run_log_writer=None if route in ('implicit', 'stale_public') else writer)
 if route == 'stale_public':
     service.run_log_writer = writer
+from tldw_chatbook.Agents import activation as agent_activation
+scopes = []
+at_entry = []
+def observe_entry(frame, event, arg):
+    if event != 'call': return
+    if (frame.f_code is agent_activation.execution.__code__
+            and frame.f_back.f_code is AgentService.run_turn.__code__): scopes.append(True)
+    if frame.f_code is AgentService.run_turn.__wrapped__.__code__: at_entry.append(len(scopes))
+sys.setprofile(observe_entry)
 try:
     run_id, outcome = service.run_turn(conversation_id='conversation',
         messages=[{'role':'user','content':'hello'}],
         config=AgentConfig(model='test', system_prompt=''), api_endpoint='OpenAI')
     assert outcome.status == RUN_DONE and effects == ['provider']
+    if route == 'stock': assert at_entry == [1], at_entry
     assert bool(selected) is (route != 'stock'), selected
     assert service.run_log_writer.log_dir.is_dir()
     if route == 'stale_public':
         assert service.run_log_writer is not writer
 finally:
+    sys.setprofile(None)
     db.close()
 assert not blocked_attempts()
 print('retired and reopened')
@@ -763,3 +774,51 @@ print('retired and reopened')
 )
 def test_saved_history_reader_preserves_root_and_custom_call_contracts(tmp_path, route):
     _run(tmp_path, route, "ordinary", script=_HISTORY_READER_ABI)
+
+
+_PASSIVE_WRITER_SOURCE = (
+    _SCRIPT.split("effects=[]")[0]
+    + r"""
+from types import ModuleType
+from tldw_chatbook.Agents import activation as agent_activation, run_log
+writer = run_log.RunLogWriter(root=data/'explicit-history')
+service = AgentService(db, ToolCatalogRegistry(), run_log_writer=writer)
+key = 'tldw_chatbook.Agents.run_log'
+source = sys.modules[key]
+record = vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL']
+effects = []
+class CustomModule(ModuleType):
+    def __getattribute__(self, name):
+        effects.append('module callback')
+        raise AssertionError('custom module inspected before admission')
+class CustomMeta(type):
+    def __getattribute__(self, name):
+        effects.append('metaclass callback')
+        raise AssertionError('custom metaclass inspected before admission')
+class CustomWriter(metaclass=CustomMeta): pass
+try:
+    del sys.modules[key]
+    assert agent_activation._explicit_writer_root(service) is None
+    assert key not in sys.modules, 'qualification imported a missing source'
+    sys.modules[key] = CustomModule(key)
+    assert agent_activation._explicit_writer_root(service) is None
+    sys.modules[key] = source
+    del vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL']
+    assert agent_activation._explicit_writer_root(service) is None
+    vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL'] = (CustomWriter, record[1])
+    assert agent_activation._explicit_writer_root(service) is None
+    vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL'] = (record[0], ())
+    assert agent_activation._explicit_writer_root(service) is None
+    assert not effects, effects
+finally:
+    sys.modules[key] = source
+    vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL'] = record
+    db.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+)
+
+
+def test_explicit_writer_source_observation_has_no_pre_admission_callbacks(tmp_path):
+    _run(tmp_path, "passive_source", "ordinary", script=_PASSIVE_WRITER_SOURCE)

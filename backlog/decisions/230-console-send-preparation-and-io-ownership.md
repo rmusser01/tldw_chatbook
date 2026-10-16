@@ -162,3 +162,10 @@ loads, or admitting one root and then reselecting another. Qualify real native
 refusal/retirement and matched first/later sends; a successful reply alone does
 not establish the broad latency or platform targets. See TASK-34406.2 and the
 companion ADR-126/ADR-230 amendment.
+
+The explicit writer root may be passively qualified from already loaded stock
+source objects before entry and included in the initial admission observation.
+That single execution scope still freshly admits every actual source before the
+run body starts; it avoids re-admitting the same profile/config/database sources
+in a nested scope. Qualification never imports or calls an optional source before
+admission. Missing or custom source objects keep the admitted global fallback.
