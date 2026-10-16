@@ -145,3 +145,23 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             f"below last row's bottom ({last_row.region.bottom}) -- should be "
             f"within {max_y_gap} lines"
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_production_geometry_fixture_replay_preserves_controls(
+    request: pytest.FixtureRequest,
+) -> None:
+    """The synthetic identified round survives the real unchanged state replay."""
+    app = _build_ready_production_console_app()
+    async with app.run_test(size=(200, 40)) as pilot:
+        card = await _show_production_approval_batch(app, pilot, _sample_calls())
+        generation = card._batch_generation
+        selects = tuple(card.query(Select))
+        assert len(selects) == 2
+        app.screen.sync_task_resume_state()
+        await pilot.pause()
+        assert card._batch_generation == generation, (
+            "unchanged geometry round was rebuilt"
+        )
+        assert tuple(card.query(Select)) == selects

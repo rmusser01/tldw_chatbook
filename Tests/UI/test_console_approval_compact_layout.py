@@ -15,8 +15,8 @@ from Tests.UI.app_factory import (
     drain_active_service_patches,
     drain_created_dirs,
 )
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -32,6 +32,9 @@ class ProductionConsoleHarness(ConsoleHarness):
 
 
 def _pending_card(console, round_id="compact-round"):
+    assert console._console_attach_reconciled, (
+        "synthetic approval preceded Console attachment"
+    )
     console.set_task_resume_state(
         TaskResumeState(
             pending_approval={
@@ -96,8 +99,7 @@ async def _verify_every_approval_action_is_painted_and_focusable(request):
     _configure_native_ready_console(app)
     host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 24)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         for size, inspect_open in (
             ((80, 24), True),
             ((90, 30), True),
@@ -142,8 +144,7 @@ async def _verify_reflow_preserves_decision_and_reused_round_controls(request):
     _configure_native_ready_console(app)
     host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 24)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         console._set_console_rail_preference(left_open=False, right_open=True)
         _pending_card(console)
         await pilot.pause(0.3)
@@ -190,8 +191,7 @@ async def _verify_height_only_resize_reflows_existing_controls(request):
     _configure_native_ready_console(app)
     host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 40)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         console._set_console_rail_preference(left_open=False, right_open=False)
         _pending_card(console)
         await pilot.pause(0.3)

@@ -152,7 +152,6 @@ def _report_census(case: str, census: dict[str, Any]) -> None:
 #: TASK-33802: who paid each storage admission and helper spawn billed to the
 #: typing burst, so an over-ceiling burst names its caller in the failure.
 _TYPING_BURST_CALLERS: list[str] = []
-_TYPING_PAUSE_HELPER_CALLERS: list[str] = []
 #: TASK-33644: why the GC census pass failed. The pass records rather than
 #: asserts, so the census is still reported before the test fails on it.
 _GC_PASS_FAILURES: list[str] = []
@@ -161,22 +160,21 @@ _GC_PASS_FAILURES: list[str] = []
 _APP_PACKAGE = str(Path(__file__).resolve().parents[2] / "tldw_chatbook") + os.sep
 
 
-def _caller(unit: str, frame_limit: int = 6) -> str:
+def _caller(unit: str) -> str:
     """One line per unit: the unit, the thread and the innermost app frames.
 
     Args:
         unit: The storage unit being billed.
-        frame_limit: Maximum number of app frames to report.
 
     Returns:
-        ``"<unit> on <thread>: file:line fn <- ..."`` for the last ``frame_limit``
+        ``"<unit> on <thread>: file:line fn <- ..."`` for the last six
         ``tldw_chatbook`` frames, innermost first.
     """
     frames = [
         frame
         for frame in traceback.extract_stack()[:-3]
         if frame.filename.startswith(_APP_PACKAGE)
-    ][-frame_limit:]
+    ][-6:]
     where = " <- ".join(
         f"{frame.filename[len(_APP_PACKAGE) :]}:{frame.lineno} {frame.name}"
         for frame in reversed(frames)
@@ -272,8 +270,6 @@ def _count_storage_units(
 
     def counted_start(cls: type, *args: Any, **kwargs: Any) -> Any:
         bump("helper_spawns")
-        if counting["on"] and counting.get("phase") == "pause":
-            _TYPING_PAUSE_HELPER_CALLERS.append(_caller("helper_spawns", 16))
         return real_start(*args, **kwargs)
 
     monkeypatch.setattr(HelperLease, "start", classmethod(counted_start))
@@ -709,7 +705,6 @@ async def _census(
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
         _TYPING_BURST_CALLERS.clear()
-        _TYPING_PAUSE_HELPER_CALLERS.clear()
         counting["burst"] = True
         counting["on"] = True
         for _ in range(KEYSTROKES):
@@ -852,7 +847,6 @@ async def _census_idle_and_visit(
         for unit in IO_UNITS:
             counts[unit] = 0
         started.clear()
-        counting["phase"] = name
         counting["on"] = name is not None
         try:
             await body()
@@ -874,7 +868,6 @@ async def _census_idle_and_visit(
                 await _settle(pilot, passes=4)
         finally:
             counting["on"] = False
-            counting["phase"] = None
         if name is not None:
             phases.update({f"{name}:{unit}": counts[unit] for unit in IO_UNITS})
         if name == "cleanup":
@@ -1487,15 +1480,11 @@ async def test_console_storage_units_stay_within_their_ratchets(
         "cleanup:candidate_queries_completed"
     ]
     request.node.user_properties.append(("storage_units", json.dumps(census)))
-    request.node.user_properties.append(
-        ("typing_pause_helper_callers", json.dumps(_TYPING_PAUSE_HELPER_CALLERS))
-    )
     # TASK-33643: every run reports its census -- before any assertion, so a
     # failing run reports too -- and CI ceilings are pinned from those lines;
     # perf-guard.yml names the file and prints it.
     if _GC_PASS_FAILURES:
         census["trace GC pass failure"] = _GC_PASS_FAILURES[0]
-    census["typing pause helper callers"] = list(_TYPING_PAUSE_HELPER_CALLERS)
     _report_census(request.node.name, census)
     assert not _GC_PASS_FAILURES, _GC_PASS_FAILURES[0]
     assert (

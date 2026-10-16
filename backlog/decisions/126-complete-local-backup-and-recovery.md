@@ -1600,3 +1600,20 @@ obsolete-result path, after the acquired handle retires. Borrowed, custom and
 memory routes retain their preceding lifetimes and errors. Workspace's deferred
 default and the kernel/AgentRuns immediate default remain unchanged; explicit
 transaction keywords still win. Existing ADR-230 governs preparation ownership.
+
+
+### Default-only Console binding display (TASK34406 AC22, Linux census follow-up)
+
+Under [ADR028](028-settings-workspaces-category-and-folder-roots.md), Default
+cannot have runtime folder bindings. The exact source-current stock file-backed
+registry may therefore derive an empty tuple for the Console display read-view
+and a wholly Default availability snapshot without opening a native callback.
+This is immutable presentation policy, not a cached permission or DB observation.
+Definition-owned policy methods, normalizer, Default identity and plain receiver
+lookup must remain current; custom, memory, changed-source, named and mixed reads
+keep their preceding route. Public/direct Default listers still freshly remove
+legacy bindings. Keep the existing worker, generation, selected registry/database,
+runtime, publication and cancellation checks, and recheck policy before accepting
+the derived snapshot. A previously issued native callback still retires through
+its original owner. No TTL, admission, native authority, deadline or census budget
+changes follow from this exception.

@@ -27,7 +27,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
@@ -121,7 +121,9 @@ from ...Workspaces.models import (
     RuntimeBindingStatus,
     WorkspaceRuntimeBinding,
 )
+from ...Workspaces import registry_service as _workspace_registry_source
 from ...Workspaces.registry_service import (
+    _DEFAULT_BINDING_DISPLAY_CHECK,
     LocalWorkspaceRegistryService,
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
@@ -412,6 +414,31 @@ def _normalized_console_workspace_id(workspace_id: str | None) -> str:
     return normalized
 
 
+def _default_display_bindings_are_empty(service: object, workspace_id: object) -> bool:
+    """Decline changed/malformed selectors before invoking the stock policy."""
+    record = _DEFAULT_BINDING_DISPLAY_CHECK
+    if (
+        type(record) is not tuple
+        or len(record) != 4
+        or type(_workspace_registry_source) is not ModuleType
+        or vars(_workspace_registry_source).get("_DEFAULT_BINDING_DISPLAY_CHECK")
+        is not record
+    ):
+        return False
+    checker, code, defaults, keywords = record
+    if (
+        type(checker) is not FunctionType
+        or vars(_workspace_registry_source).get("_default_binding_display_current")
+        is not checker
+        or checker.__globals__ is not vars(_workspace_registry_source)
+        or checker.__code__ is not code
+        or checker.__defaults__ is not defaults
+        or checker.__kwdefaults__ is not keywords
+    ):
+        return False
+    return checker(service, workspace_id)
+
+
 class _ConsoleRegistryDisplayReads:
     """Generation-keyed read-through view over the workspace registry.
 
@@ -487,6 +514,8 @@ class _ConsoleRegistryDisplayReads:
         return self._read(("workspaces",), "list_workspaces")
 
     def list_runtime_bindings(self, workspace_id: str) -> Any:
+        if _default_display_bindings_are_empty(self._service, workspace_id):
+            return ()
         return self._read(
             ("bindings", str(workspace_id)), "list_runtime_bindings", workspace_id
         )
@@ -6900,12 +6929,20 @@ class ConsoleWorkspaceController:
                 workspace_ids = self._workspace_files_availability_requested_ids
                 registry = getattr(self.app_instance, "workspace_registry_service", None)
                 database = getattr(registry, "db", None)
-                if (
+                stock_read = (
                     type(database) is WorkspaceDB and not database.is_memory_db
                     and type(registry) is LocalWorkspaceRegistryService
                     and _availability_methods_current(self, _WORKSPACE_AVAILABILITY_METHODS)
                     and _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
-                ):
+                )
+                default_only = (
+                    stock_read and workspace_ids == (DEFAULT_WORKSPACE_ID,)
+                    and _default_display_bindings_are_empty(registry, DEFAULT_WORKSPACE_ID)
+                )
+                if default_only:
+                    availability_snapshot = {DEFAULT_WORKSPACE_ID: False}
+                    bindings_snapshot = {DEFAULT_WORKSPACE_ID: ()}
+                elif stock_read:
                     availability_snapshot, bindings_snapshot = (
                         await self._read_owned_workspace_availability(
                             registry, database, workspace_ids
@@ -6927,6 +6964,10 @@ class ConsoleWorkspaceController:
                     runtime is not None and runtime._disposed
                 ):
                     return
+                if default_only and not _default_display_bindings_are_empty(
+                    registry, DEFAULT_WORKSPACE_ID
+                ):
+                    continue
                 if (
                     generation == self._workspace_files_availability_generation
                     and registry is getattr(self.app_instance, "workspace_registry_service", None)

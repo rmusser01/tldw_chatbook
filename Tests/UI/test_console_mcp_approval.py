@@ -26,6 +26,7 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static, TextArea
@@ -1320,6 +1321,7 @@ async def _show_production_approval_batch(
     screen.set_task_resume_state(
         TaskResumeState(
             pending_approval={
+                "round_id": "geometry-round",
                 "calls": calls,
                 "timeout_seconds": 45.0,
             }
@@ -2016,7 +2018,10 @@ async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
 
 
 @pytest.mark.asyncio
-async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+@private_profile_test
+async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css(
+    request: pytest.FixtureRequest,
+) -> None:
     """task-1234 review round 1: the sibling multi-row geometry test above
     only ever mounts a 2-row batch, so `.approval-row-fast-approve`/
     `.approval-row-fast-deny` (single-row-only, see `set_batch`'s
