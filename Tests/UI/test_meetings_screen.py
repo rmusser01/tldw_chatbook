@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Audio.meeting_owner import (
@@ -2061,7 +2062,8 @@ async def test_the_passphrase_never_lingers_in_the_input(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_tick_repaints_the_clock_only_when_the_formatted_time_moves(tmp_path):
+@private_profile_test
+async def test_tick_repaints_the_clock_only_when_the_formatted_time_moves(request, tmp_path):
     """The 5 Hz tick costs a string compare while the seconds digit is still.
 
     TASK-35028: `#meetings-timer` is a bare height:auto Static, so an
@@ -2099,7 +2101,8 @@ async def test_tick_repaints_the_clock_only_when_the_formatted_time_moves(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_enroll_progress_repaints_only_when_the_copy_changes(tmp_path):
+@private_profile_test
+async def test_enroll_progress_repaints_only_when_the_copy_changes(request, tmp_path):
     """The 1 Hz countdown write is gated on its own last-written copy."""
     host, owner = await _boot(tmp_path)
     async with host.run_test(size=(160, 45)) as pilot:

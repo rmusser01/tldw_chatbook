@@ -137,7 +137,8 @@ async def test_workspace_attention_accepts_new_generations_without_repainting_sa
         assert modal.update_attention(attention, 1)
         calls = observe_updates(monkeypatch, {"console-workspace-files-attention"})
         for generation in range(2, 10):
-            assert modal.update_attention(attention, generation)
+            assert not modal.update_attention(attention, generation)
+            assert modal._attention_generation == generation
         assert calls == [], f"Unchanged attention repaints: {calls}"
         changed_flags = replace(attention, has_failed_activity=True)
         assert modal.update_attention(changed_flags, 10)

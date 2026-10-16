@@ -16,6 +16,7 @@ from Tests.LLM_Management.test_snapshot_admission import (
     _explicit_command,
     _launch_files,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
@@ -614,8 +615,9 @@ async def test_details_observation_is_absolute_and_elapsed_timer_does_not_refres
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_paint_elapsed_repaints_only_when_the_status_copy_moves(
-    snapshot_ui, monkeypatch
+    request, monkeypatch
 ):
     """The 1 Hz tick between whole-second boundaries must cost a compare, not
     a repaint of the bare height:auto status row (TASK-34991 finding)."""
@@ -623,7 +625,7 @@ async def test_paint_elapsed_repaints_only_when_the_status_copy_moves(
 
     from tldw_chatbook.Widgets import llamacpp_snapshot_manager as module
 
-    h = snapshot_ui
+    h = request.getfixturevalue("snapshot_ui")
     async with h.app.run_test(size=(140, 45)) as pilot:
         await h.app.push_screen(LLMScreen(h.app))
         await pilot.pause()

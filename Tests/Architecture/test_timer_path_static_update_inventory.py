@@ -518,7 +518,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py",
         "LlamaCppSetupView._refresh_state_locked",
-        "self.query_one('#llamacpp-connection-status', Static)",
+        "connection_status",
     ): (
         "NOT-PER-TICK: behind the same `_last_refresh_gate` equality gate "
         "(task-34916) as bind_status above."
@@ -534,7 +534,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py",
         "LlamaCppSetupView._render_launch_state",
-        "self.query_one('#llamacpp-preview-title', Static)",
+        "title",
     ): (
         "NOT-PER-TICK: two fixed strings, written only behind the caller's "
         "`_last_refresh_gate` equality gate (task-34916)."
@@ -656,7 +656,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/UI/Screens/settings_screen.py",
         "SettingsScreen._update_provider_test_result",
-        "self.query_one('#settings-provider-test-result', Static)",
+        "row",
     ): (
         "NOT-PER-TICK: behind the same two poll equality gates as "
         "_set_static_text above."
@@ -986,9 +986,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     (
         "tldw_chatbook/Widgets/Console/console_workspace_files_modal.py",
         "ConsoleWorkspaceFilesModal.update_attention",
-        "self.query_one('#console-workspace-files-attention', Static)",
+        "label",
     ): (
-        "NOT-PER-TICK: equality-gated on the WorkspaceFilesAttention "
+        "NOT-PER-TICK: displayed content equality also skips flag-only changes "
+        "with identical status copy; equality-gated on the WorkspaceFilesAttention "
         "snapshot itself (`attention == self._attention`, TASK-35028) -- "
         "the publisher bumps its generation counter on every Console sync "
         "tick, so the counter alone never blocked one; an unchanged "
