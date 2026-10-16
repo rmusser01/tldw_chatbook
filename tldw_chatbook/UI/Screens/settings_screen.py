@@ -340,6 +340,7 @@ from .settings_config_models import (
     SettingsDraft,
     SettingsOwnershipRecord,
 )
+from .settings_tools_hub import TOOLS_HUB_MODE_SHORTCUTS, ToolsHubPanel
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
 from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
@@ -2127,23 +2128,6 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             ),
         ),
         follow_up="add workflow defaults after Workflows exposes a persisted execution-safety contract.",
-    ),
-    SettingsDomainCategoryContract(
-        category=SettingsCategoryId.MCP_DEFAULTS,
-        title="MCP Defaults",
-        owner_destination="MCP",
-        source_of_truth=("Unified MCP panel", "MCP configured server target store"),
-        rows=(
-            (
-                "Runtime owner",
-                "MCP owns server/tool runtime, target management, and tool readiness",
-            ),
-            (
-                "Settings role",
-                "show global defaults/status only; server operations stay in MCP",
-            ),
-        ),
-        follow_up="add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.ACP_DEFAULTS,
@@ -3962,6 +3946,7 @@ class SettingsScreen(BaseAppScreen):
         self._tool_profile_review_modal: ModalScreen | None = None
         self._tool_profile_operation_revision = 0
         self._tool_profile_completion_revision = 0
+        self._tools_hub_initial_view_state: dict[str, object] | None = None
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -4454,6 +4439,9 @@ class SettingsScreen(BaseAppScreen):
         # draft, a return continuation) outlived its Save or Revert (13c).
         state: dict[str, object] = {}
         state["active_category"] = self.active_category
+        tools_pane = self._tools_hub_pane()
+        if tools_pane is not None:
+            state["mcp_hub_view_state"] = tools_pane.get_view_state()
         state["category_search_query"] = self._sanitize_category_search_query(
             self.category_search_query
         )
@@ -4518,6 +4506,15 @@ class SettingsScreen(BaseAppScreen):
             pass
         else:
             self.active_category = category.value
+
+        mcp_view_state = state.get("mcp_hub_view_state")
+        if isinstance(mcp_view_state, dict):
+            self._tools_hub_initial_view_state = mcp_view_state
+        tools_pane = self._tools_hub_pane()
+        if tools_pane is not None:
+            tools_pane.set_initial_view_state(
+                self._tools_hub_initial_view_state
+            )
 
         query = state.get("category_search_query")
         if isinstance(query, str):
@@ -5599,6 +5596,12 @@ class SettingsScreen(BaseAppScreen):
                 "Immediate actions",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.TOOLS,
+                "Tools & MCP",
+                "Agent tools, MCP servers, permissions, and audit.",
+                "Immediate actions",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
                 "Privacy & Security",
                 "Raw CLI host-access gate, secrets, redaction, and local privacy boundaries.",
@@ -5674,12 +5677,6 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WORKFLOWS,
                 "Workflows",
                 "Procedure, dry-run, approval, and execution safety defaults.",
-                "Read-only",
-            ),
-            SettingsCategorySummary(
-                SettingsCategoryId.MCP_DEFAULTS,
-                "MCP Defaults",
-                "Server/tool management defaults without owning MCP runtime operations.",
                 "Read-only",
             ),
             SettingsCategorySummary(
@@ -6530,6 +6527,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.STORAGE,
                     SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.TOOL_PROFILES,
+                    SettingsCategoryId.TOOLS,
                     SettingsCategoryId.PRIVACY_SECURITY,
                     SettingsCategoryId.NETWORK,
                     SettingsCategoryId.PERSONAL_CONTEXT,
@@ -6563,7 +6561,6 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.DREAMS,
                     SettingsCategoryId.GUARDIAN,
                     SettingsCategoryId.WORKFLOWS,
-                    SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
                     SettingsCategoryId.IMAGE_GENERATION,
                     SettingsCategoryId.VIDEO_GENERATION,
@@ -6981,6 +6978,26 @@ class SettingsScreen(BaseAppScreen):
                 recovery_copy=(
                     "Re-inspect stale imports and remove only profiles with no active or "
                     "archived workspace references."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.TOOLS,
+                owns_config_sections=(
+                    "MCP permission-store Tool policy",
+                    "[mcp] enable/expose controls",
+                ),
+                reads_runtime_state_from=(
+                    "Unified MCP panel",
+                    "MCP configured server target store",
+                ),
+                writes_allowed=True,
+                runtime_owner="MCP workbench (immediate reviewed actions)",
+                boundary_copy=(
+                    "Tools & MCP owns servers, tools, permissions, and audit "
+                    "in place; Tool Profiles next door owns profile lifecycle."
+                ),
+                recovery_copy=(
+                    "Re-open the category or press r to force a workbench reload."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -22925,6 +22942,12 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         await open_profile_rules(self)
 
+    def _tools_hub_pane(self) -> ToolsHubPanel | None:
+        try:
+            return self.query_one("#settings-tools-hub", ToolsHubPanel)
+        except QueryError:
+            return None
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.HOOKS:
@@ -23017,6 +23040,12 @@ class SettingsScreen(BaseAppScreen):
                 result=self._tool_profiles_result,
                 result_profile_id=self._tool_profiles_result_profile_id,
                 id="settings-tool-profiles-panel",
+            )
+        elif category is SettingsCategoryId.TOOLS:
+            yield ToolsHubPanel(
+                self.app_instance,
+                initial_view_state=self._tools_hub_initial_view_state,
+                id="settings-tools-hub",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static(
