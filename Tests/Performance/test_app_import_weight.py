@@ -235,6 +235,50 @@ def _measure_app_import(tmp_path: Path) -> dict:
     return json.loads(last_line)
 
 
+def test_local_conversation_state_normalization_avoids_api_models(tmp_path):
+    """Local row reads must not initialize unrelated API request models."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import importlib.abc
+import sys
+
+blocked = "tldw_chatbook.tldw_api.chat_conversation_schemas"
+assert blocked not in sys.modules
+class RefuseApiSchema(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            raise AssertionError("local state normalization imported API schemas")
+
+sys.meta_path.insert(0, RefuseApiSchema())
+from tldw_chatbook.Chat.chat_conversation_service import (
+    _normalize_state, normalize_conversation_row,
+)
+states = ("in-progress", "resolved", "backlog", "non-viable")
+for value in (None, "", "   "):
+    assert _normalize_state(value) is None
+    assert normalize_conversation_row({"id": "local", "state": value})["state"] == "in-progress"
+for state in states:
+    value = " " + state.upper() + " "
+    assert _normalize_state(value) == state
+    assert normalize_conversation_row({"id": "local", "state": value})["state"] == state
+for value in ("future", 17):
+    try:
+        _normalize_state(value)
+    except ValueError as error:
+        assert str(error) == f"Invalid state '{value}'. Allowed: {', '.join(states)}"
+    else:
+        raise AssertionError("invalid conversation state accepted")
+assert blocked not in sys.modules
+print("local state vocabulary validated without API schemas")
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip().splitlines()[-1] == (
+        "local state vocabulary validated without API schemas"
+    )
+
+
 def test_plugin_facade_defers_package_management_until_use(tmp_path):
     """A metadata facade must not import inspection or open its storage worker."""
     result = _run_isolated_python(

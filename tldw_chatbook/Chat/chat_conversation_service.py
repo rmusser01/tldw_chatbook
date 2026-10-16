@@ -33,9 +33,9 @@ def _clean_text(value: Any) -> str | None:
 
 
 def _normalize_state(value: Any) -> str | None:
-    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-    from tldw_chatbook.tldw_api.chat_conversation_schemas import (
-        ALLOWED_CONVERSATION_STATES,
+    # Keep local state validation independent of API request models.
+    from tldw_chatbook.Chat.console_conversation_actions import (
+        CONVERSATION_STATES as ALLOWED_CONVERSATION_STATES,
     )
 
     text = _clean_text(value)
