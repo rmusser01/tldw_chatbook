@@ -25,7 +25,13 @@ from uuid import uuid4
 
 from loguru import logger
 
-from .activation import AgentActivationRequired, guarded, worker_guard
+from .activation import (
+    AgentActivationRequired,
+    guarded,
+    history_execution,
+    standard_history_resolver,
+    worker_guard,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -7874,53 +7880,65 @@ class AgentService:
             scope = str(args.get("scope") or "run").strip().lower()
             if scope == "conversation":
                 try:
-                    offset = int(args.get("offset") or 0)
-                    # task-1273 review finding A: the cap is pushed INTO the
-                    # query (both `limit` and `agent_kind`) rather than
-                    # fetched-then-discarded -- a long-lived conversation's
-                    # run count (primary + every sub-agent run it has ever
-                    # spawned) must never size this query. `count_runs` is a
-                    # second, O(1)-row query that gets the EXACT total
-                    # without materializing it, so the coverage line can
-                    # still report a precise omitted count rather than only
-                    # "more exist".
-                    windowed = self.db.list_runs(
-                        conversation_id,
-                        include_superseded=True,
-                        limit=MAX_CROSS_RUN_RUNS,
-                        agent_kind=AGENT_KIND_PRIMARY,
-                    )
-                    total_primary_count = self.db.count_runs(
-                        conversation_id,
-                        include_superseded=True,
-                        agent_kind=AGENT_KIND_PRIMARY,
-                    )
-                    omitted_run_count = max(0, total_primary_count - len(windowed))
-                    resolved_runs: list = []
-                    for run in windowed:
-                        candidate_id = run.get("id")
-                        if candidate_id == run_id:
-                            # This run's own directory is already known --
-                            # never re-resolved (avoids a redundant glob and
-                            # any race with THIS run's still-open writer).
-                            resolved_runs.append((candidate_id, log_dir))
-                        else:
-                            resolved_runs.append(
-                                (candidate_id, resolve_existing_log_dir(candidate_id))
-                            )
-                    cross_result = search_across_runs(
-                        resolved_runs,
-                        current_run_id=run_id,
-                        contains=contains,
-                        pattern=pattern,
-                        tool=str(args.get("tool", "")),
-                        type=str(args.get("type", "")),
-                        status=str(args.get("status", "")),
-                        kind=str(args.get("kind", "")),
-                        from_record=int(args.get("from_record") or 0),
-                        to_record=int(args.get("to_record") or 0),
-                        context=int(args.get("context") or 0),
-                    )
+                    with history_execution(self) as history_root:
+                        offset = int(args.get("offset") or 0)
+                        # task-1273 review finding A: the cap is pushed INTO the
+                        # query (both `limit` and `agent_kind`) rather than
+                        # fetched-then-discarded -- a long-lived conversation's
+                        # run count (primary + every sub-agent run it has ever
+                        # spawned) must never size this query. `count_runs` is a
+                        # second, O(1)-row query that gets the EXACT total
+                        # without materializing it, so the coverage line can
+                        # still report a precise omitted count rather than only
+                        # "more exist".
+                        windowed = self.db.list_runs(
+                            conversation_id,
+                            include_superseded=True,
+                            limit=MAX_CROSS_RUN_RUNS,
+                            agent_kind=AGENT_KIND_PRIMARY,
+                        )
+                        total_primary_count = self.db.count_runs(
+                            conversation_id,
+                            include_superseded=True,
+                            agent_kind=AGENT_KIND_PRIMARY,
+                        )
+                        omitted_run_count = max(0, total_primary_count - len(windowed))
+                        standard_resolver = standard_history_resolver(
+                            resolve_existing_log_dir
+                        )
+                        resolved_runs: list = []
+                        for run in windowed:
+                            candidate_id = run.get("id")
+                            if candidate_id == run_id:
+                                # This run's own directory is already known --
+                                # never re-resolved (avoids a redundant glob and
+                                # any race with THIS run's still-open writer).
+                                resolved_runs.append((candidate_id, log_dir))
+                            else:
+                                if standard_resolver:
+                                    directory = (
+                                        resolve_existing_log_dir(
+                                        candidate_id, root=history_root
+                                    )
+                                        if history_root is not None
+                                    else None
+                                    )
+                                else:
+                                    directory = resolve_existing_log_dir(candidate_id)
+                                resolved_runs.append((candidate_id, directory))
+                        cross_result = search_across_runs(
+                            resolved_runs,
+                            current_run_id=run_id,
+                            contains=contains,
+                            pattern=pattern,
+                            tool=str(args.get("tool", "")),
+                            type=str(args.get("type", "")),
+                            status=str(args.get("status", "")),
+                            kind=str(args.get("kind", "")),
+                            from_record=int(args.get("from_record") or 0),
+                            to_record=int(args.get("to_record") or 0),
+                            context=int(args.get("context") or 0),
+                        )
                 except (TypeError, ValueError, OverflowError) as exc:
                     return ToolResult(
                         ok=False, error=f"Invalid search arguments: {exc}"

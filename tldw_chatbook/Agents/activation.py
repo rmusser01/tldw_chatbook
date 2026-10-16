@@ -1,6 +1,9 @@
 """Recovery admission for installed agent runs and their native workers."""
 
+import inspect
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 
@@ -89,8 +92,74 @@ def execution(service=None, *, sources=()):
     return _guard.execution(service, sources=sources)
 
 
+def _explicit_writer_root(service):
+    """Select only the unchanged writer that stock run_turn will actually bind."""
+    from .agent_service import AgentService
+    from .run_log import _RUN_LOG_PATH_WRITER_ORIGINAL
+
+    writer_class, methods = _RUN_LOG_PATH_WRITER_ORIGINAL
+    if (
+        type(service) is not AgentService
+        or AgentService.__getattribute__ is not object.__getattribute__
+        or writer_class.__getattribute__ is not object.__getattribute__
+    ):
+        return None
+    writer = inspect.getattr_static(service, "_injected_run_log_writer", None)
+    if type(writer) is not writer_class or not all(
+        inspect.getattr_static(writer, name, None) is function
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        for name, function, code, defaults in methods
+    ):
+        return None
+    root = inspect.getattr_static(writer, "_explicit_root", None)
+    return root if type(root) is type(Path()) else None
+
+
+@contextmanager
+def history_execution(service: object) -> Iterator[Path | None]:
+    """Admit saved history at selection and retain it through segment loading."""
+    from .run_log import resolve_log_root
+
+    with execution(service):
+        root = resolve_log_root()
+        sources = (("agents.history", root),) if root is not None else ()
+        with execution(service, sources=sources):
+            yield root
+
+
+def standard_history_resolver(callback: Callable[..., Path | None]) -> bool:
+    """Recognize the recorded reader before supplying its optional root argument."""
+    from .run_log import _RUN_LOG_PROBE_SOURCE
+
+    original = next(
+        function
+        for _owner, name, function in _RUN_LOG_PROBE_SOURCE[4]
+        if name == "resolve_existing_log_dir"
+    )
+    if callback is not original:
+        return False
+    record = next(row for row in _RUN_LOG_PROBE_SOURCE[5] if row[0] is original)
+    _, code, namespace, defaults, kwdefaults, items, closure, cells, wrapped = record
+    return (
+        callback.__code__ is code
+        and callback.__globals__ is namespace
+        and callback.__defaults__ is defaults
+        and callback.__kwdefaults__ is kwdefaults
+        and len(callback.__kwdefaults__ or {}) == len(items)
+        and all(
+            (callback.__kwdefaults__ or {}).get(key) is value for key, value in items
+        )
+        and callback.__closure__ is closure
+        and all(cell.cell_contents is value for cell, value in cells)
+        and vars(callback).get("__wrapped__") is wrapped
+    )
+
+
 def guarded(function):
     """Guard synchronous installed run entry points before their first effect."""
+
+    original_code = function.__code__
 
     @wraps(function)
     def call(self, *args, **kwargs):
@@ -106,10 +175,15 @@ def guarded(function):
             if function.__name__ == "run_turn":
                 from .run_log import resolve_log_root
 
-                # This installed selector consults the admitted workspace DB.
-                # Check the actual workspace log source before writer.bind can
-                # migrate logs or before any model/tool consumes saved history.
-                root = resolve_log_root()
+                # The Console supplies its live writer root; unrelated saved
+                # history is selected and admitted only when a search reads it.
+                root = (
+                    _explicit_writer_root(self)
+                    if function.__code__ is original_code
+                    else None
+                )
+                if root is None:
+                    root = resolve_log_root()
                 if root is not None:
                     with execution(self, sources=(("agents.history", root),)):
                         return function(self, *args, **kwargs)
