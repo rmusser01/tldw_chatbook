@@ -21,7 +21,7 @@ CONSOLE_SETUP_CARD_TITLE = "Get started"
 #: first-time user knows what a "provider" even is before the steps ask them
 #: to connect one. Kept provider-agnostic (no settings jargon). TASK-33008.4:
 #: its second line says where cloud setup goes, and Enter is the only key it
-#: names, matching the blocked footer's first hint (ADR-031 rule 5).
+#: names, matching the blocked footer's Enter hint (ADR-031 rule 5).
 #: TASK-33008.2: the line promises no return for a custom endpoint, because
 #: Settings offers none there (no return can name a ``custom-ep:`` id).
 CONSOLE_SETUP_CARD_SUBTITLE = (

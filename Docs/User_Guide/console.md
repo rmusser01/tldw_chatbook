@@ -271,7 +271,7 @@ stays on one line. Behind the card, the workbench is covered by a plain
 dim fill with nothing drawn on it. Under its plain-language line about
 providers, the card says "Cloud setup opens Settings and comes back here,
 except for custom endpoints. Press Enter to use the highlighted action." —
-Enter is the only key the card names, matching the first hint in the footer.
+Enter is the only key the card names, matching the footer's Enter hint.
 While the card shows, the only Console keys the footer names are the ones
 that work under it: **Enter**, **F1** help and **Ctrl+P** palette (the
 app-wide Ctrl+Shift+F and Ctrl+Q stay). Alt+M, Ctrl+O, F6 and the other
@@ -299,8 +299,9 @@ API key field is disabled, no **Return to Console** shows, and focus starts on
 endpoint's editor; come back to the Console yourself when it is fixed.
 **Choose provider** and
 **Choose model** open **Switch model**, where a model is always picked as a
-provider·model pair (Choose model opens with Find on this chat's provider, so
-it lists only that provider's models; clear Find to see every provider); an
+provider·model pair (Choose model opens with Find filled with this chat's
+provider name, so it lists that provider's models and any other row whose
+provider name or model id contains it; clear Find to see every provider); an
 endpoint step (**Configure endpoint**) opens **Chat settings**. The composer
 stays locked until a provider and model are configured; once they are, the
 empty transcript names what is connected, for example "Setup complete — OpenAI
