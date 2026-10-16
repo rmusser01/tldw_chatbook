@@ -160,7 +160,6 @@ def _assertion(
 def test_registration_and_login_round_trip(tmp_path: Path) -> None:
     clock = _FakeClock()
     service = _service(tmp_path, clock)
-    assert service.available is True
 
     private_key, credential_id, result = _register(service)
     assert result["label"] == "YubiKey 5"

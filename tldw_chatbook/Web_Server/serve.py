@@ -2298,16 +2298,24 @@ def create_server(
     # public_url anchors a registrable-domain RP. An IP literal, localhost, or
     # a missing public_url cannot, so the server degrades to token-only login
     # (service None -> 503 routes, no UI controls) instead of failing to boot.
-    from .webauthn_service import PasskeysUnavailable, WebAuthnService
-    from .webauthn_store import WebAuthnCredentialStore
-
+    # python-fido2 rides the optional [web] extra and webauthn_service.py
+    # imports it at module top, so a stale install that upgraded code without
+    # reinstalling must degrade the same way — never kill served boot.
     webauthn_service = None
     try:
+        from .webauthn_service import PasskeysUnavailable, WebAuthnService
+        from .webauthn_store import WebAuthnCredentialStore
+
         webauthn_service = WebAuthnService(
             public_url=public_url,
             store=WebAuthnCredentialStore(
                 get_user_data_dir() / "webauthn_credentials.json"
             ),
+        )
+    except ImportError:
+        logger.warning(
+            "Passkeys disabled: python-fido2 is missing; reinstall the app with "
+            'the [web] extra (e.g. pip install -e ".[web]") to enable passkeys'
         )
     except PasskeysUnavailable:
         webauthn_service = None

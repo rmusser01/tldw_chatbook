@@ -18,6 +18,9 @@ survive restarts because only public keys are stored server-side.
 
 1. WebAuthn login via fido2 (>=2,<3, web extra only). Discoverable
    credentials, attestation "none", user verification "preferred".
+   UV semantics: login accepts UP-only assertions — fido2 enforces
+   user verification only when it is REQUIRED, the standard WebAuthn
+   rule (verified against fido2.server.authenticate_complete).
 2. RP ID derived from [web_server] public_url's host at server build time.
    Passkeys are refused when public_url is unset or its host is an IP
    literal/localhost (WebAuthn spec forbids IP RP IDs) — QR/token remain

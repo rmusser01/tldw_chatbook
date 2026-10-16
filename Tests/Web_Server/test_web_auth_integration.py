@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import struct
+import sys
 from contextlib import asynccontextmanager
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
@@ -347,6 +348,66 @@ def test_create_server_resolves_only_dedicated_web_credential(monkeypatch) -> No
     assert server._canvas_policy.remote_access_status == "insecure_development"
     assert "provider-secret" not in repr(policy)
     assert "legacy-secret" not in repr(policy)
+
+
+def test_create_server_degrades_to_token_only_login_when_fido2_missing(
+    monkeypatch, tmp_path
+) -> None:
+    """A missing python-fido2 must degrade passkeys, not fail served boot.
+
+    ``webauthn_service.py`` imports fido2 at module top and fido2 rides the
+    optional [web] extra, so a stale install that upgraded code without
+    reinstalling hits an ImportError inside create_server. Parking ``None``
+    under the module name in ``sys.modules`` makes that exact import raise
+    ImportError; the server must still build with ``webauthn_service None``
+    (token-only login — the 503 route half is covered by
+    ``test_passkey_routes_answer_503_when_passkeys_unavailable``).
+    """
+
+    class _Base:
+        def __init__(self, **kwargs):
+            pass  # kwargs sink; the mixin holds the asserted state
+
+    monkeypatch.setattr(serve, "_load_textual_serve_server_class", lambda: _Base)
+    monkeypatch.setattr(serve, "_load_textual_serve_app_service_class", lambda: None)
+    values = {
+        "access_token": "web-secret",
+        "public_url": "http://chatbook.example",
+        "allow_insecure_remote_http": True,
+        "trusted_proxy_addresses": [],
+        "tls_certificate": "",
+        "tls_private_key": "",
+    }
+    monkeypatch.setattr(
+        serve,
+        "get_cli_setting",
+        lambda section, key=None, default=None: values.get(key, default),
+    )
+    # Keep the construction hermetic: both of these read the shared config
+    # cache (and the backup-recovery bootstrap behind it) on a real machine;
+    # the device-manager helpers below dodge the same seam on purpose.
+    monkeypatch.setattr(
+        serve,
+        "get_canvas_config_policy",
+        lambda **_: build_canvas_config_policy({}, web_auth_policy=None),
+    )
+    monkeypatch.setattr(serve, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "provider-secret")
+    monkeypatch.setenv("TLDW_API_KEY", "legacy-secret")
+    monkeypatch.delenv("TLDW_CHATBOOK_WEB_ACCESS_TOKEN", raising=False)
+    # A None entry under a module name is the documented CPython signal for
+    # "import of this module halted": the from-import in create_server then
+    # raises ImportError without needing to uninstall anything.
+    monkeypatch.setitem(
+        sys.modules, "tldw_chatbook.Web_Server.webauthn_service", None
+    )
+
+    server = serve.create_server(host="0.0.0.0", port=8000)
+
+    assert server is not None
+    # The mixin's __init__ keeps the service on the instance (the textual
+    # base never sees it), so presence/None is asserted there.
+    assert server._webauthn_service is None
 
 
 # --- Device manager pages (task 4, ADR-233) -------------------------------

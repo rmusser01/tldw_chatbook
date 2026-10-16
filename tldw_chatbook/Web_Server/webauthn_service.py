@@ -128,11 +128,6 @@ class WebAuthnService:
     # ------------------------------------------------------------------- RP
 
     @property
-    def available(self) -> bool:
-        """Whether RP derivation succeeded (always True past construction)."""
-        return self._rp_id is not None
-
-    @property
     def rp_id(self) -> str:
         return self._rp_id
 
