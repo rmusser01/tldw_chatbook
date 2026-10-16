@@ -11136,6 +11136,15 @@ RecoveryPassphraseDialog {
     min-width: $ds-size-12;
 }
 
+/* ===== MODULE: features/_plugins.tcss ===== */
+#plugins-shell .section-title { height: $ds-control-height-compact; text-style: $ds-text-strong; color: $ds-text-primary; }
+#plugins-scope { height: auto; color: $ds-authority-workspace; }
+#plugins-search > .input--placeholder { color: $ds-text-primary; }
+#plugins-search { height: $ds-control-height; }
+
+
+#plugins-shell .section-title, #plugins-scope, #plugins-search { margin: $ds-space-0; }
+
 /* ===== MODULE: features/_home.tcss ===== */
 
 

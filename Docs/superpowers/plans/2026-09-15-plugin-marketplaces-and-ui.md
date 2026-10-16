@@ -347,8 +347,7 @@ git diff --check
 - Create: `tldw_chatbook/UI/Plugins_Modules/details.py`
 - Create: `tldw_chatbook/css/features/_plugins.tcss`
 - Modify: `tldw_chatbook/UI/Navigation/screen_registry.py`
-- Modify: `tldw_chatbook/UI/Navigation/main_navigation.py`
-- Modify: `tldw_chatbook/UI/stable_command_palette.py`
+- Shared metadata: `tldw_chatbook/UI/Navigation/shell_destinations.py` and `UI/Navigation/screen_registry.py` (R13/R97); generic navigation/palette consumers remain unchanged.
 - Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Modify: `tldw_chatbook/css/build_css.py`
 - Modify: `tldw_chatbook/css/tldw_cli_modular.tcss`
@@ -361,7 +360,7 @@ git diff --check
 **Interfaces**
 
 - Consumes: I4 SourceService and the existing ScreenRoute lazy-navigation/command-palette surface. Read backlog/docs/design-language.md before changing any UI.
-- Produces: PluginsScreen(source_service: SourceService, coordinator: PluginCoordinator) uses screen route plugins. PluginBrowseState stores view, query, page, selected_source_id, selected_installation_id and request_generation. accept_response(request_generation: int, current_generation: int) -> bool ignores stale responses. All mutations remain coordinator calls; projected UI state is never authority.
+- Produces: PluginsScreen(app) uses screen route plugins. PluginBrowseState stores view, query, page, selected_source_id, selected_installation_id and request_generation. accept_response(request_generation: int, current_generation: int) -> bool ignores stale responses. The one lazy app-owned SourceService wraps PluginService; mutations use public facades; projected UI state is never authority.
 
 - [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
@@ -400,6 +399,28 @@ python -m pytest Tests/UI/test_plugins_navigation.py Tests/UI/test_plugins_brows
 backlog task task-32693 --plain
 git diff --check
 ```
+
+### I5 implemented public seam and I6 handoff
+
+Plugins is appended as F8; Settings retains F4 and exposes a Plugins link.
+`PluginService.management_snapshot(workspace_id, *, query="", offset=0, limit=50)`
+returns immutable display metadata with activation, trust, selection, support,
+evidence and current component eligibility from the existing admission owner.
+`management_readme(installation_id, revision_digest, *, workspace_id)` reads only
+an explicitly selected current retained revision and returns a bounded, marked
+64 KiB UTF-8 preview. Neither display API grants a token, lease or run admission.
+ADR: [162](../../../backlog/decisions/162-managed-agent-plugins.md).
+
+Repository acquisition, catalog-entry preview and explicit Cursor/Codex import
+inspection retain actual snapshot/review/preview objects in `PluginBrowseState`.
+I6 supplies exact review/commit and operation-management panels. Its concrete
+service/test extension is protected terminal candidate reference enumeration
+and reviewed reference discard in `Plugins/source_service.py` and
+`Tests/Plugins/test_source_service.py`. Compact persisted references cannot be
+inflated into fabricated full `AcquiredSnapshot` objects; discard must check the
+full protected dependency union and boot-qualified custody. Missing in-session
+objects or empty maps never prove abandonment; pending/reboot custody is not
+adopted. This is management increment scope, not an I5 discard implementation.
 
 ## I6: Review and manage plugin operations across UI surfaces
 
@@ -709,3 +730,34 @@ rebinding remains a separate reviewed action. During active acquisition only,
 quota monitoring tolerates a vanished descendant inside its physically qualified
 staging leaf. Final acceptance and all non-acquisition capacity scans remain strict;
 this exception does not grant deletion authority or suppress other storage errors.
+
+### I5 R98 budget qualification
+
+The exact Task23 BASE full-registry control already exceeded ADR097 at515 modules;
+the initial Plugins implementation added4. R98 defers the twelve measured
+Settings category import groups plus Plugins private display/state modules at
+first use, retaining existing export/class/patch identities and event handlers.
+Actual full-registry qualification reaches499 modules under the unchanged500 cap;
+headroom warnings remain visible. The existing Settings category sweep at both
+terminal sizes and targeted category/constructor controls qualify first use.
+This does not identify the original branch-wide cause of the BASE breach.
+
+### Task23 Fix1 — R99/R100 authenticated recorded display and actual category use
+
+Passive Installed listing and explicit README metadata lookup use recorded inspection metadata authenticated in the same registry SQLite projection that is compared with protected current authority and the published snapshot. This replaces the earlier contradictory `capture(fresh=False)` display requirement: that call still fully reinspects package bodies and remains mandatory for execution, not passive display. The registry collector is untrusted until coordinator equality gates succeed. Only requested current revision metadata is returned; unprotected evidence/availability/diagnostics/candidates are stripped and dependency edges derive from authenticated component constraints. No schema, store, owner or authority format changes.
+
+Admission shares its existing activation/trust/selection/mapping/dependency/revocation/live-fence checks between full capture and recorded eligibility. Display returns only component IDs, never RunPluginSnapshot, tokens, leases or run admission. Execution retains complete retained-byte verification, drain gates, component ceilings, data-root epochs and current authority checks. UI labels recorded eligibility and explicitly says package bytes are not reverified. Explicit README opens only the selected current root's no-follow regular README, reads at most65537 bytes including sentinel and returns at most65536 UTF8 bytes including truncation marker; it is a bounded literal preview, not proof of whole-package integrity.
+
+R100 requires actual cold Overview and unrelated shared handlers to leave unopened category panels/models deferred. Symbol resolution follows its matching category/field/ID/saved-content/nonempty-query branch; genuine shared Overview model use must be identified and tested. Original class/export/assigned-module-patch identity and saved drafts are preserved. ADR097 caps and all routes remain unchanged.
+
+Fix1 controls cover zero package-member reads for list/search, entire selected README read bound, authenticated-record tampering, identical shared eligibility/runtime gates with full runtime verification, cold Overview then actual category/draft behavior, held-load Back/form/new-owner cleanup and scoped token-backed title/placeholder contrast. See task-23-fix1-proposal.md and CLI5 plan; root owns independent re-review and closeout.
+
+
+### Current dev navigation ownership (2026-10-17 integration)
+
+The removed `UI/Workbench/route_inventory.py` is not restored. Shared route and shell coverage uses current `UI/Navigation/screen_registry.py` and `shell_destinations.py`, including Meetings, Research and the new Plugins destination. Plugins uses F8; all existing shortcuts, including Settings F4, remain. The lazy source facade follows the current app skill-wiring owner. This preserves the route-coverage outcome of historical I5 AC5 through current owners; rebased-source checks remain TASK32695 AC15.
+
+
+### I5 route-owned Plugins styling (2026-10-17 integration)
+
+Apply the existing ADR097 first-navigation stylesheet owner. The current builder splits only `plugins`-prefixed browser selectors from `features/_plugins.tcss` into generated `screen_feature_plugins.tcss`; the app's existing route CSS map loads it on Plugins entry. Shared-selector, singular `plugin-review` and type-only modal rules stay in the normal boot remainder, so standalone plugin review/authority/status modals retain first-open styling. Current classifier/cascade rules and all startup caps remain unchanged. There is no new loader, Screen.CSS_PATH feature duplication, modal owner, token or cap exception. Existing source builder alone generates the sheets; qualify source synchronization, the full boot budget, first navigation and standalone modal first use at both terminal sizes.
