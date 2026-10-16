@@ -3356,6 +3356,19 @@ class MCPWorkbench(Container):
             context_reset or original_context == service_context
         )
 
+    def suspend_recovery_review(self) -> None:
+        """Invalidate an accepted recovery review's UI receipt on host suspend.
+
+        The review's own confirmation opens before busy is set. Once accepted,
+        leaving the host surface invalidates its UI receipt even if the user
+        returns before the retained native write finishes. ADR-233: this is
+        the single owner of that semantics -- the retired MCP shell screen
+        carried it in its own ``on_screen_suspend``; the Settings host and
+        any other host call this method from theirs.
+        """
+        if self._mcp_recovery_busy:
+            self._mcp_recovery_token = None
+
     def on_mcp_permissions_mode_recovery_review_requested(
         self,
         event: MCPPermissionsMode.RecoveryReviewRequested,

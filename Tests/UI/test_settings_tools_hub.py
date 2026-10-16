@@ -233,6 +233,109 @@ async def test_apply_navigation_context_rejects_malformed_tools_context(request)
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_suspending_settings_invalidates_in_flight_recovery_review(request):
+    """ADR-233 port check: leaving Settings mid-review must invalidate an
+    accepted recovery review's UI receipt AND clear the TOOLS footer hints --
+    both halves of the retired MCP shell's on_screen_suspend, driven through
+    the REAL SettingsScreen handler (not an inlined copy)."""
+    from textual.screen import Screen as TextualScreen
+
+    from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+
+        # Busy guard: an idle workbench keeps its (synthetic) receipt -- the
+        # retired screen only invalidated an ACCEPTED review.
+        idle_token = object()
+        pane.workbench._mcp_recovery_token = idle_token
+        await host.push_screen(TextualScreen())
+        await pilot.pause()
+        assert pane.workbench._mcp_recovery_token is idle_token
+        # First half of the port: the footer hints cleared under the overlay.
+        footer = settings.query_one(AppFooterStatus)
+        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        await host.pop_screen()
+        await pilot.pause()
+
+        # Second half: an accepted (busy) review is invalidated by leaving.
+        busy_token = object()
+        pane.workbench._mcp_recovery_busy = True
+        pane.workbench._mcp_recovery_token = busy_token
+        await host.push_screen(TextualScreen())
+        await pilot.pause()
+        assert pane.workbench._mcp_recovery_token is None
+        pane.workbench._mcp_recovery_busy = False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_permission_toggle_keeps_tools_category_undrafted(request, tmp_path):
+    """Spec amendment A3: the workbench writes permission changes immediately,
+    so the Settings draft machinery must stay empty for TOOLS -- no phantom
+    "unsaved changes" marker and no save/revert keys that would lie about
+    staged edits that do not exist."""
+    from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
+
+    app = _build_test_app()
+    app.unified_mcp_service = PermissionsHubService(
+        tmp_path / "mcp_permissions.json"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        pane.activate_mode("permissions")
+        deadline = time.monotonic() + 2.0
+        while (
+            time.monotonic() < deadline
+            and pane.workbench.active_mode != "permissions"
+        ):
+            await pilot.pause(0.01)
+        assert pane.workbench.active_mode == "permissions"
+        # The Space-cycle handler needs the captured tool-policy context the
+        # permissions sync builds (same step the recovery journeys drive).
+        await pane.workbench._sync_children()
+        await pilot.pause()
+        assert pane.workbench._tool_policy_profile_context is not None
+
+        await pane.workbench.on_mcp_permissions_mode_state_cycle_requested(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="global",
+                server_key="",
+                tool_name=None,
+                # Store vocabulary is allow/ask/deny (the UI's "off" rung).
+                new_state="deny",
+                # The real canvas sends the workbench's captured context with
+                # every Space-cycle; the handler validates the EVENT's copy.
+                profile_context=pane.workbench._tool_policy_profile_context,
+            )
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        # The toggle took effect on the store (immediate write)...
+        assert (
+            app.unified_mcp_service.permission_store.get_global_default() == "deny"
+        )
+        # ...and the category still reports NO staged Settings draft.
+        assert not settings._category_has_unsaved_changes(SettingsCategoryId.TOOLS)
+        assert SettingsCategoryId.TOOLS not in settings._settings_drafts
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_runtime_backend_change_forces_pane_reload(request, tmp_path):
     app = _build_test_app()
     # A real (fake-seam) hub service: the workbench's initial load worker
