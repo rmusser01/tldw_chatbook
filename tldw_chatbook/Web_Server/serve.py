@@ -1574,7 +1574,35 @@ class ChatbookWebServerMixin:
                 data_dir=get_user_data_dir() / "mobile",
                 provider_gateway=gateway,
             )
+        self._attach_mobile_relay(self._mobile_service)
         return self._mobile_service
+
+    def _attach_mobile_relay(self, service: Any) -> None:
+        """Bind the desktop approval relay when both halves exist (ADR-236).
+
+        Lazy by construction: the service (mobile surface) is only built
+        on the first mobile-surface request, and the relay needs the
+        canvas control broker (``_canvas_control_broker`` — built at
+        startup only while canvas is enabled). The two inert cases stay
+        inert: mobile surface off → this method is never reached (the
+        mobile routes are not registered), and canvas disabled → the
+        broker is ``None`` and desktop approval rounds never leave the
+        child, so they stay invisible on the phone (documented
+        limitation). The child-id source reads the live browser-binding
+        registry (``_served_browser_children``, ``bind_served_browser`` /
+        ``unbind_served_browser``), so children appearing or disappearing
+        later are followed by the service's drainer. ``attach_relay`` is
+        idempotent and starts its drainer on the serving loop; rounds
+        raised before this first mobile use wait in the broker's bounded
+        per-child queue and are still picked up.
+        """
+        if getattr(service, "_relay_task", None) is not None:
+            return
+        broker = getattr(self, "_canvas_control_broker", None)
+        if broker is None:
+            return
+        children = self._served_browser_children
+        service.attach_relay(broker, child_ids=lambda: list(children.values()))
 
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""

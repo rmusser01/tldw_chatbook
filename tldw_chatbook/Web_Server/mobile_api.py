@@ -334,7 +334,9 @@ async def handle_decide(server: Any, request) -> Any:
 
     An unknown or already-dead round is a reported ``{"ok": false}``, not
     an error: the phone may legitimately race a round that expired while
-    the decision was in flight.
+    the decision was in flight. Desktop-relayed rounds (ADR-236) route
+    through the canvas control broker inside this await — the 2 s routing
+    budget bounds the response.
     """
     from aiohttp import web
 
@@ -350,7 +352,7 @@ async def handle_decide(server: Any, request) -> Any:
     ):
         return _error(400, "invalid_decisions")
     try:
-        delivered = service.decide_approval(
+        delivered = await service.decide_approval(
             request.match_info["round_id"], dict(decisions)
         )
     except KeyError:

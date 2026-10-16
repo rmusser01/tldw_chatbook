@@ -272,7 +272,7 @@ class FakeMobileService:
             }
         ]
 
-    def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
+    async def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
         self.calls.append(
             ("decide_approval", {"round_id": round_id, "decisions": dict(decisions)})
         )

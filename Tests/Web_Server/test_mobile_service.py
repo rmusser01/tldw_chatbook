@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,13 @@ import pytest
 
 from Tests.console_provider_doubles import AgentModeGateway
 
+from tldw_chatbook.Canvas.control_protocol import (
+    CONTROL_PROTOCOL_VERSION,
+    CanvasControlBroker,
+    CanvasControlClient,
+    ControlMessage,
+    ControlProtocolError,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Web_Server.mobile_service import MobileChatService, MobileSendRefused
@@ -118,13 +126,13 @@ async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
 
         call = payload["calls"][0]
         assert (
-            service.decide_approval(
+            await service.decide_approval(
                 payload["round_id"], {call["call_id"]: "approve_once"}
             )
             is True
         )
         # Deciding an unknown round is reported, not raised.
-        assert service.decide_approval("no-such-round", {"x": "deny"}) is False
+        assert await service.decide_approval("no-such-round", {"x": "deny"}) is False
 
         await asyncio.wait_for(send_task, timeout=60)
         await _wait_for(
@@ -704,3 +712,619 @@ async def test_library_detail_returns_row_with_transcript_and_none_for_unknown(
         await service.shutdown()
         notes_db.close_connection()
         media_db.close_connection()
+
+
+# ========================================================================= #
+# Desktop approval relay (Phase 2c, ADR-236): parent-side subscription      #
+# ========================================================================= #
+#
+# Real ``CanvasControlBroker`` on an ephemeral loopback port + real
+# ``CanvasControlClient`` scripted children, the same harness shape
+# ``Tests/Canvas/test_control_protocol.py`` uses (these tests carry
+# ``@pytest.mark.loopback_network`` for the owned listener). The service
+# side is the real ``MobileChatService``; the engine is only built where
+# an event subscriber is needed — the relay surface itself must stand
+# alone (a phone that only polls ``list_approvals`` never builds one).
+
+_RELAY_SNAPSHOT = "a" * 64
+
+
+def _relay_frame(message_type: str, payload: dict, request_id: str) -> ControlMessage:
+    return ControlMessage(
+        CONTROL_PROTOCOL_VERSION, message_type, request_id, None, payload
+    )
+
+
+def _relay_raised_payload(round_id: str = "round-desktop-1") -> dict[str, Any]:
+    """One desktop approval round, shaped exactly like the child publisher's."""
+    return {
+        "round_id": round_id,
+        "session_id": "desktop-session-1",
+        "calls": [
+            {
+                "llm_name": "fs_write",
+                "call_id": "call-1",
+                "options": ["approve_once", "approve_session", "deny"],
+                "arguments": {"path": "notes/scratch.md"},
+            }
+        ],
+        "timeout_seconds": 300,
+    }
+
+
+class _ScriptedChild:
+    """One authenticated child connection with a recording handler.
+
+    ``decide`` answers ``relay.decide.response`` (``delivered`` from the
+    constructor); ``park_decide`` instead parks the handler past any
+    parent deadline (the timeout path). ``canvas_events`` answers the
+    pull-based ``canvas.events.request`` the served canvas gateway uses.
+    """
+
+    def __init__(
+        self,
+        broker: CanvasControlBroker,
+        child_id: str,
+        *,
+        delivered: bool = True,
+        park_decide: bool = False,
+        canvas_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.seen: list[ControlMessage] = []
+        self._delivered = delivered
+        self._park_decide = park_decide
+        self._canvas_events = canvas_events or []
+        self._launch = broker.issue_child(child_id)
+        self.client = CanvasControlClient(
+            self._launch.environment,
+            runtime_snapshot_id=_RELAY_SNAPSHOT,
+            handler=self._handler,
+        )
+
+    async def _handler(self, message: ControlMessage) -> ControlMessage:
+        self.seen.append(message)
+        if message.message_type == "relay.decide.request":
+            if self._park_decide:
+                # Swallow the broker's control.cancel like a slow child;
+                # the parent deadline has already expired by then.
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    pass
+            return _relay_frame(
+                "relay.decide.response",
+                {
+                    "round_id": message.payload["round_id"],
+                    "delivered": self._delivered,
+                },
+                message.request_id,
+            )
+        if message.message_type == "canvas.events.request":
+            return _relay_frame(
+                "canvas.events.response",
+                {"events": self._canvas_events},
+                message.request_id,
+            )
+        raise ControlProtocolError("authority_unavailable")
+
+    async def start(self) -> None:
+        await self.client.start()
+
+    async def aclose(self) -> None:
+        await self.client.aclose()
+
+
+async def _wait_child_disconnected(
+    broker: CanvasControlBroker, child_id: str, timeout: float = 5.0
+) -> None:
+    """Wait until the broker observes the child's transport as gone."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            await asyncio.wait_for(
+                broker.wait_connected(child_id, timeout=0.05), 0.2
+            )
+        except (ControlProtocolError, TimeoutError):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"child {child_id} never disconnected")
+
+
+def _relay_test_service(tmp_path: Path) -> MobileChatService:
+    return MobileChatService(
+        data_dir=tmp_path / "engine", provider_gateway=AgentModeGateway()
+    )
+
+
+async def _relay_teardown(
+    service: MobileChatService,
+    broker: CanvasControlBroker,
+    child: _ScriptedChild | None,
+    *subscribers: asyncio.Task,
+) -> None:
+    for subscriber in subscribers:
+        subscriber.cancel()
+    if child is not None:
+        await child.aclose()
+    await broker.aclose()
+    await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+@pytest.mark.loopback_network
+async def test_relay_raised_round_lists_with_surface_and_fires_event(
+    tmp_path: Path,
+) -> None:
+    """A raised desktop round joins list_approvals (surface desktop) and
+    fires approval_requested; a mounted mobile round stays surface mobile."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    children: list[str] = ["child-a"]
+    service.attach_relay(broker, child_ids=lambda: list(children))
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        desktop = next(
+            a
+            for a in service.list_approvals()
+            if a["round_id"] == "round-desktop-1"
+        )
+        assert desktop["surface"] == "desktop"
+        assert desktop["child_id"] == "child-a"
+        assert desktop["calls"][0]["llm_name"] == "fs_write"
+        assert desktop["timeout_seconds"] == 300
+
+        await _wait_for(
+            lambda: any(
+                e.type == "approval_requested"
+                and e.payload.get("round_id") == "round-desktop-1"
+                for e in got
+            ),
+            timeout=5,
+            what="approval_requested event for the desktop round",
+        )
+        event = next(
+            e
+            for e in got
+            if e.type == "approval_requested"
+            and e.payload.get("round_id") == "round-desktop-1"
+        )
+        assert event.session_id == "desktop-session-1"
+        assert event.payload["surface"] == "desktop"
+        assert event.payload["child_id"] == "child-a"
+        json.dumps(event.to_wire())
+
+        # A mobile round mounts beside it: both surfaces list, correctly
+        # labelled, and the mobile entry carries no child binding.
+        service._mount_approval(
+            {
+                "round_id": "round-mobile-1",
+                "session_id": "mobile-session-1",
+                "calls": [],
+                "timeout_seconds": 300,
+            }
+        )
+        listed = service.list_approvals()
+        by_id = {a["round_id"]: a for a in listed}
+        assert set(by_id) == {"round-desktop-1", "round-mobile-1"}
+        assert by_id["round-mobile-1"]["surface"] == "mobile"
+        assert "child_id" not in by_id["round-mobile-1"]
+        assert by_id["round-desktop-1"]["surface"] == "desktop"
+    finally:
+        await _relay_teardown(service, broker, child, subscriber)
+
+
+@pytest.mark.loopback_network
+async def test_relay_decision_routes_to_child_and_clears_round(
+    tmp_path: Path,
+) -> None:
+    """A phone decision on a desktop round rides relay.decide.request to
+    the owning child; delivered True clears the round and answers True."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        delivered = await service.decide_approval(
+            "round-desktop-1", {"call-1": "approve_once"}
+        )
+        assert delivered is True
+        decide_requests = [
+            m for m in child.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_requests) == 1
+        assert decide_requests[0].payload == {
+            "round_id": "round-desktop-1",
+            "decisions": {"call-1": "approve_once"},
+        }
+        assert not [
+            a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"
+        ]
+        # The relay-only path never needed the engine.
+        assert service._engine is None
+        # A repeated decide on the cleared round is unknown, not an error.
+        assert (
+            await service.decide_approval("round-desktop-1", {"call-1": "deny"})
+            is False
+        )
+    finally:
+        await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_decide_dead_child_returns_false_and_drops_round(
+    tmp_path: Path,
+) -> None:
+    """Deciding a round whose child died returns False and drops the round
+    (fail-closed: the child's own timeout/deny semantics govern)."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        await child.aclose()
+        await _wait_child_disconnected(broker, "child-a")
+        assert (
+            await service.decide_approval("round-desktop-1", {"call-1": "deny"})
+            is False
+        )
+        assert not [
+            a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"
+        ]
+    finally:
+        await _relay_teardown(service, broker, None)
+
+
+@pytest.mark.loopback_network
+async def test_relay_decide_timeout_returns_false_and_drops_round(
+    tmp_path: Path,
+) -> None:
+    """A child that never acknowledges within the 2 s routing budget fails
+    the round closed on the parent."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a", park_decide=True)
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        assert (
+            await service.decide_approval("round-desktop-1", {"call-1": "deny"})
+            is False
+        )
+        elapsed = loop.time() - started
+        assert 1.5 <= elapsed < 10, f"decide did not bound itself: {elapsed}s"
+        assert not [
+            a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"
+        ]
+    finally:
+        await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_run_status_emits_desktop_event(tmp_path: Path) -> None:
+    """relay.run.status from a child surfaces as a run_status event marked
+    surface desktop."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        await child.client.send_relay_event(
+            "relay.run.status",
+            {"session_id": "desktop-session-1", "status": "completed"},
+        )
+        await _wait_for(
+            lambda: any(e.type == "run_status" for e in got),
+            timeout=5,
+            what="run_status event",
+        )
+        event = next(e for e in got if e.type == "run_status")
+        assert event.session_id == "desktop-session-1"
+        assert event.payload == {"status": "completed", "surface": "desktop"}
+        json.dumps(event.to_wire())
+    finally:
+        await _relay_teardown(service, broker, child, subscriber)
+
+
+@pytest.mark.loopback_network
+async def test_relay_child_disconnect_clears_rounds_but_not_mobile(
+    tmp_path: Path,
+) -> None:
+    """A child transport loss clears that child's rounds on its own (the
+    child-id source may not shrink until the browser session unwinds);
+    mobile rounds are untouched."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    children: list[str] = ["child-a"]
+    service.attach_relay(broker, child_ids=lambda: list(children))
+    try:
+        service._mount_approval(
+            {
+                "round_id": "round-mobile-1",
+                "session_id": "mobile-session-1",
+                "calls": [],
+                "timeout_seconds": 300,
+            }
+        )
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-desktop-1", "round-mobile-1"},
+            timeout=5,
+            what="both rounds listed",
+        )
+        await child.aclose()
+        await _wait_child_disconnected(broker, "child-a")
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-mobile-1"},
+            timeout=5,
+            what="desktop round failed closed after disconnect",
+        )
+        listed = service.list_approvals()
+        assert listed[0]["surface"] == "mobile"
+    finally:
+        await _relay_teardown(service, broker, None)
+
+
+@pytest.mark.loopback_network
+async def test_relay_cleared_event_removes_round(tmp_path: Path) -> None:
+    """relay.approval.cleared from the child removes exactly that round."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload("round-keep")
+        )
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload("round-gone")
+        )
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-keep", "round-gone"},
+            timeout=5,
+            what="both desktop rounds listed",
+        )
+        await child.client.send_relay_event(
+            "relay.approval.cleared",
+            {"round_id": "round-gone", "resolution": "approved"},
+        )
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-keep"},
+            timeout=5,
+            what="cleared round removed",
+        )
+    finally:
+        await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_drainer_coexists_with_canvas_event_flow(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: the drainer reading each child's broker event
+    queue cannot disturb the canvas event flow.
+
+    Production canvas delivery is PULL-based — the served canvas gateway
+    sends ``canvas.events.request`` over ``broker.request`` and the child
+    answers from its own store; it never reads the per-child push queue
+    the drainer consumes. Proven live here: with the drainer attached and
+    a desktop round flowing, the pull request/reply still answers, and a
+    PUSHED ``canvas.events`` frame sharing the drainer's queue is drained
+    and dropped without stalling later relay events (it also protects the
+    queue from its 64-frame backpressure disconnect).
+    """
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(
+        broker,
+        "child-a",
+        canvas_events=[
+            {
+                "event_id": "event-a",
+                "kind": "updated",
+                "canvas_id": "canvas-a",
+                "revision_id": "revision-a",
+                "metadata": {},
+            }
+        ],
+    )
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        # Desktop round flows through the drainer's queue.
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+
+        # The gateway's pull path (canvas.events.request → response over
+        # broker.request) is unaffected by the running drainer.
+        response = await broker.request(
+            "child-a", "canvas.events.request", {"after_event_id": None}, timeout=2
+        )
+        assert response.message_type == "canvas.events.response"
+        assert response.payload["events"][0]["event_id"] == "event-a"
+
+        # A pushed canvas.events frame lands in the same per-child queue
+        # the drainer reads; it must be drained and dropped, not stall it.
+        await child.client.send_event(
+            {
+                "event_id": "event-pushed",
+                "kind": "updated",
+                "canvas_id": "canvas-a",
+                "revision_id": "revision-a",
+                "metadata": {},
+            }
+        )
+        await child.client.send_relay_event(
+            "relay.run.status",
+            {"session_id": "desktop-session-1", "status": "completed"},
+        )
+        await _wait_for(
+            lambda: any(
+                e.type == "run_status"
+                and e.payload.get("surface") == "desktop"
+                and e.payload.get("status") == "completed"
+                for e in got
+            ),
+            timeout=5,
+            what="run_status after a pushed canvas frame shared the queue",
+        )
+        # The desktop round survived the interleaving too.
+        assert any(
+            a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+        )
+    finally:
+        await _relay_teardown(service, broker, child, subscriber)
+
+
+def _serve_module():
+    """Import serve.py under its optional-dependency guard."""
+    from tldw_chatbook.Web_Server import serve as serve_module
+
+    if not serve_module.check_web_server_available():
+        pytest.skip("web server optional dependencies are unavailable")
+    return serve_module
+
+
+class _RelayWiringHost:
+    """The smallest host over the real wiring methods.
+
+    Only the attributes ``_get_mobile_service`` /
+    ``_attach_mobile_relay`` / ``bind_served_browser`` read; the mixin's
+    methods themselves are the code under test, unmodified.
+    """
+
+    def __init__(self, serve_module) -> None:
+        self._mobile_service = None
+        self._mobile_provider_gateway = object()  # seam: no production gateway
+        self._canvas_control_broker = None
+        self._served_browser_children: dict[str, str] = {}
+        self._served_canvas_launches: dict[str, Any] = {}
+        self._served_canvas_gateway = types.SimpleNamespace(
+            mark_browser_session_unavailable=lambda _session_id: None
+        )
+        _get_mobile_service = serve_module.ChatbookWebServerMixin._get_mobile_service
+        _attach_mobile_relay = (
+            serve_module.ChatbookWebServerMixin._attach_mobile_relay
+        )
+        _bind = serve_module.ChatbookWebServerMixin.bind_served_browser
+        _unbind = serve_module.ChatbookWebServerMixin.unbind_served_browser
+        self._get_mobile_service = _get_mobile_service.__get__(self)
+        self._attach_mobile_relay = _attach_mobile_relay.__get__(self)
+        self.bind_served_browser = _bind.__get__(self)
+        self.unbind_served_browser = _unbind.__get__(self)
+
+
+@pytest.mark.loopback_network
+async def test_serve_wiring_attaches_relay_only_when_broker_exists(
+    tmp_path: Path,
+) -> None:
+    """The lazy serve wiring: broker present → relay attached with the live
+    browser-binding child source; broker absent (canvas disabled) → the
+    relay stays inert (documented ADR-236 limitation)."""
+    serve_module = _serve_module()
+
+    # Inert case first: canvas disabled → no broker → no drainer, and the
+    # service is still fully usable for the mobile-only surface.
+    inert_host = _RelayWiringHost(serve_module)
+    inert_service = inert_host._get_mobile_service()
+    assert inert_service._relay_task is None
+    assert inert_service._relay_broker is None
+    assert inert_service.list_approvals() == []
+    await inert_service.shutdown()
+
+    # Attached case: a real broker + one bound browser terminal session.
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    host = _RelayWiringHost(serve_module)
+    host._canvas_control_broker = broker
+    host.bind_served_browser("browser-1", "child-a")
+    service = host._get_mobile_service()
+    try:
+        assert service._relay_broker is broker
+        assert service._relay_task is not None
+        source = service._relay_child_ids
+        assert source is not None
+        assert list(source()) == ["child-a"]  # live registry read
+        host.unbind_served_browser("browser-1", "child-a")
+        assert list(source()) == []
+        host.bind_served_browser("browser-2", "child-b")
+        assert list(source()) == ["child-b"]
+    finally:
+        await service.shutdown()
+        await broker.aclose()

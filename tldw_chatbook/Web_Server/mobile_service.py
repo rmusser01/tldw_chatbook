@@ -28,6 +28,18 @@ same helpers ``app.py`` constructs them from). Strictly read paths: the
 only calls made are ``list_notes`` / ``get_note_by_id`` /
 ``search_media_db`` / ``get_media_transcripts``.
 
+Desktop approval relay (Phase 2c, ADR-236): ``attach_relay`` subscribes
+the service to the parent's loopback canvas control broker. A drainer
+task reads each bound child's broker event queue (the same per-child
+queue ``canvas.events`` push frames would land in — production canvas
+delivery never reads it, it is pull-based via ``canvas.events.request``,
+so this drainer is that queue's only consumer and cannot steal frames
+from the served canvas gateway). Desktop approval rounds merge into
+``list_approvals`` marked ``surface: "desktop"`` and phone decisions
+route back through ``broker.request``; a child that disconnects loses
+its rounds fail-closed. With no broker attached (canvas disabled) the
+relay is inert and desktop approvals stay invisible on the phone.
+
 Logging discipline (ADR-234): session ids, run statuses, and event types
 only — never message content, never credentials.
 """
@@ -37,11 +49,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
+from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -90,6 +104,22 @@ _POLL_INTERVAL_SECONDS = 0.5
 #: Preview length for mobile notes listings (Phase 2b wire contract).
 _NOTES_PREVIEW_CHARS = 200
 
+#: Relay supervisor cadence (seconds): spawn/stop per-child drain tasks and
+#: run the fail-closed disconnect probes (ADR-236).
+_RELAY_SCAN_INTERVAL_SECONDS = 0.25
+
+#: Per-child ``next_event`` wait inside a drain task (seconds): purely a
+#: re-check cadence; cancels land at this granularity.
+_RELAY_DRAIN_TIMEOUT_SECONDS = 1.0
+
+#: Connectivity probe timeout (seconds) for children that still hold
+#: desktop rounds — a failed probe fails their rounds closed.
+_RELAY_PROBE_TIMEOUT_SECONDS = 0.1
+
+#: Parent→child decision routing budget (seconds) for
+#: ``relay.decide.request`` (plan bound: 2 s).
+_RELAY_DECIDE_TIMEOUT_SECONDS = 2.0
+
 
 def _wire_safe(value: Any) -> Any:
     """Project one read value onto JSON-safe wire types, recursively.
@@ -117,14 +147,16 @@ class MobileEvent:
 
     Attributes:
         type: One of ``run_started`` | ``delta`` | ``message_done`` |
-            ``approval_requested`` | ``run_completed`` | ``run_failed`` |
-            ``session_updated``.
+            ``approval_requested`` | ``run_status`` | ``run_completed`` |
+            ``run_failed`` | ``session_updated``.
         session_id: Owning Console session id ("" when service-wide).
         payload: Type-specific dict — ``delta``: ``{"message_id", "offset",
             "text"}``; ``approval_requested``: the captured round payload
             (``round_id``, ``calls[...]`` with ``llm_name``/``call_id``/
-            ``options``/``arguments``, ``timeout_seconds``); terminal events
-            carry the final status.
+            ``options``/``arguments``, ``timeout_seconds``; desktop-relayed
+            rounds add ``child_id`` and ``surface``); ``run_status``
+            (desktop relay, ADR-236): ``{"status", "surface": "desktop"}``;
+            terminal events carry the final status.
         seq: Per-service monotonic sequence number.
     """
 
@@ -232,6 +264,9 @@ class MobileChatService:
     ``pending_approvals`` via the ``set_pending_approval`` capture
     (worker-thread deliveries are marshalled into the loop) and are decided
     through :meth:`decide_approval` → ``controller.resolve_pending_approval``.
+    Desktop rounds relayed from served terminal children (ADR-236, after
+    :meth:`attach_relay`) join the same approvals surface and route their
+    decisions back over the canvas control broker.
     """
 
     def __init__(
@@ -279,6 +314,16 @@ class MobileChatService:
         self._notes_db: CharactersRAGDB | None = None
         self._media_db: MediaDatabase | None = None
         self._reading_dbs_lock = threading.Lock()
+        # Desktop approval relay (ADR-236): set once ``attach_relay`` binds
+        # the parent's canvas control broker; None keeps the relay inert
+        # (canvas disabled — desktop approvals then stay invisible on the
+        # phone, a documented limitation).
+        self._relay_broker: Any | None = None
+        self._relay_child_ids: Callable[[], Iterable[str]] | None = None
+        self._relay_task: asyncio.Task[None] | None = None
+        # round_id -> {**relay.approval.raised payload, child_id,
+        # surface: "desktop"}; loop-thread only.
+        self._desktop_approvals: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ #
     # Construction                                                        #
@@ -877,11 +922,22 @@ class MobileChatService:
                 break
 
     def list_approvals(self) -> list[dict[str, Any]]:
-        """Pending approval rounds across mobile sessions."""
-        return [dict(payload) for payload in self._state.pending_approvals.values()]
+        """Pending approval rounds across both surfaces (ADR-236).
 
-    def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
-        """Resolve one pending round.
+        Mobile rounds (this service's engine) gain ``surface: "mobile"``;
+        desktop rounds (relayed from served terminal children) carry
+        ``surface: "desktop"`` and their owning ``child_id``. Order:
+        mobile first, then desktop (insertion order).
+        """
+        mobile = [
+            {**payload, "surface": "mobile"}
+            for payload in self._state.pending_approvals.values()
+        ]
+        desktop = [dict(entry) for entry in self._desktop_approvals.values()]
+        return mobile + desktop
+
+    async def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
+        """Resolve one pending round on whichever surface owns it.
 
         Args:
             round_id: The captured round's id.
@@ -891,14 +947,20 @@ class MobileChatService:
 
         Returns:
             True when the round was known and the decision was delivered;
-            False for an unknown round (nothing was resolved).
+            False for an unknown round (nothing was resolved), and — for
+            desktop rounds — when the owning child is dead, unknown, or
+            failed to acknowledge within the routing budget (the round is
+            then dropped from the list; the child's own timeout/deny
+            semantics govern, ADR-236).
         """
-        engine = self._require_engine()
+        if round_id in self._desktop_approvals:
+            return await self._decide_desktop_round(round_id, decisions)
         if round_id not in self._state.pending_approvals:
             logger.info(
                 "mobile approval decision for unknown round_id=%s", round_id
             )
             return False
+        engine = self._require_engine()
         engine.controller.resolve_pending_approval(
             dict(decisions), round_id=round_id
         )
@@ -908,6 +970,232 @@ class MobileChatService:
             len(decisions),
         )
         return True
+
+    # ------------------------------------------------------------------ #
+    # Desktop approval relay (ADR-236, Phase 2c)                          #
+    # ------------------------------------------------------------------ #
+
+    def attach_relay(
+        self, broker: Any, *, child_ids: Callable[[], Iterable[str]]
+    ) -> None:
+        """Bind the desktop approval relay to the parent's control broker.
+
+        Starts one drainer supervisor task that owns a per-child drain
+        task for every child ``child_ids()`` lists (the serve.py
+        browser-binding registry, read live). Each drain task reads the
+        child's broker event queue — the queue production canvas delivery
+        never consumes (the served canvas gateway pulls events via
+        ``canvas.events.request`` request/reply), so this drainer is its
+        only consumer and cannot steal canvas frames from the gateway.
+        Desktop rounds land in ``_desktop_approvals`` and surface through
+        :meth:`list_approvals` / the ``approval_requested`` /
+        ``run_status`` events.
+
+        Must run on the serving loop (the supervisor task starts here);
+        idempotent — a second call is a no-op, so the inert case (canvas
+        disabled → the caller never attaches) and the attached case are
+        both stable. Rounds raised before the attach are still picked up:
+        they wait in the broker's bounded per-child queue until drained.
+
+        Args:
+            broker: The parent's ``CanvasControlBroker``.
+            child_ids: Live source of currently bound child ids (one
+                entry per served browser terminal session).
+        """
+        if self._closed or self._relay_task is not None:
+            return
+        self._relay_broker = broker
+        self._relay_child_ids = child_ids
+        self._relay_task = asyncio.create_task(
+            self._relay_supervisor(), name="mobile-relay-supervisor"
+        )
+        logger.info("mobile desktop approval relay attached")
+
+    async def _relay_supervisor(self) -> None:
+        """Keep per-child drain tasks aligned with ``child_ids()`` (loop).
+
+        Every scan cycle: spawn drains for new children, stop drains and
+        fail rounds closed for children that disappeared from the source,
+        and probe children that still hold desktop rounds — a broker-level
+        disconnect (the child process died while its browser binding is
+        being torn down) also fails its rounds closed. The broker exposes
+        no disconnect callback; ``wait_connected`` is its liveness read.
+        """
+        broker = self._relay_broker
+        child_ids = self._relay_child_ids
+        assert broker is not None and child_ids is not None
+        drains: dict[str, asyncio.Task[None]] = {}
+        try:
+            while True:
+                await asyncio.sleep(_RELAY_SCAN_INTERVAL_SECONDS)
+                for child_id, task in list(drains.items()):
+                    if task.done():
+                        drains.pop(child_id, None)
+                try:
+                    live = {str(value) for value in child_ids()}
+                except Exception:  # noqa: BLE001 - keep draining what we have
+                    logger.warning("mobile relay child source failed", exc_info=True)
+                    live = set(drains)
+                for child_id in sorted(live - drains.keys()):
+                    drains[child_id] = asyncio.create_task(
+                        self._drain_relay_child(broker, child_id),
+                        name=f"mobile-relay-drain-{child_id}",
+                    )
+                for child_id in [known for known in drains if known not in live]:
+                    drains.pop(child_id).cancel()
+                    self._drop_child_rounds(child_id, "child_unbound")
+                owners = {
+                    str(entry.get("child_id") or "")
+                    for entry in self._desktop_approvals.values()
+                }
+                owners.discard("")
+                for child_id in owners:
+                    try:
+                        await asyncio.wait_for(
+                            broker.wait_connected(
+                                child_id, timeout=_RELAY_PROBE_TIMEOUT_SECONDS
+                            ),
+                            _RELAY_PROBE_TIMEOUT_SECONDS * 3,
+                        )
+                    except (ControlProtocolError, TimeoutError):
+                        self._drop_child_rounds(child_id, "child_disconnected")
+        except asyncio.CancelledError:
+            raise
+        finally:
+            for task in drains.values():
+                task.cancel()
+            if drains:
+                await asyncio.gather(*drains.values(), return_exceptions=True)
+            self._desktop_approvals.clear()
+
+    async def _drain_relay_child(self, broker: Any, child_id: str) -> None:
+        """Read one child's broker event queue until the child is revoked."""
+        while True:
+            try:
+                message = await broker.next_event(
+                    child_id, timeout=_RELAY_DRAIN_TIMEOUT_SECONDS
+                )
+            except TimeoutError:
+                continue
+            except ControlProtocolError as error:
+                if error.code != "unknown_child":
+                    logger.debug(
+                        "mobile relay drain stopped child_id=%s code=%s",
+                        child_id,
+                        error.code,
+                    )
+                return
+            self._handle_relay_event(child_id, message)
+
+    def _handle_relay_event(self, child_id: str, message: Any) -> None:
+        """Fold one relayed child event into the desktop surfaces."""
+        message_type = message.message_type
+        payload = dict(message.payload)
+        if message_type == "relay.approval.raised":
+            round_id = str(payload.get("round_id") or "")
+            if not round_id:
+                return
+            self._desktop_approvals[round_id] = {
+                **payload,
+                "child_id": child_id,
+                "surface": "desktop",
+            }
+            self._emit(
+                "approval_requested",
+                str(payload.get("session_id") or ""),
+                dict(self._desktop_approvals[round_id]),
+            )
+            logger.info(
+                "mobile desktop approval mounted round_id=%s child_id=%s",
+                round_id,
+                child_id,
+            )
+        elif message_type == "relay.approval.cleared":
+            round_id = str(payload.get("round_id") or "")
+            if self._desktop_approvals.pop(round_id, None) is not None:
+                logger.info(
+                    "mobile desktop approval cleared round_id=%s child_id=%s",
+                    round_id,
+                    child_id,
+                )
+        elif message_type == "relay.run.status":
+            session_id = str(payload.get("session_id") or "")
+            self._emit(
+                "run_status",
+                session_id,
+                {
+                    "status": str(payload.get("status") or ""),
+                    "surface": "desktop",
+                },
+            )
+            logger.debug(
+                "mobile desktop run status child_id=%s session_id=%s",
+                child_id,
+                session_id,
+            )
+        elif message_type == "canvas.events":
+            # Production canvas delivery is pull-based (canvas.events.request
+            # through broker.request, answered by the child) and never reads
+            # this queue; a pushed canvas frame is drained and dropped here
+            # only so the bounded queue cannot backpressure the connection.
+            logger.debug(
+                "mobile relay drained canvas push frame child_id=%s", child_id
+            )
+
+    def _drop_child_rounds(self, child_id: str, reason: str) -> None:
+        """Fail every desktop round of one child closed (loop thread)."""
+        stale = [
+            round_id
+            for round_id, entry in self._desktop_approvals.items()
+            if entry.get("child_id") == child_id
+        ]
+        for round_id in stale:
+            del self._desktop_approvals[round_id]
+        if stale:
+            logger.info(
+                "mobile desktop rounds dropped child_id=%s reason=%s count=%d",
+                child_id,
+                reason,
+                len(stale),
+            )
+
+    async def _decide_desktop_round(
+        self, round_id: str, decisions: dict[str, str]
+    ) -> bool:
+        """Route one phone decision to the owning child (ADR-236).
+
+        ``relay.decide.request`` → ``relay.decide.response`` over the
+        broker with a 2 s budget. Delivered → True and the round clears.
+        Anything else (child not connected, deadline exceeded, child
+        answered ``delivered: false`` — the round already ended there)
+        drops the round and returns False: the desktop child's own
+        timeout/deny semantics own the round from that point.
+        """
+        broker = self._relay_broker
+        entry = self._desktop_approvals.get(round_id)
+        if broker is None or entry is None:
+            return False
+        child_id = str(entry.get("child_id") or "")
+        try:
+            response = await broker.request(
+                child_id,
+                "relay.decide.request",
+                {"round_id": round_id, "decisions": dict(decisions)},
+                timeout=_RELAY_DECIDE_TIMEOUT_SECONDS,
+            )
+            delivered = (
+                response.payload.get("round_id") == round_id
+                and response.payload.get("delivered") is True
+            )
+        except (ControlProtocolError, TimeoutError) as error:
+            delivered = False
+            logger.info(
+                "mobile desktop decision failed round_id=%s code=%s",
+                round_id,
+                getattr(error, "code", type(error).__name__),
+            )
+        self._desktop_approvals.pop(round_id, None)
+        return delivered
 
     # ------------------------------------------------------------------ #
     # Events                                                              #
@@ -1181,6 +1469,13 @@ class MobileChatService:
                 logger.exception("mobile reading %s DB close failed", label)
         self._notes_db = None
         self._media_db = None
+        relay = self._relay_task
+        if relay is not None:
+            relay.cancel()
+            try:
+                await relay
+            except asyncio.CancelledError:
+                pass
         pump = self._pump_task
         if pump is not None:
             pump.cancel()
