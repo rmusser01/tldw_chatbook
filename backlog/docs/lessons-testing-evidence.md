@@ -19920,3 +19920,17 @@ producer Future, its source-refusal outcome and positive retirement, and observe
 all publication sites for that issuing task. A global timestamp/counter freeze is
 valid only with proven exclusive ownership; a later passing rerun does not
 identify the earlier failure's cause.
+
+
+## Deliver queued changes before joining their workers (PR3023, 2026-10-16)
+
+UI9's permission-summary journey read the old provider while its real atomic
+save completed during teardown. The fixture joined WorkerManager before
+delivering a queued Select.Changed event; that join snapshots current workers
+and could return before the event created its writer. A held-real-writer control
+proved the helper returned while the exact issued save Worker remained held.
+Reordering the same existing event drain, bounded worker join and final UI drain
+fixed the full18-case module without changing product code or deadlines. Join
+workers after the events that issue them; a manager join alone does not settle
+queued UI input. The original OpenAI case passed locally, so retain its hosted
+negative separately from the causal held-worker control.
