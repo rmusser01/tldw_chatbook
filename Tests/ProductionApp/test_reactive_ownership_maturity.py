@@ -21,7 +21,6 @@ from tldw_chatbook.Constants import (
     TAB_EVALS,
     TAB_LIBRARY,
     TAB_LLM,
-    TAB_MCP,
     TAB_PERSONAS,
     TAB_SETTINGS,
 )
@@ -38,7 +37,6 @@ from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
@@ -59,7 +57,9 @@ ROUTE_SPECS = (
     ("media", TAB_LIBRARY, LibraryScreen),
     ("search", TAB_LIBRARY, LibraryScreen),
     ("ingest", TAB_LIBRARY, LibraryScreen),
-    ("mcp", TAB_MCP, MCPScreen),
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP; the
+    # legacy "mcp" route aliases to the Settings screen.
+    ("mcp", TAB_SETTINGS, SettingsScreen),
     ("evals", TAB_EVALS, EvalsScreen),
     ("settings", TAB_SETTINGS, SettingsScreen),
 )
@@ -230,11 +230,15 @@ async def _exercise_route(route: str, screen: object, pilot: Any) -> None:
         assert type(screen) is LibraryScreen
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
     elif route == "mcp":
-        assert type(screen) is MCPScreen
-        assert screen.workbench is not None
-        screen.action_mcp_mode("permissions")
+        # ADR-237: the bare "mcp" route lands Settings > Tools & MCP via the
+        # alias + default context; ownership lives in the mounted pane.
+        assert type(screen) is SettingsScreen
+        pane = screen._tools_hub_pane()
+        assert pane is not None
+        assert pane.workbench is not None
+        screen.action_settings_tools_mode("permissions")
         await pilot.pause()
-        assert screen.workbench.active_mode == "permissions"
+        assert pane.workbench.active_mode == "permissions"
     elif route == "evals":
         assert type(screen) is EvalsScreen
         screen.select(kind="classic", id=None)
@@ -286,12 +290,18 @@ async def _assert_restored_route(route: str, screen: object, pilot: Any) -> None
         assert type(screen) is LibraryScreen
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
     elif route == "mcp":
-        assert type(screen) is MCPScreen
-        assert screen.workbench is not None
+        assert type(screen) is SettingsScreen
+        pane = screen._tools_hub_pane()
+        assert pane is not None
+        assert pane.workbench is not None
+        # The legacy nav context re-applies on every bare "mcp" visit (the
+        # same deterministic-deep-link contract "search" follows above), so
+        # the revisit lands the TOOLS category at its default Servers mode
+        # rather than restoring the mode the previous instance switched to.
         await _wait_until(
             pilot,
-            lambda: screen.workbench.active_mode == "permissions",
-            "fresh MCP owner did not restore its view state",
+            lambda: pane.workbench.active_mode == "servers",
+            "fresh Settings owner did not land the Tools & MCP default mode",
         )
     elif route == "evals":
         assert type(screen) is EvalsScreen

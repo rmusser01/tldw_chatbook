@@ -628,7 +628,7 @@ class MCPWorkbench(Container):
         """Posted by `set_mode()` whenever the active mode actually changes,
         so the hosting screen can keep its mode-chip highlight in sync.
         `set_mode` is the single emission point: it covers every path that
-        changes the mode without going through `MCPScreen._activate_mode()`
+        changes the mode without going through the host surface's mode action
         (a click or keybinding) -- state restore and inspector hub actions
         ("Open tool catalog"/"Open audit") alike. The screen's chip sync is
         idempotent, so the redundant notification on the _activate_mode
@@ -1133,7 +1133,7 @@ class MCPWorkbench(Container):
         self._reloading = True
         # Raised here, not only in `on_mount`: `reload()` always CLEARS this in
         # its `finally`, so every caller must also raise it or a direct reload
-        # (MCPScreen's manual refresh calls this straight) would fetch with no
+        # (the Tools & MCP pane's manual refresh calls this straight) would fetch
         # spinner and then clear a flag it never set.
         self.is_loading = True
         try:
@@ -3356,6 +3356,19 @@ class MCPWorkbench(Container):
             context_reset or original_context == service_context
         )
 
+    def suspend_recovery_review(self) -> None:
+        """Invalidate an accepted recovery review's UI receipt on host suspend.
+
+        The review's own confirmation opens before busy is set. Once accepted,
+        leaving the host surface invalidates its UI receipt even if the user
+        returns before the retained native write finishes. ADR-237: this is
+        the single owner of that semantics -- the retired MCP shell screen
+        carried it in its own ``on_screen_suspend``; the Settings host and
+        any other host call this method from theirs.
+        """
+        if self._mcp_recovery_busy:
+            self._mcp_recovery_token = None
+
     def on_mcp_permissions_mode_recovery_review_requested(
         self,
         event: MCPPermissionsMode.RecoveryReviewRequested,
@@ -5510,8 +5523,8 @@ class MCPWorkbench(Container):
         )
 
     async def open_test_for_selected_tool(self) -> None:
-        """T8: entry point for the `t` keybinding (mcp_screen.py's
-        `action_mcp_test_tool`) -- open the Test Tool panel for whatever
+        """T8: entry point for the `t` keybinding (the Settings Tools & MCP
+        pane's `test_selected_tool`) -- open the Test Tool panel for whatever
         tool the inspector currently has selected.
 
         Mirrors `open_add_server_form()`'s T13 rationale for a keybinding

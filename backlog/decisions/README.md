@@ -206,3 +206,4 @@ Do not reuse numbers.
 | [ADR-208: DB migration .sql files are the executed source of truth](208-migration-sql-files-are-the-executed-source.md) | Migration .sql files execute; decorative twins deleted; packaging pins the file-backed set. |
 
 | [ADR-227: Native Console goal runs](227-native-console-goal-runs.md) | Accepted | Bounded native goal iterations, evidence, storage and current-dev runtime integration; preserves source ADR-141 provenance. |
+| [ADR-237: Retire the MCP destination; Settings hosts the Tools & MCP hub](237-mcp-destination-retirement-tools-hub-in-settings.md) | Accepted | Re-home the four-mode MCP workbench intact as a Settings category (ADR-172 retirement template); `mcp`/`tools_settings` alias Settings and ctrl+9 survives as a compatibility deep-link; amends ADR-015 (14 -> 13 destinations). |

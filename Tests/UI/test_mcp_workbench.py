@@ -79,7 +79,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutations
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
 
 class _AllGatesOn(dict):
@@ -1589,18 +1589,19 @@ class _StubApp:
     unified_mcp_service = None
 
 
-def test_screen_hosts_workbench_with_mode_action_and_tolerant_restore():
-    screen = MCPScreen(_StubApp())
-    # New surface: workbench host + mode action (old screen has mcp_panel, no workbench).
-    assert hasattr(screen, "workbench")
-    assert not hasattr(screen, "mcp_panel")
-    assert callable(getattr(screen, "action_mcp_mode", None))
+def test_tools_hub_panel_hosts_workbench_with_mode_action_and_tolerant_state():
+    panel = ToolsHubPanel(_StubApp())
+    # New surface: workbench host + mode action (the retired shell's
+    # action_mcp_mode is now the panel's activate_mode; its tolerant
+    # save/restore is now set_initial_view_state/get_view_state).
+    assert hasattr(panel, "workbench")
+    assert callable(getattr(panel, "activate_mode", None))
     # Never crashes on legacy shape, garbage, or empty state pre-mount.
-    screen.restore_state({"unified_mcp_view_state": {"selected_source": "server"}})
-    screen.restore_state({"mcp_hub_view_state": {"mode": "tools"}})
-    screen.restore_state({})
-    state = screen.save_state()
-    assert isinstance(state, dict)
+    panel.set_initial_view_state({"selected_source": "server"})
+    panel.set_initial_view_state({"mode": "tools"})
+    panel.set_initial_view_state(None)
+    state = panel.get_view_state()
+    assert state is None or isinstance(state, dict)
 
 
 def test_mcp_hub_modes_registry_is_complete():
@@ -6644,39 +6645,6 @@ async def test_settings_deep_link_rejects_stale_tool_policy_profile(tmp_path):
 
         assert workbench.active_mode == "permissions"
         assert workbench._tool_policy_profile_id == "default"
-
-
-def test_mcp_screen_accepts_bounded_tool_profile_navigation_context():
-    screen = MCPScreen(SimpleNamespace())
-    screen.apply_navigation_context(
-        {
-            "mode": "permissions",
-            "tool_policy_profile_id": "research",
-            "profile_revision": 7,
-            "profile_policy_digest": "d" * 64,
-        }
-    )
-    assert screen._initial_view_state() == {
-        "mode": "permissions",
-        "tool_policy_profile_id": "research",
-        "profile_revision": 7,
-        "profile_policy_digest": "d" * 64,
-    }
-
-    screen.apply_navigation_context(
-        {"mode": "permissions", "tool_policy_profile_id": "other", "extra": True}
-    )
-    assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
-
-    screen.apply_navigation_context(
-        {
-            "mode": "permissions",
-            "tool_policy_profile_id": "digest-missing",
-            "profile_revision": None,
-            "profile_policy_digest": None,
-        }
-    )
-    assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
 
 
 def test_profile_scoped_mutation_does_not_retry_an_internal_type_error():

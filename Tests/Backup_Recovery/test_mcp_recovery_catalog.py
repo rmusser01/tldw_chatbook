@@ -11,7 +11,6 @@ from textual.screen import Screen
 from textual.widgets import Button,DataTable,Static
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 service=plane();host=SimpleNamespace(unified_mcp_service=service);route=sys.argv[1]
 entered=asyncio.Event();release=asyncio.Event();reads=[];effects=[]
@@ -39,8 +38,11 @@ class Bench(MCPWorkbench):
  _refresh_server_discovery=forbidden
 class Surface(Screen):
  def compose(self):self.workbench=Bench(host);yield self.workbench
- def _clear_footer_shortcuts(self):pass
- on_screen_suspend=MCPScreen.on_screen_suspend
+ def on_screen_suspend(self):
+  # ADR-237: the retired MCP shell handler these journeys borrowed is now
+  # the REAL production method the Settings host calls on suspend -- no
+  # inlined copy of the semantics anymore.
+  self.workbench.suspend_recovery_review()
 class Host(App):pass
 app=Host();notices=[];app.notify=lambda message,**kwargs:notices.append(str(message))
 async def wait_for(predicate):

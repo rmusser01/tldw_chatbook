@@ -10,7 +10,6 @@ from loguru import logger
 from tldw_chatbook.Constants import (
     TAB_CCP,
     TAB_LLM,
-    TAB_MCP,
     TAB_MEETINGS,
     TAB_RESEARCH_WORKSPACE,
 )
@@ -151,9 +150,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.meetings_screen",
         "MeetingsScreen",
     ),
-    "mcp": ScreenRoute(
-        "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
-    ),
     "acp": ScreenRoute(
         "acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"
     ),
@@ -174,9 +170,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     ),
     "evals": ScreenRoute(
         "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
-    ),
-    "tools_settings": ScreenRoute(
-        "tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
     ),
     "llm": ScreenRoute(
         "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
@@ -301,6 +294,9 @@ _SCREEN_ALIASES = {
     # The standalone Customize screen is retired: theme/splash management now
     # lives inside Settings. Legacy "customize" route ids resolve to Settings.
     "customize": "settings",
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP.
+    "mcp": "settings",
+    "tools_settings": "settings",
 }
 
 
@@ -320,8 +316,7 @@ def registered_screen_routes() -> tuple[ScreenRoute, ...]:
     Unlike ``registered_screen_route_ids()`` (ids only), this exposes the
     route metadata itself -- notably ``module_path`` -- so a caller can
     dedupe routes that share one module (e.g. ``"ccp"``/``"personas"`` both
-    target ``personas_screen.PersonasScreen``, ``"tools_settings"``/``"mcp"``
-    both target ``mcp_screen.MCPScreen``) or call ``load_screen_class()``
+    target ``personas_screen.PersonasScreen``) or call ``load_screen_class()``
     directly. Used by the app's background screen-module pre-importer
     (task-15472) to warm ``sys.modules`` after first paint.
 

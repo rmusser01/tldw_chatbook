@@ -10,7 +10,7 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_MODE,
     TAB_EVALS,
     TAB_LIBRARY,
-    TAB_MCP,
+    TAB_SETTINGS,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
@@ -21,7 +21,8 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
 
 REMOVED_ROOT_NAMES = (
@@ -145,29 +146,40 @@ async def _drive_affected_routes(
     assert ingest._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
     _assert_removed_root_state_absent(app)
 
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP; the
+    # bare legacy "mcp" route rides the alias + default context.
     app.post_message(NavigateToScreen("mcp"))
-    mcp = await _wait_for_screen(app, pilot, MCPScreen, TAB_MCP)
-    assert mcp.workbench is not None
-    mcp.action_mcp_mode(mcp_mode)
+    mcp = await _wait_for_screen(app, pilot, SettingsScreen, TAB_SETTINGS)
+    pane = mcp._tools_hub_pane()
+    assert pane is not None
+    assert pane.workbench is not None
+    mcp.action_settings_tools_mode(mcp_mode)
     await pilot.pause()
-    assert mcp.workbench.active_mode == mcp_mode
+    assert pane.workbench.active_mode == mcp_mode
     _assert_removed_root_state_absent(app)
 
     app.post_message(NavigateToScreen("tools_settings"))
     tools_settings = await _wait_for_screen(
         app,
         pilot,
-        MCPScreen,
-        TAB_MCP,
+        SettingsScreen,
+        TAB_SETTINGS,
         previous_screen=mcp,
     )
     assert tools_settings is not mcp
-    assert tools_settings.workbench is not None
+    revisit_pane = tools_settings._tools_hub_pane()
+    assert revisit_pane is not None
+    assert revisit_pane.workbench is not None
+    # The legacy nav context re-applies on every bare route visit (the same
+    # deterministic-deep-link contract "search" follows above), so the
+    # revisit lands the TOOLS category at its default Servers mode rather
+    # than restoring the mode the previous instance switched to.
     for _ in range(400):
-        if tools_settings.workbench.active_mode == mcp_mode:
+        if revisit_pane.workbench.active_mode == "servers":
             break
         await pilot.pause(0.01)
-    assert tools_settings.workbench.active_mode == mcp_mode
+    assert revisit_pane.workbench.active_mode == "servers"
+    assert tools_settings.active_category == "tools"
     _assert_removed_root_state_absent(app)
 
     app.post_message(NavigateToScreen("evals"))
@@ -197,8 +209,9 @@ async def test_registered_destinations_own_state_without_retired_root_mirrors(
         "notes": ("library", TAB_LIBRARY, LibraryScreen),
         "search": ("library", TAB_LIBRARY, LibraryScreen),
         "ingest": ("library", TAB_LIBRARY, LibraryScreen),
-        "mcp": ("mcp", TAB_MCP, MCPScreen),
-        "tools_settings": ("tools_settings", TAB_MCP, MCPScreen),
+        # ADR-237: both legacy route ids alias to the Settings screen.
+        "mcp": ("settings", TAB_SETTINGS, SettingsScreen),
+        "tools_settings": ("settings", TAB_SETTINGS, SettingsScreen),
         "evals": ("evals", TAB_EVALS, EvalsScreen),
     }
     for route, expected in expected_routes.items():

@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1033 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1022 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -100,7 +100,6 @@ tldw_chatbook.Canvas.runtime_assets
 tldw_chatbook.Canvas.service
 tldw_chatbook.Character_Chat
 tldw_chatbook.Character_Chat.Chat_Dictionary_Lib
-tldw_chatbook.Character_Chat.artwork_attribution
 tldw_chatbook.Character_Chat.builtin_pixel_migu
 tldw_chatbook.Character_Chat.character_conversation_navigation
 tldw_chatbook.Character_Chat.character_mood
@@ -226,7 +225,6 @@ tldw_chatbook.Chat.console_transaction_contribution
 tldw_chatbook.Chat.console_turn_context
 tldw_chatbook.Chat.console_turn_grouping
 tldw_chatbook.Chat.console_turn_preparation
-tldw_chatbook.Chat.console_voice_input
 tldw_chatbook.Chat.conversation_local_marks_service
 tldw_chatbook.Chat.cost_display
 tldw_chatbook.Chat.custom_endpoint_registry
@@ -285,6 +283,8 @@ tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
+tldw_chatbook.DB.keyword_store
+tldw_chatbook.DB.library_search_engine
 tldw_chatbook.DB.private_sqlite
 tldw_chatbook.DB.private_sqlite_files
 tldw_chatbook.DB.private_sqlite_process
@@ -294,6 +294,7 @@ tldw_chatbook.DB.sql_identifier_core
 tldw_chatbook.DB.sql_logging
 tldw_chatbook.DB.sql_validation
 tldw_chatbook.DB.sqlite_datetime_fix
+tldw_chatbook.DB.store_kernel
 tldw_chatbook.DB.transaction_observer
 tldw_chatbook.Evals
 tldw_chatbook.Evals.concurrency_manager
@@ -341,11 +342,6 @@ tldw_chatbook.Internal_Prompts.rag_reranker_prompts
 tldw_chatbook.Internal_Prompts.resolver
 tldw_chatbook.Internal_Prompts.summarization_prompts
 tldw_chatbook.Internal_Prompts.websearch_prompts
-tldw_chatbook.Kanban_Interop
-tldw_chatbook.Kanban_Interop.kanban_scope_service
-tldw_chatbook.Kanban_Interop.local_kanban_db
-tldw_chatbook.Kanban_Interop.local_kanban_service
-tldw_chatbook.Kanban_Interop.server_kanban_service
 tldw_chatbook.LLM_Calls
 tldw_chatbook.LLM_Calls.LLM_API_Calls
 tldw_chatbook.LLM_Calls.LLM_API_Calls_Local
@@ -477,16 +473,11 @@ tldw_chatbook.Notes.note_import_windows_fs
 tldw_chatbook.Notes.notes_device_state_schema
 tldw_chatbook.Notes.notes_device_state_store
 tldw_chatbook.Notes.notes_scope_service
-tldw_chatbook.Notes.notes_sync_authority
 tldw_chatbook.Notes.notes_sync_conflicts
-tldw_chatbook.Notes.notes_sync_coordinator
-tldw_chatbook.Notes.notes_sync_executor
 tldw_chatbook.Notes.notes_sync_filesystem
 tldw_chatbook.Notes.notes_sync_legacy
 tldw_chatbook.Notes.notes_sync_models
 tldw_chatbook.Notes.notes_sync_reconciler
-tldw_chatbook.Notes.notes_sync_runtime
-tldw_chatbook.Notes.notes_sync_watcher
 tldw_chatbook.Notes.server_notes_workspace_service
 tldw_chatbook.Notes.sync_paths
 tldw_chatbook.Notifications
@@ -506,7 +497,6 @@ tldw_chatbook.Persona_Buddy
 tldw_chatbook.Persona_Buddy.console_adapter
 tldw_chatbook.Persona_Buddy.preferences
 tldw_chatbook.Persona_Visual
-tldw_chatbook.Persona_Visual.artwork
 tldw_chatbook.Persona_Visual.contracts
 tldw_chatbook.Persona_Visual.repository
 tldw_chatbook.Persona_Visual.validation
@@ -765,6 +755,7 @@ tldw_chatbook.UI.Console_Modules.rail_section_layout
 tldw_chatbook.UI.Console_Modules.raw_cli
 tldw_chatbook.UI.Console_Modules.reaction_preview
 tldw_chatbook.UI.Console_Modules.realtime
+tldw_chatbook.UI.Console_Modules.response_rules
 tldw_chatbook.UI.Console_Modules.retrieval
 tldw_chatbook.UI.Console_Modules.review_selection
 tldw_chatbook.UI.Console_Modules.right_rail
@@ -842,7 +833,6 @@ tldw_chatbook.Utils.fts5_match_forms
 tldw_chatbook.Utils.input_validation
 tldw_chatbook.Utils.instance_lock
 tldw_chatbook.Utils.library_rail_width
-tldw_chatbook.Utils.local_stt_providers
 tldw_chatbook.Utils.log_sanitizer
 tldw_chatbook.Utils.mosaic_render
 tldw_chatbook.Utils.optional_deps
@@ -1031,5 +1021,4 @@ tldw_chatbook.state
 tldw_chatbook.state.ui_state
 tldw_chatbook.tldw_api
 tldw_chatbook.tldw_api.exceptions
-tldw_chatbook.tldw_api.kanban_schemas
 tldw_chatbook.tldw_api.notes_workspace_limits

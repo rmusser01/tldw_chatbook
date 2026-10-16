@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox, Collapsible, DataTable, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -23,6 +24,7 @@ from Tests.UI.test_destination_shells import (
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
     StaticWatchlistsScopeService,
+    _ToolsPaneHarness,
     _active_destination_screen,
     _wait_for_selector,
 )
@@ -50,12 +52,12 @@ from tldw_chatbook.UI.Screens import (
     watchlists_collections_screen as wc_screen_module,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
     SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
+    SettingsScreen,
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
@@ -2174,23 +2176,38 @@ async def _assert_advanced_run_reachable(screen, pilot) -> None:
         assert adv_run.can_focus, "#mcp-adv-run is not focusable"
 
 
+class _BundleToolsPaneHarness(_ToolsPaneHarness):
+    """`_ToolsPaneHarness` that ALSO loads the real app CSS bundle.
+
+    The pane's mode-strip height lives in the app bundle
+    (`.destination-mode-strip`, css/layout/_destination.tcss) -- the bare
+    harness never loads it, so geometry measurements need this subclass the
+    same way `_CssTrueDestinationHarness` does for Meetings (see its
+    docstring and the "shared UI harness never loads the app stylesheet"
+    entry in backlog/docs/lessons-testing-evidence.md).
+    """
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+
 @pytest.mark.asyncio
-async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow():
+@private_profile_test
+async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(request):
     """Realigned from the retired `UnifiedMCPPanel` 3-column embed.
 
     Task 8 replaced the embedded panel with the rail/canvas/inspector
-    `MCPWorkbench` triad. Same product intent -- server list, server detail,
-    and readiness/actions each get a fully visible, non-overflowing pane --
-    verified against the new `#mcp-hub-rail` / `#mcp-hub-canvas` /
-    `#mcp-hub-inspector` landmarks.
+    `MCPWorkbench` triad; ADR-237 moved that triad into the Settings Tools &
+    MCP pane. Same product intent -- server list, server detail, and
+    readiness/actions each get a fully visible, non-overflowing pane --
+    verified against the `#mcp-hub-rail` / `#mcp-hub-canvas` /
+    `#mcp-hub-inspector` landmarks (the retired shell's `#mcp-title` strip is
+    gone; the pane's `#tools-hub-purpose` line carries the purpose copy).
     """
-    app = _build_test_app()
-    host = DestinationHarness(app, "mcp")
+    host = _BundleToolsPaneHarness()
     async with host.run_test(size=(140, 42)) as pilot:
-        screen = _active_destination_screen(host)
+        screen = host.query_one("#settings-tools-hub")
         await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
-        _assert_strip_compact(screen, "#mcp-title", max_height=1)
-        _assert_strip_compact(screen, "#mcp-purpose", max_height=1)
+        _assert_strip_compact(screen, "#tools-hub-purpose", max_height=1)
         _assert_ascii_workbench_contract(
             screen,
             workbench="#mcp-hub-workbench",
@@ -2204,19 +2221,20 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
 
 
 @pytest.mark.asyncio
-async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry():
+@private_profile_test
+async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry(request):
     """Realigned from the retired `UnifiedMCPPanel` embed (same intent as above).
 
-    Verifies the default local-source state (no server selected, only the
-    built-in server present) does not break the workbench triad's geometry,
-    and that the servers-mode overview content stays confined to the canvas
-    pane rather than escaping it (successor to the old
-    `#unified-mcp-content` inside `#mcp-detail-pane` check).
+    ADR-237: hosted by the Settings Tools & MCP pane now. Verifies the
+    default local-source state (no server selected, only the built-in server
+    present) does not break the workbench triad's geometry, and that the
+    servers-mode overview content stays confined to the canvas pane rather
+    than escaping it (successor to the old `#unified-mcp-content` inside
+    `#mcp-detail-pane` check).
     """
-    app = _build_test_app()
-    host = DestinationHarness(app, "mcp")
+    host = _BundleToolsPaneHarness()
     async with host.run_test(size=(140, 42)) as pilot:
-        screen = _active_destination_screen(host)
+        screen = host.query_one("#settings-tools-hub")
         await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
         _assert_ascii_workbench_contract(
             screen,
@@ -2251,11 +2269,15 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
 
 
 @pytest.mark.asyncio
-async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
+@private_profile_test
+async def test_mcp_forced_loading_state_stays_inside_workbench(request, monkeypatch):
     """A blocked production service load keeps the real workbench usable."""
     app = _build_test_app()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    # Pin the initial route (a fresh private profile defaults elsewhere) --
+    # same precedent as the footer-hints production test.
+    app._initial_tab_value = "chat"
     service = app.unified_mcp_service
     real_load_context = service.load_context
     load_started = asyncio.Event()
@@ -2269,9 +2291,14 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
     monkeypatch.setattr(service, "load_context", keep_loading)
     async with app.run_test(size=(140, 42)) as pilot:
         try:
-            await _wait_for_production_screen(app, pilot, ChatScreen)
+            # Private-profile children start cold (no warm module cache), so
+            # the first screen push can outgrow the helper's tight default.
+            await _wait_for_production_screen(app, pilot, ChatScreen, timeout=30.0)
+            # ADR-237: the bare "mcp" route lands Settings > Tools & MCP.
             await app.handle_screen_navigation(NavigateToScreen("mcp"))
-            screen = await _wait_for_production_screen(app, pilot, MCPScreen)
+            screen = await _wait_for_production_screen(
+                app, pilot, SettingsScreen, timeout=30.0
+            )
             await asyncio.wait_for(load_started.wait(), timeout=6.0)
             await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
             rail = screen.query_one("#mcp-hub-rail")

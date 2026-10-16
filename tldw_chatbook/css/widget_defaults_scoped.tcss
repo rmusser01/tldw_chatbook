@@ -1397,38 +1397,6 @@
         display: none;
     }
 
-/* ===== WIDGET: MCPScreen (UI/Screens/mcp_screen.py) ===== */
-
-    MCPScreen Button.mcp-mode-chip {
-        width: auto;
-
-        min-width: 10;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-    MCPScreen .mcp-mode-chip.is-active {
-        border: none;
-        text-style: bold underline;
-    }
-
-    MCPScreen .mcp-mode-chip:focus,
-    MCPScreen .mcp-mode-chip:hover:focus {
-        background: $surface;
-        color: $text;
-        text-style: bold;
-        outline: none;
-    }
-
-    MCPScreen .mcp-mode-chip.is-active:focus,
-    MCPScreen .mcp-mode-chip.is-active:hover:focus {
-        background: $surface;
-        color: $text-muted;
-        text-style: bold underline;
-        outline: none;
-    }
-
 /* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
 
 
