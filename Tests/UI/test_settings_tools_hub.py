@@ -1,5 +1,7 @@
 """Settings hosts the MCP workbench as the Tools & MCP category."""
 
+import time
+
 import pytest
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -56,12 +58,31 @@ async def test_panel_mounts_workbench_and_mode_chips():
 
 async def test_panel_view_state_round_trip():
     host = _PanelHarnessApp(initial_view_state={"mode": "audit"})
-    async with host.run_test():
+    async with host.run_test() as pilot:
         panel = host.query_one("#settings-tools-hub", ToolsHubPanel)
         workbench = panel.query_one(MCPWorkbench)
+
+        # Wait on the chip, not just on `active_mode`. The stashed initial
+        # view state is applied at the END of the workbench's initial reload
+        # worker (mcp_workbench.py, TASK-1320 moved that load off mount), so
+        # asserting the mode right after run_test() entry races the worker.
+        # The chip highlight is synced by this panel's ModeChanged handler,
+        # one pump cycle after the mode itself -- polling it and then
+        # asserting everything follows the poll-then-assert precedent in
+        # test_destination_shells.py
+        # (`test_mcp_destination_mode_chip_syncs_to_restored_mode`). The end
+        # state asserted is unchanged: this still fails
+        # if the restore never applies or the chip never syncs.
+        audit_chip = panel.query_one("#mcp-mode-audit")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not audit_chip.has_class("is-active"):
+            await pilot.pause(0.01)
+
         assert workbench.active_mode == "audit"
+        assert audit_chip.has_class("is-active")
         state = panel.get_view_state()
         assert isinstance(state, dict)
+        assert state["mode"] == "audit"
 
 
 @pytest.mark.asyncio
