@@ -551,7 +551,7 @@ class ModelStep(SetupStep):
         # A status is no Tab stop (06a drew it focused); loading keeps the stop.
         radio_set.can_focus = bool(models) or discovery_state == "loading"
         if not radio_set.can_focus and radio_set.has_focus:
-            self.query_one("#setup-model-custom", Input).focus()
+            self.query("#setup-model-custom").focus()  # no NoMatches after the await
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
             # carries a "recommended" tag in its LABEL only; the clean model
