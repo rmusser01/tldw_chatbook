@@ -18,8 +18,10 @@ Error contract: an unknown session answers ``404 {"error":
 "unknown_session"}`` and an unknown approval round answers ``200
 {"ok": false}``; nothing on this surface may 5xx for a caller mistake.
 
-Logging discipline (ADR-234): these handlers log nothing — the service
-owns logging, and it logs session ids and statuses only.
+Logging discipline (ADR-234): these handlers log nothing except one
+transport-failure diagnostic on the stream route (session id + error
+type only) — the service owns the rest of logging, and it logs session
+ids and statuses only.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ import contextlib
 from collections.abc import Mapping
 from functools import partial
 from typing import Any
+
+from loguru import logger
 
 from ..Canvas.web_auth import WEBSOCKET_PROTOCOL
 from ..config import get_cli_setting
@@ -151,6 +155,15 @@ def build_mobile_routes(server: Any) -> list:
     ]
 
 
+class _BodyTooLarge(Exception):
+    """Internal marker: the request body exceeded the route's byte cap.
+
+    Raised by :func:`_read_mobile_json` (handlers map it to the surface's
+    uniform ``413 body_too_large`` JSON shape instead of aiohttp's
+    plain-text ``HTTPRequestEntityTooLarge``).
+    """
+
+
 async def _read_mobile_json(request, *, max_bytes: int) -> dict:
     """Read one bounded JSON object body for the mobile endpoints.
 
@@ -158,15 +171,20 @@ async def _read_mobile_json(request, *, max_bytes: int) -> dict:
     generalized over the byte cap: the send route's text allowance cannot
     fit the device endpoints' fixed 4 KiB ceiling. Malformed or
     non-object bodies read as ``{}`` so per-field validation answers.
+
+    Raises:
+        _BodyTooLarge: The declared Content-Length or the received body
+            exceeds ``max_bytes`` (the latter via aiohttp's
+            ``client_max_size`` enforcement during the read).
     """
     from aiohttp import web
 
     if request.content_length is not None and request.content_length > max_bytes:
-        raise web.HTTPRequestEntityTooLarge(
-            max_size=max_bytes, actual_size=request.content_length
-        )
+        raise _BodyTooLarge()
     try:
         payload = await request.json()
+    except web.HTTPRequestEntityTooLarge as exc:
+        raise _BodyTooLarge() from exc
     except (ValueError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -192,7 +210,10 @@ async def handle_new_conversation(server: Any, request) -> Any:
     from aiohttp import web
 
     service = server._get_mobile_service()
-    payload = await _read_mobile_json(request, max_bytes=_SMALL_BODY_BYTES)
+    try:
+        payload = await _read_mobile_json(request, max_bytes=_SMALL_BODY_BYTES)
+    except _BodyTooLarge:
+        return _error(413, "body_too_large")
     title = payload.get("title")
     workspace_id = payload.get("workspace_id")
     if title is not None and not isinstance(title, str):
@@ -240,7 +261,10 @@ async def handle_send(server: Any, request) -> Any:
     from .mobile_service import MobileSendRefused
 
     service = server._get_mobile_service()
-    payload = await _read_mobile_json(request, max_bytes=MOBILE_MAX_BODY_BYTES)
+    try:
+        payload = await _read_mobile_json(request, max_bytes=MOBILE_MAX_BODY_BYTES)
+    except _BodyTooLarge:
+        return _error(413, "body_too_large")
     text = payload.get("text")
     if not isinstance(text, str) or not text:
         return _error(400, "invalid_text")
@@ -287,7 +311,10 @@ async def handle_decide(server: Any, request) -> Any:
     from aiohttp import web
 
     service = server._get_mobile_service()
-    payload = await _read_mobile_json(request, max_bytes=_SMALL_BODY_BYTES)
+    try:
+        payload = await _read_mobile_json(request, max_bytes=_SMALL_BODY_BYTES)
+    except _BodyTooLarge:
+        return _error(413, "body_too_large")
     decisions = payload.get("decisions")
     if not isinstance(decisions, Mapping) or not all(
         isinstance(key, str) and value in _APPROVAL_DECISIONS
@@ -404,8 +431,14 @@ async def handle_mobile_stream(server: Any, request) -> Any:
         pass  # server shutdown: drain the subscriber below
     except _StreamEngineError:
         close_code = CLOSE_ENGINE_ERROR
-    except Exception:  # noqa: BLE001 - transport failure; the socket is gone
-        pass
+    except Exception as error:  # noqa: BLE001 - transport failure; the socket is gone
+        # One diagnostic line, ids/types only (no content, no credentials),
+        # so a dead socket is distinguishable from a silent handler.
+        logger.warning(
+            "mobile stream transport failure session_id={} error_type={}",
+            getattr(session, "session_id", None),
+            type(error).__name__,
+        )
     finally:
         for task in (receive_task, event_task, expiry_task):
             if task is not None:

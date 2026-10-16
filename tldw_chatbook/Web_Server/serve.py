@@ -674,6 +674,42 @@ async def _read_device_json(request) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _build_production_mobile_provider_gateway() -> Any:
+    """Construct the real provider gateway for the mobile surface (headless).
+
+    Production mirror of ``ConsoleRuntime.ensure_provider_gateway``
+    (``Chat/console_runtime.py``): the gateway resolves providers through
+    a ``config_provider`` callable over the guarded ``load_settings``
+    path — the same settings source ``create_server`` already trusts via
+    ``get_cli_setting`` — fenced exactly like ``console_runtime``
+    ``_provider_config_for_app``: a load that raises (e.g. the ADR-126
+    ``RecoveryRequired`` fence) yields an empty mapping, so a fenced or
+    unreadable config degrades to a clean provider error surfaced as
+    ``run_failed`` instead of crashing the send path. The trace boundary
+    factory is omitted on purpose: the mobile surface owns no trace
+    database, and the gateway's normalized-writes gate fails closed
+    without one.
+    """
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.config import runtime_capture_policy
+
+    def _config_provider() -> Mapping[str, object]:
+        try:
+            from tldw_chatbook.config import load_settings
+
+            fresh = load_settings()
+        except Exception:  # noqa: BLE001 - fence mirror of _provider_config_for_app
+            return {}
+        return fresh if isinstance(fresh, Mapping) and fresh else {}
+
+    return ConsoleProviderGateway(
+        config_provider=_config_provider,
+        normalized_writes_enabled=lambda: (
+            runtime_capture_policy().normalized_writes_enabled
+        ),
+    )
+
+
 class ChatbookWebServerMixin:
     """Textual web server with Chatbook-specific viewport resize hardening."""
 
@@ -699,10 +735,10 @@ class ChatbookWebServerMixin:
                 lazily on the first ``/api/v1/mobile`` request.
             mobile_provider_gateway: Optional provider gateway forwarded to
                 the lazily constructed ``MobileChatService`` — a test /
-                Task-6 live-check seam. ``None`` (the default) defers the
-                real provider gateway construction to Task 6; it is safe
-                today because every current caller either injects the
-                whole service (tests) or never touches the surface.
+                live-check seam. ``None`` (the default) constructs the
+                real ``ConsoleProviderGateway`` headless
+                (:func:`_build_production_mobile_provider_gateway`), so
+                production sends resolve providers without an override.
         """
         super().__init__(*args, **kwargs)
         if web_auth_policy is None:
@@ -1266,19 +1302,24 @@ class ChatbookWebServerMixin:
     def _get_mobile_service(self) -> Any:
         """Return the mobile companion service, constructing it on first use.
 
-        The real ``MobileChatService`` (Task 3) binds the parent-process
-        Console engine over the user data dir; its ``provider_gateway`` is
-        the injected seam value (``mobile_provider_gateway`` — ``None``
-        today: the real provider gateway construction lands with the
-        Task-6 live check; tests inject a fake service instead, so this
-        lazy path stays unexercised until then).
+        The real ``MobileChatService`` binds the parent-process Console
+        engine over the user data dir. Its ``provider_gateway`` is the
+        injected seam value when one was supplied
+        (``mobile_provider_gateway`` — tests and live checks); without an
+        override this constructs the REAL ``ConsoleProviderGateway``
+        headless (:func:`_build_production_mobile_provider_gateway`), so
+        every production send resolves providers instead of dying on a
+        ``None`` gateway.
         """
         if self._mobile_service is None:
             from .mobile_service import MobileChatService
 
+            gateway = self._mobile_provider_gateway
+            if gateway is None:
+                gateway = _build_production_mobile_provider_gateway()
             self._mobile_service = MobileChatService(
                 data_dir=get_user_data_dir() / "mobile",
-                provider_gateway=self._mobile_provider_gateway,
+                provider_gateway=gateway,
             )
         return self._mobile_service
 

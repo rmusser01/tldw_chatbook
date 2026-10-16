@@ -73,7 +73,8 @@ _TERMINAL_MESSAGE_STATUSES = frozenset(
     {"complete", "failed", "stopped", "discarded"}
 )
 
-#: Delta pump cadence (seconds) while any session has an active run.
+#: Delta pump cadence (seconds) — one scan tick, always (the loop is a
+#: cheap forever-scan; there is no idle gating).
 _POLL_INTERVAL_SECONDS = 0.5
 
 
@@ -309,6 +310,11 @@ class MobileChatService:
         if self._engine is None:
             self._build_engine()
         return self._engine
+
+    @property
+    def provider_gateway(self) -> Any:
+        """The bound provider gateway (introspection surface for wiring tests)."""
+        return self._gateway
 
     @property
     def workspace_registry(self) -> LocalWorkspaceRegistryService:
@@ -710,7 +716,12 @@ class MobileChatService:
         )
 
     async def _pump(self) -> None:
-        """Delta pump: 0.5 s poll while any session has an active run."""
+        """Delta pump: one scan every 0.5 s, unconditionally.
+
+        A cheap forever-scan (no idle logic): each tick polls every
+        session's run status and streams deltas, so terminal transitions
+        and fast runs are always observed regardless of bookkeeping.
+        """
         try:
             while True:
                 await asyncio.sleep(_POLL_INTERVAL_SECONDS)

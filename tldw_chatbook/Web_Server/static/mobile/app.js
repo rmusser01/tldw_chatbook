@@ -196,7 +196,7 @@
       li.className = "role-" + (role === "user" ? "user" : "assistant");
       li.textContent = typeof msg.content === "string" ? msg.content : "";
       if (typeof msg.status === "string") {
-        li.classList.add("status-" + msg.status);
+        li.classList.add("status-" + msg.status.replace(/[^a-z_]/g, ""));
       }
     }
     state.rowsById.set(msg.id, li);
