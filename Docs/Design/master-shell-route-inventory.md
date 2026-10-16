@@ -18,10 +18,10 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | W+C | `subscriptions` plus legacy collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | W+C | Compatibility wrapper focuses future work on watchlists and can follow live work in Console; new Collections UX belongs in Library |
 | Schedules | schedule surfaces | `SchedulesScreen` | Schedules | Wrapper owns when-runs and can follow timing/recovery work in Console |
 | Workflows | workflow surfaces | `WorkflowsScreen` | Workflows | Wrapper owns what-runs and can launch live work in Console |
-| MCP | `tools_settings`, tools/MCP settings | `MCPScreen` | MCP | Wrapper owns MCP tool/server capability control; `tools_settings` is an MCP alias, not global Settings |
+| ~~MCP~~ (retired, ADR-237) | `mcp`, `tools_settings` | none — lives as the Settings "Tools & MCP" category | — | No longer a live screen/destination: both routes are compatibility aliases of `settings` carrying a `{"category": "tools"}` default context (same pattern as `artifacts` → Library, ADR-172); ctrl+9 is a retained compatibility deep-link |
 | ACP | ACP surfaces | `ACPScreen` | ACP | Wrapper shows honest ACP runtime-unconfigured state and can follow agent work in Console |
 | Skills | skills services | `LibraryScreen` (Skills rail) | Library | Skill management lives entirely inside Library; the standalone `SkillsScreen` was retired (task-34893) and the legacy `skills` route aliases Library |
-| Settings | `settings`, `customize` | `SettingsScreen` plus `CustomizeScreen` | Settings | Settings owns global preferences, appearance, accounts/auth, storage, and app behavior |
+| Settings | `settings`, `customize` | `SettingsScreen` (hosts the Tools & MCP workbench category) | Settings | Settings owns global preferences, appearance, accounts/auth, storage, app behavior, and — since ADR-237 — the Tools & MCP hub (the former MCP destination, four workbench modes intact); `mcp`/`tools_settings` legacy routes alias Settings |
 
 ## Shortcut And Command Palette Inventory
 
@@ -29,7 +29,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | --- | --- | --- | --- |
 | Command palette tab navigation | `ALL_TABS` direct tab IDs | Console plus legacy direct routes | Keep all direct legacy commands searchable while adding primary shell destinations first |
 | Chat route | `chat` | Console | Keep route ID; change user-facing label to Console |
-| Tools/settings route | `tools_settings` | MCP | Keep as legacy MCP alias, not global Settings |
+| Tools/settings route | `tools_settings` (and `mcp`) | Settings (Tools & MCP category) | Compatibility aliases of `settings` with `{"category": "tools"}` default context (ADR-237); no longer an MCP-destination alias |
 | Models shortcut | `llm` alias and `llm_management` tab ID | Legacy direct command | Keep alias to `TAB_LLM` until a later Models/MCP decision |
 | Subscription route | `subscription`, `subscriptions` | W+C | Keep both aliases |
 | Study route | `study` | Library | Keep route searchable as a Library-owned Study Dashboard, Flashcards, and Quizzes entry; do not create a separate top-level Study destination |
@@ -58,5 +58,5 @@ Current runtime chrome ownership is still screen-wrapper based through `BaseAppS
 
 - ACP launch remains an honest unavailable/capability state until an ACP runtime is configured.
 - Workflow runtime execution is not implemented in the shell wrapper; the wrapper exposes ownership and Console launch boundaries only.
-- Rich MCP management still lives in the existing Unified MCP panel/service surface; the top-level MCP wrapper prevents `tools_settings` from acting as global Settings.
+- Rich MCP management lives in the Tools & MCP category inside Settings (ADR-237); the retired `mcp`/`tools_settings` routes are compatibility aliases of `settings` and no longer gate anything.
 - Library sub-surfaces remain linked to legacy Notes, Media, Ingest, Search/RAG, conversation, and Study screens until those screens are split into Library-native views.

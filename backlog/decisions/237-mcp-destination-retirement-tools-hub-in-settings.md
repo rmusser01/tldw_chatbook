@@ -1,21 +1,21 @@
-# ADR-233: Retire the MCP destination; Settings hosts the Tools & MCP hub
+# ADR-237: Retire the MCP destination; Settings hosts the Tools & MCP hub
 
 Status: Accepted
 Date: 2026-10-16
 Related Task: task-35150
 Spec: Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md
-Amends: ADR-015 (destination set 13 -> 12; fold map gains mcp/tools_settings -> Settings)
+Amends: ADR-015 (destination set 14 -> 13; fold map gains mcp/tools_settings -> Settings)
 Supersedes: the `mcp-defaults` Settings domain contract's "server operations stay
 in MCP" stance (the contract object is deleted with the category)
 Related: ADR-172 (retirement template reused), ADR-148 (workbench IA preserved
 unchanged), ADR-031/ADR-152 (shortcut lockstep for removing ctrl+9)
 
-Numbering note (2026-10-16): "233" is contested — the served-web ADR "served
-web session persistence and device pairing" (`ce8f2d6dcd`, 2026-10-15, the
-earlier claim) also uses it, and 234–236 are claimed on sibling branches.
-Renumber this file to the next free number (≥ 237 at the time of writing;
-re-sweep all refs at merge) and update the spec, plan, task-35150 and the
-decisions README. See the spec's Amendments, A5.
+Renumber note (2026-10-16): originally drafted under number 233; renumbered to 237
+because 233-236 are claimed on sibling branches (served-web work: 233 session
+persistence/device pairing per `ce8f2d6dcd`, 234 mobile companion, 235 WebAuthn
+passkey login, 236 canvas relay message types — spec amendment A5). All
+references in spec/plan/task/docs/code were swept to 237; re-sweep at merge
+time in case sibling branches moved again.
 
 ## Decision
 
@@ -56,7 +56,8 @@ decision re-homes the workbench intact and deletes the pointer card instead.
 
 ## Consequences
 
-- `SHELL_DESTINATION_ORDER` drops to 12; ctrl+9 leaves
+- `SHELL_DESTINATION_ORDER` drops to 13 (14 pre-retirement — Research and
+  Meetings postdate ADR-015's "13"); ctrl+9 leaves
   `SHELL_DESTINATION_SHORTCUTS` in lockstep (ADR-031/152).
 - ADR-148's rail IA, recovery review, and audit drill-down are unchanged;
   only the host screen changes.

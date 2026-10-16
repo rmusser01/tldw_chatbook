@@ -3752,7 +3752,7 @@ class SettingsScreen(BaseAppScreen):
         ("e", "settings_personal_context_edit", "Edit profile record"),
         ("d", "settings_personal_context_delete", "Delete profile record"),
         ("x", "settings_personal_context_export", "Export profile"),
-        # Tools & MCP (ADR-233): mode keys self-guard to the TOOLS category,
+        # Tools & MCP (ADR-237): mode keys self-guard to the TOOLS category,
         # mirroring the RAG accelerator self-guard pattern above.
         ("1", "settings_tools_mode('servers')", "Tools: Servers"),
         ("2", "settings_tools_mode('tools')", "Tools: Tools"),
@@ -5337,7 +5337,7 @@ class SettingsScreen(BaseAppScreen):
                 continue
 
     def on_screen_resume(self) -> None:
-        # ADR-233: re-assert the category-aware footer registration the
+        # ADR-237: re-assert the category-aware footer registration the
         # suspend path cleared (the "settings-tools" source) -- mirrors the
         # retired MCP destination's resume re-registration.
         self._register_footer_shortcuts()
@@ -30135,7 +30135,7 @@ class SettingsScreen(BaseAppScreen):
             isinstance(self.app.screen, ModalScreen)
             and self._active_category_id() is SettingsCategoryId.THEME
         )
-        # ADR-233 (port of the retired MCP destination's suspend behavior): clear
+        # ADR-237 (port of the retired MCP destination's suspend behavior): clear
         # the Tools & MCP hint set while an overlay owns the screen, so the
         # footer never advertises keys that are dead under it. Resume
         # re-registers the category-aware set (see on_screen_resume).
@@ -34747,7 +34747,7 @@ class SettingsScreen(BaseAppScreen):
             pane.activate_mode(mode)
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
-        """Forward runtime-backend changes to the Tools & MCP pane (ADR-233).
+        """Forward runtime-backend changes to the Tools & MCP pane (ADR-237).
 
         Args:
             runtime_backend: Newly active runtime backend identifier.

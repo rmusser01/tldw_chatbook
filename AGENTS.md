@@ -46,7 +46,7 @@ Navigation is screen-based and exclusive (no legacy tab-window UI): every destin
 - `personas_screen.py` - Characters, personas, dictionaries, behavior profiles
 - `library_screen.py` - Library hub: notes, media, conversations, prompts, skills, collections, search/RAG
 - `evals_screen.py` - LLM benchmarking
-- `settings_screen.py` - Settings (canonical surface)
+- `settings_screen.py` - Settings (canonical surface; hosts the Tools & MCP hub — the retired MCP destination's four-mode workbench, ADR-237)
 - `watchlists_collections_screen.py`, `scheduling/schedules_workbench.py`, `llm_screen.py`, `image_gen_demo_screen.py`, and other feature screens
 
 **Settings**: `UI/Screens/settings_screen.py` (F4 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Add new settings only to the canonical Settings screen.
@@ -213,6 +213,7 @@ variable is unset, which means off.
 
 ### Tool Calling
 - Schema v7 adds tool messages; `tool_executor.py` runs the builtin tools
+- The MCP workbench (Servers / Tools / Permissions / Audit) lives in Settings → Tools & MCP (ADR-237). The old MCP destination is retired: `mcp`/`tools_settings` routes alias Settings with `{"category": "tools"}` context, and ctrl+9 is a compatibility deep-link to that category (ADR-172 pattern)
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
