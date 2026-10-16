@@ -3,7 +3,7 @@ id: TASK-35030
 title: 'Served mobile companion surface at /m: chat, approvals, PWA (Phase 1b)'
 status: Done
 created_date: 2026-10-15 20:04
-updated_date: 2026-10-15 23:25
+updated_date: 2026-10-16 13:20
 ---
 
 ## Description
@@ -19,7 +19,7 @@ Implements spec 2026-10-15 §4 per spike verdict (Binding 1): /m page, mobile AP
 - [x] REST API under `/api/v1/mobile` (conversations list/new, message history with cursor, non-blocking send → 202, cancel, approvals list/decide) behind session + CSRF auth with the documented `{"error": ...}` shapes and text bounds
 - [x] Stream WebSocket authenticates via the `csrf.<token>` + `chatbook-v1` subprotocols, delivers run frames in order, answers client pings, and closes 4401 on session revoke
 - [x] `[web_server] mobile_surface` gate (default true): page, mobile assets/manifest, REST routes, and stream all 404 as unregistered when false
-- [x] Desktop activity reaches the phone via completion-level polling (12 s + on focus); no service worker, no offline support
+- [x] Mobile-initiated conversations sync via polling (12 s + on focus); desktop activity via the Phase 2c relay; no shared conversation DB in v1; no service worker, no offline support
 - [x] Default-workspace chats expose no `fs_*`/`git_*` folder tools; approval rounds mount only for the most recently activated session
 - [x] `Web_Server/README.md` documents the surface, the config flag, and the v1 limits
 - [x] Targeted suites green; regression failures name-identical to the documented environment baselines
@@ -45,6 +45,19 @@ Approach, per task (all on branch `feat/served-mobile-phase1b`):
 **Task-7 verification fix (deviation from docs-only scope, flagged in the task-7 report):** the full-mobile-suite verification run exposed a pre-existing race from fix round 1 — `run_completed` was emitted (by the turn task inside the session lock, or by a pump tick) while the session still refused sends, and a pump tick in `submit_draft`'s return window silently baselined a fast run's content (zero deltas). Three of five `test_mobile_service.py` tests failed intermittently-to-consistently before the fix. Fixed in `mobile_service.py`: the owning turn releases its admission slot before announcing terminal (`_release_turn_slot`), the pump holds terminal announcements and treats slot-owned sessions as live for scanning while a turn owns the slot (`_turn_slot_owned`), and a first-observed terminal message delivers `message_done` with its content. 8/8 consecutive green runs after.
 
 **Tests/evidence:** `test_mobile_service.py` 5, `test_mobile_api.py` 20, `test_mobile_page.py` 16, `test_session_store.py` 5, `test_serve_cli_pair.py` 3 — all passed; `Tests/Canvas/test_web_auth.py` 80 passed; `test_web_auth_integration.py` 11 failed/9 passed and `test_web_server_dependency_gate.py` 4 failed/2 passed — failure names diffed against the stashed pre-change tree: byte-identical (pre-existing `RecoveryRequired` environment baselines). Live round-trip evidence (controller-run, visual): full agent round trip send → approval → decision → streamed completion on /m across the three fix rounds.
+
+**Correction (2026-10-16, PR #3128 review — docs only, no code change):** AC #6's original
+wording ("Desktop activity reaches the phone via completion-level polling") described the
+spec's intent, not what shipped, and was corrected above to the shipped reality. The mobile
+engine runs over ISOLATED databases at `<user data dir>/mobile/` (`chat.db`,
+`workspaces.db`, `runs.db`) — there is no shared conversation DB in v1, so desk-started
+conversations are not readable on the phone. The 12 s + on-focus polling's actual scope is
+cross-surface completion sync within mobile-initiated conversations only; desktop activity
+(approvals, run-status) reaches the phone only via the Phase 2 parent↔child relay (spec §5;
+"Phase 2c relay" in the review). ADR-234 and spec §4 now carry matching dated amendments.
+Restart persistence is likewise per-server-run in v1: the sessions list is in-memory
+(message rows persist in the mobile data dir but are not rehydrated after a restart) —
+**rehydration is a recorded follow-up** (README v1 limits note; not in v1).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

@@ -266,6 +266,17 @@ v1 scope.
 `[web_server] mobile_surface = true` (default on — the surface is behind auth; the flag is
 the escape hatch). Part A adds the two `session_*_timeout_days` keys (§3.1).
 
+**Post-implementation amendment (2026-10-16, PR #3128 review).** Shipped Phase 1b
+diverges from the §4.3/§4.4 text above on one point, recorded here and in ADR-234's
+amendment: the mobile engine runs over isolated databases under
+`<user data dir>/mobile/` — not the shared chat DB — so a conversation started at the
+desk is not readable on the phone in v1 (the §4.3 "History reads … immediately
+readable on the phone" sentence and §4.4's desktop-completion framing are superseded).
+The §4.4 client polling's actual scope is cross-surface completion sync within
+mobile-initiated conversations only. Desktop activity (approvals, run-status) reaches
+the phone only via the Phase 2 parent↔child relay (§5; the "Phase 2c" relay), not via
+conversation polling.
+
 ## 5. Sequencing
 
 1. **Phase 1a — auth foundation:** session store + persistence, `/auth/devices` + logout +
