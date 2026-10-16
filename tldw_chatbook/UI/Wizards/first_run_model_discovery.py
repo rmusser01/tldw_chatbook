@@ -175,6 +175,10 @@ def subscription_cannot_list(
     carries it, so a keyless Anthropic model list is refused. The copy said
     the server "needs an API key and none was set", steering the user to a
     key they do not need. Such a listing reads as unavailable instead.
+
+    The table is found the way readiness finds it (``provider_settings_for_key``,
+    the first normalised match), so ``[api_settings.Anthropic]`` reads as a
+    subscription here too, not only in readiness (review round 2).
     """
 
     app_config = getattr(getattr(step.wizard, "app_instance", None), "app_config", None)
@@ -186,12 +190,10 @@ def subscription_cannot_list(
         or not isinstance(app_config, Mapping)
     ):
         return False
+    from tldw_chatbook.config import provider_settings_for_key
     from tldw_chatbook.LLM_Calls.anthropic_subscription import anthropic_auth_source
 
-    api = app_config.get("api_settings")
-    settings = api.get("anthropic") if isinstance(api, Mapping) else None
-    if not isinstance(settings, Mapping):
-        return False
+    settings = provider_settings_for_key(app_config.get("api_settings"), "anthropic")
     return anthropic_auth_source(settings) == "claude_subscription"
 
 

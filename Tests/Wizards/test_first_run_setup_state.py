@@ -2468,6 +2468,35 @@ class TestProviderTrustChain:
         assert reached("sk-local") == identity  # a typed key was sent
         assert reached("") is None
 
+    def test_a_subscription_table_spelled_otherwise_reads_as_readiness_reads_it(
+        self, monkeypatch
+    ):
+        """TASK-33008 review round 2: the subscription check read
+        ``api_settings["anthropic"]`` itself, while readiness takes the first
+        normalised match. ``[api_settings.Anthropic]`` was a subscription to
+        readiness and a missing key to the listing copy."""
+        from types import SimpleNamespace
+
+        import tldw_chatbook.LLM_Calls.anthropic_subscription as subscription
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        monkeypatch.setattr(
+            subscription, "subscription_credential_status", lambda **_kw: "ready"
+        )
+        config = {"api_settings": {"Anthropic": {"auth_source": "claude_subscription"}}}
+        app = SimpleNamespace(app_config=config)
+        step = SimpleNamespace(wizard=SimpleNamespace(app_instance=app))
+        keyless = setup_state.FirstRunProviderDraft(
+            "anthropic", "", setup_state.ProviderCredentialDraft("none", "", 0)
+        )
+
+        readiness = get_provider_readiness("anthropic", config, environ={})
+        assert readiness.subscription_status == "ready"
+        assert first_run_model_discovery.subscription_cannot_list(
+            step, keyless, "connection_failed", "authentication"
+        )
+
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
             provider_configured=True,
