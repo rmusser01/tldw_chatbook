@@ -87,3 +87,17 @@ After this phase, task-1379 re-runs the Settings critique.
 - [ ] #8 Docs/User_Guide pages updated, each with a Verified-against stamp: console.md (Get started), settings.md (return action) and First_Run_Setup.md (model-step status lines).
 - [ ] #9 ./scripts/preflight.sh passes.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Capture fixes (after `a57bc97f87`, Phase 8 full-screen captures).** Five capture-fix waves and their rounds (70 commits to `1c1730f4b0`, about 680 production lines) fixed what the live captures showed; `qa/model-config-33008-captures/README.md` records each retake. By area:
+- Console status row: the cost chip fits the room left by the chips before it, drops whole figures, keeps a focused chip in view and refits after a model switch or a layout change. No subtask's acceptance criteria cover this work; it is recorded here, not in a subtask.
+- Footer: under the Get started card it names only the keys that act there (no F6), and under a dialog over the Console only Ctrl+P and Ctrl+Q (`CONSOLE_WORKBENCH_SHORTCUTS_COVERED`).
+- Switch model: Enter's label follows the highlighted row and keeps its width, NOT RUNNING wraps and repacks on resize, MLX-LM it cannot check reads "not checked", Find counts in the singular, and no blank row after a probe shortens the list.
+- Get started card: a long provider name is shortened so its readiness word stays on one line, and step 1 names the provider that word is about.
+- Wizard (TASK-33008.5's area): a refusal of a check that sent no key asks for a key (key-required copy), the Authentication section drops "(optional)" and scrolls into view, the status box hugs its line (`#setup-model-choice.-status`), and the pinned notice keeps off the frame (`.setup-step-error` padding).
+- Settings: a key check after the save redraws the return line ("the provider accepted the key"), and the unsaved-changes and Return without saving copy were reworded.
+
+**Review fixes (2026-10-16).** The review of `1c1730f4b0`: the wizard's Test 401, Claude subscription and cleared-key cases and the status picker's Tab stop (see TASK-33008.5), the setup card's focus guard under a dialog, the return line's key-accepted copy for another provider, docs and docstrings, ratchet rows re-pinned to measured sizes, polling waits in the wizard's compose-crash tests, and the phase's new tests gated in the PR lanes.
+<!-- SECTION:NOTES:END -->
