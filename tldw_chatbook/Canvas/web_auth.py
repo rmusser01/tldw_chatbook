@@ -634,6 +634,40 @@ class WebAuthManager:
             client_ip, self._clock(), device_label=device_label, persist=persist
         )
 
+    def login_device(
+        self,
+        *,
+        client_ip: str,
+        device_label: str,
+    ) -> SessionGrant:
+        """Mint a persistent session for an externally verified device login.
+
+        Thin ``_new_session`` wrapper for login paths whose credential was
+        verified outside this manager — the served WebAuthn passkey
+        assertion flow (ADR-235).  No token check or attempt recording
+        happens here: callers must have fully authenticated the request
+        (a verified ceremony) before calling, and the minted session is
+        always disk-persistent like every remembered device.
+
+        Args:
+            client_ip: The effective client address (post trusted-proxy
+                resolution) the session is bound to.
+            device_label: Non-secret device description for the devices
+                page (e.g. ``"Macintosh · Chrome (passkey)"``).
+
+        Returns:
+            The granted session cookie/CSRF pair.
+
+        Raises:
+            AuthenticationError: If session capacity is exhausted.
+        """
+        return self._new_session(
+            client_ip,
+            self._clock(),
+            device_label=device_label,
+            persist=True,
+        )
+
     def _new_session(
         self,
         client_ip: str,

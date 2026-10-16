@@ -150,6 +150,7 @@ _SERVED_SHELL_ASSETS = {
     "served-shell.js": ("application/javascript", "served_shell.js"),
     "devices.js": ("application/javascript", "devices.js"),
     "qrcodegen.js": ("application/javascript", "qrcodegen.js"),
+    "passkeys.js": ("application/javascript", "passkeys.js"),
 }
 
 #: Mobile companion assets (ADR-234 Phase 1b): name -> (content type,
@@ -674,6 +675,15 @@ async def _read_device_json(request) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _required_str(payload: dict, key: str) -> str:
+    """Return ``payload[key]`` when it is a str; otherwise fail closed."""
+
+    value = payload.get(key)
+    if not isinstance(value, str):
+        raise AuthenticationError("authentication denied")
+    return value
+
+
 def _build_production_mobile_provider_gateway() -> Any:
     """Construct the real provider gateway for the mobile surface (headless).
 
@@ -725,6 +735,7 @@ class ChatbookWebServerMixin:
         session_absolute_timeout_seconds: float | None = None,
         mobile_service: Any | None = None,
         mobile_provider_gateway: Any | None = None,
+        webauthn_service: Any | None = None,
         **kwargs,
     ) -> None:
         """Initialize the served shell and its feature surfaces.
@@ -739,6 +750,13 @@ class ChatbookWebServerMixin:
                 real ``ConsoleProviderGateway`` headless
                 (:func:`_build_production_mobile_provider_gateway`), so
                 production sends resolve providers without an override.
+            webauthn_service: Injected WebAuthn ceremony service
+                (``Web_Server.webauthn_service.WebAuthnService``, ADR-235).
+                ``None`` (the default) means passkeys are unavailable:
+                every passkey route answers ``503`` and the login/devices
+                pages omit their passkey controls. Tests inject a service
+                over a tmp store; ``create_server`` builds the real one
+                and passes ``None`` when RP derivation fails.
         """
         super().__init__(*args, **kwargs)
         if web_auth_policy is None:
@@ -771,6 +789,7 @@ class ChatbookWebServerMixin:
         self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
         self._mobile_service = mobile_service
         self._mobile_provider_gateway = mobile_provider_gateway
+        self._webauthn_service = webauthn_service
 
     def __repr__(self) -> str:
         return (
@@ -854,6 +873,31 @@ class ChatbookWebServerMixin:
                 "/auth/devices/pair",
                 self.handle_devices_pair,
                 name="devices_pair",
+            ),
+            web.post(
+                "/auth/passkeys/register/begin",
+                self.handle_passkeys_register_begin,
+                name="passkeys_register_begin",
+            ),
+            web.post(
+                "/auth/passkeys/register/complete",
+                self.handle_passkeys_register_complete,
+                name="passkeys_register_complete",
+            ),
+            web.post(
+                "/auth/passkeys/login/begin",
+                self.handle_passkeys_login_begin,
+                name="passkeys_login_begin",
+            ),
+            web.post(
+                "/auth/passkeys/login/complete",
+                self.handle_passkeys_login_complete,
+                name="passkeys_login_complete",
+            ),
+            web.post(
+                "/auth/passkeys/remove",
+                self.handle_passkeys_remove,
+                name="passkeys_remove",
             ),
             web.get("/", self.handle_index, name="index"),
             web.get("/ws", self.handle_websocket, name="websocket"),
@@ -954,7 +998,16 @@ class ChatbookWebServerMixin:
 
     @property
     def _public_auth_paths(self) -> frozenset[str]:
-        return frozenset({"/auth/login", "/auth/bootstrap"})
+        return frozenset(
+            {
+                "/auth/login",
+                "/auth/bootstrap",
+                # Public origin-checked passkey login ceremonies (ADR-235);
+                # registration stays behind the session + CSRF middleware.
+                "/auth/passkeys/login/begin",
+                "/auth/passkeys/login/complete",
+            }
+        )
 
     @property
     def _public_asset_paths(self) -> tuple[str, ...]:
@@ -1062,6 +1115,19 @@ class ChatbookWebServerMixin:
         from aiohttp import web
 
         if request.method == "GET":
+            # Passkey login is offered only when the ceremony service exists
+            # (domain-origin public_url); the button ships hidden and
+            # passkeys.js reveals it only in WebAuthn-capable browsers.
+            passkey_login = (
+                (
+                    '<button type="button" class="passkey-login" hidden>'
+                    "Use passkey</button>"
+                    '<p class="passkey-message" hidden></p>'
+                    '<script src="/static/chatbook/passkeys.js" defer></script>'
+                )
+                if self._webauthn_service is not None
+                else ""
+            )
             return web.Response(
                 text=(
                     '<!doctype html><html><head><meta charset="utf-8">'
@@ -1080,7 +1146,9 @@ class ChatbookWebServerMixin:
                     "device session; unchecked uses a short-lived in-memory "
                     "session that ends when the server stops (safest on shared "
                     "machines)</label>"
-                    '<button type="submit">Sign in</button></form></main></body></html>'
+                    '<button type="submit">Sign in</button></form>'
+                    + passkey_login
+                    + "</main></body></html>"
                 ),
                 content_type="text/html",
                 headers={"Cache-Control": "no-store"},
@@ -1187,6 +1255,56 @@ class ChatbookWebServerMixin:
                 '<button type="button" class="device-rename">Rename</button> '
                 f"{action}</section>"
             )
+        # Passkeys (ADR-235): with a ceremony service, the page offers
+        # registration ("Add a passkey", revealed by passkeys.js only in
+        # WebAuthn-capable browsers) and lists every stored credential with a
+        # Remove control keyed by its full public credential id; without one
+        # (IP/localhost/missing public_url) it renders the domain-origin
+        # notice instead of a dead button.
+        if self._webauthn_service is None:
+            passkey_section = (
+                '<section class="device-passkeys"><h2>Passkeys</h2>'
+                '<p class="passkey-unavailable">Passkeys need a domain origin '
+                "(`public_url`)</p></section>"
+            )
+        else:
+            items = []
+            for entry in self._webauthn_service.list_credentials():
+                credential_id = html.escape(
+                    str(entry["credential_id_hex"]), quote=True
+                )
+                item_label = html.escape(
+                    str(entry["label"] or "Passkey"), quote=True
+                )
+                prefix = html.escape(
+                    str(entry["credential_id_prefix"]), quote=True
+                )
+                created = datetime.fromtimestamp(entry["created_at"], UTC).isoformat()
+                last_used = datetime.fromtimestamp(
+                    entry["last_used_at"], UTC
+                ).isoformat()
+                items.append(
+                    f'<li class="passkey" data-credential-id="{credential_id}">'
+                    f"<strong>{item_label}</strong> "
+                    f'<span class="passkey-id">{prefix}</span>'
+                    f'<p class="passkey-times">Added {created} · Last used '
+                    f"{last_used}</p> "
+                    '<button type="button" class="passkey-remove">Remove'
+                    "</button></li>"
+                )
+            passkey_section = (
+                '<section class="device-passkeys"><h2>Passkeys</h2>'
+                '<label>Passkey name <input type="text" maxlength="64" '
+                'class="passkey-label" placeholder="e.g. YubiKey 5"></label> '
+                '<button type="button" class="passkey-add" hidden>Add a passkey'
+                "</button>"
+                '<p class="passkey-message" hidden></p>'
+                '<ul class="passkey-list">'
+                + "".join(items)
+                + "</ul>"
+                '<script src="/static/chatbook/passkeys.js" defer></script>'
+                "</section>"
+            )
         body = (
             '<!doctype html><html><head><meta charset="utf-8">'
             f'<meta name="chatbook-csrf" content="{csrf}">'
@@ -1202,6 +1320,7 @@ class ChatbookWebServerMixin:
             "100&nbsp;seconds (each link works once and expires 2 minutes "
             "after issue).</p>"
             '<p class="device-pair-url"></p></section>'
+            + passkey_section
             + "".join(sections)
             + "</main>"
             '<script src="/static/chatbook/qrcodegen.js" defer></script>'
@@ -1298,6 +1417,140 @@ class ChatbookWebServerMixin:
 
         nonce = self._web_auth.issue_bootstrap()
         return f"{self.public_url.rstrip('/')}/auth/bootstrap?nonce={quote(nonce)}"
+
+    # --- Passkey routes (ADR-235) ------------------------------------------
+    #
+    # Availability is SERVICE PRESENCE, not a property on it: a service
+    # exists only when RP derivation succeeded (domain public_url), so
+    # ``self._webauthn_service is None`` is the single gate — every handler
+    # answers ``503 {"error": "passkeys_unavailable"}`` and both pages omit
+    # their passkey controls. Registration routes sit behind the session +
+    # CSRF middleware; the two login routes are public origin-checked POSTs
+    # (``_public_auth_paths``). All responses are uncacheable: every one
+    # embeds a one-use challenge or a session outcome.
+
+    def _passkeys_unavailable(self):
+        from aiohttp import web
+
+        return web.json_response(
+            {"error": "passkeys_unavailable"},
+            status=503,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def handle_passkeys_register_begin(self, request):
+        """Start a passkey registration ceremony for the signed-in user."""
+
+        from aiohttp import web
+
+        if self._webauthn_service is None:
+            return self._passkeys_unavailable()
+        payload = await _read_device_json(request)
+        label = payload.get("label")
+        label = (
+            label.strip()[:_DEVICE_LABEL_MAX_LENGTH]
+            if isinstance(label, str)
+            else ""
+        )
+        options = self._webauthn_service.register_begin(label=label or "Passkey")
+        return web.json_response(options, headers={"Cache-Control": "no-store"})
+
+    async def handle_passkeys_register_complete(self, request):
+        """Verify a registration response and persist the new credential."""
+
+        from aiohttp import web
+
+        if self._webauthn_service is None:
+            return self._passkeys_unavailable()
+        payload = await _read_device_json(request)
+        try:
+            result = self._webauthn_service.register_complete(
+                _required_str(payload, "challenge_id"),
+                _required_str(payload, "client_data_json"),
+                _required_str(payload, "attestation_object_b64"),
+            )
+        except AuthenticationError:
+            return web.json_response(
+                {"error": "authentication_denied"},
+                status=401,
+                headers={"Cache-Control": "no-store"},
+            )
+        return web.json_response(
+            {"ok": True, **result}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_passkeys_login_begin(self, request):
+        """Start a discoverable-credential login ceremony (public route)."""
+
+        from aiohttp import web
+
+        if self._webauthn_service is None:
+            return self._passkeys_unavailable()
+        return web.json_response(
+            self._webauthn_service.login_begin(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def handle_passkeys_login_complete(self, request):
+        """Verify an assertion and mint a persistent device session (ADR-235).
+
+        The middleware has already origin-checked this public POST; the
+        handler re-validates for the effective client IP exactly like the
+        bootstrap handler, then mints the session through
+        ``login_device`` — the ``login_with_access_token``-equivalent with
+        no token check — and sets the same cookie the bootstrap flow uses.
+        Any ``AuthenticationError`` (ceremony failure or capacity
+        exhaustion) is a plain 401 with no ceremony detail.
+        """
+
+        from aiohttp import web
+
+        if self._webauthn_service is None:
+            return self._passkeys_unavailable()
+        facts = self._request_facts(request)
+        payload = await _read_device_json(request)
+        try:
+            client_ip, _scheme, _host = self._web_auth.validate_public_request(
+                facts, require_origin=True
+            )
+            self._webauthn_service.login_complete(
+                _required_str(payload, "challenge_id"),
+                _required_str(payload, "client_data_json"),
+                _required_str(payload, "authenticator_data_b64"),
+                _required_str(payload, "signature_b64"),
+            )
+            grant = self._web_auth.login_device(
+                client_ip=client_ip,
+                device_label=_device_label_from_user_agent(
+                    request.headers.get("User-Agent", "")
+                )
+                + " (passkey)",
+            )
+        except AuthenticationError:
+            raise web.HTTPUnauthorized(text="Authentication denied") from None
+        response = web.Response(status=303, headers={"Location": "/"})
+        self._set_session_cookie(
+            response, grant, secure=self._web_auth.policy.secure_cookies
+        )
+        return response
+
+    async def handle_passkeys_remove(self, request):
+        """Remove one stored passkey by its full public credential id."""
+
+        from aiohttp import web
+
+        if self._webauthn_service is None:
+            return self._passkeys_unavailable()
+        payload = await _read_device_json(request)
+        credential_id = payload.get("credential_id")
+        removed = (
+            self._webauthn_service.remove_credential(credential_id)
+            if isinstance(credential_id, str)
+            else False
+        )
+        return web.json_response(
+            {"ok": removed}, headers={"Cache-Control": "no-store"}
+        )
 
     def _get_mobile_service(self) -> Any:
         """Return the mobile companion service, constructing it on first use.
@@ -2041,6 +2294,24 @@ def create_server(
             "INSECURE DEVELOPMENT MODE: remote Chatbook content is using plaintext HTTP"
         )
 
+    # Passkeys (ADR-235): the ceremony service exists only when the finalized
+    # public_url anchors a registrable-domain RP. An IP literal, localhost, or
+    # a missing public_url cannot, so the server degrades to token-only login
+    # (service None -> 503 routes, no UI controls) instead of failing to boot.
+    from .webauthn_service import PasskeysUnavailable, WebAuthnService
+    from .webauthn_store import WebAuthnCredentialStore
+
+    webauthn_service = None
+    try:
+        webauthn_service = WebAuthnService(
+            public_url=public_url,
+            store=WebAuthnCredentialStore(
+                get_user_data_dir() / "webauthn_credentials.json"
+            ),
+        )
+    except PasskeysUnavailable:
+        webauthn_service = None
+
     session_idle_timeout_days = max(
         1,
         int(get_cli_setting("web_server", "session_idle_timeout_days", default=30)),
@@ -2072,6 +2343,7 @@ def create_server(
         session_store=WebSessionStore(get_user_data_dir() / "web_sessions.json"),
         session_idle_timeout_seconds=session_idle_timeout_days * 86400,
         session_absolute_timeout_seconds=session_absolute_timeout_days * 86400,
+        webauthn_service=webauthn_service,
     )
 
     return server

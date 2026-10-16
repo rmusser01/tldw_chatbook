@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import re
+import struct
 from contextlib import asynccontextmanager
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from fido2 import cbor
 
 from tldw_chatbook.Canvas.web_auth import (
     CSRF_HEADER_NAME,
@@ -17,6 +24,8 @@ from tldw_chatbook.Canvas.web_auth import (
 from tldw_chatbook.config import build_canvas_config_policy
 from tldw_chatbook.Web_Server import serve
 from tldw_chatbook.Web_Server.session_store import WebSessionStore
+from tldw_chatbook.Web_Server.webauthn_service import WebAuthnService
+from tldw_chatbook.Web_Server.webauthn_store import WebAuthnCredentialStore
 
 pytestmark = [
     pytest.mark.skipif(
@@ -366,7 +375,7 @@ _DEVICE_REQUEST_HEADERS = {
 }
 
 
-def _device_manager_server(tmp_path, policy):
+def _device_manager_server(tmp_path, policy, *, webauthn_service=None):
     """Build a config-free served server whose sessions persist to tmp_path."""
 
     templates = tmp_path / "templates"
@@ -395,11 +404,14 @@ def _device_manager_server(tmp_path, policy):
             {}, environ={"TLDW_CANVAS_ENABLED": "false"}
         ),
         session_store=WebSessionStore(tmp_path / "web_sessions.json"),
+        webauthn_service=webauthn_service,
     )
 
 
 @asynccontextmanager
-async def _logged_in_client(tmp_path, *, remember: str | None = "1"):
+async def _logged_in_client(
+    tmp_path, *, remember: str | None = "1", webauthn_service=None
+):
     """Yield one token-authenticated TestClient against a fresh server.
 
     The client carries the forwarded routing headers by default and has
@@ -416,7 +428,9 @@ async def _logged_in_client(tmp_path, *, remember: str | None = "1"):
         allow_insecure_remote_http=True,
         trusted_proxy_addresses=["127.0.0.1"],
     )
-    server = _device_manager_server(tmp_path, policy)
+    server = _device_manager_server(
+        tmp_path, policy, webauthn_service=webauthn_service
+    )
     client = TestClient(
         TestServer(await _app_without_control_broker(server)),
         headers=dict(_DEVICE_REQUEST_HEADERS),
@@ -754,3 +768,335 @@ def test_device_label_from_user_agent_platform_and_browser_markers() -> None:
 
     assert serve._device_label_from_user_agent("curl/8.4.0") == "Unknown device"
     assert serve._device_label_from_user_agent("") == "Unknown device"
+
+
+# --- Served passkeys (task 3, ADR-235) --------------------------------------
+#
+# The ceremony builders mirror the in-process software authenticator from
+# Tests/Web_Server/test_webauthn_service.py (none-format attestation, ES256
+# assertion with UP|UV flags), but drive the SERVER's HTTP routes: begin
+# POSTs hit the real middleware/handlers and completes carry the built
+# responses, so the round trips exercise the full route contract.
+
+_PASSKEY_RP_ID = "chatbook.example"
+#: WebAuthn client data always carries the https RP origin — browsers only
+#: sign for secure contexts — regardless of the served public scheme.
+_PASSKEY_ORIGIN = f"https://{_PASSKEY_RP_ID}"
+_PASSKEY_RP_ID_HASH = hashlib.sha256(_PASSKEY_RP_ID.encode()).digest()
+_PASSKEY_FLAG_UP_UV = 0x05  # UP | UV
+_PASSKEY_FLAG_UP_UV_AT = 0x45  # UP | UV | AT
+
+
+def _passkey_service(tmp_path) -> WebAuthnService:
+    """The real ceremony service over a tmp-path credential store."""
+
+    return WebAuthnService(
+        public_url=_PASSKEY_ORIGIN,
+        store=WebAuthnCredentialStore(tmp_path / "webauthn_credentials.json"),
+    )
+
+
+def _passkey_cose_key(public_key: ec.EllipticCurvePublicKey) -> dict:
+    numbers = public_key.public_numbers()
+    return {
+        1: 2,  # kty: EC2
+        3: -7,  # alg: ES256
+        -1: 1,  # crv: P-256
+        -2: numbers.x.to_bytes(32, "big"),
+        -3: numbers.y.to_bytes(32, "big"),
+    }
+
+
+def _passkey_auth_data(
+    flags: int, counter: int, credential_id: bytes | None, cose_key: bytes | None
+) -> bytes:
+    data = _PASSKEY_RP_ID_HASH + struct.pack(">BI", flags, counter)
+    if credential_id is not None:
+        assert cose_key is not None
+        data += (
+            b"\x00" * 16
+            + struct.pack(">H", len(credential_id))
+            + credential_id
+            + cose_key
+        )
+    return data
+
+
+def _passkey_client_data(kind: str, challenge, origin: str = _PASSKEY_ORIGIN) -> str:
+    return json.dumps({"type": kind, "challenge": challenge, "origin": origin})
+
+
+async def _register_passkey_via_routes(
+    client, *, label: str = "YubiKey 5", credential_id: bytes = b"\x02" * 32
+):
+    """Drive register begin -> complete against the live authed routes."""
+
+    csrf = await _csrf(client)
+    begin = await client.post(
+        "/auth/passkeys/register/begin",
+        json={"label": label},
+        headers={CSRF_HEADER_NAME: csrf},
+    )
+    assert begin.status == 200
+    payload = await begin.json()
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    cose_key = cbor.encode(_passkey_cose_key(private_key.public_key()))
+    auth_data = _passkey_auth_data(
+        _PASSKEY_FLAG_UP_UV_AT, 0, credential_id, cose_key
+    )
+    attestation_object = cbor.encode(
+        {"fmt": "none", "attStmt": {}, "authData": auth_data}
+    )
+    complete = await client.post(
+        "/auth/passkeys/register/complete",
+        json={
+            "challenge_id": payload["challenge_id"],
+            "client_data_json": _passkey_client_data(
+                "webauthn.create", payload["publicKey"]["challenge"]
+            ),
+            "attestation_object_b64": base64.b64encode(attestation_object).decode(),
+        },
+        headers={CSRF_HEADER_NAME: csrf},
+    )
+    assert complete.status == 200
+    return private_key, credential_id, await complete.json()
+
+
+async def _login_passkey_via_routes(
+    client, private_key: ec.EllipticCurvePrivateKey, credential_id: bytes, *, counter: int
+):
+    """Drive login begin -> complete against the live public routes."""
+
+    begin = await client.post("/auth/passkeys/login/begin")
+    assert begin.status == 200
+    payload = await begin.json()
+    assert payload["publicKey"]["allowCredentials"] == []
+    client_data_json = _passkey_client_data(
+        "webauthn.get", payload["publicKey"]["challenge"]
+    )
+    auth_data = _passkey_auth_data(_PASSKEY_FLAG_UP_UV, counter, None, None)
+    signature = private_key.sign(
+        auth_data + hashlib.sha256(client_data_json.encode()).digest(),
+        ec.ECDSA(hashes.SHA256()),
+    )
+    return await client.post(
+        "/auth/passkeys/login/complete",
+        json={
+            "challenge_id": payload["challenge_id"],
+            "client_data_json": client_data_json,
+            "authenticator_data_b64": base64.b64encode(auth_data).decode(),
+            "signature_b64": base64.b64encode(signature).decode(),
+        },
+        allow_redirects=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_passkey_register_begin_requires_session_and_csrf(tmp_path) -> None:
+    service = _passkey_service(tmp_path)
+    server = _device_manager_server(
+        tmp_path,
+        build_web_auth_policy(
+            host="127.0.0.1",
+            port=8000,
+            access_token=_DEVICES_ACCESS_TOKEN,
+            public_url=_DEVICES_PUBLIC_ORIGIN,
+            allow_insecure_remote_http=True,
+            trusted_proxy_addresses=["127.0.0.1"],
+        ),
+        webauthn_service=service,
+    )
+    async with TestClient(
+        TestServer(await _app_without_control_broker(server)),
+        headers=dict(_DEVICE_REQUEST_HEADERS),
+    ) as visitor:
+        anonymous = await visitor.post(
+            "/auth/passkeys/register/begin", json={"label": "k"}
+        )
+        assert anonymous.status == 401
+
+    async with _logged_in_client(tmp_path, webauthn_service=service) as client:
+        no_csrf = await client.post("/auth/passkeys/register/begin", json={"label": "k"})
+        assert no_csrf.status == 401
+
+
+@pytest.mark.asyncio
+async def test_passkey_register_begin_under_domain_service_returns_options(
+    tmp_path,
+) -> None:
+    async with _logged_in_client(
+        tmp_path, webauthn_service=_passkey_service(tmp_path)
+    ) as client:
+        response = await client.post(
+            "/auth/passkeys/register/begin",
+            json={"label": "YubiKey 5"},
+            headers={CSRF_HEADER_NAME: await _csrf(client)},
+        )
+
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        payload = await response.json()
+        assert isinstance(payload["challenge_id"], str) and payload["challenge_id"]
+        assert payload["publicKey"]["rp"]["id"] == _PASSKEY_RP_ID
+        assert payload["publicKey"]["challenge"]
+
+
+@pytest.mark.asyncio
+async def test_passkey_routes_answer_503_when_passkeys_unavailable(
+    tmp_path,
+) -> None:
+    async with _logged_in_client(tmp_path, webauthn_service=None) as client:
+        csrf = await _csrf(client)
+        register = await client.post(
+            "/auth/passkeys/register/begin",
+            json={},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert register.status == 503
+        assert (await register.json())["error"] == "passkeys_unavailable"
+
+        login = await client.post("/auth/passkeys/login/begin")
+        assert login.status == 503
+        assert (await login.json())["error"] == "passkeys_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_passkey_login_begin_is_public(tmp_path) -> None:
+    server = _device_manager_server(
+        tmp_path,
+        build_web_auth_policy(
+            host="127.0.0.1",
+            port=8000,
+            access_token=_DEVICES_ACCESS_TOKEN,
+            public_url=_DEVICES_PUBLIC_ORIGIN,
+            allow_insecure_remote_http=True,
+            trusted_proxy_addresses=["127.0.0.1"],
+        ),
+        webauthn_service=_passkey_service(tmp_path),
+    )
+    async with TestClient(
+        TestServer(await _app_without_control_broker(server)),
+        headers=dict(_DEVICE_REQUEST_HEADERS),
+    ) as visitor:
+        response = await visitor.post("/auth/passkeys/login/begin")
+
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        payload = await response.json()
+        assert payload["publicKey"]["allowCredentials"] == []
+        assert payload["publicKey"]["rpId"] == _PASSKEY_RP_ID
+        assert isinstance(payload["challenge_id"], str) and payload["challenge_id"]
+
+        # A garbage completion is denied without leaking ceremony detail.
+        garbage = await visitor.post(
+            "/auth/passkeys/login/complete",
+            json={
+                "challenge_id": "deadbeef",
+                "client_data_json": "x",
+                "authenticator_data_b64": "x",
+                "signature_b64": "x",
+            },
+            allow_redirects=False,
+        )
+        assert garbage.status == 401
+
+
+@pytest.mark.asyncio
+async def test_passkey_register_and_login_round_trip_via_server_routes(
+    tmp_path,
+) -> None:
+    service = _passkey_service(tmp_path)
+    async with _logged_in_client(
+        tmp_path, remember=None, webauthn_service=service
+    ) as client:
+        private_key, credential_id, result = await _register_passkey_via_routes(client)
+        assert result["ok"] is True
+        assert result["credential_id"] == credential_id.hex()[:8]
+        assert result["label"] == "YubiKey 5"
+
+        # The devices page lists the credential with its public prefix and
+        # carries the full public hex id for the Remove control.
+        page = await client.get("/auth/devices")
+        body = await page.text()
+        assert "Add a passkey" in body
+        assert f'data-credential-id="{credential_id.hex()}"' in body
+        assert credential_id.hex()[:8] in body
+
+        # A fresh, not-yet-signed-in browser completes a full login.
+        phone = await _fresh_client(client.chatbook_test_server)
+        async with phone:
+            complete = await _login_passkey_via_routes(
+                phone, private_key, credential_id, counter=1
+            )
+            assert complete.status == 303
+            assert complete.headers["Location"] == "/"
+            cookie = SimpleCookie(complete.headers["Set-Cookie"])[SESSION_COOKIE_NAME]
+            assert cookie["httponly"] is True
+            assert cookie["samesite"] == "Strict"
+            # The minted cookie authenticates: an authed route answers 200
+            # (the index shell itself needs textual-serve machinery the fake
+            # test server does not carry, so prove the session this way).
+            authed = await phone.get("/auth/devices")
+            assert authed.status == 200
+
+    # Exactly one persistent record: the passkey-minted device session (the
+    # authed registrar used remember=None, so nothing else hit the disk).
+    records = WebSessionStore(tmp_path / "web_sessions.json").load()
+    assert len(records) == 1
+    [record] = records.values()
+    assert record.device_label.endswith(" (passkey)")
+
+
+@pytest.mark.asyncio
+async def test_passkey_remove_via_devices_route(tmp_path) -> None:
+    service = _passkey_service(tmp_path)
+    async with _logged_in_client(tmp_path, webauthn_service=service) as client:
+        private_key, credential_id, _result = await _register_passkey_via_routes(client)
+
+        removed = await client.post(
+            "/auth/passkeys/remove",
+            json={"credential_id": credential_id.hex()},
+            headers={CSRF_HEADER_NAME: await _csrf(client)},
+        )
+        assert removed.status == 200
+        assert (await removed.json())["ok"] is True
+        assert removed.headers["Cache-Control"] == "no-store"
+
+        again = await client.post(
+            "/auth/passkeys/remove",
+            json={"credential_id": credential_id.hex()},
+            headers={CSRF_HEADER_NAME: await _csrf(client)},
+        )
+        assert (again.status == 200) and (await again.json())["ok"] is False
+
+        body = await (await client.get("/auth/devices")).text()
+        assert credential_id.hex()[:8] not in body
+
+        complete = await _login_passkey_via_routes(
+            client, private_key, credential_id, counter=1
+        )
+        assert complete.status == 401
+
+
+@pytest.mark.asyncio
+async def test_passkey_pages_gate_on_service_availability(tmp_path) -> None:
+    async with _logged_in_client(
+        tmp_path, webauthn_service=_passkey_service(tmp_path)
+    ) as client:
+        devices = await (await client.get("/auth/devices")).text()
+        assert "Add a passkey" in devices
+        assert "/static/chatbook/passkeys.js" in devices
+        login_page = await client.get("/auth/login")
+        assert login_page.status == 200
+        assert "Use passkey" in (await login_page.text())
+
+    async with _logged_in_client(tmp_path, webauthn_service=None) as client:
+        devices = await (await client.get("/auth/devices")).text()
+        assert "Passkeys need a domain origin" in devices
+        assert "Add a passkey" not in devices
+        assert "/static/chatbook/passkeys.js" not in devices
+        login_page = await client.get("/auth/login")
+        assert login_page.status == 200
+        body = await login_page.text()
+        assert "Use passkey" not in body
+        assert "/static/chatbook/passkeys.js" not in body

@@ -387,10 +387,17 @@ class WebAuthnService:
     # ------------------------------------------------------------- registry
 
     def list_credentials(self) -> list[dict]:
-        """Public metadata for management UIs; no key material."""
+        """Public metadata for management UIs; no key material.
+
+        ``credential_id_hex`` is the full public credential identifier (the
+        WebAuthn credential id is public by design); the devices page posts
+        it back to ``remove_credential``, which validates it against the
+        store — no secret or key material ever appears here.
+        """
         creds = self._store.load()
         return [
             {
+                "credential_id_hex": record.credential_id_hex,
                 "credential_id_prefix": self._prefix(record.credential_id_hex),
                 "label": record.label,
                 "created_at": record.created_at,
