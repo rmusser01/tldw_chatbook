@@ -79,13 +79,15 @@ footer/category glue, deep-link context branch, runtime-backend forwarding,
 suspend invalidation); `UI/Screens/mcp_screen.py` deleted;
 `UI/Navigation/shell_destinations.py` + `UI/Navigation/screen_registry.py` +
 `app.py` (retirement seams: order/shortcuts, aliases, compat binding,
-default-context entries); `Constants.py` label constants become compatibility
-labels; ~18 test files ported (destination shells, navigation aliases, footer
-hints, permissions handoff, retired-destination root state, recovery review,
-visual parity, smoke/perf guards).
+default-context entries); `Constants.py` needed no change on this branch
+(`TAB_MCP`/its label are untouched and now serve purely as compatibility
+references); ~18 test files ported (destination shells, navigation aliases,
+footer hints, permissions handoff, retired-destination root state, recovery
+review, visual parity, smoke/perf guards).
 
-**Ratchet measurement (spec A2).** `settings_screen.py` grew +190 lines on
-this branch (36,444 → 36,634) and is exempt from the module-size ratchet by
+**Ratchet measurement (spec A2).** `settings_screen.py` grew +211 lines on
+this branch (36,444 → 36,655; 36,641 before the final-review view-state
+fix) and is exempt from the module-size ratchet by
 design (no row yet — the #3057 pin never landed first). The 12 red ratchet
 modules were already red at the pristine merge base — line-count-proven on
 untouched files (app_lifecycle 2337 > 2134, app.py 5824 > 5712,

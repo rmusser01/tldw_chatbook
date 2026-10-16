@@ -253,7 +253,7 @@ async def test_artifacts_default_and_shortcut_use_same_library_context(
     posted.clear()
     TldwCli.action_library_artifacts(SimpleNamespace(post_message=posted.append))
     assert posted[0].screen_name == "artifacts"
-    # ADR-233: the MCP destination retired into Settings > Tools & MCP;
+    # ADR-237: the MCP destination retired into Settings > Tools & MCP;
     # ctrl+9 survives as the same shape of compatibility deep-link.
     assert bindings["ctrl+9"] == "settings_tools_hub"
     posted.clear()

@@ -1156,7 +1156,7 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
             "MCPServerMutationsPanel",
             "DEFAULT_CSS",
         ),
-        # ADR-233: the pane's mode-chip styling must load under ANY host app
+        # ADR-237: the pane's mode-chip styling must load under ANY host app
         # (destination-shell harnesses mount it with no CSS_PATH, so the app
         # bundle is absent; it also uses raw $surface/$text tokens that the
         # $ds-* aliases only define once the bundle loads). Reviewed

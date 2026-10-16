@@ -396,7 +396,7 @@ class TestTabNavigationProvider:
         assert any("Console" in name for name in tab_names)
         assert any("Library" in name for name in tab_names)
         assert any("Artifacts" in name for name in tab_names)
-        # ADR-233: the retired MCP destination's popular slot is now a
+        # ADR-237: the retired MCP destination's popular slot is now a
         # Settings > Tools & MCP deep-link -- a second "Switch to Settings"
         # entry beside the Settings destination's own.
         assert sum("Switch to Settings" in name for name in tab_names) == 2
@@ -513,7 +513,7 @@ class TestTabNavigationProvider:
             "Watchlists",
             "Schedules",
             "Workflows",
-            # ADR-233: the MCP destination retired into Settings > Tools &
+            # ADR-237: the MCP destination retired into Settings > Tools &
             # MCP; "mcp" is a Settings alias term, not a labeled command.
             "ACP",
             "Lab",
@@ -602,7 +602,7 @@ class TestTabNavigationProvider:
             ("logs", "Tab Navigation: Switch to Logs"),
             ("stats", "Tab Navigation: Switch to Settings"),
             ("media", "Tab Navigation: Switch to Library"),
-            # ADR-233: the MCP destination's route ids are Settings palette
+            # ADR-237: the MCP destination's route ids are Settings palette
             # alias terms now ("tools_settings" remains a route alias, just
             # not a labeled palette command).
             ("tools", "Tab Navigation: Switch to Settings"),

@@ -3,6 +3,7 @@
 import asyncio
 import shutil
 import subprocess
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -305,7 +306,18 @@ def test_returning_user_initial_route_preserves_configured_default(configured_ro
 def test_startup_route_validation_accepts_shell_and_legacy_defaults():
     app = _build_test_app()
 
-    for route in ["home", "library", "settings", "notes"]:
+    # "mcp"/"tools_settings": the retired MCP destination's legacy aliases
+    # stay valid startup defaults (ADR-237) -- they resolve to Settings via
+    # the registry alias and carry the {"category": "tools"} default
+    # context (see test_boot_with_mcp_default_tab_lands_on_settings_tools_hub).
+    for route in [
+        "home",
+        "library",
+        "settings",
+        "notes",
+        "tools_settings",
+        "mcp",
+    ]:
         assert app._normalize_initial_tab_from_config(route) == route
 
 
@@ -4714,6 +4726,44 @@ async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_s
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
+    """ADR-237 compat: booting with ``default_tab = "mcp"`` must land on
+    Settings with the Tools & MCP category active. The retired MCP
+    destination's alias carries the same boot-time default-context promise
+    as the Library aliases above (``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``
+    supplies ``{"category": "tools"}``), mirroring
+    ``test_boot_with_search_default_tab_lands_on_library_rag_canvas``
+    except that it drives the real app -- hence the private-profile marker
+    (the sandbox's pre-existing RecoveryRequired bootstrap signature blocks
+    real-app construction outside a private profile, see
+    baseline-failures.txt).
+    """
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
+
+    app = _build_test_app(configured_default="mcp")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        # The search/prompts siblings above poll 150 x 0.02 s; a private
+        # profile boots the real app from a cold profile directory, which
+        # takes longer than that fixed loop -- wait on a deadline instead.
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "SettingsScreen" and app.screen.query(
+                "#settings-tools-hub"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "SettingsScreen"
+        settings = app.screen
+        assert settings.active_category == SettingsCategoryId.TOOLS.value
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        assert pane.workbench is not None
 
 
 @pytest.mark.asyncio

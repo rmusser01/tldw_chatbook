@@ -87,7 +87,7 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         category = SettingsCategoryId(category_value)
         shortcuts = screen._category_footer_shortcuts(category)
         if category is SettingsCategoryId.TOOLS:
-            # ADR-233 (task-35150): TOOLS & MCP runs the hub's own per-mode
+            # ADR-237 (task-35150): TOOLS & MCP runs the hub's own per-mode
             # key model (1-4/a/r everywhere, t in Tools mode, space in
             # Permissions) instead of the s/r/t draft verbs, so the generic
             # verb assertions below do not apply. Unmounted (no pane), the
@@ -584,7 +584,7 @@ async def test_advertised_capabilities_match_real_action_branches():
     * ``t``: the "No test action is available" stub toast must fire IFF the
       category is NOT in TESTABLE_SETTINGS_CATEGORIES. Adding a test
       branch (or deleting one) without updating the frozenset goes red.
-      TOOLS & MCP (ADR-233, task-35150) is the one carve-out: its ``t``
+      TOOLS & MCP (ADR-237, task-35150) is the one carve-out: its ``t``
       drives the hub pane's Test Tool flow instead of the stub, pinned in
       test_settings_tools_hub.py.
     * ``s``: probed in CLEAN state only, so nothing is ever written -- every
@@ -619,7 +619,7 @@ async def test_advertised_capabilities_match_real_action_branches():
             test_stubbed = any(_TEST_STUB_TOAST in toast for toast in toasts)
             testable = category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
             if category is SettingsCategoryId.TOOLS:
-                # ADR-233 (task-35150): TOOLS `t` dispatches to the hub
+                # ADR-237 (task-35150): TOOLS `t` dispatches to the hub
                 # pane's Test Tool flow (pinned in
                 # test_settings_tools_hub.py) instead of the stub toast,
                 # so the frozenset contract does not model this category.
