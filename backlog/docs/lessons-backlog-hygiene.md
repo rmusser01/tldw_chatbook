@@ -1360,3 +1360,24 @@ Archive the actual output before postchecking. Treat a successful or uncertain
 mutation as already attempted: inspect the task before retrying, compare the
 exact plan append and metadata values, and preserve any formatting recovery as
 a separate snapshot. A failed postcheck is not authorization to append twice.
+
+## "Next free task id" races dev's minting — allocate with a lead buffer (PRs #3083/#3119, 2026-10-14/15)
+
+**Incident.** Four consecutive merge-queue evictions on the UI-perf PRs, all
+from the same move: file tasks at "next free id", then get evicted by the
+`Backlog task IDs are unique` required check because dev minted the same ids
+before the PR landed. The chain: 34948-34952 renumbered to next-free
+34953-34967 -> 34949-34951 collided (dev's round-5 filings) -> renumbered to
+34968-34983 -> 34991/34992 collided -> renumbered to 35026/35027 -> collided
+again 94 minutes after that push. dev mints ids continuously across active
+sessions (~2/hour over that window), so a queue-bound branch races the minting
+from the moment it files a task. The allocation that finally survived used a
++30 lead (35058/35059) — roughly 15 hours of headroom at the observed rate.
+
+**What to do.** Never eyeball `ls backlog/tasks/` for a free id on a branch
+that will ride the merge queue. Allocate with a lead buffer:
+`python scripts/next_backlog_task_ids.py N [--buffer B]` (TASK-35131) scans
+all three id-resolving directories (`tasks/`, `completed/`,
+`archive/tasks/` — archiving does not free an id) and prints N ids starting
+at max+30. If allocating by hand, the same lead applies: max across ALL three
+directories, plus 30.
