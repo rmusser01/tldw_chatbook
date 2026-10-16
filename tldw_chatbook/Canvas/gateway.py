@@ -465,7 +465,24 @@ class _ServedBridgeReceipt:
 class ServedCanvasControlHandler:
     """Translate private wire requests into one child-owned Canvas authority."""
 
-    def __init__(self, *, preparation_ttl_seconds: float = 300.0) -> None:
+    def __init__(
+        self,
+        *,
+        preparation_ttl_seconds: float = 300.0,
+        relay_decide: Callable[[str, Mapping[str, str]], Any] | None = None,
+    ) -> None:
+        """Bind the handler's translation surfaces.
+
+        Args:
+            preparation_ttl_seconds: Bridge preparation lifetime bound.
+            relay_decide: ADR-236 phone→desktop decision resolver —
+                ``relay_decide(round_id, decisions)`` applies one phone
+                decision on this child's Console controller and returns a
+                truthy value when the round was armed and resolved (the
+                app wires this to the app-owned controller's
+                ``resolve_pending_approval``; ``None`` keeps the branch
+                answering ``delivered: false``). May be sync or async.
+        """
         if (
             isinstance(preparation_ttl_seconds, bool)
             or not isinstance(preparation_ttl_seconds, (int, float))
@@ -478,6 +495,7 @@ class ServedCanvasControlHandler:
         self._prepared: dict[str, _ServedPreparedBridge] = {}
         self._receipts: OrderedDict[str, _ServedBridgeReceipt] = OrderedDict()
         self._preparation_ttl_seconds = float(preparation_ttl_seconds)
+        self._relay_decide = relay_decide
 
     def _clear_prepared(self) -> None:
         for prepared in self._prepared.values():
@@ -576,6 +594,45 @@ class ServedCanvasControlHandler:
         if request.message_type == "shutdown.request":
             self.clear()
             return self._response(request, "shutdown.response", {"status": "closed"})
+        if request.message_type == "relay.decide.request":
+            # ADR-236 phone→desktop decision routing. No canvas scope is
+            # involved, so this branch deliberately precedes the scope
+            # lookup: an unbound handler still answers relay decisions.
+            # The answer is ALWAYS a relay.decide.response — never an
+            # error frame — so the parent's fail-closed path (drop the
+            # round, deny-side governs) is the only failure mode.
+            round_id = request.payload.get("round_id")
+            decisions = request.payload.get("decisions")
+            delivered = False
+            resolver = self._relay_decide
+            if (
+                resolver is not None
+                and isinstance(round_id, str)
+                and bool(round_id)
+                and isinstance(decisions, Mapping)
+            ):
+                try:
+                    delivered = bool(
+                        await _maybe_await(
+                            resolver(
+                                round_id,
+                                {
+                                    key: str(value)
+                                    for key, value in decisions.items()
+                                },
+                            )
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - never an error frame
+                    delivered = False
+            return self._response(
+                request,
+                "relay.decide.response",
+                {
+                    "round_id": round_id if isinstance(round_id, str) else "",
+                    "delivered": delivered,
+                },
+            )
 
         authority, scope = self._current()
         if request.message_type == "scope.snapshot.request":

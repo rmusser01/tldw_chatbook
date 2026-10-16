@@ -37,6 +37,7 @@ re-typing the long token constantly.
   accepted for a single-operator deployment.
 - Loopback auto-login, login rate limiting, TLS/proxy fail-closed rules,
   SameSite=Strict + CSRF posture, and the session capacity cap are unchanged.
+- Amended by ADR-235 (passkey login).
 
 ## Alternatives considered
 

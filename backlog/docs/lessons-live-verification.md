@@ -4036,3 +4036,39 @@ loop with the command that turns the switch back (or set a `trap ... EXIT`),
 and give the loop a hard deadline. The same goes for anything disarmed,
 disabled or paused "temporarily". A restore that depends on the agent coming
 back is not a restore. Tell the owner the deadline before flipping the switch.
+
+
+## A launcher that seeds a served service with asyncio.run() before serve() drops approvals on a dead loop (TASK-35030, 2026-10-15)
+
+**Incident.** The /m live check (task 35030.6) seeded `MobileChatService`
+state with `asyncio.run(service.create_session(...))` before
+`server.serve()`. `asyncio.run` bound the service's captured `_loop` to a
+loop it then destroyed; `_ensure_started` never rebinds a non-None loop, so
+every approval capture (`loop.call_soon_threadsafe(...)`) marshalled onto
+the dead loop and was silently dropped — the run blocked forever at the
+tool boundary and `/approvals` stayed empty while every test passed.
+
+**Rule.** Seed a served service's state from inside the serving loop (an
+`on_startup` wrapper or the first request), never from a separate
+`asyncio.run()` before `serve()`. A service that captures
+`asyncio.get_running_loop()` once is welded to that loop's lifetime; when a
+live check hangs exactly at a thread→loop handoff with no error anywhere,
+look for a destroyed-loop capture first.
+
+## Live-check HOME under /tmp is refused by private-path hardening — use mktemp -d (TASK-35030, 2026-10-15)
+
+**Incident.** The same /m live check redirected the launcher's `HOME` to a
+directory under `/tmp`. The app's private-path hardening refuses any path
+with a sticky world-writable ancestor, so `/tmp`-located HOMEs (and the user
+data they imply) are rejected outright. Redirecting to `mktemp -d` instead —
+which on macOS resolves under `/var/folders/...`, no sticky world-writable
+parent — passed. A first attempt that only `os.environ.setdefault`-ed HOME
+also leaked probe artifacts into the real `~/.local/share/tldw_cli/` because
+the shell's exported `HOME` won; both the leak and the cleanup by timestamp
+cost a round trip.
+
+**Rule.** For a live check that must isolate user state, export `HOME` to a
+fresh `mktemp -d` directory (never a `/tmp/...` literal path — the sticky
+parent trips private-path validation), and export it in the shell so the
+child cannot inherit the real one. Afterwards, diff the real user data dir
+by mtime to confirm nothing leaked.

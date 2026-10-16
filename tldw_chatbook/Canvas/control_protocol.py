@@ -52,6 +52,7 @@ _REQUEST_REPLY = {
     "canvas.events.request": "canvas.events.response",
     "bridge.request": "bridge.response",
     "bridge.decision.request": "bridge.decision.response",
+    "relay.decide.request": "relay.decide.response",
     "health.request": "health.response",
     "shutdown.request": "shutdown.response",
 }
@@ -132,6 +133,17 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"request_id", "status"}),
         frozenset(),
     ),
+    "relay.approval.raised": (
+        frozenset({"round_id", "session_id", "calls", "timeout_seconds"}),
+        frozenset(),
+    ),
+    "relay.approval.cleared": (
+        frozenset({"round_id", "resolution"}),
+        frozenset(),
+    ),
+    "relay.run.status": (frozenset({"session_id", "status"}), frozenset()),
+    "relay.decide.request": (frozenset({"round_id", "decisions"}), frozenset()),
+    "relay.decide.response": (frozenset({"round_id", "delivered"}), frozenset()),
     "health.request": (frozenset(), frozenset()),
     "health.response": (frozenset({"status"}), frozenset()),
     "shutdown.request": (frozenset(), frozenset()),
@@ -139,6 +151,20 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "control.cancel": (frozenset({"request_id"}), frozenset()),
     "control.error": (frozenset({"code"}), frozenset()),
 }
+# Child→parent push frames the broker queues per child alongside canvas
+# activity; anything else a child sends unsolicited stays an error.
+_CHILD_EVENT_TYPES = frozenset(
+    {
+        "canvas.events",
+        "relay.approval.raised",
+        "relay.approval.cleared",
+        "relay.run.status",
+    }
+)
+# The relay subset a child may push through `CanvasControlClient.send_relay_event`
+# (ADR-236). `canvas.events` stays on `send_event`, which derives its request
+# id from the payload's own `event_id`.
+_RELAY_EVENT_TYPES = frozenset(_CHILD_EVENT_TYPES - {"canvas.events"})
 
 
 class ControlProtocolError(RuntimeError):
@@ -241,13 +267,21 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
         "request_id",
         "preparation_nonce",
         "code",
+        "round_id",
+        "resolution",
     }
     nullable_string_fields = {
         "selected_canvas_id",
         "selected_revision_id",
         "after_event_id",
     }
-    mapping_fields = {"render_metadata", "metadata", "request", "presentation"}
+    mapping_fields = {
+        "render_metadata",
+        "metadata",
+        "request",
+        "presentation",
+        "decisions",
+    }
     for key, value in payload.items():
         if key == "runtime_snapshot_id":
             _snapshot_identity(value)
@@ -272,7 +306,7 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
             raise ControlProtocolError("invalid_payload_field")
         if key in mapping_fields and not isinstance(value, Mapping):
             raise ControlProtocolError("invalid_payload_field")
-        if key in {"following", "approved"} and type(value) is not bool:
+        if key in {"following", "approved", "delivered"} and type(value) is not bool:
             raise ControlProtocolError("invalid_payload_field")
         if key in {"events", "canvases"} and not isinstance(value, list):
             raise ControlProtocolError("invalid_payload_field")
@@ -283,6 +317,15 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
         if key == "active_message_ids" and (
             not isinstance(value, list)
             or any(not isinstance(item, str) for item in value)
+        ):
+            raise ControlProtocolError("invalid_payload_field")
+        if key == "calls" and (
+            not isinstance(value, list)
+            or any(not isinstance(item, Mapping) for item in value)
+        ):
+            raise ControlProtocolError("invalid_payload_field")
+        if key == "timeout_seconds" and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
         ):
             raise ControlProtocolError("invalid_payload_field")
 
@@ -649,7 +692,7 @@ class CanvasControlBroker:
             )
             while True:
                 message = await _read_message(reader)
-                if message.message_type == "canvas.events":
+                if message.message_type in _CHILD_EVENT_TYPES:
                     try:
                         state.events.put_nowait(message)
                     except asyncio.QueueFull:
@@ -872,6 +915,38 @@ class CanvasControlClient:
                 CONTROL_PROTOCOL_VERSION,
                 "canvas.events",
                 request_id,
+                None,
+                payload,
+            ),
+        )
+
+    async def send_relay_event(
+        self, message_type: str, payload: Mapping[str, Any]
+    ) -> None:
+        """Push one ADR-236 relay event to the parent over this connection.
+
+        Mirrors :meth:`send_event` (authenticated connection reuse, frame
+        limits) for the ``relay.*`` child→parent event kinds; payload
+        validation rides ``ControlMessage``'s constructor exactly as there.
+        """
+
+        if message_type not in _RELAY_EVENT_TYPES:
+            raise ControlProtocolError("unsupported_relay_type")
+        writer = self._writer
+        if (
+            writer is None
+            or self._reader_task is None
+            or self._reader_task.done()
+            or self._disconnected.is_set()
+        ):
+            raise ControlProtocolError("client_not_connected")
+        await _write_message(
+            writer,
+            self._write_lock,
+            ControlMessage(
+                CONTROL_PROTOCOL_VERSION,
+                message_type,
+                f"relay-{uuid4().hex}",
                 None,
                 payload,
             ),

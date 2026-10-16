@@ -67,6 +67,9 @@ tls_private_key = ""
 trusted_proxy_addresses = []
 # Emergency plaintext development override; keep false for normal use.
 allow_insecure_remote_http = false
+# Phone companion surface at /m (page, REST API, stream). Set false to
+# disable the surface; its routes then 404 as unregistered.
+mobile_surface = true
 ```
 
 `font_size` controls the browser terminal text size in CSS pixels. The default
@@ -128,6 +131,24 @@ multi-user account, filesystem, or database isolation system. Canvas
 capability URLs are narrower: a copied or guessed URL cannot reuse another
 browser session's Canvas authority.
 
+Passkeys (WebAuthn) are an alternative sign-in path. Register one from
+`/auth/devices` with **Add a passkey** (registration routes require an
+authenticated session plus the CSRF token) and sign in from `/auth/login`
+with **Use passkey**; a completed ceremony mints the same persistent
+device session as token login, labelled with a `(passkey)` suffix. The
+WebAuthn relying party is the `public_url` host, and relying-party ids
+must be registrable domains: with the default localhost bind, an unset
+`public_url`, or an IP-literal host, the pages omit the passkey controls,
+`/auth/devices` shows a "Passkeys need a domain origin" notice, and QR
+pairing or token login remain the path. The server stores public key
+material only, in `webauthn_credentials.json` in the user data dir
+(written with mode 0600). Losing or deleting that file logs every passkey
+out — QR/token login still works, and individual credentials can also be
+removed on `/auth/devices`. Each login must advance the credential's
+stored signature counter; a counter regression (a cloned authenticator)
+rejects the assertion. Passkeys need the `fido2` library (`>=2,<3`),
+installed with the `web` extra.
+
 ### Incident response
 
 If a token, browser session, proxy, or served host may be compromised:
@@ -181,6 +202,83 @@ download actions sit outside that generated runtime. See the
 [Canvas user guide](../../Docs/User_Guide/console/canvas.md) and
 [V1 compatibility boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md) and
 [V2 compatibility boundary](../../Docs/Canvas/V2_RUNTIME_COMPATIBILITY.md).
+
+## Mobile companion surface
+
+`/m` is a phone-first companion page for a served Chatbook: chat and
+tool-call approvals for conversations initiated from the phone, plus reading
+of this server run's mobile conversations (conversations are per-server-run
+in v1 — see the limits below). It is not the full served terminal. The
+mobile surface runs its own engine over its own databases under
+`<user data dir>/mobile/`, so it shows only mobile-initiated conversations;
+desktop conversations stay on the desktop surfaces.
+
+Reach it through the **Phone view** link on the login page (shown on narrow
+screens) or at `/m` directly. It uses the same browser sign-in as the rest
+of the served app. `tldw-serve --pair` prints a one-use QR that signs a
+phone in before serving (this requires `public_url`).
+
+**Library tab (Phase 2b).** Next to Chats, a bottom-tab **Library** view
+offers read-only browsing of the main desktop libraries — unlike the chat
+engine, it reads the app's own notes and media databases, not the
+mobile-only data dir. Notes (`GET /api/v1/mobile/notes`, full reader at
+`/notes/{id}`) and media items (`GET /api/v1/mobile/library`, detail with
+transcripts at `/library/{media_id}`) list 50/25 per page with a
+Load-more button. These four GET routes are the surface's only library
+access: no write, create, edit, delete, or ingest path to notes or media
+exists on `/m`, and reading views refresh on open only (no extra
+polling). Everything renders as plain text (`textContent` only), so note
+and transcript bodies are always inert.
+
+**Desktop approval relay (Phase 2c, ADR-236).** When Canvas browser
+delivery is enabled, approval rounds raised by desktop terminal sessions
+(served child Apps) reach `/m`'s approvals inbox alongside mobile-initiated
+ones — each card tagged **desktop** or **phone** — and a decision made on
+the phone routes back over the parent's loopback control broker to the
+owning desktop session, releasing the waiting agent run there. Desktop run
+completions also push to the phone as live cross-surface events (the
+`run_status` event over the existing stream), which resync an open chat and
+refresh the approvals inbox; this is update-level sync, not token-level
+transcript streaming. The relay covers rounds raised for the ACTIVE session
+while its Console view is mounted — the same lifecycle as the desktop
+approval card. Rounds raised while the Console screen is unmounted, and
+rounds for parked background sessions, are not relayed. Fail-closed is the
+rule on every failure: a disconnecting or unresponsive child (2 s routing
+budget) drops its rounds from the phone and the desktop child's own
+timeout/deny semantics govern, and with Canvas disabled the relay is
+entirely inert — no broker exists, and desktop approvals stay invisible on
+the phone (a documented limitation, not an error). The phone's decision
+authority equals the desktop user's: same single operator, riding the
+authenticated mobile API and the child-secret loopback hop.
+
+v1 limits:
+
+- Desktop approvals reach the phone only through the relay above — only
+  while Canvas is enabled and the round's Console view is mounted; every
+  other desktop round (unmounted Console screen, parked background
+  session) waits on the desktop user, exactly as before.
+- Conversations are per-server-run: the sessions list is in-memory, and
+  while message rows persist under `<user data dir>/mobile/`, earlier
+  mobile conversations are not rehydrated after a server restart in v1 —
+  rehydration is a recorded follow-up.
+- Desktop activity reaches the phone at completion level via the relay's
+  run-status pushes; the 12-second/focus-regain polling syncs within
+  mobile-initiated conversations (the isolated mobile databases cannot see
+  desktop conversations). Not live transcript streaming. The phone's own
+  runs do stream over a WebSocket while it is connected.
+- There is no service worker and no offline support; with no connection the
+  page shows the last synced state.
+- REVIEWED run hooks never fire on mobile sends (`ensure_run_hooks` is not
+  wired on this path). Hooks that are unreviewed or fail their configuration
+  check still refuse sends, fail-closed.
+- Approval rounds mount only for the most recently activated session.
+- Conversations created without an explicit workspace (the default) expose
+  no local `fs_*`/`git_*` tools to the agent.
+- `[web_server] mobile_surface = true` (the default) enables the surface.
+  With `false` the page, its assets and manifest, the REST API under
+  `/api/v1/mobile/*`, and the stream all 404 as unregistered routes.
+- A web app manifest and icons are served, so a phone browser's
+  add-to-home-screen installs `/m` as a standalone app.
 
 ## Binary Distribution
 

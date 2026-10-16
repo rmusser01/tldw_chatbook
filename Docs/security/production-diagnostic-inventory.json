@@ -4173,10 +4173,31 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "8a70e814225a166d6068",
+      "call_count": 1,
+      "diagnostic_digest": "98cd396c17feb0ba7e18",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/mobile_api.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 31,
+      "diagnostic_digest": "3d14d33288e7692ecdd7",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/mobile_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 14,
+      "diagnostic_digest": "21ef7e40e128c1135885",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/serve.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 6,
+      "diagnostic_digest": "1d50037687d77d447205",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/served_relay_publisher.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -4184,6 +4205,20 @@
       "diagnostic_digest": "dceb7c082d5c8d5039a5",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/session_store.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 9,
+      "diagnostic_digest": "0006a334de1e902de77d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/webauthn_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "d7c160715fe9f0ff572b",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Web_Server/webauthn_store.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10899,6 +10934,38 @@
         }
       ],
       "path": "tldw_chatbook/Web_Scraping/Article_Scraper/importers.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "4fac6a95cc27042e",
+          "method": "info",
+          "path_expressions": [
+            "self._data_dir"
+          ],
+          "scope": "MobileChatService._build_engine",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "071f58ddfab5b11e",
+          "method": "info",
+          "path_expressions": [
+            "notes_path"
+          ],
+          "scope": "MobileChatService._ensure_reading_dbs",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "0a06eb12cff6d466",
+          "method": "info",
+          "path_expressions": [
+            "media_path"
+          ],
+          "scope": "MobileChatService._ensure_reading_dbs",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Web_Server/mobile_service.py"
     },
     {
       "candidates": [
