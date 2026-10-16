@@ -57,6 +57,7 @@ from ..css.Themes.themes import (
 from ..Utils.input_validation import escape_markup
 from ..Utils.path_validation import validate_browsing_path, validate_filename
 from .confirmation_dialog import ConfirmationDialog
+from .state_checkbox import StateCheckbox
 from .theme_preview import ThemePreview
 
 #: TASK-32942: shown in the picker while backup/recovery holds the theme files.
@@ -350,7 +351,7 @@ class SettingsThemeEditor(Vertical):
             yield Static("Dark theme", classes="settings-input-label")
             # TASK-31254: the label carries the state in text ("On"/"Off") so
             # colour is never the only carrier.
-            yield Checkbox("On", value=True, id="settings-theme-dark-mode")
+            yield StateCheckbox("On", value=True, id="settings-theme-dark-mode")
 
     def _compose_palette_section(self) -> ComposeResult:
         yield Static("Color Palette", classes="destination-section")
@@ -406,7 +407,7 @@ class SettingsThemeEditor(Vertical):
         # (INSTANT_APPLY_BEHAVIOR_COPY in UI/Screens/settings_screen.py -- the
         # widget must not import the screen).
         yield Static(
-            "Try previews this palette now - no Save needed; Save stores the theme file.",
+            "Try previews this palette now · no Save needed; Save stores the theme file.",
             id="settings-theme-apply-hint",
             classes="settings-help-copy",
         )

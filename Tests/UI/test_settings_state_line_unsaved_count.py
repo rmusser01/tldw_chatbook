@@ -191,7 +191,9 @@ async def test_categories_without_a_draft_keep_todays_badge(request) -> None:
         SettingsCategoryId.WORKSPACES: "Applies immediately",
         SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
-        SettingsCategoryId.CONSOLE_BEHAVIOR: "Draft — save with s",
+        # Capture finding 3 (TASK-33007), rewritten on purpose: at rest a
+        # draft category says it holds no changes, not "Draft".
+        SettingsCategoryId.CONSOLE_BEHAVIOR: "No changes · edits save with s",
     }
     for category, badge in expected.items():
         text = screen._category_state_banner_text(category)
@@ -255,6 +257,6 @@ async def test_dirty_state_line_renders_without_a_new_row_at_211x44(request) -> 
         runs.value = saved_runs
         await pilot.pause()
         assert _static_text(banner) == (
-            "State: Draft — save with s | "
+            "State: No changes · edits save with s | "
             "Changes affect global Console fallbacks after save."
         )

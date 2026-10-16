@@ -68,7 +68,7 @@ you touch them; some are read-only and point you elsewhere.
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls stay in MCP and ACP". |
 | **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. The row with keyboard focus also shows a thick bar at its left edge, in the theme's primary text colour. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
-| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme picker** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows, one after another with no blank line between them. "▼ more — scroll the inspector" appears when there is more below. Focusing a field scrolls the inspector to that field's whole Focused field guide, and resizing the window keeps the guide in view. From 134 columns wide the inspector is at least 36 columns (below about 186 columns the detail pane gives up the width); on a narrower window the detail pane keeps its width first, and at 100 columns or fewer the inspector is hidden. |
+| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme picker** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows, one after another with no blank line between them (Providers & Models has no "Owns" row: each field's config key is in its **config key** disclosure). "▼ more — scroll the inspector" appears when there is more below, "▲ more above — scroll the inspector" when the rest is above, and "▲ more above · ▼ more below" for both. Focusing a field scrolls the inspector no further than it takes to show that field's whole Focused field guide, heading included, so the sections above it (on Providers & Models, **Applies to** and **Next new chat will use**) stay in view when they fit; resizing the window or a **Revert** does the same, so the inspector starts at its top or at a heading, never in the middle of a section. From 134 columns wide the inspector is at least 36 columns (below about 186 columns the detail pane gives up the width); on a narrower window the detail pane keeps its width first, and at 100 columns or fewer the inspector is hidden. |
 | **Footer** | This category's live shortcut hints (see [Keyboard & commands](#keyboard--commands)). |
 
 Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
@@ -98,7 +98,9 @@ Appearance.
 ![A draft category with unsaved changes](images/settings/console-draft.svg)
 
 The State banner reads "State: \<badge\> | \<what saving affects\>". Unsaved
-edits keep the badge and add a count. Above, Console Behavior has one edited
+edits keep the badge and add a count. A **Draft — save with s** category with
+nothing unsaved reads "State: No changes · edits save with s | …" instead, as
+the Scope Inspector's "No unsaved changes" does. Above, Console Behavior has one edited
 field, so it reads "State: Draft — save with s · 1 unsaved · revert with r |
 Changes affect global Console fallbacks after save." and the Scope
 Inspector's buttons lose their "— no changes" suffix. The count is the number
@@ -126,7 +128,14 @@ you when you leave a category or the screen with unsaved edits — the **\*** in
 the rail is how you find it again. (Two exceptions: switching the
 active RAG profile prompts — see [RAG defaults](settings/rag.md) — and leaving
 Speech & TTS with edits raises its own save/discard dialog instead of keeping
-the draft; see that section and Quirks.) A draft that fails
+the draft; see that section and Quirks.) Quitting is different: **Ctrl+Q**
+on Settings with unsaved changes asks "Quit and discard unsaved Settings
+changes?" and names the categories that hold them; **Keep editing** stays,
+**Discard and quit** quits (with unsaved theme edits too, the theme's own
+Save / Discard / Stay prompt asks after it). Quitting from another screen
+asks the same question about a draft you left in Settings; there **Keep
+editing** takes you back to Settings, draft and all, or, when you quit from
+an open dialog, leaves you in that dialog. A draft that fails
 validation keeps its badge and count and names the problem — "State: Draft —
 save with s · 1 unsaved | Needs correction: \<the problem\>" — and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and
@@ -229,26 +238,32 @@ The biggest page, and where to start.
 
 | Group | What's in it |
 |---|---|
-| **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, whose highlighted row is a solid bar in the theme's primary text colour, plus "Manual / custom provider", under the same display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and old names still work as typed provider IDs), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
-| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. For **Anthropic** a **Sign in with** select comes first: **API key** or **Claude subscription**. The subscription uses the credential Claude Code already holds (the macOS Keychain, or `~/.claude/.credentials.json`); Chatbook reads it, never stores or refreshes it, and requests bill your Claude plan rather than API credits. While it is chosen, **API key** and **Env var** stay visible but disabled, so switching back loses nothing, and the status line reads "Checking Claude subscription credential…" and then "Credential source: Claude subscription (not verified)", or says the credential is missing or expired and to log in with Claude Code. It follows the choice as soon as you make it, before Save. Like any field here it is an unsaved edit until **Save**. |
-| **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
-| **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
-| **Session summary on quit** | **Show session usage summary when quitting** and **Summary duration (seconds)** (1–30, default 3). These **write immediately**. When enabled, confirming a quit (Ctrl+Q) briefly shows total session tokens and elapsed session time before the app exits; any key skips it. Off by default. |
-| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text, and focusing one shows its plain-language help and range in the inspector. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity."). For llama.cpp and other strict local templates the **Reasoning effort** list leaves out levels the request would drop, such as "minimal"; a value saved before stays selected as "minimal (not supported here)" until you change it. Global fallbacks live under Console Behavior. |
+| **Connect** | One row per fact, each with a **Source** word and a one-line help. **Provider** is one row and one Tab stop: it shows the chosen provider (Source word **new-chat default** for the saved one, **edited \*** until you save another, **not set** when none is saved; when a link from another screen opens this form on a provider that is not your saved default, the row reads **not the default** — Save does not write it yet — and **edited \*** once you change the model, API key, Env var or Endpoint, because Save then makes that provider the default; an edit such as **Sign in with**, **API mode** or a model default is saved for that provider and leaves your default alone), and typing in it filters the list that opens under it by display name or ID (Up/Down move, **Enter** chooses or a click on a row does, and a name or ID typed in full is highlighted first, so **OpenAI** then **Enter** is OpenAI, not Azure OpenAI; a legacy alias is highlighted first only by its full name, so **mistral** then **Enter** is Mistral AI even while you are on the alias; short of a full name, a provider whose name or ID *starts* with what you typed is highlighted ahead of one that only contains it, so **llama** then **Enter** is llama.cpp, not Ollama Cloud listed above it, and the provider you are on is preferred when it starts that way too; the chosen name is then selected, so the next key filters afresh; **Esc** keeps the current provider and leaves the field, so **s**, **r** and **t** work next). The list leads with **Configured** providers (a key saved in config or set in your shell, or an endpoint you changed), then Cloud and Local, with Custom & legacy aliases last; at rest the row's help counts them, as in "3 of 60 configured · listed first" (or "none of 60 configured yet"). It uses the display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and stay selectable — and ends with **Enter provider ID**, which opens **Manual** for a custom key. For **Anthropic** a **Sign in with** row comes just above it: **API key** or **Claude subscription**. Like the other rows it has a Source word (**built-in**, **saved in config** once saved, **edited \*** until you save) and a one-line help that says what the choice bills: "bills API credits through your key" or "bills your Claude plan, not API credits"; the Inspector's guide gives the rest while the row has focus. The subscription uses the credential Claude Code already holds (the macOS Keychain, or `~/.claude/.credentials.json`); Chatbook reads it, never stores or refreshes it, and requests bill your Claude plan rather than API credits. While it is chosen, **API key** and **Env var** stay visible but disabled, so switching back loses nothing: Env var's Source word reads **not used**, and the API key row's reads **subscription** beside "checking the Claude Code login…" and then "Claude Code login · not verified", or "expired · log in with Claude Code" or "missing · log in with Claude Code". It follows the choice as soon as you make it, before Save; like any field here it is an unsaved edit until **Save**. **API key** is masked and says where the key comes from: **saved in config**, **from env var**, or **missing** (**edited \*** or **cleared \*** until you save); it reads **not required** for a provider that needs no key ("this provider needs no key"), **invalid** when the provider's saved settings are not valid ("repair it in Advanced Config") or when what you are typing in **Env var** is not a variable's name ("Env var is not a variable's name" — letters, digits and underscores, not starting with a digit; a name being typed decides, so correcting a saved one clears the word at once), and **this endpoint** for a custom endpoint; the empty field reads "Paste to replace" over a saved key and "Paste API key" without one; for Azure, Cloudflare and Databricks it says so even before their base URL is set, and such a provider is already **Configured**. Emptying the field is not an edit: it keeps the saved key, and only **Clear** removes one. **Clear** removes a saved key and shows only while there is a key to clear (a saved one, or one you are typing): click it, or press **Ctrl+L** in the API key field (if tmux or your terminal keeps Ctrl+L for itself the key never arrives, so click). While a key is saved the row's help names the key that clears it, "hidden · ctrl+l clears the saved key": **Ctrl+L** works only with the cursor in the API key field. **t** belongs to the Key check row (**Test (t)**) and, like **s** and **r**, works only once **Esc** has released the field. Clearing is an unsaved edit like any other: the row reads **cleared \*** and "s removes the saved key" until **s** saves it, and **r** (after its confirmation) puts the key back. When a key is saved and the env var is set too, the saved key is the one used; the Inspector's guide says so while the API key field has focus. **Env var** holds the variable's *name*, never the key ("safer: a variable's name, never the key", or "optional · a variable's name, not a key" for a provider that needs no key; the field is not masked, so other rows repeat only a name written in upper case, like `OPENAI_API_KEY`, and call anything else — a pasted key included — "that variable"), and says whether that variable is **set in shell** — it holds a usable key — or **not set** (**not used** for a provider that reads no variable, **edited \*** until you save). Typing a name there over a saved key means Save will drop the saved key for the variable: the API key row then reads **cleared \*** with "s removes the saved key · Env var used". A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. **Endpoint** (**saved in config**, **built-in**, or **not set** where a URL is required) is checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." A local server needs its base URL ("required: the server's base URL"), and Azure, Cloudflare and Databricks ship no default either, so their row says "required: your resource host", "required: your account URL" or "required: your workspace host"; once the field holds an address the help says only what it is ("the server's base URL", "your resource host") — without it the **Key check** reads "Not ready · no endpoint". While Endpoint has focus the Inspector's guide says the same, as in "Validation: an http:// or https:// address; required: your resource host" (a provider with a default URL reads "… address when set"). Connect ends in one **Key check** row: this provider's readiness word, in the Console's words ("Ready · not tested", "Ready · verified 14:01", "Not ready · no key"), and **Test (t)**. **Tab** walks Provider, API key, Env var, Endpoint and then Model. **Clear** and **Test (t)** are actions that Tab skips, because a key runs each (**Ctrl+L** in the API key field, and **t**). For a cloud provider chosen from the list, Model is at most five presses from Provider — including the one extra stop Anthropic (**Sign in with**, before API key) and QwenCloud (**API mode**, after Endpoint) each add. OpenAI adds one only while a connection restored from a backup awaits review: a **Connection** row after Endpoint (Source word **restored**, "requests wait until you review it") whose **Review** button opens the review, which the Inspector's guide explains while it has focus. Once a review is recorded the row goes; a profile that restored nothing never shows it. The budget of five is for the card at rest: once **Enter provider ID** has opened **Manual**'s provider ID box (after Provider), that box is a stop of its own, so with it open Anthropic's chain to Model is six presses. The buttons shown while a return to Chat settings is pending, such as **Return without saving**, come after the Default model's **Applies to** row, so they are never stops between Provider and Model. |
+| **Default model for new chats** | **Model** is a searchable list of this provider's models, with its Source word (**new-chat default**, **edited \*** until you save a change, **not set** when no model is saved, **not the default** when a link opens the form on a model that is not your saved default). Focus it (or type) and the list opens under it, grouped by where each ID came from — **Served now** (what **Discover models** just listed, also an ID the catalog or your saved list holds too), **Current catalog**, **Saved fallback** — with the saved default marked **● CURRENT** and highlighted. Focusing the field (Tab, a click, or coming back to the terminal window) selects the whole ID, so typing replaces it (back from another window, a Custom ID you were typing keeps its cursor); like **Provider**, a long ID reads from its first character. Typing narrows the list, and its status line counts the matches ("2 found · Enter picks · Esc cancels"); the first match is highlighted (or the ID typed in full, when one matches), so **Enter** chooses it, and **Down** moves into the list to choose another. The chosen ID is then selected, so the next key searches afresh. Choosing a model stages it as the default for new chats even when one is already set (save with **s**); it does not add the model to the provider's saved list — only **Save selected** does that. For an ID no list holds, press **Custom ID** (shown while the field has focus) and type it; it must be one line of at most 256 characters. **Esc** drops an unfinished search, keeps a typed Custom ID, and leaves the field. An ID that is not valid is never kept: leaving the field puts the previous model back and says so. Changing the provider switches the list to that provider and stages its own default model. Under Model, **Applies to** says in one row who the choice reaches: "new chats;", then the open Console chat by name and the provider · model it will use — "open chat “Chat 1” is unused and will use OpenAI · gpt-4.1." when it has no messages and no edited settings, "open chat “Refactor plan” keeps Ollama · qwen3:32b." when it holds work, or "no Console chat is open." (which new chats — Ctrl+T, temporary and workspace chats — is in the Inspector). While no model is chosen the pair says so, as in "llama.cpp · no model", here and in the Model defaults title. A row too long for one line breaks before the provider · model, never inside it. |
+| **Model defaults · \<provider\> · \<model\>** (open) | The per-model overrides for the default model above, saved under that provider + model only; changing the default model re-titles the section and shows that model's values. Each field is one row: its label, a one-row control, a **Source** word and one help line. Core rows come first — **Temperature**, **Max tokens**, **Streaming** (**Inherit** / **On** / **Off**), then **Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking** and **Thinking budget** only when the provider accepts them. A set field reads **model default** (**edited \*** until you save) beside what the field does, in a line short enough to show whole at full screen ("Lower stays focused; higher is more varied."); a blank one names the layer it inherits from as its Source word and the value in its help, such as **Console Behavior** "inherits 1.0", **built-in** "inherits 0.95", or "the provider decides" when nothing below sets it, so nothing is sent. A placeholder only states a range or unit ("0.0 - 2.0", "tokens"); Temperature's is the provider's own, so Anthropic's reads "0.0 - 1.0", and Save refuses a value outside it. **Top P**, **Min P**, **Top K**, **Seed**, **Presence penalty** and **Frequency penalty** sit in one closed **Sampling** row whose title says their state — "Sampling · Top P 0.9", "Sampling · all inherit" — and the fields the provider does not accept, the same line Chat settings prints: named when they fit in one row, otherwise counted ("Anthropic does not accept 7 fields (open to list them)") and listed when you open it ("Anthropic does not accept: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity."). Those fields are hidden, not greyed. For llama.cpp and other strict local templates the **Reasoning effort** list leaves out levels the request would drop, such as "minimal"; a value saved before stays selected as "minimal (not supported here)" until you change it. Values are read the way a new chat reads them: a hand-edited `streaming = "0"` shows **Off**, and a value a new chat ignores (such as `top_k = 2.5` or `min_p = "abc"`) shows blank with what the row inherits instead. A saved choice the list has no option for (a hand-edited `reasoning_effort = "High"`) shows blank but reads **model default** with "saved 'High' is not a choice", because a new chat still reads it. Picking an option replaces it; to stop overriding it, pick an option, then the blank **Inherit**, and save. A hand-edited value its field refuses, such as `seed = -1` or `temperature = 3.0`, shows as saved and reads **model default**. Save changes only the rows you edit: every other row, including one that shows blank or a value its field refuses, stays exactly as saved, and Save refuses only a value you type that its field does not accept, such as one out of range or not a number. A negative whole number can be deleted with Backspace. Global fallbacks live under Console Behavior. |
+| **Advanced** | Six closed one-row disclosures, each titled with its state; **Enter** or a click opens one in place, and **/** search opens the one it lands in. **Context window** — "200,000 tokens · detected, no override", "… · override set", or "… · edited \*" before you save: the model's total token capacity. Opened, it is one row like Model defaults' rows: the field, a Source word — **detected**, **saved in config** for an override, **edited \*** until you save, or **not set** while nothing is known — and one help line; an unknown window's help names the size the Console assumes, as in "unknown, 32,000 assumed · budgets use it until set", and a field you empty reads "required for Automatic conversation budgets". **Reset to detected** sits in that row and is hidden while the window is unknown; pressed over an override with nothing detected it empties the field, and the row and the title ("unknown · edited \*") both mark the edit until you save. With no model chosen the title reads "Context window · choose a model first". For a model no catalog knows the title reads "unknown, 32,000 assumed · enter the model's documented limit": the Console's fallback, which Chat settings names the same way, and which is never saved for you. A server that reports its own window (llama.cpp, Ollama, vLLM, the other local servers and Custom OpenAI-compatible, or a named custom endpoint of one of those kinds) gets no assumed size here: its row and title read "unknown here · the Console reads it from the server". **Saved model list** — "12 saved in config · 41 discovered, 29 not saved · 2 selected": **Discover models** queries the endpoint, **Save selected** keeps the ones you select, **Clear** drops the discovered list; each discovered row starts with **selected** or **not selected** and says **saved** or **not saved**. Under the list a line names the saved models it does not show: all of them before a discovery ("Saved: …"), then those the server does not serve ("Saved, not served now: mistral-7b-instruct-q5"). A discovery reports once: a successful one in a toast such as "Discovered 3 models from llama.cpp." (the title counts what it found), a failed one on the line above **Discover models**, with the reason. **Catalog refresh** — "applies immediately · startup refresh On · every 24 h · 29 of 30 providers": **Refresh on startup**, **Refresh after (hours)**, and one row per provider whose **refresh** and **save to config** boxes end in **On** or **Off**. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch; while **Refresh on startup** is **Off** the title and a line under it say the per-provider choices are not in effect. **Session summary on quit** — "applies immediately · Off" or "… · On · 3 s": **Show session usage summary when quitting** and **Duration (seconds)** (1–30, default 3). Neither is part of the draft: the checkbox **writes immediately**, and the duration is saved when you press **Enter** in it or leave the field, which then shows the value that was saved (99 becomes 30); when on, confirming a quit (Ctrl+Q) briefly shows the session's total tokens and elapsed time before the app exits, and any key skips it. **Custom endpoints** — "no named endpoints · applies immediately" or "2 named endpoints · …" (see [Custom endpoints](#custom-endpoints)). **Prompt-cache snapshots** — "llama.cpp only · Off" or "… · On · keep 20": enable and keep count, saved with the category's **s** / **r**; enable/disable applies on the next launch. Each disclosure stays open or closed as you left it while you move between Settings categories. |
 
-Use **Tab** to reach the discovered-model list, arrow keys to move, and
-**Space** to check a model. Checked rows survive leaving this category and
-returning within Settings. **Save selected** immediately appends those exact
-model IDs to that provider’s saved list. If Model is empty, the first newly
+Open **Saved model list**, then use **Tab** to reach the discovered-model
+list, arrow keys to move, and **Space** to select a model; its row then starts
+with **selected**. Checked rows, and the **Served now** rows in Model,
+survive leaving this category and returning within Settings. **Save selected** immediately appends those exact
+model IDs to that provider’s saved list and reports once, on the line above
+**Discover models**: "Saved 2 discovered models to OpenAI.", "The selected
+models are already saved for OpenAI." when none was new, or why nothing was
+saved ("Select discovered models to save." with none checked). If Model is empty, the first newly
 saved ID fills it as an unsaved draft; an existing Model value is kept.
-**Clear** removes discovered results and their typeahead suggestions, while
-keeping the saved list. A failed save or clear keeps the checked rows for retry.
+**Clear** removes discovered results (and their **Served now** rows in Model),
+while keeping the saved list. A failed save or clear keeps the checked rows for retry.
+A **Save selected** that has started always finishes: pressing **Discover models**
+or **Clear**, or changing provider, meanwhile does not cancel it, and as that
+line is then theirs, its report is a toast that names the provider the save
+was for, such as "OpenAI: Could not save discovered models to the providers list."
 Changing provider, endpoint or credentials clears the old results; a delayed
 operation cannot replace the new form’s results or Model value.
 
-Open **Generation defaults** to edit overrides for the selected provider and
-model. Supported controls remain reachable with **Tab**; unsupported controls
-are hidden. "Supported" is the same answer Console uses: the provider's
+**Model defaults** opens expanded, right under the default model, to edit
+overrides for that provider and model. Supported controls remain reachable
+with **Tab**; unsupported controls are hidden. "Supported" is the same answer Console uses: the provider's
 capability rules (reasoning and thinking follow the model, e.g. a Claude model
 that rejects a fixed thinking budget hides **Thinking budget**) narrowed to the
 fields that provider's request actually sends. A value saved earlier for a
@@ -257,12 +272,21 @@ sent. Searching **/** for a hidden field (say "seed" with Anthropic) opens
 this category and says the field is hidden for this provider and model. Leave
 an override blank and save to remove it and inherit the
 fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
-lets you keep editing or discard the draft. The section remembers whether
-you opened or closed it while moving between Settings categories; resizing or
-editing keeps the active generation field in view.
+lets you keep editing or discard the draft. Model defaults and Sampling
+remember whether you opened or closed them while moving between Settings
+categories; resizing or editing keeps the active generation field in view.
+On this card and on Console Behavior every Select is one row tall, like the
+text fields, with the same thin left edge that thickens on focus. Inside the
+detail pane neither card draws a frame of its own: the pane border is the only
+frame, and each section — Connect, Default model for new chats, Model
+defaults, Advanced — starts with a one-row header. Console Behavior's fields
+sit in one control column, wide enough for its longest choice; its
+free-text fields (Side chat's model and prompt template, Permission
+summaries' Model) and Permission summaries' Provider list take the rest of their row instead. Its disclosures and Permission summaries group draw no box.
+A checkbox on these cards shows ✓ when it is on and an empty box when it is off.
 
-Automatic refresh shows whether changes are saving, saved, or could not be saved.
-If a write fails, your choices remain visible when you leave this category and
+Catalog refresh shows whether changes are saving, saved ("Saved to config."),
+or could not be saved; with nothing changed it says nothing. If a write fails, your choices remain visible when you leave this category and
 return; choose **Retry** after making the config file writable.
 
 **Session summary on quit** is a farewell screen, not a dashboard: after you
@@ -279,8 +303,10 @@ The refresh interval accepts fractional hours; **0** refreshes on every launch.
 Empty, negative, and invalid values explain how to recover without replacing
 the saved interval. Changing these controls does not record startup consent.
 
-**Test Provider** (**t**) checks your current draft before saving, then lists
-the provider's models. Nothing is generated and nothing is saved. A URL-based
+**Test (t)** on the Key check row (click it, or press **t**; Tab skips it,
+as it skips **Clear**) checks your current draft
+before saving, then lists the provider's models. Nothing is generated and
+nothing is saved. A URL-based
 local provider gets a short model-listing probe, sent with the draft's API key
 when it has one (a server started with a key is tested with it, never
 without), and it is listed even before you choose a model, since the list is
@@ -309,7 +335,9 @@ endpoint key that is set, and so does their listing. A missing, placeholder
 or blank key is reported as missing
 and nothing is sent. If the listing cannot run at all (for example while
 Chatbook uses a server), the result says "Key not checked" and records
-nothing. The result leads with a **Readiness** row in the same
+nothing. The result's rows appear in the inspector's **Key** block, under
+what **t** checks, so a result never pushes the card down. The result leads
+with a **Readiness** row, which the Key check row repeats, in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
 \<reason\>", see [Console](console.md); with no model chosen it reads "Not
@@ -332,7 +360,7 @@ names the address the field shows, for example "https://api.openai.com/v1
 (provider default)". A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
 the new probe runs the Endpoint row says "checking the model listing", and
-each fact appears once. If the tested values change, run **Test Provider**
+each fact appears once. If the tested values change, run **Test (t)**
 again. The last result for the saved connection is kept for the rest of the
 session, whichever surface ran it: leave Settings and return, and the rows show
 it, including a **Test connection & list models** run in Chat settings of the
@@ -352,9 +380,29 @@ result and its toast say what the save reaches: "new chats and open chats
 nobody has used yet take them; chats with work keep their own settings (change
 them in Console with Alt+M)". The State line says the same in one row:
 "Applies to new and unused open chats · used chats keep theirs (Console:
-Alt+M)". Focusing the **Provider** search or list shows its Purpose in the
+Alt+M)". Focusing the **Provider** control shows its Purpose in the
 inspector: "Sets the provider new chats start with; open chats nobody has used
 yet follow it."; **Model** reads the same way for the model.
+
+The inspector for this page reads top to bottom:
+
+- **Applies to**: new chats (yes: Ctrl+T, temporary and workspace chats);
+  unused open chats follow the saved default; chats with work keep their own
+  (switch there with **Alt+M**); and the model defaults also reach chats that
+  switch to this model.
+- **Next new chat will use**: the provider · model and the core values
+  ("T 0.7 · max 8192 · stream On") a new chat gets from the saved config. While
+  the page has unsaved edits it names them and adds that they wait for
+  save: "Unsaved: Provider, Model. Edits apply only after save (s)." (choosing
+  another provider clears the model, so it counts as two).
+- **Focused field guide**: the focused field's name, help, commit model and
+  range. Its config key is not printed there: it sits in the closed **config
+  key** disclosure under the guide ("Saved as: …"), together with the
+  endpoint key, the provider catalog, the credential policy, how to enter a
+  provider the catalog lacks, and where sampling fallbacks live. Opening the
+  disclosure keeps describing the field you were on. No open row prints a
+  config key.
+- **Key**: what **t** checks and the last check's rows.
 
 A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
@@ -467,7 +515,7 @@ search the full cached list; the disk cache contains IDs and timestamps only.
 Usage is recorded when returned. **Pricing unknown** means Chatbook has no
 verified rate for that model, not that the call is free.
 
-If Test Provider reports invalid settings, keep exactly one canonical
+If the key check (**t**) reports invalid settings, keep exactly one canonical
 `[api_settings.moonshot]` or `[api_settings.zai]` table, remove normalized
 duplicates, enter a nonblank model and an absolute HTTP(S) base without
 credentials in the URL, then correct timeout/retry/streaming types in
@@ -499,7 +547,7 @@ gateway models that support them. Model-specific pricing is usually
 workspace-configured; unpriced models show **pricing unknown**, which means
 no verified rate, not a free call.
 
-If Test Provider reports invalid settings, keep exactly one canonical
+If the key check (**t**) reports invalid settings, keep exactly one canonical
 `[api_settings.databricks]` table, set the token and an absolute HTTP(S)
 workspace URL without credentials in the URL, then correct
 timeout/retry/streaming types under **Advanced Config**. Test the draft again
@@ -617,7 +665,7 @@ comparison follow the same rules. A few notes:
 - **Kilo Gateway** reports a failure after the reply has started as a
   provider error rather than a cut-off reply.
 
-If Test Provider reports invalid settings, keep exactly one canonical
+If the key check (**t**) reports invalid settings, keep exactly one canonical
 `[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave
 the shipped `api_base_url` unless your account documents a different one.
 Test the draft again before saving.
@@ -793,7 +841,7 @@ settings). **Cancel** leaves config untouched. Because entries are durable confi
 the "Endpoint not saved" block, and conversations using them survive
 restart.
 
-This page's **Custom endpoints** section manages them. Each row reads
+This page's **Custom endpoints** disclosure, under **Advanced**, manages them. Each row reads
 *name · family · safe URL · model count*, with three actions:
 
 | Action | What it does |
@@ -805,28 +853,32 @@ This page's **Custom endpoints** section manages them. Each row reads
 An entry can also be your saved default provider. Settings then names it by
 its display name, and its readiness is the family's readiness plus the
 entry's own `api_key_env` rule. Providers & Models shows the entry's own
-facts, read-only: **Endpoint** is the entry's base URL, **Endpoint key** is
-`custom_endpoints.<slug>.base_url`, and the credential line names where the
-key comes from — **env var `<NAME>` (this endpoint)**, **saved in this
-endpoint**, or **none required by this endpoint** (never the key itself, and
-never the family's own `[api_settings]` key). **Test Provider** checks the
+facts, read-only: **Endpoint** is the entry's base URL, the inspector's
+**config key** disclosure gives its **Endpoint key** as
+`custom_endpoints.<slug>.base_url`, and the API key row reads **this
+endpoint** beside where the key comes from — "env var `<NAME>`", "saved in
+this endpoint", or "none required by this endpoint" (never the key itself,
+and never the family's own `[api_settings]` key). **Test (t)** checks the
 same facts and names the entry's URL. Providers & Models cannot save a named
 endpoint, so its Model, Endpoint, API key, Env var, Context window, Generation
 defaults, and model discovery controls are disabled for one; **Edit this
-endpoint in Custom endpoints** opens the entry's editor below. Picking
+endpoint in Custom endpoints** opens that disclosure with the entry's editor. Picking
 another provider enables those controls again.
 
 If the entry's `api_key_env` is not a valid environment variable name (for
 example `gpu-key`, hand-edited into `config.toml`), the entry stays listed
 but is not ready: Overview reads **Not ready · check settings** and
-the credential line says the endpoint's credential env var name is invalid.
-Fix it with **Edit ▸ Env var** (letters, digits, and underscores, not
-starting with a digit). A stored key on the entry still works meanwhile.
+Providers & Models' API key row reads **this endpoint** with "invalid Env
+var · edit this endpoint". Fix it with **Edit ▸ Env var** (letters, digits,
+and underscores, not starting with a digit). A stored key on the entry still
+works meanwhile. An entry that is not ready for another reason (its variable
+is not set in your shell, say) reads "not ready · Test (t) says why": press
+**t** and the result's **Key** row names what to set.
 
 If the entry the default names no longer exists (for example, it was removed
 from `config.toml` by hand), Overview reads **Not ready · unsupported**
-and Providers & Models reads **Not ready · endpoint not found; choose another
-provider**. Pick another provider, or recreate the endpoint.
+and Providers & Models' API key row reads **this endpoint** with "not found ·
+choose another provider". Pick another provider, or recreate the endpoint.
 
 A hand-edited default that is not a provider id at all — `custom-ep:` with
 no slug, `foo:bar`, or an uppercase `CUSTOM-EP:<slug>` (endpoint ids are
@@ -1216,15 +1268,15 @@ Most controls are drafted. Groups marked **applies immediately** save as you edi
 | **Model thinking presentation** | **Show model thinking** is on by default and applies immediately. Off hides displayable and **Thinking · unavailable** rows only; capture, persistence, replay policy, and token accounting continue unchanged. This is a device-local presentation preference, not a request for hidden chain-of-thought. |
 | **Exchange capture** | Capture future exchanges, optional PII masking, and Safe/Full viewing are separate choices. Use **Apply exchange capture** to save; choosing Full requires **View Full** confirmation. See [trace viewer consent and recovery](console/semantic-trace-capture.md#safe-and-full-are-views-of-one-trace). |
 | **Rail presentation** | **Stack collapsed rail labels** is off by default, so the collapsed handles read **Context ▸** and **Inspector** horizontally. Turn it on to use narrower three-column handles with the letters stacked upright. Save the category, then return to Console to see the new style; no restart is required. |
-| **Status row placement** | An **Above composer**/**Below composer** toggle, above by default: where the Console status-chip row (Provider, Model, Tools, …) sits relative to the composer input. Writes immediately — no save, no draft — and takes effect when you return to Console. |
+| **Status row placement** | A **Status row** choice, **Above composer** or **Below composer**, above by default: where the Console status-chip row (Provider, Model, Tools, …) sits relative to the composer input. Writes immediately — no save, no draft — and takes effect when you return to Console. |
 | **Composer paste handling** | An Enabled/Disabled toggle plus **Threshold (chars)** (1–100000): "Collapse large pasted chunks only when they exceed the threshold." Normal typing stays literal and the message actually sent is unchanged. |
-| **Chat images** | One Enabled/Disabled toggle, off by default: "Render images linked in assistant replies (remote fetch)." and "Off by default: fetching a model-suggested link reveals your IP address to that host." Like Status row placement, **this control writes immediately** — pressing it takes effect at once ("Linked images in replies will now render."), with no save and no draft. |
+| **Chat images** | One **Render linked images** checkbox, off by default: "Render images linked in assistant replies (remote fetch)." and "Applies immediately. Off by default: fetching a model-suggested link reveals your IP address to that host." Like Status row placement, **this control writes immediately** — ticking it takes effect at once ("Linked images saved."), with no save and no draft. |
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
-| **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. Mode, provider and model save immediately; summaries do not decide approvals. |
-| **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, with the same labels, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. Focusing one shows the same help and range in the **Focused field guide** as the Providers & Models inspector, and the setting it is saved as (`chat_defaults.<field>`). |
-| **Local reasoning history** | How much earlier reasoning a local model gets back: **Automatic (recommended)**, **Current exchange**, **All available** or **Off**. **Reasoning replay override** (collapsed) remembers a different choice, and **Native tool support**, for the local model Console is using now; its first line names that provider, model and endpoint, and **Use default** clears the override. |
-| **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Edit summary prompt** opens the matching Internal Prompts entry. |
+| **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. **Provider** is a list of the providers Providers & Models offers, by name (**not set** sends nothing); a saved name the list does not hold stays selected as "\<name\> (not in this list)". Mode, provider and model save immediately; summaries do not decide approvals. |
+| **Global fallback defaults** | **Chat display name** (your speaker label), then the same rows as Providers & Models ▸ **Model defaults**, but app-wide: "Used when no provider+model profile or active Console session overrides them." **Temperature**, **Max tokens** and **Streaming** come first, then the reasoning and thinking controls under their note ("Reasoning and thinking controls are sent only to providers that support them."); **Top P**, **Min P**, **Top K**, **Seed**, **Presence penalty** and **Frequency penalty** sit in a closed one-row **Sampling** disclosure. Its title names the samplers `[chat_defaults]` holds or you have edited ("Sampling · Top P 0.95 · Min P 0.05 · Top K 50"), counts them when the names do not fit one row ("Sampling · 3 set"), and reads "Sampling · none set" when none does. A built-in Top P shown at rest is not counted. Each row shows its value, a word for where it comes from, and one help line. **Console Behavior** means `[chat_defaults]` holds the value. Values are read the way a new chat reads them, so a hand-edited out-of-range Temperature shows as saved, and a value a new chat ignores (for example `streaming = 0`) reads **built-in**. **built-in** means nothing is saved here, so the control shows tldw_chatbook's own value (Streaming **On**, Temperature 0.7, Top P 0.95) and its help line reads "used unless the provider sets its own": a provider's own table outranks a built-in value. On a fresh install, for example, Streaming reads **On** · **built-in** here while a new OpenAI chat streams **Off**, and Model defaults says the same thing: **provider**, "inherits Off". Saving a value here puts it ahead of the provider's. A **built-in** row treats any change as an edit, even one that ends on the value it started with, so to pin Streaming **On** choose **Off**, then **On**, and save; the **Focused field guide** says so while a row reads **built-in**. Settings cannot clear a saved Streaming, Temperature or Top P: to let a provider's own setting come first again, remove the key from `[chat_defaults]` in `config.toml`. **edited \*** marks an unsaved change. A blank optional field reads **provider** with "the provider decides", because nothing is sent; a blank reasoning or thinking choice shows **default**, as in Chat settings, and reads the same. A saved choice the list has no option for (a hand-edited `reasoning_effort = "High"`) also shows blank, but reads **Console Behavior** with "saved 'High' is not a choice": a new chat still reads it, so pick an option to replace it, or pick an option, then the blank **default**, and save to send nothing. Temperature and Top P cannot be blank: a cleared one reads "Required: 0.0 to 2.0." (Top P: "Required: 0.0 to 1.0."), the words Chat settings uses, and Save refuses it with the same range. **Streaming** is an **On**/**Off** choice from the same family as a model default's **Inherit**/**On**/**Off**; a model default left at **Inherit** says what it gets from here, for example **Console Behavior**, "inherits Off". Precedence runs active session, then provider + model profile, then these. Focusing one shows the same help and range in the **Focused field guide** as the Providers & Models inspector. The guide does not print the config key: "Saved as: chat_defaults.\<field\>" sits in the Inspector's closed **config key** disclosure, which also notes that `chat_defaults.streaming` is read before the older `enable_streaming` key and lists every `[chat_defaults]` key this group saves (**Fallbacks**). The card itself carries no config-key prose. |
+| **Local reasoning history** | How much earlier reasoning a local model gets back, on one **Default replay** row: **Automatic (recommended)**, **Current exchange**, **All available** or **Off**. **Reasoning replay override** (collapsed) remembers a different choice in **This model's replay**, and **Native tool support**, for the local model Console is using now; its first line names that provider, model and endpoint, and **Use default** clears the override. With no local model in Console it holds only "Select a local model in Console to set a remembered override." |
+| **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Summary prompt** ▸ **Edit in Internal Prompts…** opens the matching Internal Prompts entry. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
 
 The **Show model thinking** result stays beside its checkbox when you reopen
@@ -1534,7 +1586,7 @@ a note on what would have to exist before Settings could own a default.
 1. **Point the app at a provider and check it works.** Open **Providers &
    Models**, pick your **Provider**, type or discover a **Model**, then fill in
    **Endpoint** for a local server or **API key** (or **Env var**) for a cloud
-   one. Press **Test Provider** *before* saving — it tests your draft. For a
+   one. Press **Test (t)** *before* saving — it tests your draft. For a
    cloud provider it checks the key with one model listing ("Ready · verified
    *HH:MM*"); for a local server it lists its models, so you can pick one even
    before a model is set. Then press **s**: a result for exactly the saved
@@ -1593,6 +1645,7 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 | s | Save this category — only on the seven **Draft — save with s** categories |
 | r | Revert this category — same seven. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
 | t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one. On Providers & Models it lists models without generating: a cloud provider's listing checks the API key, a local server's shows it answers |
+| Ctrl+L | Providers & Models only, and the one key here that works *only* inside a field: with the cursor in **API key** (no **Esc** first), clear the saved key. An unsaved edit until **s**; **r** puts the key back |
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |

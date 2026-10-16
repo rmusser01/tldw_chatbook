@@ -114,6 +114,35 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[canvas-denied]",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
+    # TASK-33007 (review of #3057, ruling C11): the size rows of the three
+    # Settings modules Phase 7 pins ran in no PR lane, so a PR could grow them
+    # unseen. Three node ids (under a second), not the file: it holds rows of
+    # modules this phase does not touch that are red (11 at 37f5e55b5b).
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/providers_models_card.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]",
+    # Ruling C16 (2026-10-12): the review's fix wave added these two non-UI
+    # files and no lane ran them. R3 #15's Source-word resolver (pure, under a
+    # second) and R3 #1, #2, #5-#7's model picker keys (17 bare mounts, ~9 s).
+    "Tests/Chat/test_console_value_layers_skipped_model_defaults.py",
+    "Tests/Widgets/test_model_search_picker_list_keys.py",
+    # Ruling C16 for the capture fix wave (2026-10-13): six tests it added to
+    # files no lane runs (node ids; each under a second, 3 of 3 serial alone).
+    # Capture round 2 finding 1: Make default checks the default it writes.
+    "Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_validates_the_temperature_the_write_saves",
+    "Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one",
+    # Capture finding 11: Temperature's range is the provider's own.
+    "Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own",
+    # Capture findings 9 and 20, round 1 finding 4: the model picker's lists.
+    "Tests/Widgets/test_model_search_picker.py::test_a_saved_model_the_endpoint_serves_is_listed_as_served_now",
+    "Tests/Widgets/test_model_search_picker.py::test_saved_only_list_says_catalog_refresh_is_off_when_it_is",
+    "Tests/Widgets/test_model_search_picker.py::test_an_unreadable_catalog_setting_is_logged_by_type",
+    # Review of #3057, finding 2: the unsaved-work check knows every Settings key.
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_settings_check_knows_every_key_settings_save_state_writes",
+    # Its siblings: the check sees a pipeline voice edit, and the key pin
+    # reads or refuses every way save_state could write a key.
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_speech_pipeline_voice_draft_is_compared",
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_save_state_key_pin_reads_or_refuses_every_way_a_key_is_written",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

@@ -68,6 +68,8 @@ Tests/UI/test_console_session_tab_close.py
 # plus an unrelated flake's timeout, not these 46 s; if a shard nears its
 # cap, add a shard (TASK-34353) rather than drop a P0 entry. The rest of the
 # Console P0 tests run in the console-p0-gate job.
+# (TASK-33007 runs ten: the shard numbers and the multiple-of-the-shard-count
+# placement above describe the four- and six-shard lanes.)
 Tests/UI/test_console_conversation_action_menu.py::test_row_menu_save_md_writes_the_file_and_keeps_the_app_running
 Tests/UI/test_app_keep_alive_dead_screen.py::test_ctrl_q_quits_after_a_screen_handler_error_while_a_modal_is_up
 Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[choose]
@@ -268,3 +270,219 @@ Tests/UI/test_library_dreams_reader.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
+# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 92
+# entries below are this PR's. They sit last, so no earlier entry's shard
+# depends on them, in the order that spreads them most evenly when they are
+# dealt round-robin over ten shards (scripts/ui_lane_shard_replay.py; see
+# check_ui_pr_gate_census.py).
+# Each keeps the comment that names what it pins, which the replay's --write
+# moves with it; the blank line below ends this header, so it stays here.
+# Append new entries after them; one added above them moves every one of them
+# to another shard. Entries that --write will re-order with this block (its
+# --tail counts them too) must not be blank-separated from it or from each other.
+
+# TASK-33007.2: Connect's API key source words and Clear key, the Key check
+# row, an endpoint with no shipped default and the card's result line.
+Tests/UI/test_settings_connect_key_rows.py
+# R2 card note (a2-N2): the Key check verdict reads the credential Save keeps.
+Tests/UI/test_settings_key_check_env_var_draft.py
+# TASK-33007.7 AC#7: a memory save refuses an invalid trigger/target pair (15-28 s).
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair
+# Capture review items 9-11: Console Behavior's one frame, one control column,
+# its labels and its prose inset.
+Tests/UI/test_settings_console_behavior_grammar.py
+# Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
+# TASK-33007.1: the card's controls stay hit-testable after the
+# region-module move, at 160x45 and 235x52.
+Tests/UI/test_settings_providers_models_card_geometry.py
+# R3 #4 (C7): no assumed window for a server that reports its own.
+Tests/UI/test_settings_server_reported_window.py
+# Fix round 1, finding 17: the picker sync ends quietly when its field is gone.
+Tests/UI/test_settings_model_picker_sync_teardown.py
+# R1 #7: Model list over an invalid Custom ID puts the model back.
+Tests/UI/test_settings_custom_id_model_list_rollback.py
+# Parent AC#11 (ADR-033): the Inspector labels a staged field's commit model (17-29 s).
+Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged_save_in_the_inspector
+# R2 F1 = R1 #12: a dropped Clear of the API key does not come back.
+Tests/UI/test_settings_api_key_clear_reset.py
+# Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
+Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft
+# Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
+Tests/UI/test_settings_provider_save_scope.py::test_providers_models_state_line_names_its_scope_in_one_row
+# TASK-33007.2, parent AC#2: Model is at most five Tab presses from Provider.
+Tests/UI/test_settings_connect_tab_budget.py
+# Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
+Tests/UI/test_settings_save_commit_models.py::test_model_catalog_fields_document_instant_apply_in_the_inspector
+# TASK-33007.4: who a save reaches -- the real D1 reach save and Ctrl+T in Console.
+Tests/UI/test_settings_save_reach.py
+# TASK-33007.2 and .9: Connect one row per fact; the Provider control's name
+# after a choice or Revert, and its open list drawn whole at both sizes.
+Tests/UI/test_settings_connect_rows.py
+# Ruling C-N1: back on Settings, Ctrl+Q never asks about its stale snapshot.
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_never_asks_about_its_own_stale_snapshot
+# Capture round 2, finding 15: Permission summaries' Provider is a provider list.
+Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_provider_is_chosen_from_the_provider_list
+# R1 #4 and #26 (C2, C5): the API key row names only the key that works there.
+Tests/UI/test_settings_api_key_row_help.py
+# R1 #9, #18, #21 and #24 (C3): one Source word for one state on Connect.
+Tests/UI/test_settings_connect_source_words.py
+# Capture 13c: a kept snapshot edit is forgotten once it is saved (14 s).
+Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[save]
+# Parent AC#11 (ADR-033) and TASK-33007.6 AC#7: the catalog controls are
+# labelled and set apart (17-29 s).
+Tests/UI/test_settings_save_commit_models.py::test_model_catalog_controls_are_labeled_and_visually_separated
+# R3 #10: the two free-text Side chat fields take their row.
+Tests/UI/test_settings_console_side_chat_field_width.py
+# R1 #13 and #14: literal rows print a provider's name without escaping it.
+Tests/UI/test_settings_plain_provider_names.py
+# R2 F4 and F5: the Key check and Endpoint key rows refresh as they were composed.
+Tests/UI/test_settings_inspector_rows_refresh.py
+# R1 #10 (C4): the API key row follows an unsaved Env var edit.
+Tests/UI/test_settings_api_key_row_env_var.py
+# R2 F6: a staged Context window Reset reads as an edit.
+Tests/UI/test_settings_context_window_staged_reset.py
+# R3 #1 and #2: Down walks the open model list; Enter picks the id typed in full.
+Tests/UI/test_settings_default_model_list_keys.py
+# R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
+Tests/UI/test_settings_session_summary_save.py
+# Capture round 1, finding 1: an unknown window reads "unknown", not "tokens".
+Tests/UI/test_console_context_controls.py::test_unknown_model_window_reads_unknown_not_unknown_tokens
+# Capture finding 6: Catalog refresh says nothing until a choice is saved.
+Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_says_nothing_until_a_choice_is_saved
+# Capture finding 12: Render linked images is a Checkbox read from config.
+Tests/UI/test_settings_configuration_hub.py::test_remote_images_toggle_value_reflects_config
+# TASK-33007.4 AC#6: the reference rows read from the Inspector's closed
+# disclosure, after Model defaults (16-19 s).
+Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_defaults_appear_before_reference_copy
+# TASK-33007.7 AC#7: a memory save writes its normalized values to the console section (15-28 s).
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_routes_normalized_values_to_console_section
+# Review of #3057, sibling of finding 3: undoing an audio.cpp review merge keeps a pipeline voice edit (12 s, both cases).
+Tests/UI/test_audio_cpp_model_library_handoff.py::test_review_merge_undo_keeps_a_pipeline_voice_edit
+# Capture round 2, finding 3: the Save row claims no staged edit when none is.
+Tests/UI/test_settings_save_commit_models.py::test_the_save_row_claims_no_staged_edit_when_none_is_staged
+# A custom endpoint as the default: Revert relocks Discover, Save selected and Clear (11-19 s).
+Tests/UI/test_settings_custom_endpoint_default.py::test_revert_to_a_registry_default_relocks_model_discovery
+# Capture fix 2 round 1, finding 4: Ctrl+Q asks about staged drafts first.
+Tests/UI/test_settings_theme_picker_screen.py::test_quit_asks_about_staged_changes_before_the_theme
+# Capture round 2, finding 19: the Context view's memory buttons stand apart.
+Tests/UI/test_console_context_controls.py::test_memory_action_buttons_are_separated
+# R1 #11: the API key row's fixed sentences fit its one line.
+Tests/UI/test_settings_api_key_row_fits.py
+# TASK-33007.7: Console Behavior's global fallbacks in the shared rows, the
+# On/Off streaming Select, and a real save a new chat follows.
+Tests/UI/test_settings_console_fallback_rows.py
+# Capture round 1, findings 2 and 7: Chat settings holds the provider's range.
+Tests/UI/test_console_session_settings.py::test_console_settings_modal_holds_anthropic_temperature_to_its_own_range
+# TASK-33007.4 AC#6: the catalog rows read from the Inspector's closed
+# disclosure (33-38 s).
+Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_lists_console_supported_catalog
+# R1 #29 (C6): Settings spells a number one way.
+Tests/UI/test_settings_number_spelling.py
+# TASK-33007.3: the Default model picker -- one row, ids grouped by where they
+# came from, Custom ID and its rollback, a wide id read from its head.
+Tests/UI/test_settings_default_model_picker.py
+# Capture round 2, finding 21: the Context view leaves the nav bar visible.
+Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible
+# Capture round 2, finding 1: the Inspector starts at a heading, says more above.
+Tests/UI/test_settings_field_guide_in_view.py::test_the_inspector_starts_at_a_heading_and_says_when_more_is_above
+# TASK-33007.5: Model defaults' one-row field-truth rows, the one-row Select
+# rows, and a real save of a blanked field.
+Tests/UI/test_settings_model_defaults_rows.py
+# TASK-33007.9: Connect painted whole -- the open provider list's box and a
+# wide provider name from its head, at both full-screen sizes.
+Tests/UI/test_settings_connect_paint.py
+# Capture 13c: a kept snapshot edit is forgotten once it is reverted (14 s).
+Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[revert]
+# R2 F10: arriving on the Provider control does not open its list.
+Tests/UI/test_settings_provider_list_arrival.py
+# Capture round 2, finding 2: a focused field keeps Applies to in view.
+Tests/UI/test_settings_field_guide_in_view.py::test_a_focused_field_keeps_applies_to_and_next_new_chat_in_view
+# Capture fix 2 round 2, finding 1: the quit prompt never stacks on the theme's.
+Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_staged_changes_never_stacks_on_the_theme_prompt
+# Post-rebase round 1, finding 1: Ctrl+Q waits for a snapshot Save still writing (15 s).
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight
+# TASK-33007.3 AC#9: Save selected fills an empty default model with the first
+# saved id (17-27 s).
+Tests/UI/test_settings_provider_test_draft.py::test_model_to_activate_after_save_prefers_first_saved_when_field_empty
+# Capture finding 15: every Chat settings help line is whole at full screen.
+Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen
+# A custom endpoint as the default: Settings opens on a dangling registry
+# default honestly, the row that was red in no lane (11-19 s; the file is 3.4 min).
+Tests/UI/test_settings_custom_endpoint_default.py::test_settings_opens_on_a_dangling_registry_default_honestly
+# Capture round 2, finding 22: Ctrl+Q with a staged Settings change asks first.
+Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_a_staged_settings_change_asks_first
+# R1 #25 (C4, f1-N2): a key pasted into Env var is not repeated in other rows.
+Tests/UI/test_settings_env_var_not_echoed.py
+# TASK-33007.3 AC#9: prefix search in the picker finds a discovered id (17-27 s).
+Tests/UI/test_settings_provider_test_draft.py::test_model_picker_prefix_search_finds_a_discovered_id
+# Review of #3057, finding 2: the unsaved-work check reads a kept Settings visit (10 s).
+Tests/UI/test_app_quit_under_modal.py::test_the_unsaved_work_check_reads_a_kept_settings_visit
+# Capture finding 19: Settings' focus-help line never describes the nav bar.
+Tests/UI/test_settings_configuration_hub.py::test_settings_focus_help_line_never_describes_the_nav_bar
+# R2 F3: Revert and a deep link drop the discovery listing.
+Tests/UI/test_settings_discovery_listing_dropped.py
+# Ruling cf3r1-N1 (b): a snapshot edit left before its Changed lands is kept (11 s).
+Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_edit_left_before_its_change_lands_is_kept
+# R1 #3 and R3 #9 (a2-N1): the restored-OpenAI review row is read again.
+Tests/UI/test_settings_openai_reconnect_reread.py
+# Capture fix 3 round 1, finding 2: a raw edit left before it lands is asked about.
+Tests/UI/test_app_quit_under_modal.py::test_a_raw_edit_left_before_its_change_lands_is_asked_about
+# R2 "outside the diff" (C9): Discover and Clear never cancel Save selected.
+Tests/UI/test_settings_save_selected_not_cancelled.py
+# Finding 12b: Chat settings' field widths, re-keyed to the control types after
+# the last capture (three cases, 13-20 s each).
+Tests/UI/test_console_session_settings.py::test_console_settings_fields_are_sized_by_value_type
+# Capture finding 16: Chat settings' footer sets its hint and buttons apart.
+Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart
+# Post-rebase round 1, finding 1: leaving Settings waits for a snapshot Save still writing (15 s).
+Tests/UI/test_app_quit_under_modal.py::test_leaving_settings_waits_for_a_snapshot_save_in_flight
+# Parent AC#1: no listed provider's closed card needs scrolling at 211x44 (26-44 s).
+Tests/UI/test_settings_providers_models_card_fits_the_pane.py
+# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
+# state, state words on every row, one frame level, '/' opening its disclosure.
+Tests/UI/test_settings_advanced_disclosures.py
+# Capture fix 2 round 2, finding 2: Image Gen's on check reads on light themes.
+Tests/UI/test_settings_theme_card_contrast.py::test_image_gen_on_check_is_readable_on_light_themes
+# Ruling cf3r1-N1 (b): Settings keeps unsaved snapshot preferences; Ctrl+Q names them.
+Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console
+# Parent AC#5 (a field the provider does not accept is not saved), 10-13 s.
+Tests/UI/test_settings_configuration_hub.py::test_settings_model_default_save_leaves_values_for_hidden_rows_untouched
+# The restored-OpenAI review against the real recovery_review (the lane's
+# Connect test stubs it), 7 s.
+Tests/UI/test_settings_openai_reconnect.py::test_actual_settings_confirms_only_selected_restored_openai[approve]
+# R3 #3: fast typing keeps the Model field in Custom ID mode.
+Tests/UI/test_settings_custom_id_fast_typing.py
+# R1 #5: Revert shows the saved provider's Model defaults rows.
+Tests/UI/test_settings_revert_model_defaults_rows.py
+# R1 #23: a Model defaults field the provider does not accept is composed blank.
+Tests/UI/test_settings_model_defaults_hidden_field_blank.py
+# Capture finding 15 (B #15): Chat settings is its width token (176) by 22.
+Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport
+# Capture round 2, finding 14: replay override controls sit beside a named model.
+Tests/UI/test_settings_console_reasoning_history.py::test_override_controls_show_only_beside_the_model_they_remember
+# R1 #2: an emptied Default model is not rebuilt as the text None.
+Tests/UI/test_settings_blank_model_card_rebuild.py
+# R1 #6: an env var name that is no name is invalid settings, not an exception.
+Tests/UI/test_settings_invalid_env_var_name.py
+# R1 #1 = R2 F2 (C1, f1-N1): a deep link's first edit keeps the linked provider.
+Tests/UI/test_settings_deep_link_first_edit.py
+# Capture round 2, finding 18: Chat settings says once that there is no memory.
+Tests/UI/test_console_context_controls.py::test_no_memory_is_said_once
+# Capture fix 3 round 1, finding 1: Keep editing under a modal stays in it.
+Tests/UI/test_app_quit_under_modal.py::test_keep_editing_on_a_kept_draft_under_a_modal_keeps_the_modal
+# TASK-33007.6 AC#2: Prompt-cache snapshots' controls, copy and keyboard save
+# (28-38 s). The whole file fails in one process (its notes: a shared profile).
+Tests/UI/test_llamacpp_snapshot_settings.py::test_f9_snapshot_controls_paint_and_keyboard_save[size1]
+# TASK-33007.7 AC#7: memory and compaction defaults mount, stage and fit a
+# narrow Settings (15-28 s).
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_controls_mount_stage_and_fit_narrow_settings
+# Review of #3057 (C11): the Saved model list's row words, red since
+# f3fa7bbfe4 made the rows Text and seen by no lane (8-11 s).
+Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_labels_use_user_vocabulary_not_internal_jargon
+# Capture finding 17: Chat settings' Context view names Settings as Model does.
+Tests/UI/test_console_context_controls.py::test_context_view_names_settings_as_the_model_view_does
+# TASK-33007 (review of #3057): the lock that keeps two #card-list rebuilds from
+# interleaving. The gated real-service test waits for the settled list, so this
+# node is the only one that goes red without the lock.
+Tests/UI/test_study_flashcards_screen.py::test_two_awaited_card_list_rebuilds_do_not_interleave

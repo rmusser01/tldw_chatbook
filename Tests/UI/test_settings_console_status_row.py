@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Select
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from Tests.private_profile import private_profile_test
@@ -21,11 +21,13 @@ POSITION_TOGGLE = "#settings-console-status-row-position-toggle"
 @pytest.mark.asyncio
 @private_profile_test
 async def test_status_row_position_toggle_flips_and_pokes_live_config(request):
-    """The toggle carries the state in its label and applies immediately.
+    """The placement is a one-row Select that applies immediately.
 
-    ADR-020-style immediate write (remote-images precedent): pressing the
-    button flips ``[console] status_chips_position`` in the live config —
-    no category draft — and the label always reads the current placement.
+    ADR-020-style immediate write (remote-images precedent): choosing a
+    placement sets ``[console] status_chips_position`` in the live config —
+    no category draft — and the Select always shows the current placement.
+    Rewritten on purpose (#3057 capture finding 12): it was a Button whose
+    label was the value, drawn like the section header above it.
     """
     app = _build_test_app()
     app.app_config["console"] = {}
@@ -34,19 +36,24 @@ async def test_status_row_position_toggle_flips_and_pokes_live_config(request):
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        toggle = screen.query_one(POSITION_TOGGLE, Button)
+        toggle = screen.query_one(POSITION_TOGGLE, Select)
 
-        assert str(toggle.label) == "Above composer"
+        assert toggle.value == "above"
+        assert toggle.parent.has_class("settings-input-row")
+        assert dict(toggle._options) == {
+            "Above composer": "above",
+            "Below composer": "below",
+        }
 
-        toggle.press()
+        toggle.value = "below"
         await pilot.pause()
         assert app.app_config["console"]["status_chips_position"] == "below"
-        assert str(toggle.label) == "Below composer"
+        assert toggle.value == "below"
 
-        toggle.press()
+        toggle.value = "above"
         await pilot.pause()
         assert app.app_config["console"]["status_chips_position"] == "above"
-        assert str(toggle.label) == "Above composer"
+        assert toggle.value == "above"
 
 
 def test_status_row_position_is_field_search_indexed():

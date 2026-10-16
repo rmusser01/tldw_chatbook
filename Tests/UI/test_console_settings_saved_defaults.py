@@ -103,7 +103,8 @@ async def test_title_names_the_chat_and_counts_its_unsaved_edits() -> None:
 async def test_footer_offers_the_four_actions_in_order(size) -> None:
     """AC#2: the Esc hint, then Use saved defaults, Save as model default,
     Default for new chats (Ctrl+N) and Apply to this chat (Ctrl+Enter), on
-    one painted row; Cancel is the Context view's, not the Model view's.
+    one painted row; Cancel shows only with the recovery actions
+    (TASK-33007 capture finding 20).
 
     Plan ruling R14: the Context view keeps its own scope copy and offers
     no defaults action (its defaults line:
@@ -130,15 +131,20 @@ async def test_footer_offers_the_four_actions_in_order(size) -> None:
 
         modal.query_one("#console-settings-view-context", Button).press()
         await settle(pilot, app)
-        assert modal.query_one("#console-settings-cancel", Button).display
+        # Rewritten on purpose by TASK-33007 capture finding 20 (round 2):
+        # the footer's "Esc close" is the Context view's close too.
+        assert not modal.query_one("#console-settings-cancel", Button).display
         for action in (
             USE_SAVED_DEFAULTS_ID,
             "console-settings-save-default",
             "console-settings-make-default",
         ):
             assert not modal.query_one(f"#{action}", Button).display, action
+        # Rewritten on purpose by TASK-33007 capture finding 17: the Context
+        # view's scope line uses the Model view's words.
         assert str(modal.query_one("#console-settings-scope", Static).content) == (
-            "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
+            "Applies to this chat only · defaults live in Settings ▸ Console "
+            "Behavior (F4)"
         )
 
 
@@ -172,7 +178,8 @@ async def test_defaults_line_follows_the_view_switch(edited) -> None:
         await _open(pilot, app, modal)
         default_scope = modal.query_one("#console-settings-default-scope", Static)
         save_default = modal.query_one("#console-settings-save-default", Button)
-        line = "Used by future conversations for llama.cpp."
+        # Rewritten on purpose by TASK-33007 capture finding 17 (round 2).
+        line = "Save as model default: future chats on this llama.cpp model"
         assert save_default.display is default_scope.display is edited
         modal.query_one("#console-settings-view-context", Button).press()
         await settle(pilot, app)

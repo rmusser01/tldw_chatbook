@@ -50,7 +50,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
@@ -65,6 +65,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     effective_placeholder,
     load_user_image_generation_table,
 )
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 
 # Generation-defaults scalar fields, in display order. `context_llm_enabled`
 # is rendered separately as a Checkbox (booleans have no placeholder analog).
@@ -134,9 +135,8 @@ def switch_word(value: bool) -> str:
 
 
 def toggle_label(name: str, value: bool) -> str:
-    """Checkbox label that carries the state in TEXT (task-1561): the glyph
-    paints an "X" in both states and distinguishes them by color alone,
-    which reads as checked either way in reduced-color terminals."""
+    """Checkbox label that carries the state in TEXT too (task-1561), so the
+    row reads without the glyph."""
     return f"{name}: on" if value else f"{name}: off"
 
 
@@ -241,7 +241,7 @@ class ImageGenSettingsPanel(Vertical):
                     id=f"settings-imagegen-status-{row.backend_id}",
                     classes="settings-imagegen-badge",
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     switch_word(is_enabled),
                     value=is_enabled,
                     id=f"settings-imagegen-enabled-{row.backend_id}",
@@ -343,7 +343,7 @@ class ImageGenSettingsPanel(Vertical):
                     )
 
         yield Static("Generation defaults", classes="destination-section")
-        yield Checkbox(
+        yield StateCheckbox(
             toggle_label(
                 "Context LLM",
                 bool(overlay.get("context_llm_enabled", bool(cfg.context_llm_enabled))),

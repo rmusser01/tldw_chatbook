@@ -26,6 +26,7 @@ from textual.widgets import (
     Static,
 )
 
+from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
 from tldw_chatbook.Chat.console_context_compaction import EffectiveMemoryKind
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -144,6 +145,7 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    context_token_row,
     format_context_tokens,
 )
 
@@ -151,6 +153,7 @@ from .console_context_controls import (
 # ConsoleSettingsInput only lazily (inside compose) so this edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_field_row import (
+    ConsoleSettingsSelect,
     CONNECTION_DISCLOSURE_ID,
     CONNECTION_FOCUS_IDS,
     CONNECTION_TITLE,
@@ -193,8 +196,8 @@ ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
 ENDPOINT_NEW_BUTTON_WIDTH = 17
 BASE_URL_ENTRY_HINT_ID = "console-settings-base-url-entry-hint"
 BASE_URL_ENTRY_HINT_COPY = (
-    "Managed by this endpoint entry — rename or edit it in F4 Settings › "
-    "Providers & Models."
+    "Managed by this endpoint entry — rename or edit it in Settings ▸ "
+    "Providers & Models (F4)."
 )
 MODEL_DISCOVER_SCOPE_COPY = (
     "Tests this endpoint by listing models; this does not test generation."
@@ -232,6 +235,11 @@ AllMemoryResetter = Callable[[], int]
 ContextCompactor = Callable[[], Awaitable[tuple[bool, str]]]
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
+
+
+def _view_tab_label(name: str, selected: bool) -> str:
+    """A view tab's label; the shown view is marked without colour (finding 16)."""
+    return f"● {name}" if selected else name
 
 
 async def _default_generation_tester(
@@ -824,7 +832,7 @@ CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Settings ▸ Providers & Models (F4)"
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
-    "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
+    "Applies to this chat only · defaults live in Settings ▸ Console Behavior (F4)"
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 _FOCUS_REVEAL_SETTLE_DELAY_SECONDS = 0.06
@@ -1508,7 +1516,7 @@ class ConsoleSettingsModal(
             and control_id not in self._invalid_generation_choice_drafts
             else Select.NULL
         )
-        select = Select(
+        select = ConsoleSettingsSelect(
             [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
             prompt=BLANK_CHOICE_PROMPT,
             value=selected,
@@ -1561,10 +1569,8 @@ class ConsoleSettingsModal(
             )
             with Horizontal(id="console-settings-view-tabs"):
                 model_view = Button(
-                    (
-                        "Model and generation · Selected"
-                        if self._active_view == "model"
-                        else "Model and generation"
+                    _view_tab_label(
+                        "Model and generation", self._active_view == "model"
                     ),
                     id="console-settings-view-model",
                     classes=(
@@ -1580,10 +1586,8 @@ class ConsoleSettingsModal(
                 )
                 yield model_view
                 context_view = Button(
-                    (
-                        "Context and memory · Selected"
-                        if self._active_view == "context"
-                        else "Context and memory"
+                    _view_tab_label(
+                        "Context and memory", self._active_view == "context"
                     ),
                     id="console-settings-view-context",
                     classes=(
@@ -1661,7 +1665,7 @@ class ConsoleSettingsModal(
                             id="console-settings-configure-credential",
                             tooltip=(
                                 "Configure this provider's credentials in "
-                                "F4 Settings > Providers & Models"
+                                "Settings ▸ Providers & Models (F4)"
                             ),
                         )
                         credential_action.display = (
@@ -1834,29 +1838,25 @@ class ConsoleSettingsModal(
                     with Vertical(classes="console-settings-modal-section"):
                         yield Static("Model capacity", classes="destination-section")
                         yield Static(
-                            f"{self._model_window_label():<20}"
-                            f"{format_context_tokens(self._context_state.model_window_tokens)} tokens",
+                            self._model_window_row(),
                             id="console-context-model-window",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            f"{MODEL_FIELD_LABELS['max_tokens']:<20}"
-                            f"{format_context_tokens(self._context_state.response_max_tokens)} tokens",
+                            context_token_row(MODEL_FIELD_LABELS["max_tokens"], self._context_state.response_max_tokens),
                             id="console-context-response-max",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Safety margin       "
-                            f"{format_context_tokens(self._context_state.safety_margin_tokens)} tokens",
+                            context_token_row("Safety margin", self._context_state.safety_margin_tokens),
                             id="console-context-safety-margin",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Safe input ceiling  "
-                            f"{format_context_tokens(self._context_state.safe_input_ceiling_tokens)} tokens",
+                            context_token_row("Safe input ceiling", self._context_state.safe_input_ceiling_tokens),
                             id="console-context-safe-input",
                             classes="console-settings-modal-row",
                             markup=False,
@@ -1876,7 +1876,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["conversation_budget_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Automatic", ContextBudgetMode.AUTOMATIC.value),
                                     ("Custom", ContextBudgetMode.CUSTOM.value),
@@ -1896,22 +1896,19 @@ class ConsoleSettingsModal(
                                 classes="console-settings-control",
                             )
                         yield Static(
-                            "Effective           "
-                            f"{format_context_tokens(self._context_state.conversation_budget_tokens)} tokens",
+                            context_token_row("Effective", self._context_state.conversation_budget_tokens),
                             id="console-context-effective-budget",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Next request        "
-                            f"{format_context_tokens(self._context_state.request_tokens)} tokens",
+                            context_token_row("Next request", self._context_state.request_tokens),
                             id="console-context-next-request",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Request overhead    "
-                            f"{format_context_tokens(self._context_state.request_overhead_tokens)} tokens",
+                            context_token_row("Request overhead", self._context_state.request_overhead_tokens),
                             id="console-context-overhead",
                             classes="console-settings-modal-row",
                             markup=False,
@@ -1923,7 +1920,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["compaction_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Ask", ContextCompactionMode.ASK.value),
                                     (
@@ -1938,7 +1935,7 @@ class ConsoleSettingsModal(
                             )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("Representation")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     (
                                         "Text summary",
@@ -2000,7 +1997,7 @@ class ConsoleSettingsModal(
                         )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("If compaction fails")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     (
                                         "Stop and ask",
@@ -2019,7 +2016,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["compaction_carry_forward_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 CARRY_FORWARD_OPTIONS,
                                 value=self._context_state.resolved_policy.policy.carry_forward_mode.value,
                                 id="console-context-carry-forward",
@@ -2038,7 +2035,7 @@ class ConsoleSettingsModal(
                         )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("History policy")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Auto", "auto"),
                                     ("Include", "include"),
@@ -2073,11 +2070,13 @@ class ConsoleSettingsModal(
                             classes="console-settings-modal-row",
                             markup=False,
                         )
-                        yield Static(
+                        review = Static(
                             self._memory_review_text(),
                             id="console-settings-memory-review",
                             markup=False,
                         )
+                        review.display = bool(self._memory_review_text())
+                        yield review
                         yield Static(
                             "",
                             id="console-context-action-status",
@@ -2199,7 +2198,7 @@ class ConsoleSettingsModal(
                     classes="console-settings-action-scope",
                     markup=False,
                 )
-                # TASK-33006.5 (spec mock (b)): Cancel is the Context view's;
+                # Cancel shows only in recovery (finding 20, round 2);
                 # _sync_action_copy sizes every button from its label.
                 with Horizontal(classes="console-settings-action-group"):
                     yield Button("Cancel", id="console-settings-cancel")
@@ -2793,14 +2792,8 @@ class ConsoleSettingsModal(
         )
         model_tab = self.query_one("#console-settings-view-model", Button)
         context_tab = self.query_one("#console-settings-view-context", Button)
-        model_tab.label = (
-            "Model and generation · Selected"
-            if model_selected
-            else "Model and generation"
-        )
-        context_tab.label = (
-            "Context and memory" if model_selected else "Context and memory · Selected"
-        )
+        model_tab.label = _view_tab_label("Model and generation", model_selected)
+        context_tab.label = _view_tab_label("Context and memory", not model_selected)
         model_tab.variant = "default"
         context_tab.variant = "default"
         model_tab.set_class(model_selected, "console-settings-view-active")
@@ -2818,7 +2811,9 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model
-        self.query_one("#console-settings-cancel", Button).display = not show_model
+        # Esc close is each view's close; Cancel only backs the recovery
+        # actions (TASK-33007 capture finding 20, round 2).
+        self.query_one("#console-settings-cancel", Button).display = recovery_active
         # Save as model default, Apply, the defaults line and the readiness
         # block follow the view from the draft (TASK-33006.6 AC#2).
         self._sync_default_readiness()
@@ -2950,10 +2945,13 @@ class ConsoleSettingsModal(
         provider = readiness.provider_display_name or provider_display_name(
             settings.provider
         )
+        # Capture finding 17 (round 2): the line names the button it explains.
         scope_copy = (
-            "Updates this provider for future conversations."
+            f"{SAVE_ENDPOINT_ACTION_LABEL}: new chats start on this {provider} "
+            "endpoint and model."
             if needs_endpoint_persistence and show_defaults
-            else f"Used by future conversations for {provider}."
+            else f"{SAVE_MODEL_DEFAULT_LABEL}: future chats on this {provider} "
+            "model use these values."
             if show_defaults
             else ""
         )
@@ -3742,9 +3740,7 @@ class ConsoleSettingsModal(
             status.update("Memory changed before it could be reset.")
             return
         self._memory_reset_token = token
-        self.query_one("#console-settings-memory-review", Static).update(
-            "No conversation memory is active on this branch."
-        )
+        self._show_memory_review("")
         self.query_one("#console-context-memory-metadata", Static).update(
             "Current branch memory reset; transcript unchanged."
         )
@@ -3845,9 +3841,7 @@ class ConsoleSettingsModal(
                 )
             return False
         self._memory_reset_token = None
-        self.query_one("#console-settings-memory-review", Static).update(
-            self._memory_review_text()
-        )
+        self._show_memory_review(self._memory_review_text())
         self.query_one("#console-context-memory-metadata", Static).update(
             self._memory_metadata_label()
         )
@@ -3892,9 +3886,7 @@ class ConsoleSettingsModal(
         undo = self.query_one("#console-context-undo-reset", Button)
         undo.display = False
         undo.disabled = True
-        self.query_one("#console-settings-memory-review", Static).update(
-            "No conversation memory is active."
-        )
+        self._show_memory_review("")
         self.query_one("#console-context-memory-metadata", Static).update(
             "All generated and legacy conversation memory was reset; transcript "
             f"unchanged. Generated records deactivated: {count}."
@@ -5500,8 +5492,8 @@ class ConsoleSettingsModal(
         label = (
             f"{format_context_tokens(estimate.used_tokens)} / {result.tokens:,} tokens"
         )
-        if not result.verified:
-            label += " (estimated; model unverified)"
+        if not result.verified:  # TASK-33007 #12: the words Settings uses
+            label += " (assumed; window unknown)"
         self._context_estimate = replace(
             estimate,
             token_limit=result.tokens,
@@ -5521,11 +5513,11 @@ class ConsoleSettingsModal(
         state = self._context_state
         updates = {
             "console-settings-context-current": f"Current         {self._context_label()}",
-            "console-context-model-window": f"{self._model_window_label():<20}{result.tokens:,} tokens ({result.source})",
-            "console-context-safe-input": f"Safe input ceiling  {format_context_tokens(state.safe_input_ceiling_tokens)} tokens",
-            "console-context-effective-budget": f"Effective           {format_context_tokens(state.conversation_budget_tokens)} tokens",
-            "console-context-response-max": f"{MODEL_FIELD_LABELS['max_tokens']:<20}{format_context_tokens(state.response_max_tokens)} tokens",
-            "console-context-safety-margin": f"Safety margin       {format_context_tokens(state.safety_margin_tokens)} tokens",
+            "console-context-model-window": self._model_window_row(result.source),
+            "console-context-safe-input": context_token_row("Safe input ceiling", state.safe_input_ceiling_tokens),
+            "console-context-effective-budget": context_token_row("Effective", state.conversation_budget_tokens),
+            "console-context-response-max": context_token_row(MODEL_FIELD_LABELS["max_tokens"], state.response_max_tokens),
+            "console-context-safety-margin": context_token_row("Safety margin", state.safety_margin_tokens),
             "console-context-capacity-status": self._context_validation_label(),
         }
         for control_id, text in updates.items():
@@ -6046,22 +6038,22 @@ class ConsoleSettingsModal(
             return "Capacity is verified for the selected model."
         if self._context_state.model_window_tokens is not None:
             return (
-                "Estimated fallback only; model capacity is unverified. "
-                "Set the actual context window in F4 Settings > Providers & Models."
+                "Context window unknown; budgets use the assumed size. Enter the "
+                f"model's documented limit in {MODEL_WINDOW_SETTING}."
             )
         return (
             "Model limit unknown; automatic safety cannot be verified. "
-            "Set the context window in F4 Settings > Providers & Models."
+            f"Set the context window in {MODEL_WINDOW_SETTING}."
         )
 
-    def _model_window_label(self) -> str:
-        """Label fallback model windows as estimates instead of verified facts."""
-        if (
-            self._context_state.model_window_tokens is not None
-            and not self._context_state.model_window_verified
-        ):
-            return "Model window (est.)"
-        return "Model window"
+    def _model_window_row(self, source: str = "") -> str:
+        """Say the window; a fallback is unknown, its size assumed (TASK-33007 #12)."""
+        state = self._context_state
+        tokens = format_context_tokens(state.model_window_tokens)
+        if state.model_window_tokens is not None and not state.model_window_verified:
+            return f"{'Model window':<20}unknown, {tokens} assumed"
+        suffix = f" ({source})" if source else ""
+        return context_token_row("Model window", state.model_window_tokens) + suffix
 
     def _memory_metadata_label(self) -> str:
         effective = self._context_state.effective_memory
@@ -6100,7 +6092,12 @@ class ConsoleSettingsModal(
             return effective.memory.summary_text
         if effective.legacy is not None:
             return effective.legacy.summary_text
-        return "No conversation memory is active on this branch."
+        return ""  # the metadata line says there is none (finding 18)
+
+    def _show_memory_review(self, text: str) -> None:
+        review = self.query_one("#console-settings-memory-review", Static)
+        review.update(text)
+        review.display = bool(text)
 
     def _sources_label(self) -> str:
         if self._context_estimate.staged_context_summary.strip():

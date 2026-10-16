@@ -186,7 +186,10 @@ async def test_printable_shortcut_keys_type_into_focused_text_fields():
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "providers-models")
         screen = _active_destination_screen(host)
-        model_input = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the Model field users type in
+        # is the Default model picker's; #settings-model-value is a hidden,
+        # unfocusable adapter.
+        model_input = screen.query_one("#model-search-picker-input", Input)
         model_input.focus()
         await pilot.pause()
         assert screen.app.focused is model_input

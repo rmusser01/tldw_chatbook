@@ -4405,6 +4405,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "d6d70f46c2e567064346",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/model_search_picker.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "1c6b7e3a0f425b124bee",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/password_dialog.py",

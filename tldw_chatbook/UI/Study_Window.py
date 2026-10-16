@@ -272,9 +272,12 @@ class AnkiFlashcardsWidget(Widget):
             # Review section
             with Vertical(classes="review-area"):
                 yield Label("Review Cards:", classes="subsection-title")
-                yield Static("Create a deck to begin studying.", id="review-status")
-                yield Static("", id="review-front")
-                review_back = Static("", id="review-back")
+                # Literal: card text and deck names are typed by the user.
+                yield Static(
+                    "Create a deck to begin studying.", id="review-status", markup=False
+                )
+                yield Static("", id="review-front", markup=False)
+                review_back = Static("", id="review-back", markup=False)
                 review_back.display = False
                 yield review_back
                 yield Static("", id="review-next-intervals")
@@ -378,10 +381,13 @@ class QuizzesWidget(Widget):
 
             with Vertical(classes="quiz-attempt-area"):
                 yield Label("Attempt Quiz:", classes="subsection-title")
+                # Quiz names, question text and answers print as typed.
                 yield Static(
-                    "Create a quiz to begin practicing.", id="quiz-attempt-status"
+                    "Create a quiz to begin practicing.",
+                    id="quiz-attempt-status",
+                    markup=False,
                 )
-                yield Static("", id="quiz-attempt-question")
+                yield Static("", id="quiz-attempt-question", markup=False)
                 yield Label("Attempt History:", classes="subsection-title")
                 with Horizontal(classes="form-row"):
                     yield Select(
@@ -391,7 +397,7 @@ class QuizzesWidget(Widget):
                         id="quiz-attempt-history-select",
                     )
                     yield Button("Load Attempt", id="load-quiz-attempt-history-button")
-                yield Static("", id="quiz-attempt-history-summary")
+                yield Static("", id="quiz-attempt-history-summary", markup=False)
                 with Horizontal(classes="form-row"):
                     yield Label("Your Answer:", classes="form-label")
                     yield Input(
@@ -611,6 +617,8 @@ class StudyWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.show_sidebar = show_sidebar
+        # Bumped on every sub-view swap; the Flashcards guard compares it.
+        self.view_swaps = 0
         self.flashcards_controller = StudyFlashcardsController(self)
         self.quizzes_controller = StudyQuizzesController(self)
 
@@ -805,6 +813,7 @@ class StudyWindow(Container):
 
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""
+        self.view_swaps += 1
         if old_view == "flashcards":
             self.run_worker(
                 self.flashcards_controller.end_review_session_if_needed(),

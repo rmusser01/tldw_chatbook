@@ -304,7 +304,7 @@ proves nothing about your key.
 
 A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
-**Test Provider** in Settings — was refused or timed out, the Console reads,
+the Key check's **Test (t)** in Settings — was refused or timed out, the Console reads,
 for example, "Not ready · refused :9099" (the header badge, the Model
 section, the Chat settings rows and this card's "Reconnect the
 provider server" step), and the composer reads "Send blocked — retry the
@@ -474,13 +474,19 @@ settings** card. Its title names the chat and counts your unsaved edits ("Chat
 settings · Refactor plan · 2 unsaved edits"), and the line under the tabs
 says what it changes: "Applies to this chat only · saved with the
 conversation · defaults live in Settings ▸ Providers & Models (F4)". It is
-150 columns by 22 rows, and the **Model and generation**
+176 columns by 22 rows, wide enough that every field's help line shows whole
+at 211x44 and 235x52, and the **Model and generation**
 view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
 - **Model**: the chat's model and its provider's name, where the pair comes
   from (*this chat*, or *edited \** once you change it here), the readiness
   word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
-  Ready · not tested · 200k context"), then **Change  Alt+M**. A long model
+  Ready · not tested · 200k context"), then **Change  Alt+M**. When no
+  catalog knows the model's window, the row says so in the words Settings ▸
+  Providers & Models ▸ Advanced uses: "context unknown". Request estimate
+  then ends "(assumed; window unknown)" and the Context view names the
+  fallback size budgets use until you enter the real limit there (e.g.
+  "unknown, 32,000 assumed"). A long model
   id shows whole; only an id wider than the row is shortened in the middle,
   keeping its start and its end (a GGUF file's quant), and the provider's
   name is never cut. Below 100 columns the row shows only the pair and
@@ -497,7 +503,10 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   macOS it needs the Option key set to send Meta, so the **Change** button is
   there for every keyboard.
 - The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
-  and the reasoning or thinking controls the model takes.
+  and the reasoning or thinking controls the model takes. Temperature takes
+  the provider's own range: 0.0 to 2.0 for most, 0.0 to 1.0 for Anthropic.
+  A cleared one says so ("Required: 0.0 to 1.0."), and Apply refuses a value
+  outside it.
 - Then four closed disclosures, each title one row: **Sampling** (Top P, Min P, Top K,
   Seed, Presence penalty, Frequency penalty), **Connection**, **Request
   estimate** and **Your name in this chat**. **Enter** on a title opens it.
@@ -534,9 +543,9 @@ Every field row reads the same way: the label, the value, a word saying
 where the value comes from, and one line of help. The words are the ones
 **Switch model** uses: *edited \** (changed in this open), *this chat*,
 *model default*, *Console Behavior*, *provider* and *built-in*. A blank field
-says what a blank sends: "blank = provider default" (nothing is sent, so the
+says what a blank sends: "the provider decides" (nothing is sent, so the
 provider's own default applies), and its word reads *provider*; a blank
-dropdown, such as **Reasoning effort**, shows *default*. A blank **Temperature** or **Top P** shows
+dropdown, such as **Reasoning effort**, shows *default* with the same help. A blank **Temperature** or **Top P** shows
 its range instead, because Apply needs a value while the provider accepts the
 field. Labels match Settings, for
 example **Thinking budget**, and **Budget strategy** and **When limit nears**
@@ -584,11 +593,12 @@ defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
 configuration. **Save as model default** shows only while the draft differs
 from the saved defaults, the same test that dims **Use saved defaults**, so
 the footer never offers a save beside **Matches saved defaults**. While the
-unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The **Context and memory** view has a **Cancel** button in
-place of the default actions. The line above the footer that names where a
-default goes ("Used by future conversations for Anthropic.") shows only
-beside **Save as model default**, so the **Context and memory** view never
-shows it.
+unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The
+**Context and memory** view's footer is the Esc hint and **Apply to this
+chat**, without the default actions. The line above the footer names the button it
+explains and where that default goes ("Save as model default: future chats on
+this Anthropic model use these values.") and shows only beside **Save as model
+default**, so the **Context and memory** view never shows it.
 
 **Use saved defaults** is how a chat that already holds work picks up
 defaults you saved later (a chat nobody has used yet follows them on its
@@ -604,7 +614,8 @@ While the draft already equals those defaults, the button is dimmed and reads
 
 The modal is a dense form: every field, dropdown and button in it (the
 **Model and generation** / **Context and memory** tabs included) is one row
-tall, with its label on the same row. A thin bar at a field's left edge marks
+tall, with its label on the same row. The tab of the view shown starts with
+"●". A thin bar at a field's left edge marks
 it as editable; the focused field's bar turns thick, its row fills with the
 focus colour and its value turns bold. The bars and the modal's frame are
 drawn at 3:1 or more against the background in every theme, so they stay
@@ -635,8 +646,8 @@ whose **Streaming** follows its default shows the value it inherits and where
 it comes from; picking On or Off pins it for this chat, which counts as an
 edit even when it matches the inherited value. Switching model can return it
 to following its default, which counts too.
-With edits, **Esc**, a click outside the modal, and
-the Context view's **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+With edits, **Esc** and a click outside the modal
+open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**
 (Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
 back in the field you were editing. Apply goes through the same path as the
@@ -704,9 +715,10 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   Change a provider's settings or use it, and its refusal is a NEEDS SETUP
   row again.
 
-Each row shows the model, the provider's name, its context size (`~` marks
-an estimate), readiness and last use. Readiness comes from your
-configuration plus any connection test of that provider's connection this
+Each row shows the model, the provider's name, its context size, readiness
+and last use. A size no catalog knows reads `?` (unknown), never a guess;
+once a chat uses that model, the Context view of Chat settings names the size
+it assumes. Readiness comes from your configuration plus any connection test of that provider's connection this
 session, in the same words as the rest of the Console: "Ready · not tested",
 "Ready · reachable 14:01" once a local server's model listing answered,
 "Ready · verified 14:01" once a cloud key was accepted, or "Not ready · no
@@ -731,7 +743,9 @@ as "llama.cpp (legacy alias)") only appear when a chat uses them.
 Up and Down move the highlight while you type, and from the values too.
 Under the list, "Values for <model> · <provider>" names the highlighted pair,
 and the row below it shows that pair's **Temperature**, **Max tokens** and
-**Streaming** (On or Off), each one row tall. These three are exactly what
+**Streaming** (On or Off), each one row tall. Temperature takes the
+provider's own range, as in Chat settings (0 to 1 for Anthropic), and a
+value outside it is refused with that range. These three are exactly what
 the default actions save; Thinking and every other setting stay in Chat
 settings. Next to each value is a word saying where it comes from:
 
@@ -810,7 +824,10 @@ matching models. Type to narrow the list." A catalog warning takes that
 line first: "Current model is not in the latest catalog. Choose another or
 keep it.", "Catalog unavailable. Use a configured model or Custom ID." and
 "Live catalog unavailable. Showing N configured models." are never replaced
-by the count, however long the list.
+by the count, however long the list. When catalog refresh is turned off (for
+every provider, or for this one in its list of opted-out providers), the last
+of these says why instead: "Catalog refresh is off. Showing N configured
+models."
 
 #### QwenCloud in Console
 

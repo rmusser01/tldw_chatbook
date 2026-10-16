@@ -3,7 +3,7 @@
 The owner ruling (2026-10-03): a send over budget prompts to compact,
 auto-compacts when that is enabled, or alerts when compacting cannot make
 room. The alert must name what fills the window and the setting that changes
-it, and say when the window is only an estimate and where to set the real one.
+it, and say when the window is only assumed and where to set the real one.
 """
 
 from __future__ import annotations
@@ -67,18 +67,19 @@ def test_nothing_to_compact_alert_offers_shortening_or_a_new_chat() -> None:
 
 
 @pytest.mark.parametrize("cause", list(ContextOverflowCause))
-def test_an_estimated_window_is_called_an_estimate_with_where_to_fix_it(cause) -> None:
+def test_an_estimated_window_is_called_assumed_with_where_to_fix_it(cause) -> None:
     copy = _alert(cause, estimated=True)
 
-    assert "an estimate" in copy
+    # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
+    assert "(assumed)" in copy and "is assumed, not known" in copy
     assert MODEL_WINDOW_SETTING in copy
 
 
 @pytest.mark.parametrize("cause", list(ContextOverflowCause))
-def test_a_verified_window_is_not_called_an_estimate(cause) -> None:
+def test_a_verified_window_is_not_called_assumed(cause) -> None:
     copy = _alert(cause, estimated=False)
 
-    assert "estimate" not in copy
+    assert "assumed" not in copy
 
 
 def test_compaction_prompt_states_the_threshold_and_the_choice() -> None:
@@ -89,7 +90,7 @@ def test_compaction_prompt_states_the_threshold_and_the_choice() -> None:
     assert "1,650 of 1,800 tokens" in copy
     for choice in ("Compact and send", "Send without compacting", "Cancel"):
         assert choice in copy
-    assert "estimate" not in copy
+    assert "assumed" not in copy
 
 
 def test_compaction_prompt_flags_an_estimated_budget() -> None:
@@ -97,7 +98,7 @@ def test_compaction_prompt_flags_an_estimated_budget() -> None:
         used_tokens=30_000, budget_tokens=32_000, estimated=True
     )
 
-    assert "estimate" in copy
+    assert "an assumed context window" in copy
     assert MODEL_WINDOW_SETTING in copy
 
 
@@ -107,7 +108,7 @@ def test_hold_detail_gives_the_numbers_and_what_each_choice_does() -> None:
     )
 
     assert "1,650 of 1,800 tokens" in usage
-    assert "estimate" not in usage
+    assert "assumed" not in usage
     assert "Nothing was sent" in choices
     assert "one extra model call" in choices
     assert "back in the composer" in choices
@@ -118,5 +119,5 @@ def test_hold_detail_flags_an_estimated_window() -> None:
         used_tokens=30_000, budget_tokens=32_000, estimated=True
     )
 
-    assert "estimate" in usage
+    assert "an assumed context window" in usage
     assert MODEL_WINDOW_SETTING in usage

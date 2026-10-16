@@ -224,6 +224,32 @@ about layout. To wait for geometry, wait for the event that produces it (`Resize
 widget's own "built" message), and keep a refresh-count only as the bound on a body that
 is already laid out and merely growing.
 
+## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
+
+**TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls
+made the card fit the Settings detail pane at 211x44 (32 rows of content in a 32-row
+pane). Focusing the Default model picker opens two more rows. That brings in the
+vertical scrollbar, and leaving the picker takes it away. Each flip changed the
+content width by one column (122 → 121 → 122) and re-laid out the whole card.
+
+`test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left[focus-moves-away]`
+went from 0/12 to 6/12 failures. Its 0.05 s blur timer now fired about 225 ms after
+the blur instead of about 85 ms, which is later than the test's `pause(0.2)`.
+
+A CSS bisect pinned it down. Restoring either the card's frame or the Advanced
+disclosures' old 3-row frames brought the delay back to about 82 ms. Both only make
+the content overflow all the time, so the scrollbar never flips. Removing the new
+draft-status refresh hook did nothing (8/10 still failed). `scrollbar-gutter: stable`
+on `#settings-detail-pane-body` fixed it: the delay returned to 82–91 ms, and the
+test failed 0 times in 12 runs.
+
+A pane whose content sits within a row of its height will meet this sooner or later,
+because any focus-driven growth crosses the fold. Reserve the gutter on the scroll
+container. Pin the width with a test: measure the card's width at rest and with the
+growing control focused. That test failed (121 vs 122) when the gutter was removed.
+
+---
+
 ## `set_timer(0.0)` never fires — silently
 
 **TASK-21110, 2026-08-23.** The splash/initial-screen overlap is armed with
@@ -636,6 +662,31 @@ rail_nodes = set(rail.query("*").nodes) | {rail}
 [w for w in screen.focus_chain if w in rail_nodes]
 ```
 
+## `A:focus-within B` restyles B only if A carries a `:focus-within` rule of its own (TASK-33007.3, 2026-10-03)
+
+The Settings Default model picker opens across its row while it holds focus:
+`#settings-model-row:focus-within .settings-source-word { display: none; }` and a
+matching width rule on the picker. The picker's own `:focus-within` rules
+applied, but the live 211x44 capture showed the row's Source word and help still
+painted, and the picker squeezed to a third of the row (it now shared `1fr` with
+two siblings that should have gone).
+
+`Screen._update_focus_styles` does not re-match every selector. It walks the
+focused widget's ancestors from the screen down and restyles the subtree of the
+FIRST ancestor whose `_has_focus_within` is set, and `Stylesheet.apply` sets that
+flag on a node only when a rule whose selector ENDS on that node uses
+`:focus-within`. A descendant selector `A:focus-within B` ends on `B`, so it flags
+`B`, never `A`. Here the picker was the outermost flagged node, so only its
+subtree was restyled; its siblings in the row never heard about the focus change.
+
+**The rule:** when a `:focus-within` on a container must restyle that
+container's other children, give the container a `:focus-within` rule of its
+own (any property; `#settings-model-row:focus-within { height: auto; }` here),
+and pin the effect with an assertion on a sibling's `display`, not only on the
+focused widget's subtree. Related trap from the same task: `Button.press()`
+returns without posting `Pressed` while the button is `display: none`, so a test
+that presses a focus-revealed button must focus its owner first.
+
 ## `Widget.size` excludes borders and padding; `outer_size` includes them
 
 **TASK-23193, 2026-08-29.** Measuring the Context rail's vertical budget, section
@@ -707,6 +758,26 @@ end -> False`. Fence background work on the focus intent only when that work wil
 actually take focus; work that just repaints has no stake in it. Only the real gesture
 reproduces this — calling the same coroutine directly from a test posts no focus event
 and passes.
+
+**A list that cannot take focus loses a held click if it closes on blur (TASK-33007.2
+review round 1, 2026-10-03).** The Settings Provider combobox kept its list at
+`can_focus = False`, so the control stayed the one Tab stop, and closed the list 50 ms after
+the control blurred. A press on a row focuses the nearest focusable ANCESTOR instead, here
+the scrolling detail pane (`get_focusable_widget_at` walks `ancestors_with_self`). The
+control blurs, and the timer closes the list. `OptionList` chooses only on `Click`, which
+App builds at `MouseUp`, and only when the same widget is still under the pointer
+(`app.py` `on_event`). Measured in tmux with SGR mouse sequences: a 0 s hold chose Ollama,
+a 0.1 s hold chose a **wrong** row (Arcee AI), and 0.3 s or 1.0 s holds were lost.
+`pilot.click` could never show this: it forwards `MouseDown`, `MouseUp` and `Click`
+straight to the screen, so no focus change can come between them. To reproduce it,
+post the events through App the way the driver does
+(`app.post_message(events.MouseDown(None, x, y, 0, 0, 1, False, False, False, x, y))`,
+wait, then `MouseUp`). Then poll for the outcome: the Click, `OptionSelected` and
+`Select.Changed` chain is posted after `pause()`'s idle wait starts, so a fixed
+`pause(0.2)` flaked under `-n 8`. The fix: when the timer finds that focus went to a
+container of the open list and the pointer is over the list, re-focus the control
+instead of closing. Guard the lookup with `QueryError`, because the timer can fire
+during teardown.
 
 ## `Screen`'s Tab binding is not `priority`, so a burst types past it — and `pilot.press` can never show you
 
@@ -803,6 +874,14 @@ because `Select._update_selection` assigns only `if value != self.value`. So the
 echo from a real commit by the event alone — compare against the **stored** value and
 no-op when they match (`task_detail.py:1200`, `definition_detail.py:1391`). Never close,
 persist, or navigate on the first `Changed` after `begin_edit`/mount.
+
+**`Input` does the same (TASK-33007.2, 2026-10-03).** Settings' one-row Provider control is
+an `Input` composed with the chosen provider's name, whose `Changed` handler filters the
+provider list. Its mount echo arrived unfocused with the value "Anthropic" and filtered the
+resting list down to one row, so the help line read "1 found" before anyone typed. Ignoring
+that echo then left the help blank, because the resting copy had only ever been written by
+the echo's refresh. Treat a `Changed` whose value equals the committed display text as no
+query (`handle_provider_search_changed`), and compose the resting copy directly.
 
 ---
 
@@ -989,6 +1068,20 @@ one edge silently zeroes the other three that a lower rule set. Restate every
 edge you need in the winning rule, and measure `styles.margin` rather than
 reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
 to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
+
+## Widening `#card > .row` to `#card .row` also catches nested groups' rows
+
+**TASK-33007.6 fix round 1, 2026-10-04.** Task 6 moved two compact-workbench
+rows into Advanced disclosures, and it changed
+`#settings-providers-models-card > .settings-input-row` to a descendant selector
+so the rows still stacked at <=100 columns. That selector also matched Catalog
+refresh's per-provider rows and Custom endpoints' edit rows. Neither had matched
+before, and both have compact rules of their own. Each provider row gained the
+rule's `margin-bottom`, and the open catalog group grew from 71 to 96 rows at
+100x40. Full-screen captures cannot show this, because the rule applies only at
+<=100 columns. The fix names the containers that received the moved rows. When a
+selector follows rows into a new wrapper, list every row it matches before and
+after, by layout, height and `styles.margin`, at the width where it applies.
 
 ## An empty Static still takes its row: hide it, don't just clear it
 

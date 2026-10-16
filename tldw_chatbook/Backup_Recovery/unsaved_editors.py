@@ -1,7 +1,7 @@
 """Read-only refusal for unsaved installed editor state before maintenance."""
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from textual.containers import Vertical
 from textual.css.query import QueryError
@@ -61,10 +61,22 @@ def _speech_snapshot_dirty(snapshot) -> bool:
         "SpeechTTSPanelDraftSnapshot",
     ):
         raise TypeError("unknown speech settings snapshot")
-    return (
-        snapshot.state != snapshot.original_state
-        or snapshot.realtime_draft != snapshot.realtime_original
-    )
+    # Every field but the two navigation ones is half of a draft/original
+    # pair. Read from the dataclass, so a pair added later is compared too
+    # (the pipeline voice pair was not, TASK-33007); a field that pairs with
+    # nothing is an unknown shape, never clean.
+    values = {item.name: getattr(snapshot, item.name) for item in fields(snapshot)}
+    values.pop("configure_provider", None)
+    values.pop("draft_revision", None)
+    dirty = False
+    for original in [name for name in values if "original" in name]:
+        draft = original.removeprefix("original_").replace("_original", "_draft")
+        if draft not in values:
+            raise TypeError("unknown speech settings snapshot")
+        dirty = values.pop(original) != values.pop(draft) or dirty
+    if values:
+        raise TypeError("unknown speech settings snapshot")
+    return dirty
 
 
 def _clean_settings_form(owner) -> bool:
@@ -176,6 +188,93 @@ def _console_snapshot_dirty(state) -> bool:
     return launch is not None
 
 
+#: Every key ``SettingsScreen.save_state`` can write; a test pins it to that
+#: source. An unknown key refuses, so a missing one blocks every kept visit.
+SETTINGS_SNAPSHOT_KEYS = frozenset(
+    {
+        # View state, shape-checked only.
+        "active_category",
+        "category_search_query",
+        "hooks_snapshot",  # the saved hooks' review; their edits are a draft
+        "provider_return_continuation",
+        # Drafts: retained work while unsaved.
+        "settings_drafts",
+        "speech_tts_panel_draft",
+        "web_search_session",
+        "raw_config_session",
+        "snapshot_preferences",  # written only while unsaved
+        "unsaved_titles",  # the screen's own list of its unsaved categories
+    }
+)
+
+
+def _settings_snapshot_dirty(state: dict) -> bool:
+    if set(state) - SETTINGS_SNAPSHOT_KEYS:
+        raise TypeError("unknown retained Settings field")
+    if any(
+        type(state[key]) is not str
+        for key in ("active_category", "category_search_query")
+        if key in state
+    ):
+        raise TypeError("unknown retained Settings navigation")
+    hooks = state.get("hooks_snapshot")
+    if hooks is not None and not _exact(
+        hooks, "Agents.hook_permissions", "HookReviewSnapshot"
+    ):
+        raise TypeError("unknown retained hook review")
+    continuation = state.get("provider_return_continuation")
+    if continuation is not None and (
+        type(continuation) is not dict
+        or set(continuation) != {"target", "conflict", "outcome"}
+        or type(continuation["target"]) is not dict
+        or type(continuation["conflict"]) is not bool
+        or (
+            continuation["outcome"] is not None
+            and type(continuation["outcome"]) is not str
+        )
+    ):
+        raise TypeError("unknown retained provider return")
+    dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
+    dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
+    if "web_search_session" in state:
+        from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+        session = state["web_search_session"]
+        if not _exact(session, "UI.Screens.settings_web_search", "WebSearchSettings"):
+            raise TypeError("unknown retained web search session")
+        drafts = {SettingsCategoryId.WEB_SEARCH: session.draft}
+        dirty = _settings_drafts_dirty(drafts) or dirty
+    if "raw_config_session" in state:
+        session = state["raw_config_session"]
+        module = "UI.Screens.settings_advanced_config"
+        if (
+            not _exact(session, module, "AdvancedConfigSettings")
+            or not _exact(session.state, module, "RawConfigDraft")
+            or type(session.state.text) is not str
+            or type(session.state.baseline_text) is not str
+        ):
+            raise TypeError("unknown retained raw config session")
+        dirty = session.state.text != session.state.baseline_text or dirty
+    if "snapshot_preferences" in state:
+        kept = state["snapshot_preferences"]
+        module = "LLM_Management.snapshot_settings"
+        if (
+            type(kept) is not tuple
+            or len(kept) != 2
+            or not _exact(kept[0], module, "SnapshotPreferences")
+            or type(kept[1]) is not tuple
+            or len(kept[1]) != 2
+            or type(kept[1][0]) is not bool
+            or type(kept[1][1]) is not str
+        ):
+            raise TypeError("unknown retained snapshot preferences")
+        dirty = True
+    titles = state.get("unsaved_titles", [])
+    if type(titles) is not list or any(type(title) is not str for title in titles):
+        raise TypeError("unknown retained Settings titles")
+    return bool(titles) or dirty
+
+
 def _retained_editors(store) -> list[UnsavedEditor]:
     if not _exact(store, "UI.Navigation.screen_state_store", "ScreenStateStore"):
         raise TypeError("unknown screen state owner")
@@ -200,21 +299,7 @@ def _retained_editors(store) -> list[UnsavedEditor]:
             raise TypeError("unknown retained screen shape")
         state = envelope.snapshot
         if route == "settings":
-            if set(state) - {
-                "active_category",
-                "category_search_query",
-                "settings_drafts",
-                "speech_tts_panel_draft",
-            }:
-                raise TypeError("unknown retained Settings field")
-            if any(
-                type(state[key]) is not str
-                for key in ("active_category", "category_search_query")
-                if key in state
-            ):
-                raise TypeError("unknown retained Settings navigation")
-            dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
-            dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
+            dirty = _settings_snapshot_dirty(state)
         elif route == "chat":
             dirty = _console_snapshot_dirty(state)
         elif route == "library":

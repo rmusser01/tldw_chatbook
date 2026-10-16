@@ -31,6 +31,11 @@ _STRING_KEYS = frozenset({
 # settings are held to ONE contract, so an out-of-range value is refused at
 # save time instead of reaching a provider request.
 TEMPERATURE_RANGE: tuple[float, float] = (0.0, 2.0)
+#: A provider whose API takes a narrower temperature, by config key
+#: (TASK-33007 capture finding 11): Anthropic's Messages API takes 0 to 1.
+PROVIDER_TEMPERATURE_RANGES: dict[str, tuple[float, float]] = {
+    "anthropic": (0.0, 1.0),
+}
 TOP_P_RANGE: tuple[float, float] = (0.0, 1.0)
 MIN_P_RANGE: tuple[float, float] = (0.0, 1.0)
 #: Shared by ``presence_penalty`` and ``frequency_penalty``.
@@ -68,6 +73,18 @@ _STRING_ENUMS: dict[str, frozenset[str]] = {
     "verbosity": VERBOSITY_VALUES,
     "thinking_effort": THINKING_EFFORT_VALUES,
 }
+
+
+def temperature_range(provider_key: str) -> tuple[float, float]:
+    """Return the temperature range a provider's API accepts.
+
+    Args:
+        provider_key: The provider's config key, e.g. ``"anthropic"``.
+
+    Returns:
+        ``(low, high)``; ``TEMPERATURE_RANGE`` for a provider not listed.
+    """
+    return PROVIDER_TEMPERATURE_RANGES.get(provider_key, TEMPERATURE_RANGE)
 
 
 def validate_sampling_params(params: Mapping[str, Any]) -> list[str]:

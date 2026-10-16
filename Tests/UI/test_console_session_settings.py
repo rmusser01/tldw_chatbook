@@ -4737,8 +4737,12 @@ async def test_console_settings_modal_controls_render_one_row_tall(size) -> None
         _assert_one_row_controls(screen, "context")
         painted = _painted_rows(screen)
         paired = 0
+        # Only Selects inside the body's viewport paint: one just under its
+        # bottom edge still has a region (seen once the Context view became
+        # 85% tall, TASK-33007 capture finding 21, round 2).
+        viewport = screen.query_one("#console-settings-body").content_region
         for select in screen.query("#console-settings-context-view Select"):
-            if not select.region.area:
+            if not viewport.contains_region(select.region):
                 continue
             label = next(
                 child
@@ -4998,7 +5002,7 @@ async def test_console_settings_focused_button_keeps_its_contrast(theme) -> None
         await pilot.pause()
         screen = app.screen
         # TASK-33006.5: the default-variant sample is Default for new chats
-        # (Cancel is the Context view's now).
+        # (Cancel shows only with the recovery actions, TASK-33007 capture finding 20).
         for button_id in ("#console-settings-save", "#console-settings-make-default"):
             button = screen.query_one(button_id, Button)
             assert not button.disabled, button_id
@@ -5041,6 +5045,11 @@ _FREE_TEXT_FIELD_IDS = (
 #: A dense-form Select paints its left edge, one padding cell on each side,
 #: and the arrow with its one-cell gap around the option text.
 _SELECT_CHROME = 5
+#: TASK-33007 #12(b): one Select width per view, its widest option + chrome,
+#: so the arrows line up: "Detailed" (Reasoning summary) in the Model view,
+#: where a field row's number takes it too, and Keep after compaction's
+#: 27-cell option in the Context view.
+_VIEW_SELECT_WIDTH = {"model": 8 + _SELECT_CHROME, "context": 27 + _SELECT_CHROME}
 
 
 def _shown_field_widths(screen) -> dict[str, int]:
@@ -5063,7 +5072,7 @@ def _shown_field_widths(screen) -> dict[str, int]:
 
 
 def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
-    """Each shown Select is its longest option plus the arrow: no wider, no crop."""
+    """Each shown Select is its view's one width and never crops its options."""
     from rich.cells import cell_len
 
     checked = 0
@@ -5074,7 +5083,7 @@ def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
         if select._allow_blank:
             texts.append(select.prompt)
         longest = max(cell_len(text) for text in texts)
-        assert select.region.width <= longest + _SELECT_CHROME, (
+        assert select.region.width == _VIEW_SELECT_WIDTH[view], (
             view,
             select.id,
             select.region.width,
@@ -5109,12 +5118,15 @@ _VALUE_TYPE_CHATS = {
 
 @pytest.mark.parametrize("chat", sorted(_VALUE_TYPE_CHATS))
 @pytest.mark.asyncio
-async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
+@private_profile_test
+async def test_console_settings_fields_are_sized_by_value_type(request, chat) -> None:
     """TASK-33003.3: a field is as wide as its value type, not the viewport.
 
     Under the production stylesheets, with every section expanded: numeric
-    fields are at most 12 columns (edge included), each enum Select is its
-    longest option plus the arrow, free-text fields stay within 64 columns,
+    fields are at most 13 columns (edge included; the Model view's one
+    control column, TASK-33007 #12(b)), each enum Select takes
+    its view's one width (TASK-33007 #12(b): the widest option plus the
+    arrow) and crops none, free-text fields stay within 64 columns,
     and no width changes between 211x44 and 235x52. Parametrized over three
     chats so every provider-choice Select renders in at least one.
     """
@@ -5144,11 +5156,73 @@ async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
         for field_id in shown_ids:
             assert widths.get(field_id, 0) > 0, (size, field_id)
         for field_id in _NUMERIC_FIELD_IDS:
-            assert widths.get(field_id, 0) <= 12, (size, field_id, widths.get(field_id))
+            assert widths.get(field_id, 0) <= _VIEW_SELECT_WIDTH["model"], (
+                size,
+                field_id,
+                widths.get(field_id),
+            )
         for field_id in _FREE_TEXT_FIELD_IDS:
             assert widths.get(field_id, 0) <= 64, (size, field_id, widths.get(field_id))
         widths_by_size[size] = widths
     assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
+
+
+async def _arrow_columns(pilot, screen) -> dict[str, int]:
+    """Screen column of each shown Select's ▼, scrolling each into view."""
+    columns = {}
+    for select in screen.query(Select):
+        if not select.display or not select.parent.display:
+            continue
+        select.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        arrow = select.query_one("SelectCurrent .down-arrow")
+        if arrow.region.area:
+            columns[select.id] = arrow.region.x
+    return columns
+
+
+@pytest.mark.asyncio
+async def test_console_settings_select_arrows_share_one_column() -> None:
+    """TASK-33007 #12(b): the ▼ of every Select in a view lines up.
+
+    Streaming (8), Reasoning effort (12) and Reasoning summary (13) each took
+    their own width, so their arrows (and the Source words after them)
+    stepped down the column. At 211x44, in the Model view of an OpenAI gpt-5
+    chat (four Selects) and in the Context view, every arrow sits in one
+    column, and every Model view field row's Source word starts in one
+    column (number and enum rows alike).
+    """
+    app = StyledModalHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            _one_row_settings_modal(
+                app.app_config,
+                ConsoleSessionSettings(provider="openai", model="gpt-5"),
+            )
+        )
+        await pilot.pause()
+        screen = app.screen
+        model = await _arrow_columns(pilot, screen)
+        assert {
+            "console-settings-streaming",
+            "console-settings-reasoning-effort",
+            "console-settings-reasoning-summary",
+            "console-settings-verbosity",
+        } <= set(model), model
+        assert len(set(model.values())) == 1, model
+        rows = ".console-settings-field-row .console-settings-field-source"
+        sources = {
+            source.id: source.region.x
+            for source in screen.query(rows)
+            if source.region.area
+        }
+        assert len(sources) >= 6 and len(set(sources.values())) == 1, sources
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        context = await _arrow_columns(pilot, screen)
+        assert len(context) >= 5, context
+        assert len(set(context.values())) == 1, context
 
 
 def _field_paint(screen, field) -> tuple:
@@ -6095,10 +6169,9 @@ async def test_console_settings_modal_cancel_discards_draft() -> None:
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        # TASK-33006.5: Cancel is the Context view's (spec mock (b)).
-        await pilot.click("#console-settings-view-context")
-        await pilot.pause()
-        await pilot.click("#console-settings-cancel")
+        # Rewritten on purpose by TASK-33007 capture finding 20 (round 2):
+        # no view has a Cancel button; Esc close is the close.
+        await pilot.press("escape")
 
     assert app.saved_settings is None
 
@@ -8385,6 +8458,48 @@ async def test_console_settings_modal_invalid_temperature_stays_open_and_renders
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_holds_anthropic_temperature_to_its_own_range() -> (
+    None
+):
+    """Capture fix round 1, findings 2 and 7: Ctrl+O held Temperature to
+    0-2 for every provider, so 1.5 on an Anthropic chat was applied and the
+    Messages API refused the next send. The blank row's help and Apply both
+    use the provider's own range, as Settings ▸ Providers & Models does."""
+    app = ModalHarness()
+    app.app_config["api_settings"]["anthropic"] = {"api_key": "sk-ant-test"}
+    settings = ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-5")
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"anthropic": ["claude-sonnet-4-5"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        temperature.value = ""
+        await pilot.pause()
+        help_line = app.screen.query_one("#console-settings-temperature-help", Static)
+        assert "Required: 0.0 to 1.0." in str(help_line.content), help_line.content
+
+        temperature.value = "1.5"
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Temperature must be between 0 and 1." in str(
+            app.screen.query_one("#console-settings-error", Static).content
+        )
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_blank_temperature_stays_open_and_renders_error() -> (
     None
 ):
@@ -8692,7 +8807,8 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
         # TASK-33006.4: the provider Select is gone; Streaming is a Select.
         provider_select = app.screen.query_one("#console-settings-streaming", Select)
         # TASK-33006.5: any focused control outside the Select will do;
-        # Cancel is the Context view's now, so the MODEL row's Change.
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20), so the MODEL row's Change.
         cancel_button = app.screen.query_one("#console-settings-model-change", Button)
         cancel_button.focus()
         await pilot.pause()
@@ -11670,7 +11786,7 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_apply_
     Sampling, Connection and the name stay closed until opened.
     TASK-33006.4 (R7): the MODEL row's Change sits between the view tabs and
     Temperature. TASK-33006.5 renamed it: the Model view ends on Apply, and
-    Cancel is the Context view's.
+    Cancel shows only with the recovery actions (TASK-33007 capture finding 20).
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -13569,7 +13685,8 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
     walks the shown CORE rows, then the Sampling, Connection, Request
     estimate and name titles, then the footer to Apply; opening Sampling from
     its title puts its first field next in the order. TASK-33006.5: the
-    footer ends on Apply (Cancel is the Context view's).
+    footer ends on Apply (Cancel shows only with the recovery actions,
+    TASK-33007 capture finding 20).
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -14257,7 +14374,12 @@ async def test_console_settings_modal_default_action_only_tracks_changed_persist
         assert default_action.variant == "default"
         # TASK-33006.5: one name for the action, the profile it writes.
         assert str(default_action.label) == "Save as model default"
-        assert str(scope.renderable) == "Used by future conversations for llama.cpp."
+        # Rewritten on purpose by TASK-33007 capture finding 17 (round 2):
+        # the line names the button it explains.
+        assert str(scope.renderable) == (
+            "Save as model default: future chats on this llama.cpp model use "
+            "these values."
+        )
 
 
 @pytest.mark.asyncio
@@ -14295,7 +14417,10 @@ async def test_console_settings_modal_model_default_action_names_its_scope() -> 
         assert str(default_action.label) == "Save as model default"
         assert str(
             modal.query_one("#console-settings-default-scope", Static).renderable
-        ) == "Used by future conversations for llama.cpp."
+        ) == (  # rewritten on purpose: capture finding 17 (round 2)
+            "Save as model default: future chats on this llama.cpp model use "
+            "these values."
+        )
         assert modal.query_one("#console-settings-default-scope", Static).display
 
 
@@ -14347,7 +14472,10 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
         assert str(disabled_reason.renderable) == ""
         assert str(
             modal.query_one("#console-settings-default-scope", Static).renderable
-        ) == "Updates this provider for future conversations."
+        ) == (  # rewritten on purpose: capture finding 17 (round 2)
+            "Save endpoint & use model: new chats start on this Ollama endpoint "
+            "and model."
+        )
 
         default_action.press()
         await pilot.pause()
@@ -14399,7 +14527,10 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
 
 @pytest.mark.asyncio
 async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tooltips() -> None:
-    """Selected destination must remain legible without adding a layout row."""
+    """Selected destination must remain legible without adding a layout row.
+
+    Rewritten on purpose by TASK-33007 capture finding 16 (round 2): the
+    shown view's tab is marked "●", not with the printed word "Selected"."""
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
@@ -14412,7 +14543,7 @@ async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tool
         model_view = modal.query_one("#console-settings-view-model", Button)
         context_view = modal.query_one("#console-settings-view-context", Button)
         assert list(modal.query("#console-settings-selected-view")) == []
-        assert str(model_view.label) == "Model and generation · Selected"
+        assert str(model_view.label) == "● Model and generation"
         assert str(context_view.label) == "Context and memory"
         assert model_view.tooltip == "Selected view: Model and generation"
         assert context_view.tooltip == "Show Context and memory"
@@ -14421,7 +14552,7 @@ async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tool
         await pilot.pause()
 
         assert str(model_view.label) == "Model and generation"
-        assert str(context_view.label) == "Context and memory · Selected"
+        assert str(context_view.label) == "● Context and memory"
         assert model_view.tooltip == "Show Model and generation"
         assert context_view.tooltip == "Selected view: Context and memory"
 
@@ -14561,8 +14692,8 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         assert actions.virtual_size.width <= actions.container_size.width
         assert actions.region.bottom <= frame.content_region.bottom
         assert actions.region.right <= frame.content_region.right
-        # TASK-33006.5: Cancel is the Context view's; the Model view names
-        # its actions and their keys.
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20); the Model view names its actions and their keys.
         assert not cancel.display
         assert str(adopt.label) == "Use saved defaults"
         assert str(defaults.label) == "Save as model default"

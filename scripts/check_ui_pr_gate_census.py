@@ -210,7 +210,114 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-25907.23 / 34800 adds seven bounded privacy/currentness entries.
 # PR2921: production Library Dreams reader and native modal layout/owner checks.
 # PR3010 adds two bounded native rule phase/Stop event node IDs.
-MINIMUM_FILES = 190
+# TASK-33007.5 raised it to 136: test_settings_model_defaults_rows.py (~75 s
+# serial) gates Settings' Model defaults rows, the one-row Select rows on
+# Providers & Models and Console Behavior, and a real save of a blanked field.
+# TASK-33007.6 raised it to 137: test_settings_advanced_disclosures.py (~75 s
+# serial) gates the Advanced fold -- order, one-row titles that say their
+# state, state words on every discovered and catalog row, one frame level,
+# and '/' opening the closed disclosure it lands in.
+# TASK-33007.7 raised it to 138: test_settings_console_fallback_rows.py (~45 s
+# serial) gates Console Behavior's global fallbacks -- Model defaults' rows,
+# the On/Off streaming Select, the config-key disclosure and a real save that
+# a new chat and an inheriting model default both follow.
+# TASK-33007.9 raised it to 139: test_settings_connect_rows.py (23 mounted
+# cases, ~6.7 min serial measured at load average 35; 13-25 s a case) gates
+# Connect's one-row rows -- the Provider control's name after a choice or
+# Revert, painted from its head, its open list's box at both full-screen
+# sizes, the key's source words, the Key check row and the Tab budget to Model.
+# TASK-33007.9 (review round 2) raised it to 140:
+# test_settings_default_model_picker.py (12 mounted cases, ~2.1 min serial)
+# gates the Default model picker -- one row, ids grouped by where they came
+# from, Custom ID and its rollback, and a wide id read from its head. The lane
+# went to five shards in the same commit: this phase's five Settings files
+# cost ~10.8 min serial, and replaying per-file seconds from three-shard job
+# logs over dev's census plus them put 19-20.5 min of pytest in one of three
+# shards and 16.6-17.5 in one of four; five give 13.3-14.5 at most.
+# TASK-33007 (final review) raised it to 142: test_settings_save_reach.py
+# (6 cases; the real D1 reach save and Ctrl+T in Console) and
+# test_settings_providers_models_card_geometry.py (2 cases; the card's
+# hit-test net from the region-module move) were left out of the lane.
+# The capture review's items 9-11 (p7cf-b) raised it to 143:
+# test_settings_console_behavior_grammar.py (5 cases) pins Console
+# Behavior's one frame, one control column, its labels and prose inset.
+# TASK-33007 (CI on #3057) raised it by three: test_settings_connect_rows.py
+# ran 15+ min of one 20-min shard on CI (61 cases, each mounting the whole
+# Settings screen) and timed the shard out. It is split by topic into itself
+# (the Provider control), _tab_budget.py, _key_rows.py and _paint.py; the
+# lane went to six shards in the same commit. Where the four sit in the
+# census is decided with the other Phase 7 files, below.
+# Placement (measured on #3057's six shard logs, every file timed): the eleven
+# Phase 7 Settings files are 35.2 of the lane's 71.4 pytest minutes, and where
+# they fall decides the split as much as the shard count does -- listed where
+# they were, one of six shards ran 16.0 min (17.4 with setup, of 20). They now
+# sit at the end of the census, so no earlier file's shard depends on them,
+# ordered by scripts/ui_lane_shard_replay.py for the flattest split. Per-file
+# seconds move about 40% between runs on the hosted runners (one file took
+# 204 s in one run of #3057 and 295 s in the next), so the replay scores each
+# file at the worst of the runs it is given. Over three runs of #3057 and
+# dev's 180 entries above the tail, the best tail order replays at 14.2 min
+# of pytest at most with six shards, 13.1 with seven and 13.7 with eight
+# (dev's own entries fall unevenly over eight), so the lane went to seven. An
+# entry added above the tail shifts its shards: re-run the replay then, and
+# change the shard count only if the best order still nears the cap -- a new
+# count re-deals every entry, and one more shard is not always lighter.
+# Phase 7's counts above were taken on its own base; over dev's 179 its eleven
+# files make 190, and the node that pins the Study card-list lock (the review
+# of #3057) 191.
+# The review of #3057 (ruling C11, 2026-10-11) raised it by 18, to 209: one
+# new file and 17 node ids that were the only evidence for a ticked Phase 7
+# criterion and ran in no PR lane (the census names the criterion beside
+# each). They sit above the Phase 7 tail by that ruling, which moves the
+# tail's files four shards on (18 mod 7): the replay is re-run after them.
+# Integrating that review added one more, 210: the Saved model list's row-words
+# test, red in no lane since its rows became Text (five shards on, 19 mod 7).
+# Ruling C16 (2026-10-12) raised it by 27, to 237: the Tests/UI files the
+# review's fix wave and rounds added, each 3 of 3 serial alone (tail +6 shards).
+# C16 for the capture fix wave (2026-10-13): +9 node ids, to 246 (tail +2).
+# C16 for capture fix 2 and its rounds (2026-10-13): +12 node ids, to 258 (tail +5).
+# C16 for capture fix 3 and its rounds (2026-10-13): +5 node ids, to 263 (tail +5).
+# Rebased onto dev (2026-10-13): dev's 190 entries and this PR's 84, 274. The 84
+# are one block at the end, re-ordered as a whole: the replay over three runs of
+# #3057, with the lanes report's worst local seconds x1.5 for the 53 entries no
+# CI log timed, gives 17.6 min of pytest at most as they were listed over seven
+# shards, 15.4 re-ordered (about 17 of the job's 20 with setup) and 13.5 over
+# eight, so the lane went to eight. Its first CI run there (38458195175) timed
+# one shard out: on CI the new entries took up to 1.9x their local seconds.
+# Replayed over that run and the three before it (each file at its worst), the
+# lane is 125 pytest minutes: 15.6 at most over eight, 13.9 over nine (about 16
+# of 20 with setup), 12.5 over ten, so the lane went to nine. The rounds after the
+# rebase appended five entries (279); the block of 89 is dealt as a whole.
+# Round 4 after the rebase (ruling cf3r1-N1): one node appended after the
+# block, a snapshot edit whose Changed has not landed is kept: 275.
+# C16 for post-rebase round 1: +2 node ids after the block (leaving and
+# Ctrl+Q wait for a snapshot Save still writing): 277.
+# Capture 13c: +2 node ids after the block (a kept snapshot edit is
+# forgotten once it is saved or reverted): 279.
+# Review of #3057, findings 2 and 3: +2 node ids after the block (the
+# unsaved-work check reads a kept Settings visit; a pipeline voice edit
+# survives a Settings save/restore): 281.
+# Their siblings: +1 node id after the block (undoing an audio.cpp review
+# merge keeps a pipeline voice edit): 282.
+# Rebased onto dev's six-shard lane (TASK-34917, 2026-10-14): no entry added,
+# 282. Replayed over #3057's three CI runs and five six-shard runs, each file
+# at its slowest, the re-ordered block gives 15.2 pytest min at most over nine
+# shards, 13.7 over ten and 12.4 over eleven; ten leaves a hung test's report
+# room under the 20-min cap, so the lane runs ten.
+# Merge-gate review of #3057's rebased head (2026-10-14): no entry added, 282.
+# The census's group notes for those rulings moved here, since the replay's
+# --write now moves each entry with the comments above it and would have
+# carried a group note with whichever entry sat under it. Ruling C11's 18
+# entries and the nineteenth each passed three serial runs alone, at
+# pytest's seconds for one run on a loaded machine (load average 40 and up),
+# and are node ids where their files are slow or hold reds that are not this
+# phase's. Each C16 round's entries are the Tests/UI files or tests it added
+# that no lane ran, each 3 of 3 serial alone (seconds in the p7-review-fix
+# lanes report). Their notes' "N shards on (N mod 7)" described the
+# seven-shard lane of their day; the block has since been re-dealt whole for
+# ten shards, so no earlier offset holds. Every block entry keeps its own
+# "what it pins" comment, and a blank line ends the block's header.
+MINIMUM_FILES = 282
 
 
 def read_census(path: Path) -> list[str]:

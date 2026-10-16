@@ -65,6 +65,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
+from tldw_chatbook.Chat.sampling_params import temperature_range
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from .console_model_popover import context_copy
@@ -125,10 +126,12 @@ NAME_TITLE = "Your name in this chat"
 #: Ends the Connection summary (spec §7 mock (b)): credentials and provider
 #: defaults live in Settings, and Console only surfaces recovery (ADR-012).
 SETTINGS_POINTER = "change it in Settings ▸ Providers & Models"
-#: Cells for a closed disclosure title in the 150-column frame: 150 - 2
-#: border - 2 padding - 2 title padding - 2 symbol - 1 scrollbar. Every
-#: closed title stays one row (owner ruling of 2026-10-02): Connection
-#: shortens its host, Sampling counts the fields it cannot name.
+#: Cells for a closed disclosure title, measured in mock (b)'s 150-column
+#: frame: 150 - 2 border - 2 padding - 2 title padding - 2 symbol - 1
+#: scrollbar. Every closed title stays one row (owner ruling of 2026-10-02):
+#: Connection shortens its host, Sampling counts the fields it cannot name.
+#: The frame is 176 since TASK-33007 capture finding 15; titles keep this
+#: budget, so they still fit one row.
 DISCLOSURE_TITLE_CELLS = 141
 #: The host part for an endpoint that cannot be parsed (a half-typed URL).
 INVALID_ENDPOINT_HOST = "invalid endpoint"
@@ -139,8 +142,8 @@ MODEL_CHANGE_LABEL = "Change Alt+M"
 #: Streaming at chat scope is a plain On/Off choice (ADR-095:75-81); the
 #: Source word, not a third option, says when it is inherited.
 STREAMING_OPTIONS = (("On", "on"), ("Off", "off"))
-#: What a blank optional field sends: nothing, so the provider's own default.
-BLANK_FIELD_HELP = "blank = provider default"
+#: A blank field or a "default" choice sends nothing, so the provider decides.
+BLANK_FIELD_HELP = "the provider decides"
 #: A control whose support is unknown stays visible and says so in its help
 #: line (TASK-30012 AC#3).
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
@@ -154,6 +157,12 @@ SAMPLING_HIDDEN_LIST_ID = "console-settings-sampling-hidden"
 #: A blank choice Select shows the value it inherits, not "Select" (spec
 #: §6); its Source word says the provider's (``_field_source``).
 BLANK_CHOICE_PROMPT = "default"
+
+class ConsoleSettingsSelect(Select):
+    """A Chat settings Select. Its own CSS type lets the width rules name it
+    instead of every Select in the app (the CSS fast-path ratchet counts
+    ancestor-scoped bare ``Select`` subjects)."""
+
 _CHOICE_FIELDS = frozenset(
     {"reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort"}
 )
@@ -205,35 +214,53 @@ SAMPLING_FOCUS_IDS = frozenset(field_control_id(name) for name in SAMPLING_FIELD
 CONNECTION_FOCUS_IDS = frozenset({"console-settings-base-url"})
 
 
-def hidden_fields_line(provider_name: str, hidden: Iterable[str]) -> str:
+def hidden_fields_line(
+    provider_name: str,
+    hidden: Iterable[str],
+    *,
+    cells: int = DISCLOSURE_TITLE_CELLS,
+    state: str = "",
+) -> str:
     """Return the one-row Sampling title for the fields the provider rejects.
 
     Args:
         provider_name: The provider's display name.
         hidden: Field-table names of the hidden fields, in line order.
+        cells: The title's one-row budget; Settings' card is narrower than
+            the Chat settings frame (TASK-33007.5).
+        state: An optional summary of the shown fields, put right after
+            "Sampling" (Settings' "Top P 0.95 · others inherit").
 
     Returns:
         ``"Sampling"`` when nothing is hidden; ``"Sampling · hidden for
         Anthropic: Min P, Seed (this provider does not accept them)"`` when
-        the labels fit ``DISCLOSURE_TITLE_CELLS``; else ``"Sampling · Together
-        does not accept 10 fields (open to list them)"``, the name shortened
-        with ``…`` if even that is too wide.
+        the labels fit ``cells``; else ``"Sampling · Together does not
+        accept 10 fields (open to list them)"``, the name shortened with
+        ``…`` if even that is too wide. A ``state`` follows "Sampling"; it
+        goes first when nothing of the name fits, then the hidden-field part
+        (the opened disclosure still lists them).
     """
+    title = f"{SAMPLING_TITLE} · {state}" if state else SAMPLING_TITLE
     labels = [MODEL_FIELD_LABELS[name] for name in hidden]
     if not labels:
-        return SAMPLING_TITLE
+        return title
     named = (
-        f"{SAMPLING_TITLE} · hidden for {provider_name}: "
+        f"{title} · hidden for {provider_name}: "
         f"{', '.join(labels)} {HIDDEN_FIELDS_REASON}"
     )
-    if cell_len(named) <= DISCLOSURE_TITLE_CELLS:
+    if cell_len(named) <= cells:
         return named
     noun = "field" if len(labels) == 1 else "fields"
     tail = f" does not accept {len(labels)} {noun} {HIDDEN_FIELDS_OPEN_HINT}"
-    room = DISCLOSURE_TITLE_CELLS - cell_len(f"{SAMPLING_TITLE} · {tail}")
+    room = cells - cell_len(f"{title} · {tail}")
+    if room < 1:
+        # Not even "…" fits: a negative size would cut the name from its end.
+        if state:
+            return hidden_fields_line(provider_name, hidden, cells=cells)
+        return title
     if cell_len(provider_name) > room:
         provider_name = set_cell_size(provider_name, room - 1) + "…"
-    return f"{SAMPLING_TITLE} · {provider_name}{tail}"
+    return f"{title} · {provider_name}{tail}"
 
 
 def hidden_fields_list(provider_name: str, hidden: Iterable[str]) -> str:
@@ -442,7 +469,7 @@ class ConsoleSettingsFieldRowsMixin:
         # it is hidden while empty, so the row grammar holds.
         validation: list[Widget] = []
         if name == "streaming":
-            control: Widget = Select(
+            control: Widget = ConsoleSettingsSelect(
                 STREAMING_OPTIONS,
                 value=self._streaming_select_value(),
                 allow_blank=False,
@@ -558,8 +585,14 @@ class ConsoleSettingsFieldRowsMixin:
         estimate = self._context_estimate
         context = ""
         if estimate.token_limit:
-            size = context_copy(estimate.token_limit, bool(estimate.token_limit_verified))
-            context = f" · {size} context"
+            # TASK-33007 #12: a fallback is not a known size; say "unknown" as
+            # Settings ▸ Advanced does. The size it assumes is in Request
+            # estimate below, so a long id keeps its width here.
+            context = (
+                f" · {context_copy(estimate.token_limit, True)} context"
+                if estimate.token_limit_verified
+                else " · context unknown"
+            )
         status = self.query_one("#console-settings-model-status", Static)
         _show(status, f"{self._model_row_word}{context}")
 
@@ -829,12 +862,16 @@ class ConsoleSettingsFieldRowsMixin:
         field = MODEL_CONFIG_FIELDS[name]
         if not _is_blank(control):
             text = field.help
+        elif name == "temperature":  # the provider's own range (finding 11)
+            low_high = temperature_range(provider_config_key(self._active_provider))
+            text = "Required: {:.1f} to {:.1f}.".format(*low_high)
         elif name in REQUIRED_FIELDS:
             text = f"Required: {field.valid_range}."
         else:
             text = f"{BLANK_FIELD_HELP} · {field.help}"
         if name in self._unknown_support_fields:
-            return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text}"
+            # A new sentence: "the provider decides" starts with a capital.
+            return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text[:1].upper()}{text[1:]}"
         return text
 
     def _field_source(self, word: str, control: Widget) -> str:

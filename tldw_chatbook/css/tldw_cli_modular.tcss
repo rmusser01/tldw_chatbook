@@ -120,6 +120,8 @@ $ds-textarea-min-height: 5;
 
 $ds-model-switcher-width: 140;
 
+$ds-chat-settings-width: 176;
+
 $ds-width-full: 100%;
 
 $ds-width-fill: 1fr;
@@ -3859,13 +3861,6 @@ PromptBlockEditor #prompt-editor-lane-options Checkbox {
 .internal-prompt-editor-error { color: $error; }
 .internal-prompt-editor-actions { align-horizontal: right; height: auto; padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0; }
 
-ImageGenSettingsPanel Checkbox > .toggle--button {
-  color: $ds-surface-panel;
-}
-ImageGenSettingsPanel Checkbox.-on > .toggle--button {
-  color: $success;
-}
-
 
 LibraryIngestCanvas .type-group-contents {
   height: auto;
@@ -5603,7 +5598,7 @@ StatCard:hover {
     color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
-    color: $success;
+    color: $text-success;
 }
 
 
@@ -8397,7 +8392,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 #console-settings-modal {
-    width: $ds-size-150;
+    width: $ds-chat-settings-width;
     max-width: $ds-percent-95;
     height: $ds-size-22;
     max-height: $ds-percent-95;
@@ -8410,7 +8405,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 #console-settings-modal.-context-view {
-    height: $ds-percent-94;
+    height: $ds-percent-85;
 }
 
 
@@ -8495,6 +8490,12 @@ ConsoleSettingsModal .console-context-action-row {
     min-height: $ds-control-height-compact;
 }
 
+
+#console-context-compact-now,
+#console-context-reset-overrides {
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
 .console-settings-control {
     width: $ds-width-fill;
     min-width: $ds-size-0;
@@ -8502,13 +8503,17 @@ ConsoleSettingsModal .console-context-action-row {
 }
 
 
-.console-settings-field-row Input,
-#console-settings-context-view Input {
+.console-settings-field-row ConsoleSettingsInput,
+.console-settings-field-row ConsoleSettingsSelect {
+    width: $ds-size-13;
+}
+
+#console-settings-context-view ConsoleSettingsInput {
     width: $ds-size-12;
 }
 
-#console-settings-streaming {
-    width: $ds-size-8;
+#console-settings-context-view ConsoleSettingsSelect {
+    width: $ds-size-32;
 }
 
 
@@ -8529,32 +8534,6 @@ ConsoleSettingsModal .console-context-action-row {
     text-overflow: ellipsis;
 }
 
-
-#console-settings-verbosity,
-#console-settings-thinking-effort,
-#console-settings-reasoning-effort,
-#console-context-thinking-history-policy {
-    width: $ds-size-12;
-}
-
-#console-settings-reasoning-summary {
-    width: $ds-size-13;
-}
-
-#console-context-budget-mode,
-#console-context-compaction-mode {
-    width: $ds-size-14;
-}
-
-#console-context-compaction-representation {
-    width: $ds-size-22;
-}
-
-#console-context-failure-behavior {
-    width: $ds-size-23;
-}
-
-#console-context-carry-forward,
 #console-settings-user-display-name {
     max-width: $ds-size-32;
 }
@@ -8588,6 +8567,15 @@ ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-stat
     min-height: $ds-size-3;
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     align-horizontal: right;
+}
+
+
+#console-settings-actions Button {
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions Button {
+    margin: $ds-space-0;
 }
 
 #console-settings-connection-actions {
@@ -11013,6 +11001,7 @@ RecoveryPassphraseDialog {
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {
@@ -12761,8 +12750,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 #snapshot-details,
 #snapshot-preferences-result,
 #snapshot-enabled,
-#settings-snapshot-enabled,
-#settings-snapshot-controls CollapsibleTitle,
 #llamacpp-snapshot-manager CollapsibleTitle,
 #settings-snapshot-controls .settings-help-copy,
 #settings-snapshot-controls .settings-input-label {
@@ -12832,11 +12819,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 #llamacpp-snapshot-manager .snapshot-keep-label {
     width: $ds-size-12;
-}
-
-#settings-snapshot-controls {
-    height: auto;
-    margin-bottom: $ds-space-1;
 }
 
 .gguf-source-mode-row {

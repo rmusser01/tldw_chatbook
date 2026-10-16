@@ -61,6 +61,22 @@ def format_context_tokens(value: int | None) -> str:
     return "unknown" if value is None else f"{value:,}"
 
 
+def context_token_row(label: str, value: int | None) -> str:
+    """Return one Context view row: the label in 20 cells, then the count.
+
+    Args:
+        label: The row's label, e.g. ``"Safety margin"``.
+        value: The count, or None when nothing measured it.
+
+    Returns:
+        For example ``"Safety margin       640 tokens"``; an unknown count
+        reads ``"unknown"``, never "unknown tokens" (TASK-33007 capture
+        finding 17).
+    """
+    count = "unknown" if value is None else f"{value:,} tokens"
+    return f"{label:<20}{count}"
+
+
 @dataclass(frozen=True, slots=True)
 class ThinkingHistoryControlState:
     """Saved optional replay preference and its current effective state."""
@@ -115,19 +131,6 @@ class ConsoleContextControlState:
         if budget is None:
             return None
         return int(budget * self.resolved_policy.policy.target_ratio)
-
-    @property
-    def request_row(self) -> str:
-        used = format_context_tokens(self.request_tokens)
-        ceiling = format_context_tokens(self.safe_input_ceiling_tokens)
-        if self.safe_input_ceiling_tokens is None:
-            suffix = "limit unknown"
-        elif self.model_window_verified:
-            suffix = "safe input"
-        else:
-            suffix = "estimated input; model unverified"
-        estimate_prefix = "~" if self.request_tokens is not None else ""
-        return f"{estimate_prefix}{used} / {ceiling} {suffix}"
 
     @property
     def conversation_row(self) -> str:
@@ -436,6 +439,12 @@ def build_console_context_cost_state(
             f"Context: ~{format_context_tokens(used)} / "
             f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
         )
+        if (
+            context.model_window_tokens is not None
+            and not context.model_window_verified
+        ):
+            # TASK-33007 #12: a fallback window is unknown, its size assumed.
+            context_line += " (assumed; window unknown)"
     conversation = format_context_tokens(context.conversation_tokens)
     budget = format_context_tokens(context.conversation_budget_tokens)
     prefix = "~" if context.conversation_tokens is not None else ""
@@ -493,5 +502,6 @@ __all__ = [
     "build_console_context_control_state",
     "build_console_context_cost_state",
     "build_console_next_send_spend_state",
+    "context_token_row",
     "format_context_tokens",
 ]

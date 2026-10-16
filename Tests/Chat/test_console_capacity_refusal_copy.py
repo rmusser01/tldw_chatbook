@@ -11,7 +11,7 @@ refused again.
 TASK-34350 (merged to dev first, owner ruling 2026-10-03) now owns the copy
 and refuses a composer send before it is committed: the alert names the
 model, what fills the window and the setting that changes it, and says when
-the window is an estimate and where to set the real one. These tests pin that
+the window is assumed and where to set the real one. These tests pin that
 outcome for AC#3, and pin AC#3's own half for a turn the context preflight
 refuses AFTER it was accepted (a send that skips the pre-commit check): the
 card reads 'Not sent', and Retry is refused for every caller.
@@ -32,6 +32,7 @@ from Tests.Chat.test_console_compaction_live_session import (
     _live_controller,
     _system_rows,
 )
+from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -83,8 +84,11 @@ async def test_unknown_window_refusal_names_the_model_and_the_fix(
     # The cause and its setting, and the window flagged as a guess with
     # where to set the real one -- only because it is one.
     assert "Max tokens" in copy
-    assert "(an estimate)" in copy
-    assert "F4 Settings > Providers & Models" in copy
+    # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
+    assert "(assumed)" in copy
+    # Rewritten on purpose (capture finding 17): the pointer is the constant
+    # both Chat settings views spell, "Settings ▸ Providers & Models (F4)".
+    assert MODEL_WINDOW_SETTING in copy
     for jargon in _POLICY_JARGON:
         assert jargon not in copy
     # Refused before commit: no 'Response accepted' recovery panel, and no
@@ -117,7 +121,7 @@ async def test_a_known_window_refusal_never_claims_the_size_is_unknown(
     assert gateway.stream_calls == 0
     rows = [row for row in _system_rows(store) if "gpt-test-live" in row]
     assert len(rows) == 1, _system_rows(store)
-    assert "estimate" not in rows[0]
+    assert "assumed" not in rows[0]
     assert "isn't known" not in rows[0]
     assert "1,000-token context window" in rows[0]
     for jargon in _POLICY_JARGON:

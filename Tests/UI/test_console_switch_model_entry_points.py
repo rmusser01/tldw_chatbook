@@ -76,15 +76,10 @@ async def _switcher_ready(harness: _Harness, pilot) -> ConsoleModelPopover:
 
 
 async def _close_chat_settings(harness: _Harness, console: ChatScreen, pilot) -> None:
-    # TASK-33006.5: Cancel is the Context view's (spec mock (b)), so show
-    # that view first. Esc closes with the same focus result, but after it
-    # the last assertion below reads the rail-focus footer ("Esc composer ·
-    # F6 panes" first, which pushes Alt+A out at 211 columns) instead of the
-    # composer's; that footer refresh is outside this task.
+    # Rewritten on purpose by TASK-33007 capture finding 20 (round 2): no
+    # view has a Cancel button any more; Esc close is the close.
     await pilot.pause()
-    harness.screen.query_one("#console-settings-view-context", Button).press()
-    await pilot.pause()
-    harness.screen.query_one("#console-settings-cancel", Button).press()
+    await pilot.press("escape")
     await _until(pilot, lambda: harness.screen is console, "Chat settings to close")
 
 
@@ -192,7 +187,18 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
         await pilot.press("escape")
         await _until(pilot, lambda: harness.screen is console, "the switcher to close")
 
+        # The footer is read with the composer focused (capture finding 20,
+        # round 2). Where focus ends after the rail's Change depended on
+        # whether the Model section was already open, and with the rail
+        # focused the footer leads "Esc composer · F6 panes", which pushes
+        # Alt+A out at 211 columns: a footer width outside this test.
+        _composer(console).focus()
         footer = console.query_one(AppFooterStatus)
+        await _until(
+            pilot,
+            lambda: not str(footer._shortcut_display.content).startswith("Esc"),
+            "the composer's footer",
+        )
         shown = str(footer._shortcut_display.content)
         assert "Alt+M switch model" in shown and "Ctrl+O chat settings" in shown
         # TASK-33004.7 review: at the owner's 211x44 the new model hints must

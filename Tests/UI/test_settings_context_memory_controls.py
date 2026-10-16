@@ -18,6 +18,8 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _wait_for_selector,
+    _wait_for_visible_text,
 )
 from Tests.UI.test_settings_provider_keyboard_journeys import _settle
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
@@ -35,6 +37,10 @@ from tldw_chatbook.UI.Screens.settings_context_memory import (
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Utils.token_counter import get_table_model_token_limit
+
+#: How long a gated test waits for the pane a category select composes, or
+#: for a save's result (a timeout costs nothing on a green run).
+_PANE_TIMEOUT = 30.0
 
 
 class StyledSettingsDestinationHarness(DestinationHarness):
@@ -441,6 +447,43 @@ def test_model_context_window_state_distinguishes_detection_from_override() -> N
     assert configured.configured_override_tokens == 256000
 
 
+@pytest.mark.parametrize(
+    ("provider", "model", "detected", "assumed"),
+    [
+        # A catalog/table answer is known: Settings detects it.
+        ("openai", "gpt-4o", 128000, None),
+        # ADR-052's application fallback is a guess (TASK-33007 #12): the
+        # Console budgets with 32,000, so Settings names it as assumed.
+        ("openai", "gpt-5.6-terra", None, 32000),
+        # The provider fallbacks Settings used to ignore, direct and through
+        # OpenRouter's upstream.
+        ("anthropic", "claude-unlisted-9", None, 200000),
+        ("openrouter", "anthropic/claude-unlisted-9", None, 200000),
+    ],
+)
+def test_settings_context_window_reads_the_shared_resolver(
+    provider, model, detected, assumed
+) -> None:
+    """TASK-33007 #12: Settings and Chat settings answer from one resolver.
+
+    Settings' detected window is the shared resolver's verified answer and
+    its assumed window is the resolver's fallback, never staged as a value.
+    """
+    from tldw_chatbook.model_capabilities import ModelCapabilities
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+    shared = resolve_context_window(provider, model, capabilities=ModelCapabilities({}))
+    state = model_context_window_state({}, provider, model)
+
+    assert shared.tokens == (detected or assumed)
+    assert shared.verified is (detected is not None)
+    assert (
+        state.effective_tokens,
+        state.detected_tokens,
+        state.assumed_tokens,
+    ) == (detected, detected, assumed)
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
@@ -452,12 +495,24 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
         await pilot.app.workers.wait_for_complete()
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-        await pilot.pause()
+        # The pane the select composes, then the focus the jump moves: a
+        # single pause was not always enough under load (gated in the UI lane).
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-console-context-memory-jump",
+            timeout=_PANE_TIMEOUT,
+        )
 
         jump = screen.query_one("#settings-console-context-memory-jump", Button)
         assert "Conversation context and memory" in str(jump.label)
         jump.press()
-        await pilot.pause()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-console-context-budget-mode:focus",
+            timeout=_PANE_TIMEOUT,
+        )
         budget_mode = screen.query_one("#settings-console-context-budget-mode", Select)
         assert screen.focused is budget_mode
 
@@ -532,12 +587,16 @@ async def test_console_memory_save_blocks_invalid_trigger_target_pair(request) -
         await pilot.app.workers.wait_for_complete()
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-        await pilot.pause()
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-behavior-result", timeout=_PANE_TIMEOUT
+        )
 
         screen._stage_console_default_value("compaction_trigger_ratio", 0.80)
         screen._stage_console_default_value("compaction_target_ratio", 0.70)
         screen.action_settings_save_category(allow_text_entry_focus=True)
-        await pilot.pause()
+        await _wait_for_visible_text(
+            screen, pilot, "at least 15 percentage points", timeout=_PANE_TIMEOUT
+        )
 
         result = screen.query_one("#settings-console-behavior-result", Static)
         assert "at least 15 percentage points" in _static_text(result)
@@ -556,6 +615,7 @@ async def test_console_memory_save_routes_normalized_values_to_console_section(
         console_values,
         chat_default_values,
         workbench_scope_fallback=False,
+        agents_values=None,
     ) -> None:
         captured.append(
             (
@@ -575,7 +635,12 @@ async def test_console_memory_save_routes_normalized_values_to_console_section(
             await pilot.app.workers.wait_for_complete()
             screen = _active_destination_screen(host)
             screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-            await pilot.pause()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-console-context-budget-mode",
+                timeout=_PANE_TIMEOUT,
+            )
 
             screen.query_one(
                 "#settings-console-context-budget-mode", Select
@@ -723,14 +788,20 @@ async def test_provider_context_window_reset_preserves_other_capabilities(
 
         context_input = screen.query_one("#settings-model-context-window", Input)
         status = screen.query_one("#settings-model-context-window-status", Static)
+        source = screen.query_one("#settings-model-context-window-source", Static)
         reset = screen.query_one("#settings-model-context-window-reset", Button)
         assert context_input.value == "256000"
-        assert "Configured override: 256,000" in _static_text(status)
-        assert reset.disabled is False
+        # Captures review note 11, rewritten on purpose: the row's Source
+        # word and one-line help replace the "Configured override" sentence.
+        assert _static_text(source) == "saved in config"
+        assert _static_text(status) == "override · detected 128,000"
+        assert reset.disabled is False and reset.display
 
         reset.press()
         await pilot.pause()
         assert context_input.value == "128000"
+        assert _static_text(source) == "edited *"
+        assert _static_text(status) == "detected 128,000"
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
 

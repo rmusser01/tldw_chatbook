@@ -401,7 +401,7 @@ _ISOLATED = (
     + r"""
 import subprocess
 from threading import Event
-from Tests.Backup_Recovery.test_restore_plan import sealed
+from Tests.Backup_Recovery.test_archive_reader import sealed
 from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated
 from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 source=base/'archive-source';source.mkdir(mode=0o700)

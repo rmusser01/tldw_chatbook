@@ -1176,23 +1176,6 @@ def _build_locked_default_mutation(
             endpoint_key=endpoint_key,
             endpoint_value=patch.value.strip(),
         )
-    defaults = build_target_default_console_session_settings(
-        readiness_config,
-        canonical_provider,
-        literal_model,
-    )
-    if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
-        validation_errors = validate_console_session_settings(
-            defaults,
-            app_config=readiness_config,
-        )
-        readiness = build_console_settings_readiness(
-            defaults,
-            app_config=readiness_config,
-        )
-        if validation_errors or not readiness.native_send_supported:
-            raise ValueError("Selected provider/model is not ready for new chats")
-
     # TASK-33001.2: a field the request never carries is neither written nor
     # deleted, so a value saved for it earlier stays exactly as it was.
     supported = supported_generation_fields(canonical_provider, literal_model)
@@ -1207,6 +1190,33 @@ def _build_locked_default_mutation(
         if name == "streaming" and type(value) is not bool:
             raise TypeError("Streaming default must be a strict boolean or inherit")
         profile_values[name] = value
+
+    if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+        # Validate the default this write leaves behind: the profile values it
+        # writes outrank [chat_defaults], and a cleared one falls through to
+        # it. A registry entry gets no profile write (below).
+        profile_written = registry_slug is None
+        defaults = replace(
+            build_target_default_console_session_settings(
+                readiness_config,
+                canonical_provider,
+                literal_model,
+                excluded_model_profile_fields=(
+                    frozenset(profile_deletes) if profile_written else frozenset()
+                ),
+            ),
+            **(profile_values if profile_written else {}),
+        )
+        validation_errors = validate_console_session_settings(
+            defaults,
+            app_config=readiness_config,
+        )
+        readiness = build_console_settings_readiness(
+            defaults,
+            app_config=readiness_config,
+        )
+        if validation_errors or not readiness.native_send_supported:
+            raise ValueError("Selected provider/model is not ready for new chats")
 
     profile_path = (
         "api_settings",

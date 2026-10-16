@@ -39,12 +39,14 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSurface,
     ConsoleSettingsTransfer,
 )
+from tldw_chatbook.Utils.token_counter import resolve_context_window
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     CURRENT_MARK,
     HIGHLIGHT_GLYPH,
     VALUE_FIELDS,
     ConsoleModelPopover,
     UnsavedEditsGuard,
+    context_copy,
     switcher_readiness_words,
 )
 
@@ -324,7 +326,10 @@ async def test_switcher_lists_four_groups_of_one_line_pairs() -> None:
 
         previous = line_with(lines, "claude-sonnet-4-5")
         assert "Anthropic" in previous
-        assert "~200k" in previous or "200k" in previous
+        # The size the one resolver gives: "200k" from the catalog, or "?"
+        # if the catalog is unavailable (a fallback is unknown, TASK-33007 #12).
+        window = resolve_context_window("anthropic", "claude-sonnet-4-5")
+        assert f" {context_copy(window.tokens, window.verified)}  " in previous
         assert "Ready · not tested" in previous
         assert "used 2h ago in this chat" in previous
 
@@ -1189,6 +1194,41 @@ async def test_a_value_edit_pins_its_pair_against_a_late_recent_fill() -> None:
         "model-a",
         0.3,
     )
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "refused"),
+    (("anthropic", "claude-sonnet-4-5", True), ("llama_cpp", "model-a", False)),
+)
+async def test_temperature_is_held_to_the_drafts_provider_range(
+    provider: str, model: str, refused: bool
+) -> None:
+    """TASK-33007 capture finding 25 (ruling cr1-N1 (a)): Alt+M refuses what
+    Ctrl+O refuses. Anthropic takes 0 to 1, so 1.5 is refused with that
+    range; llama.cpp takes 0 to 2 and applies it."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, build_switcher(recorder, draft=_draft(provider, model))
+        )
+        assert switcher.highlighted_row().model == model
+        switcher.query_one("#console-popover-temperature", Input).value = "1.5"
+        await pilot.pause()
+        switcher.query_one("#console-popover-apply", Button).press()
+        await pilot.pause()
+        error = (
+            str(switcher.query_one("#console-popover-error", Static).render())
+            if app.screen is switcher
+            else None  # applied and closed
+        )
+
+    if refused:
+        assert recorder.submissions == []
+        assert error == "Temperature must be a finite number from 0 to 1."
+    else:
+        assert error is None
+        assert recorder.submissions[0].draft.settings.temperature == 1.5
 
 
 # -- TASK-33004.5: the value row, Source words and commit keys ---------------

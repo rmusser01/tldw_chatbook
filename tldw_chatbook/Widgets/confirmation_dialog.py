@@ -187,13 +187,29 @@ def quit_confirmation_screens(app: Any) -> list[Any]:
     the one the user is actually in. Screens below that one are not
     consulted, exactly as when no modal is open.
 
+    One screen is asked without being open: Settings keeps its drafts in
+    ``app.screen_state_store`` after the user leaves it (TASK-33007, ruling
+    C-N1), so while it holds unsaved changes a stand-in for Settings is
+    asked last.
+
     Args:
         app: The running app (or a quit-flow harness exposing ``screen``).
 
     Returns:
         The active screen first, then -- only when it is modal -- each screen
-        beneath it down to and including the topmost non-modal screen.
+        beneath it down to and including the topmost non-modal screen, then
+        the Settings stand-in when a kept draft needs it.
     """
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        kept_settings_draft,
+    )
+
+    screens = _screens_down_to_the_destination(app)
+    stand_in = kept_settings_draft(app, screens)
+    return screens if stand_in is None else [*screens, stand_in]
+
+
+def _screens_down_to_the_destination(app: Any) -> list[Any]:
     current = app.screen
     screens = [current]
     if not getattr(current, "is_modal", False):

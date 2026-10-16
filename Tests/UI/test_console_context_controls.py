@@ -435,8 +435,11 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         assert str(save_defaults.label) == "Save as model default"  # TASK-33006.5
         assert save_defaults.display is False
         scope = str(app.screen.query_one("#console-settings-scope", Static).renderable)
-        assert "this conversation" in scope
-        assert "F4 Settings > Console Behavior" in scope
+        # Rewritten on purpose by TASK-33007 capture finding 17: "this
+        # conversation" and "F4 Settings > Console Behavior" became the
+        # Model view's words.
+        assert "this chat only" in scope
+        assert "Settings ▸ Console Behavior (F4)" in scope
         context_labels = {
             "#console-context-custom-budget": "Conversation max tokens",
             "#console-context-trigger-percent": "Compact at (%)",
@@ -520,7 +523,7 @@ async def test_thinking_history_required_preserves_saved_value_and_disables_edit
         )
         assert "Effective: Required" in effective
         assert "provider continuation" in effective
-        await pilot.click("#console-settings-cancel")
+        await pilot.press("escape")  # no Cancel here: capture finding 20
 
 
 def test_thinking_history_required_copy_is_derived_from_effective_policy() -> None:
@@ -581,7 +584,7 @@ async def test_thinking_history_default_write_is_bounded_and_live_for_new_chats(
         assert isinstance(app.screen, ConsoleSettingsModal)
         status = app.screen.query_one("#console-context-action-status", Static)
         assert "new conversations only" in str(status.renderable)
-        await pilot.click("#console-settings-cancel")
+        await pilot.press("escape")  # no Cancel here: capture finding 20
 
     assert writes == [{"console": {"thinking_history_policy_default": "exclude"}}]
     assert app_config["console"] == {"thinking_history_policy_default": "exclude"}
@@ -769,6 +772,113 @@ async def test_current_memory_uses_typed_effective_display(
             else effective.legacy.summary_text
         )
         assert expected_summary in review
+
+
+def _memory_lines(screen) -> list[str]:
+    """The Current memory section's shown lines, metadata then review."""
+    return [
+        str(static.renderable)
+        for static in screen.query(
+            "#console-context-memory-metadata, #console-settings-memory-review"
+        ).results(Static)
+        if static.display
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_memory_is_said_once() -> None:
+    """TASK-33007 capture finding 18 (round 2): with no memory, or after a
+    reset leaves none, Current memory says so on one line; the review line
+    shows only while there is a summary to review."""
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=None),
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+        assert _memory_lines(app.screen) == [
+            "No conversation memory. Transcript remains authoritative."
+        ]
+
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=_memory()),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+                undo_current_memory_reset=app.undo_current,
+                reset_all_memories=app.reset_all,
+            )
+        )
+        await pilot.pause()
+        summary = _memory().summary_text
+        assert _memory_lines(app.screen)[1] == summary
+        app.screen.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        assert _memory_lines(app.screen) == [
+            "Current branch memory reset; transcript unchanged."
+        ]
+        app.screen.query_one("#console-context-undo-reset", Button).press()
+        await pilot.pause()
+        assert _memory_lines(app.screen)[1] == summary
+        app.screen.query_one("#console-context-reset-all", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-context-confirm-reset-all", Button).press()
+        await pilot.pause()
+        (line,) = _memory_lines(app.screen)
+        assert line.startswith("All generated and legacy conversation memory was")
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_memory_action_buttons_are_separated(size: tuple[int, int]) -> None:
+    """TASK-33007 capture finding 19 (round 2): "Reset overrides" and "Reset
+    all conversation memory…" shared one shaded bar and read as one button.
+    Each memory action row leaves a blank cell between its buttons."""
+    app = _ContextHarness()
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=_memory()),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+                compact_now=lambda: None,
+                reset_all_memories=app.reset_all,
+            )
+        )
+        await pilot.pause()
+        rows = list(app.screen.query(".console-context-action-row"))
+        assert len(rows) == 2
+        for row in rows:
+            shown = [b for b in row.query(Button) if b.display]
+            assert len(shown) == 2, [b.id for b in shown]
+            first, second = (b.virtual_region for b in shown)
+            assert first.right < second.x, (shown[0].label, shown[1].label)
 
 
 @pytest.mark.asyncio
@@ -1028,12 +1138,12 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
 
 
 @pytest.mark.asyncio
-async def test_unverified_model_capacity_is_labeled_as_estimated() -> None:
+async def test_unverified_model_capacity_is_labeled_unknown() -> None:
     """Never present the 8,001-token fallback as model-verified capacity."""
     estimate = ConsoleSettingsContextEstimate(
         10,
         8001,
-        "10 / 8,001 tokens (estimated; model unverified)",
+        "10 / 8,001 tokens (assumed; window unknown)",
         token_limit_verified=False,
         token_limit_source="provider fallback",
     )
@@ -1062,9 +1172,85 @@ async def test_unverified_model_capacity_is_labeled_as_estimated() -> None:
         status = str(
             app.screen.query_one("#console-context-capacity-status", Static).renderable
         )
-        assert "Model window (est.)" in window
-        assert "model capacity is unverified" in status
+        # TASK-33007 #12: one word with Settings ▸ Advanced -- "unknown",
+        # with the fallback named as assumed.
+        assert window.endswith("unknown, 8,001 assumed"), window
+        assert "Context window unknown" in status
         assert "Providers & Models" in status
+
+
+@pytest.mark.asyncio
+async def test_context_view_names_settings_as_the_model_view_does() -> None:
+    """Capture finding 17 (08b): the Context view wrote "F4 Settings >
+    Providers & Models" where the Model view writes "Settings ▸ Providers &
+    Models (F4)", and an overhead nobody measured read "unknown tokens".
+    Both views spell the pointer one way, and an unknown count is "unknown"."""
+    estimate = ConsoleSettingsContextEstimate(
+        0,
+        32000,
+        "0 / 32,000 tokens (assumed; window unknown)",
+        token_limit_verified=False,
+        token_limit_source="provider fallback",
+    )
+    state = build_console_context_control_state(settings=_settings(), estimate=estimate)
+    assert state.request_overhead_tokens is None
+    app = _ContextHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=estimate,
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+
+        def text(selector: str) -> str:
+            return str(app.screen.query_one(selector, Static).content)
+
+        status = text("#console-context-capacity-status")
+        scope = text("#console-settings-scope")
+        assert "Settings ▸ Providers & Models (F4)" in status, status
+        assert scope == (
+            "Applies to this chat only · defaults live in Settings ▸ Console "
+            "Behavior (F4)"
+        )
+        for copy in (status, scope):
+            assert "F4 Settings" not in copy and " > " not in copy, copy
+        assert text("#console-context-overhead") == "Request overhead    unknown"
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_window_reads_unknown_not_unknown_tokens() -> None:
+    """Capture fix round 1, finding 1: with no window known at all, the
+    Context view's first row read "Model window        unknown tokens"; it
+    reads "unknown", as every other count row does."""
+    estimate = ConsoleSettingsContextEstimate(0, None, "0 tokens (window unknown)")
+    state = build_console_context_control_state(settings=_settings(), estimate=estimate)
+    assert state.model_window_tokens is None
+    app = _ContextHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=estimate,
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+
+        window = str(
+            app.screen.query_one("#console-context-model-window", Static).content
+        )
+        assert window == "Model window        unknown", window
 
 
 @pytest.mark.asyncio

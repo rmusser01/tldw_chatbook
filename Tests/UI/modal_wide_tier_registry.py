@@ -19,7 +19,7 @@ deliberately absent, as is the Console session switcher: its
 ``_sync_modal_max_height`` sets ``width`` imperatively via
 ``set_styles`` (inline styles outrank every CSS rule), so it joins the
 inventory's imperative-geometry exclusions. The Conversation settings
-modal and the Alt+M Switch model popover are fixed width tokens (150 and
+modal and the Alt+M Switch model popover are fixed width tokens (176 and
 140 columns: TASK-33006.1 retired the modal's PR #2670 196-column tier,
 TASK-33004.4 the popover's PR #2672 tier).
 
@@ -75,7 +75,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "TagFilterPicker": "inventory #86: tiny tag list",
     # -- inventory section B (special surfaces) + rollout exclusions --------
     "ConsoleModelPopover": "Switch model: fixed 140-column width token (TASK-33004.4)",
-    "ConsoleSettingsModal": "Chat settings: fixed 150x22 width/height tokens (TASK-33006.1)",
+    "ConsoleSettingsModal": "Chat settings: fixed 176x22 width/height tokens (TASK-33006.1)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",

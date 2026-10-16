@@ -52,8 +52,8 @@ shows the **first-run starter panel** while the **Editing: `<profile>`** field
 wall is collapsed. The editing card holds the ⚠ legend and five folds —
 **Search**, **Embedding**, **Chunking**, **Vector store**, **Reranking**.
 
-The pinned **State banner** above them reads `State: Draft — save with s |
-Defaults affect future Library/RAG retrieval and display.`, switching to
+The pinned **State banner** above them reads `State: No changes · edits save
+with s | Defaults affect future Library/RAG retrieval and display.`, switching to
 `State: Draft — save with s · 1 unsaved · revert with r | …` once you edit a
 field; the count follows how many fields differ from their saved values.
 **Save (s)** and **Revert (r)** live in the **Scope Inspector** on the right,
@@ -197,9 +197,11 @@ not:
   **Clone** / **Rename**; Enter submits, Esc cancels.
 - **Unsaved Library/RAG changes** — "Save your changes before switching the
   active profile, or discard them?" (**Cancel** / **Discard** / **Save**),
-  raised only when you press **Set active** with an unsaved draft. Only one
-  other unsaved-changes prompt exists in Settings — leaving **Speech & TTS**
-  with edits; every other category keeps your draft silently.
+  raised only when you press **Set active** with an unsaved draft. Leaving
+  **Speech & TTS** with edits, or **Theme** with an edited theme, asks too,
+  and **Ctrl+Q** asks before discarding any staged draft, from Settings or
+  from any screen after you left it;
+  leaving any other category keeps your draft silently.
 - **Delete profile** — 'Delete the "`<name>`" RAG profile? This cannot be
   undone.' (**Cancel** / **Delete**).
 - **Re-index required** — the destructive one, raised on **Save** when a ⚠

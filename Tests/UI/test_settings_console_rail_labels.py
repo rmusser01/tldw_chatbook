@@ -11,6 +11,7 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _console_config_key_saved_as,
     _visible_text,
     _wait_for_selector,
 )
@@ -66,7 +67,10 @@ async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentati
         scope = screen.query_one(RAIL_LAYOUT_SCOPE, Select)
         card = screen.query_one("#settings-console-behavior-card")
         children = list(card.children)
-        scope_index = children.index(scope)
+        # TASK-33007 parent AC#7, rewritten on purpose: the Select sits in a
+        # one-row labelled row, so the row is the card's child.
+        row = scope.parent
+        scope_index = children.index(row)
 
         assert scope.value == "global"
         assert scope._allow_blank is False
@@ -74,8 +78,9 @@ async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentati
             ("Global", "global"),
             ("Per workspace", "workspace"),
         ]
-        assert isinstance(children[scope_index - 1], Static)
-        assert str(children[scope_index - 1].content) == "Rail layout scope"
+        label = row.children[0]
+        assert isinstance(label, Static)
+        assert str(label.content) == "Rail layout scope"
         rail_heading_index = next(
             index
             for index, child in enumerate(children)
@@ -118,10 +123,43 @@ async def test_console_rail_layout_scope_search_lands_with_persistence_guidance(
         assert "Global keeps one arrangement across workspace switches" in visible
         assert "Per workspace restores each workspace's saved arrangement" in visible
         assert "Prior global and workspace records are retained" in visible
-        assert "Saved as: console.rail_layout_scope" in visible
-        assert dict(screen._console_behavior_field_guidance_rows())[
-            "Applies"
-        ].startswith("After Save")
+        # TASK-33007.7: the key sits in the closed config key disclosure, and
+        # "Applies" is painted, not only returned (it used to be a fourth
+        # shown row with no widget to hold it).
+        assert _console_config_key_saved_as(screen) == (
+            "Saved as: console.rail_layout_scope"
+        )
+        assert "Applies: After Save; the next Console layout read uses it." in visible
+
+
+@pytest.mark.asyncio
+@private_profile_test
+def test_every_console_behavior_guide_fits_the_three_composed_rows(request):
+    """The Inspector composes three guide rows and refreshes them by index;
+    a guide with a fourth shown row loses it silently (Rail layout scope's
+    "Applies" did). "Saved as" goes in the config key disclosure."""
+    screen = settings_screen_module.SettingsScreen(_build_test_app())
+    field_ids = (
+        None,
+        "settings-console-context-budget-mode",
+        "settings-console-show-model-thinking",
+        RAIL_LAYOUT_SCOPE.lstrip("#"),
+        RAIL_LABEL_TOGGLE.lstrip("#"),
+        "settings-console-sidechat-model",
+        "settings-console-sidechat-prompt-template",
+        "settings-console-default-user-display-name",
+        "settings-console-paste-collapse-threshold",
+        "settings-console-max-parallel-runs",
+        "settings-console-tool-result-display-chars",
+        *settings_screen_module.PERMISSION_SUMMARY_FIELD_IDS,
+        *settings_screen_module.CONSOLE_DEFAULT_FIELD_NAMES,
+    )
+    for field_id in field_ids:
+        screen._active_settings_field_id = field_id
+        rows = screen._console_behavior_field_guidance_rows()
+        shown, config_key = screen._split_config_key_row(rows)
+        assert len(shown) == 3, (field_id, shown)
+        assert config_key, field_id
 
 
 @pytest.mark.asyncio
@@ -225,7 +263,7 @@ async def test_console_rail_label_setting_carries_state_and_stages_from_keyboard
         # task-17652: the status-row placement toggle sits between the rail
         # checkbox and the paste checkbox in focus order.
         position_toggle = screen.query_one(
-            "#settings-console-status-row-position-toggle", Button
+            "#settings-console-status-row-position-toggle", Select
         )
         paste_toggle.focus()
         await pilot.press("shift+tab")
@@ -280,10 +318,11 @@ async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance
         assert "Purpose: Choose the collapsed Console rail label style." in visible
         assert "Consequences: Stacked uses narrower 3-column handles" in visible
         assert "Horizontal uses the established 13- and 11-column handles." in visible
-        assert "Saved as: console." in visible
-        assert "stack_collapsed_rail_labels" in visible
+        saved_as = _console_config_key_saved_as(screen)
+        assert "Saved as: console." in saved_as
+        assert "stack_collapsed_rail_labels" in saved_as
         assert "Applies: After saving, when Console is next opened." in visible
-        assert "Save: staged - press s to save, r to revert" in visible
+        assert "Save: edits save with s · r reverts" in visible
 
 
 @pytest.mark.asyncio
@@ -456,5 +495,7 @@ async def test_console_rail_toggle_is_painted_with_production_styles(
         toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
         painted = _painted(host, toggle)
         assert str(toggle.label) in painted, (toggle.region, painted)
-        assert "X" in painted, (toggle.region, painted)
+        # Rewritten on purpose (#3057 capture finding 4): Settings' checkboxes
+        # draw a check or a blank, not X; their state glyph is what must paint.
+        assert toggle._button.plain[:2] in painted, (toggle.region, painted)
         assert app.app_config["console"]["stack_collapsed_rail_labels"] is False

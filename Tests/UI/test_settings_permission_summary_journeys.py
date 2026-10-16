@@ -59,7 +59,9 @@ async def _depart(host, pilot, departure):
     [
         ("mode", "always", "off"),
         ("model", "first-model", "last-model"),
-        ("provider", "Anthropic", "OpenAI"),
+        # Rewritten on purpose (#3057 capture finding 15): Provider is a list
+        # whose values are provider keys; the saved "OpenAI" keeps its own.
+        ("provider", "anthropic", "OpenAI"),
     ],
 )
 @private_profile_test
@@ -147,8 +149,10 @@ async def test_permission_summary_failure_retains_values_and_keyboard_retry(
         await pilot.pause()
         _assert_painted(host.screen, retry)
         assert "Retry" in _painted(host, retry)
+        # TASK-33007.7 (review M6), rewritten on purpose: "Saved as" left the
+        # guide for the "config key" disclosure, so "Applies" is row 2.
         guide = host.screen.query_one(
-            "#settings-console-behavior-field-guide-3", Static
+            "#settings-console-behavior-field-guide-2", Static
         )
         assert "no Save step" in str(guide.render())
         monkeypatch.setattr(
@@ -183,7 +187,7 @@ async def test_permission_summary_open_and_revisit_do_not_write(request, monkeyp
         await _category(host, pilot, "Console Behavior")
         assert (path.read_bytes(), path.stat().st_mtime_ns) == before
         assert (
-            host.screen.query_one("#settings-permission-summary-provider", Input).value
+            host.screen.query_one("#settings-permission-summary-provider", Select).value
             == "OpenAI"
         )
         assert (
@@ -197,6 +201,42 @@ async def test_permission_summary_open_and_revisit_do_not_write(request, monkeyp
         )
         assert "excerpt of this conversation" in disclosure
         assert "you designate" in disclosure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved", ["OpenAI", "my-relay"])
+@private_profile_test
+async def test_permission_summary_provider_is_chosen_from_the_provider_list(
+    request, monkeypatch, saved
+):
+    """#3057 capture finding 15 (06d): Provider was free text ("e.g. OpenAI")
+    with no list and no hint which names work. It is a list of the providers
+    Providers & Models offers, by display name. A saved spelling stays
+    selected and opening writes nothing; a saved name the list does not hold
+    stays selected as "<name> (not in this list)"."""
+    from tldw_chatbook import config
+
+    host, path = _setup(monkeypatch)
+    config.apply_settings_mutation_to_cli_config(
+        {"permission_summary": {"provider": saved}}
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        before = path.read_bytes()
+        await _category(host, pilot, "Console Behavior")
+        control = host.screen.query_one("#settings-permission-summary-provider")
+        assert isinstance(control, Select)
+        options = {str(label): value for label, value in control._options}
+        assert control.value == saved
+        assert options["Anthropic"] == "anthropic"
+        shown = "OpenAI" if saved == "OpenAI" else f"{saved} (not in this list)"
+        assert options[shown] == saved
+        assert "Manual / custom provider" not in options
+        assert path.read_bytes() == before
+
+        control.value = "anthropic"
+        await _settle(host, pilot)
+        saved_section = tomllib.loads(path.read_text())["permission_summary"]
+        assert saved_section["provider"] == "anthropic"
 
 
 @pytest.mark.asyncio

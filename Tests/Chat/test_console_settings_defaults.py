@@ -2104,3 +2104,70 @@ async def test_saved_value_for_a_field_the_request_drops_stays_and_is_never_sent
     assert (projected["temp"], projected["topk"]) == (0.3, 20)
     assert 0.05 not in projected.values()
     assert 7 not in projected.values()
+
+
+def _anthropic_make_default_mutation(
+    chat_defaults_temperature: float,
+    profile: dict[str, object],
+    temperature: float | None,
+    field_mask: frozenset[str] = QUICK_MODEL_DEFAULT_FIELDS,
+) -> object:
+    config = {
+        "api_settings": {
+            "anthropic": {
+                "api_key": "test-key",
+                "model": _ANTHROPIC_MODEL,
+                "model_defaults": {_ANTHROPIC_MODEL: profile},
+            }
+        },
+        "chat_defaults": {
+            "provider": "anthropic",
+            "model": _ANTHROPIC_MODEL,
+            "temperature": chat_defaults_temperature,
+        },
+    }
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="anthropic",
+        literal_model_id=_ANTHROPIC_MODEL,
+        field_mask=field_mask,
+        values={"temperature": temperature, "max_tokens": None, "streaming": True},
+        endpoint_patch=None,
+    )
+    # apply_console_default_intent validates the intent before the gate; do the
+    # same so the gate is only ever pinned on an intent production can send.
+    provider, model = defaults_module._validate_intent(intent)
+    return defaults_module._build_locked_default_mutation(
+        intent,
+        provider,
+        model,
+        config_module.AtomicLiteralMutationSnapshot(
+            generation=1, raw_values=config, effective_values=config
+        ),
+    )
+
+
+def test_make_default_gate_validates_the_temperature_the_write_saves() -> None:
+    """[chat_defaults] at 1.2 (valid there) is out of Anthropic's 0-1 range.
+
+    The 0.7 the intent writes into the model profile outranks it, so the
+    default the write produces is valid and the write goes ahead.
+    """
+    mutation = _anthropic_make_default_mutation(1.2, {}, 0.7)
+
+    profile_path = ("api_settings", "anthropic", "model_defaults", _ANTHROPIC_MODEL)
+    assert mutation.section_values[profile_path]["temperature"] == 0.7
+
+
+def test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one() -> None:
+    """Clearing the profile's 0.5 leaves [chat_defaults]' 1.2: not a valid default.
+
+    Only Chat settings' Make default for new chats can clear Temperature (an
+    inherited field is sent as None under the full mask); Alt+M's quick mask
+    must always carry a Temperature.
+    """
+    with pytest.raises(ValueError, match="not ready for new chats"):
+        _anthropic_make_default_mutation(
+            1.2, {"temperature": 0.5}, None, FULL_MODEL_DEFAULT_FIELDS
+        )

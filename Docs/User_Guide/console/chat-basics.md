@@ -97,12 +97,12 @@ If compacting older turns cannot make a message fit the selected model,
 Console refuses it before anything is sent or saved, and the message stays in
 the composer. One system line names the model, what fills its window and the
 setting that changes it, for example "Your message was not sent:
-brand-new-model-x's 4,096-token context window (an estimate) is used up by the
+brand-new-model-x's 4,096-token context window (assumed) is used up by the
 response reservation, Max tokens (4,096), and the safety margin, so compacting
-older turns cannot make room. Lower Max tokens in Conversation settings >
-Model and generation. This model's context window is an estimate; if it is
-larger, set the real value in F4 Settings > Providers & Models." It mentions
-an estimate only when the window really is one. Switching to a model with a
+older turns cannot make room. Lower Max tokens in Chat settings ▸ Model and
+generation (Ctrl+O). This model's context window is assumed, not known; if it
+is larger, set the real value in Settings ▸ Providers & Models (F4)." It says
+"assumed" only when the window really is. Switching to a model with a
 larger window (Alt+M) also works. [When a chat reaches its context
 limit](context-and-rag.md#when-a-chat-reaches-its-context-limit) lists each
 cause and its fix.

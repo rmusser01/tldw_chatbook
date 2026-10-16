@@ -371,7 +371,7 @@ async def test_settings_theme_editor_apply_hint_announces_instant_apply(request)
 
         hint = editor.query_one("#settings-theme-apply-hint", Static)
         # TASK-32948: "Try previews" (Use in the picker is what persists).
-        assert "previews this palette now - no Save needed" in str(hint.renderable)
+        assert "previews this palette now · no Save needed" in str(hint.renderable)
 
 
 @pytest.mark.asyncio

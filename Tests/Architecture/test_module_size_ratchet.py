@@ -18,9 +18,10 @@ raise the number, which re-opens the hole this test exists to close.
 
 **Scope.** These are hand-picked god modules, not a directory family, so
 (unlike the Library controller ratchet) there is no glob that auto-adds new
-files. `settings_screen.py` is deliberately absent: its split and its
-missing ratchet row are already tracked by task-1378 / task-31202 — linked,
-not duplicated here (core-review TASK-32809.2 AC#2).
+files. `settings_screen.py` joined on 2026-10-05 (TASK-33007.8, closing
+task-31202), once the model-config redesign's Phase 7 had moved the
+Providers & Models card into `UI/Settings_Modules/`; the rest of its split
+is task-1378.
 
 First recorded 2026-09-19 by core-review TASK-32809.2, each row at its exact
 measured size as of `origin/dev`.
@@ -122,6 +123,157 @@ _BUDGETS: dict[str, int] = {
     # server label on one header row adds 15 lines; the row rises 369 -> 384,
     # never squeezed code.
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 384,
+    # TASK-33007.8 (closes task-31202): pinned at its measured size after
+    # model-config Phase 7 moved the Providers & Models card out (34,179 at
+    # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
+    # split; its new code goes in UI/Settings_Modules/, never in this row.
+    # The Phase 7 final review's fixes, still inside the PR that adds this
+    # row, re-pin it at the PR head's measured size (R4): 33,638. The
+    # full-screen capture fixes (2026-10-09) put their new code in the card
+    # module and re-pin it at 33,647. Moving the Endpoint guide there too
+    # (2026-10-09, it says required as the row does) lowers it to 33,643.
+    # Integrating the capture review's items 9-12 (Console Behavior's rows,
+    # one-row Context window, its unknown help naming the assumed size)
+    # re-pins it at the integrated head's measured 33,645; the checkpoint
+    # review's result-line fix (SettingsResultLine) re-pins it at 33,661.
+    # Rebased onto dev (2026-10-09), which added its quit-time session summary
+    # helpers here (+80 on dev): re-pinned at the rebased head's 33,712, still
+    # under dev's 34,598 for the file; the Provider list's prefix-first
+    # highlight makes it 33,724; dev's #3056 session-summary deferrals add 8
+    # (rebased again): 33,732. The review of #3057 (2026-10-11, every finding
+    # fixed by owner ruling) re-pins it at the integrated head's 33,881: the
+    # quit summary's single-writer save and its Inspector guide (C8), the
+    # staged credential source behind the Key check row, the deep link's
+    # first edit (C1) and Save selected's own worker group and lock (C9).
+    # Fix round 1 of that review ends one line under it, at 33,880; fix
+    # round 2 sets the quit summary's field to the duration a write sends
+    # (+1): 33,881; a linked pair reads "edited *" only beside an edit Save
+    # writes it with (+4): 33,885; the Test result blames the Env var field
+    # only for a name typed there that is no name (+8): 33,893; fix round 3
+    # compares a quit-summary change with the write in flight (+2): 33,895.
+    # The capture fix wave (2026-10-12): a draft category at rest says "No
+    # changes" in its State banner, not "Draft" (+4): 33,899; a revert's
+    # one report is its toast, and the next edit clears a save's report
+    # (+6): 33,905; discovery names the provider, and its empty state
+    # is one line, not two (-5): 33,900; Clear's rule moves to the card
+    # (-9): 33,891; Temperature's range is the provider's own in its
+    # placeholder, its guide and Save (+8): 33,899; Providers & Models'
+    # Inspector prints no "Owns" list of raw keys (+4): 33,903.
+    # Capture fix A2 (2026-10-12): Catalog refresh keeps its receipt for a
+    # write and says nothing at rest (+4): 33,907; its focus-help line skips
+    # the nav bar's tooltips (+3): 33,910; Console Behavior's Status row and
+    # Chat images become a Select and a Checkbox, the summary prompt's
+    # button gets a labelled row (+2): 33,912. Capture fix round 1: those
+    # two instant-apply rows' help leads with "Applies immediately." (+0).
+    # Capture round 2 A1: the Inspector's Save row says how edits save,
+    # never "staged" (+1): 33,913; the Inspector's draft line names the
+    # unsaved fields, one list behind it and the count (+23): 33,936; the
+    # provider list's "Enter provider ID" has no heading of its own, and
+    # the guide calls it that, not "Manual" (+4): 33,940; a discovery's
+    # one report is its toast, and its card line hides when empty (+1):
+    # 33,941; the Inspector scrolls no further than a focused field's guide
+    # needs and stops on a heading, after a revert and a resize too, and its
+    # fold row says when the rest is above (-8): 33,933; the unsaved names
+    # move from the pinned draft line to the note (-9): 33,924.
+    # Capture fix A2 round 2 (2026-10-13): Console Behavior's Inspector
+    # Scope row names the card's sections, not config sections (-1): 33,911;
+    # Reasoning replay override hides its controls until Console names a
+    # local model (+8): 33,919; its checkboxes say their state in the glyph,
+    # a check or a blank (StateCheckbox, +1): 33,920; Permission summaries'
+    # Provider is a list of providers, its options built in
+    # settings_field_rows.py (+5): 33,925.
+    # Capture fix 2, group C: quitting with a staged change asks first; the
+    # prompt lives in Settings_Modules/settings_quit_guard.py (+5): 33,917.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,942.
+    # Capture fix 2 round 1: a failed discovery's one report is its line,
+    # not a toast too (+0): 33,942; Ctrl+Q asks about staged drafts before
+    # the theme prompt, whose Discard undoes a Try (+0): 33,942.
+    # Capture fix 3: Save selected's line names the provider and counts in
+    # words, not "model(s) to <config key>" (+3): 33,945.
+    # Capture fix 3, group C (ruling C-N1): the snapshot Settings leaves
+    # names its unsaved categories, so a quit from another screen asks;
+    # the stand-in lives in settings_quit_guard.py (+4): 33,949 with both.
+    # Capture fix 3 round 1: save_state names them after every capture, the
+    # raw editor's queued input included (+1): 33,950; and name only what
+    # it keeps, not the snapshot preferences leaving drops (+1): 33,951;
+    # Save selected reports once, its line or (after Discover or Clear) a
+    # toast in the line's words (-1): 33,950.
+    # Capture fix 3 round 2: a Save selected that saves nothing after
+    # Discover or Clear says why in a warning toast, and a raised one is
+    # logged first (+4): 33,954.
+    # Capture fix 3 round 3: that toast names the provider the save was for
+    # (a provider change takes the line too), and a raised save's next step
+    # is one the dropped rows leave possible (+12): 33,966.
+    # Capture fix 3 round 4: that step follows what is on screen (a failed
+    # Clear keeps the checked rows; a provider change says to switch back)
+    # (+13): 33,979.
+    # Capture fix 3 round 5: a Clear still running when the save fails
+    # counts as dropping the rows, so the step is never "Try Save again"
+    # (+7): 33,986.
+    # Rebased onto dev (2026-10-13): dev grew the file from 34,606 to 36,393 lines
+    # since this PR's base (the Guardian rule editor and Personal Context
+    # owners, among others), and this PR's net change is the same as before:
+    # 35,771.
+    # Round 4 after the rebase (ruling cf3r1-N1): leaving Settings keeps
+    # unsaved snapshot preferences; the keep and restore live in
+    # settings_quit_guard.py (+4): 35,775.
+    # Post-rebase round 1: leaving Settings waits for a snapshot Save still
+    # writing; the wait lives in settings_quit_guard.py (+3): 35,778.
+    # Capture 13c: save_state starts from a fresh dict, so a kept snapshot
+    # edit is forgotten once saved or reverted (+1): 35,779.
+    # The Speech draft is kept and restored with replace(), so its pipeline
+    # voice pair is no longer dropped (-13): 35,766.
+    # Undoing an audio.cpp review merge copies the draft with replace() and
+    # compares it on every field, so a pipeline voice edit survives (+1): 35,767.
+    # Rebased onto dev 2026-10-15: dev's UI-perf waves (tasks 34913, 34934,
+    # 34935-34937 and their review fixes) added 51 lines; this PR's own net
+    # change is unchanged: 35,818.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35818,
+    # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
+    # at birth so the split cannot regrow a god module there. New code for
+    # either goes in a sibling module under UI/Settings_Modules/.
+    # providers_models_card.py: the final review's ruff format (+2 reflow)
+    # and fixes re-pin it at the PR head's measured 1,963; the full-screen
+    # capture fixes (2026-10-09: the restored-connection row, the Applies-to
+    # line, Sign in with's row copy) at 2,194; the Endpoint guide that says
+    # required as its row does (2026-10-09) at 2,238; items 11-12 (one-row
+    # Context window, -1; its assumed size, +1) leave it at 2,238 measured.
+    # dev's markup-interpolation gate (TASK-1513) found two sites here, and
+    # the test written for the first found a third: a model id holding "[/]"
+    # raised MarkupError from the Custom ID roll-back toast and from the Key
+    # block's readiness row (which crashed the card at mount, on dev too);
+    # one tooltip interpolated bare. Three guards, +3. The review of #3057
+    # found two more rows that print an endpoint or an error's text through
+    # markup (the save result, the discovery status): +2. That review's
+    # fixes (2026-10-11) re-pin it at the integrated head's 2,371: the API
+    # key row follows an unsaved Env var edit and its sentences fit one line
+    # (R1 #10, #11), with the Source words as named constants (C3, C4). Fix
+    # round 1 lowers it to 2,367 (the custom-endpoint sentence is the
+    # screen's own; the quit summary's controls read the screen's values).
+    # Fix round 2: an Env var edit drops the "invalid" verdict only when the
+    # saved name is what is invalid, read only then (+5): 2,372. The capture
+    # fix wave (2026-10-12): the Inspector's unsaved-edits note is one row
+    # and says why (+3): 2,375; the Saved model list's duplicate
+    # empty-state line is gone (-8): 2,367; Clear shows only while there
+    # is a key to clear, one rule for the card and the screen, and a
+    # keyless provider's Env var reads optional (+39): 2,406. Capture fix
+    # round 1: the API key help's width comment says what is measured (+0).
+    # Capture round 2 A1: a filled Endpoint's help drops "required:" (+1):
+    # 2,407; the Saved model list names the saved models it does not show,
+    # and the discovery line hides when a find leaves it empty (+43): 2,450;
+    # the unsaved-edits note names the unsaved fields (+17): 2,467.
+    # Capture fix A2 round 2 (2026-10-13): its checkboxes say their state in
+    # the glyph, a check or a blank (StateCheckbox, +1): 2,407.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 2,468.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2468,
+    # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
+    # (two constants it had copied are imported; one number spelling, C6).
+    # The capture fix wave (2026-10-12): Temperature's placeholder and
+    # Validation line state the provider's own range (+38): 760. Capture fix
+    # round 1: UNSET_FALLBACK_HELP's comment says 44 cells, not 45 (+0).
+    # Capture fix A2 round 2 (2026-10-13): Permission summaries' Provider
+    # list, holding a saved spelling or naming one it lacks (+34): 794.
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 794,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

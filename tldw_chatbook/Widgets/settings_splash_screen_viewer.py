@@ -22,6 +22,7 @@ from ..config import (
 )
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 from ..Widgets.splash_screen import SplashScreen
+from ..Widgets.state_checkbox import StateCheckbox
 
 
 DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
@@ -135,7 +136,7 @@ class SettingsSplashScreenViewer(Vertical):
             # screen); the Enter clause covers the duration/animation-speed
             # Inputs, which persist on Input.Submitted, not per keystroke.
             yield Static(
-                "applies immediately - no Save needed; text fields apply on Enter",
+                "applies immediately · no Save needed; text fields apply on Enter",
                 id="settings-splash-instant-hint",
                 classes="settings-instant-apply-hint",
             )
@@ -155,7 +156,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
                 yield label_static
-                yield Checkbox(
+                yield StateCheckbox(
                     value=bool(self._config.get("enabled", True)),
                     id="settings-splash-enabled",
                 )
@@ -170,7 +171,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
                 yield label_static
-                yield Checkbox(
+                yield StateCheckbox(
                     value=bool(self._config.get("show_progress", True)),
                     id="settings-splash-show-progress",
                 )
@@ -187,7 +188,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
                 yield label_static
-                yield Checkbox(
+                yield StateCheckbox(
                     value=bool(self._config.get("skip_on_keypress", True)),
                     id="settings-splash-skip-on-keypress",
                 )

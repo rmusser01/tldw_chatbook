@@ -3,7 +3,7 @@
 Owner ruling (2026-10-03): prompt to compact (compaction mode Ask), compact
 automatically (Automatic), or alert when compacting cannot make room. An
 estimated (fallback) context window takes the same routes as a verified one;
-its alert says it is an estimate and where to set the real window.
+its alert says it is assumed and where to set the real window.
 
 These drive the real ``_apply_conversation_memory_preflight`` with the real
 capacity resolver (``resolve_request_capacity``) and context policy, each in a
@@ -95,7 +95,8 @@ async def test_mandatory_context_over_the_window_alerts_with_what_fills_it(
     assert result.visible_copy.startswith("Your message was not sent:")
     assert "system prompt, tools and attached context" in result.visible_copy
     assert MAX_TOKENS_SETTING in result.visible_copy
-    assert ("an estimate" in result.visible_copy) is estimated
+    # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
+    assert ("(assumed)" in result.visible_copy) is estimated
 
 
 @pytest.mark.asyncio

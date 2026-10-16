@@ -19,7 +19,6 @@ from typing import (
     Mapping,
     Sequence,
     get_args,
-    overload,
 )
 from urllib.parse import urlparse, urlunparse
 
@@ -58,7 +57,6 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
     safe_provider_label,
 )
-from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_test_evidence import (
     ConfigurationFacet,
     ConfigurationIssueCode,
@@ -78,6 +76,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     provider_readiness_verdict,
 )
 from tldw_chatbook.Chat.sampling_params import (
+    TEMPERATURE_RANGE,
     _is_blank_value,
     _parse_optional_int,
     _string_value,
@@ -86,6 +85,7 @@ from tldw_chatbook.Chat.sampling_params import (
     optional_float_setting_from_sources as _optional_float_setting_from_sources,
     optional_int_setting_from_sources as _optional_int_setting_from_sources,
     optional_string_setting_from_sources as _optional_string_setting_from_sources,
+    temperature_range,
 )
 # The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
 # so presets, registry entries, and Console settings validate against ONE
@@ -1222,6 +1222,63 @@ def _value_from_source(source: Mapping[str, object], name: str) -> object:
     return _optional_float_setting_from_sources((source,), name)
 
 
+def chat_defaults_value(app_config: Mapping[str, object], name: str) -> object:
+    """Read one generation field from ``[chat_defaults]`` as a new chat does.
+
+    That one layer, under the default chain's own reading (legacy
+    ``enable_streaming`` bridged, the builder's coercion), so Settings shows
+    the value a new chat would take from there (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when ``[chat_defaults]`` holds none.
+    """
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    return _value_from_source(chat_defaults, name)
+
+
+def model_default_value(profile: Mapping[str, object], name: str) -> object:
+    """Read one generation field from a model's defaults profile as a new chat does.
+
+    The ``chat_defaults_value`` twin for Settings ▸ Model defaults: the
+    builder's own coercion, so a hand-edited ``streaming = "0"`` reads Off
+    and a ``top_k = 2.5`` a new chat ignores reads as unset (TASK-33007.7).
+
+    Args:
+        profile: One ``[api_settings.<provider>.model_defaults.<model>]``
+            table.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when the profile holds none.
+    """
+    return _value_from_source(profile, name)
+
+
+def chat_defaults_held_fields(
+    app_config: Mapping[str, object], names: Sequence[str]
+) -> frozenset[str]:
+    """Name the generation fields ``[chat_defaults]`` holds a usable value for.
+
+    Settings says "Console Behavior" only for these (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        names: Generation fields to check.
+
+    Returns:
+        The names ``chat_defaults_value`` reads a value for.
+    """
+    return frozenset(
+        name for name in names if chat_defaults_value(app_config, name) is not None
+    )
+
+
 def resolve_console_value_layers(
     app_config: Mapping[str, object],
     provider: str | None,
@@ -1231,6 +1288,7 @@ def resolve_console_value_layers(
     edited: frozenset[str] = frozenset(),
     chat_settings: ConsoleSessionSettings | None = None,
     extra_sources: Sequence[Mapping[str, object]] = (),
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> dict[str, ConsoleValueLayer]:
     """Name the parameter-stack layer each shown value comes from (spec §6).
 
@@ -1245,16 +1303,28 @@ def resolve_console_value_layers(
         chat_settings: This chat's committed settings when the shown pair is
             its pair; a value that differs from the default chain is the chat's.
         extra_sources: ADR-147 registry params, as the builder takes them.
+        excluded_model_profile_fields: Model-default fields to skip, so a
+            blank Settings model default names the layer it inherits from
+            (TASK-33007.5), as the builder takes them. The chain the chat is
+            compared with skips them too.
 
     Returns:
         ``{name: layer}`` for every name.
     """
     _effective, layers = _console_default_layers(
-        app_config, provider, model, extra_sources=extra_sources
+        app_config,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+        extra_sources=extra_sources,
     )
     defaults = (
         build_default_console_session_settings(
-            app_config, provider, model, extra_sources=extra_sources
+            app_config,
+            provider,
+            model,
+            excluded_model_profile_fields=excluded_model_profile_fields,
+            extra_sources=extra_sources,
         )
         if chat_settings is not None
         else None
@@ -1293,6 +1363,8 @@ def build_default_console_session_settings(
         app_config: The live app configuration snapshot.
         provider: An explicit provider override, or ``None``.
         model: An explicit model override, or ``None``.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
         extra_sources: Optional param-name → value mappings slotted between
             the saved console provider defaults and ``chat_defaults`` in the
             precedence walk (ADR-147: registry entry params ride this seam).
@@ -1640,6 +1712,7 @@ def _console_session_settings_structural_errors(
     settings: ConsoleSessionSettings,
     *,
     blank_ok: Collection[str] = (),
+    temperature_bounds: tuple[float, float] = TEMPERATURE_RANGE,
 ) -> list[str]:
     """Return pure shape/range errors shared by live and persisted settings.
 
@@ -1647,6 +1720,8 @@ def _console_session_settings_structural_errors(
         settings: The settings to check.
         blank_ok: Required samplers that may be blank: the ones the provider
             does not accept, which the draft rebase commits blank.
+        temperature_bounds: The Temperature range to hold it to; the
+            provider's own range when the caller knows the provider.
 
     Returns:
         User-facing errors, empty when the settings are well formed.
@@ -1661,10 +1736,11 @@ def _console_session_settings_structural_errors(
     if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
         errors.append("Settings source must be derived or user.")
 
+    low, high = temperature_bounds
     if not (
         settings.temperature is None and "temperature" in blank_ok
-    ) and not _float_in_range(settings.temperature, 0.0, 2.0):
-        errors.append("Temperature must be between 0 and 2.")
+    ) and not _float_in_range(settings.temperature, low, high):
+        errors.append(f"Temperature must be between {low:g} and {high:g}.")
     if not (settings.top_p is None and "top_p" in blank_ok) and not _float_in_range(
         settings.top_p, 0.0, 1.0
     ):
@@ -1739,10 +1815,14 @@ def validate_console_session_settings(
     unaccepted = {"temperature", "top_p"} - supported_generation_fields(
         settings.provider, settings.model, app_config
     )
-    errors = _console_session_settings_structural_errors(
-        settings, blank_ok=unaccepted
-    )
     provider_key = provider_config_key(settings.provider)
+    # Capture finding 11: the provider's own Temperature range (Anthropic's
+    # is 0 to 1), as Settings ▸ Providers & Models holds it.
+    errors = _console_session_settings_structural_errors(
+        settings,
+        blank_ok=unaccepted,
+        temperature_bounds=temperature_range(provider_key),
+    )
     provider_settings = console_provider_settings(app_config, provider_key)
 
     if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
@@ -2279,8 +2359,8 @@ def build_console_context_estimate(
         )
 
     label = f"{used_tokens:,} / {token_limit:,} tokens"
-    if not token_limit_verified:
-        label = f"{label} (estimated; model unverified)"
+    if not token_limit_verified:  # TASK-33007 #12: Settings' words for a fallback
+        label = f"{label} (assumed; window unknown)"
     if max_tokens_response is not None:
         label = f"{label}; {max_tokens_response:,} response tokens reserved"
     if staged_source_count:
@@ -2883,7 +2963,9 @@ def _not_ready_words(
     elif blocker == "credential_missing" and subscription in _SUBSCRIPTION_REASONS:
         reason = _SUBSCRIPTION_REASONS[subscription]
     elif blocker == "endpoint_invalid" and issue == "endpoint_missing":
-        reason = "no URL"
+        # The row to fill, as "no key" and "no model" do: "no URL" read as
+        # something else beside Azure's "your resource host" (#3057).
+        reason = "no endpoint"
     return f"Not ready · {reason}"
 
 

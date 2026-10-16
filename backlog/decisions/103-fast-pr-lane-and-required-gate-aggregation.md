@@ -104,11 +104,18 @@ cron entry on `dev`.
 - The fast-test jobs and derived-artifact job remain separate. The required job
   declares both fast lanes as prerequisites, runs with `always()`, and fails
   explicitly on pull requests unless both prerequisite results are `success`.
-- The required workflow runs its two fast lanes in parallel (at most two
-  runners at a time), then the install-free derived-artifact checks. With
-  one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
-  peak of at most three runners instead of approximately thirteen.
-- That three-runner figure is not a global maximum. The two path-scoped GGUF
+- The required workflow runs its test lanes in parallel, then the install-free
+  derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
+  (at most two runners at a time), three runners with the one routine
+  path-scoped guard (perf-guard), instead of approximately thirteen. It has
+  grown since: the UI lane runs its census as shards (TASK-34353; ten since
+  TASK-33007), the Console P0 gate is a third lane (TASK-33621.27), and the PR
+  Fast Lane's admission-sensitive half, the Dreams tracking tests and the
+  Dreams and Guardian boundary contracts are jobs of their own (TASK-34916,
+  TASK-34929, TASK-34986), so an ordinary unlabeled, non-GGUF PR
+  now runs fifteen test runners at once, sixteen with perf-guard (see the
+  dated notes below).
+- That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.
@@ -233,3 +240,18 @@ and was cancelled at the cap twice; replaying the 76 runs, the gate keeps median
 runs the gate's own steps took ~17.5 (a failing run) and ~16.1 min with setup, so
 its worst case keeps about 4 min of headroom. One more runner
 per PR: eleven concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-33007, PR #3057): Phase 7 of the model-configuration redesign
+took the UI lane to ten shards (was six). Its 92 census entries sit at the census
+tail, ordered by `scripts/ui_lane_shard_replay.py`, and are 66-72 of the
+lane's 109-119 pytest minutes in the PR's three CI runs. Replayed over eight
+runs' shard logs (those three and five six-shard runs after TASK-34917), each
+file at its slowest, the heaviest shard carries 15.2 pytest minutes with nine
+shards, 13.7 with ten and 12.4 with eleven, plus ~1.1-1.7 min of setup. Ten is
+the fewest that leaves a hung private-profile test's ~3.3-minute report room
+under the 20-min cap, as TASK-34917 requires (~15.4 + 3.3 of 20). Four more
+runners per PR: that makes fifteen concurrent test runners per PR, then the
+aggregate, and the matrix sets no `max-parallel`. Those runners bear on the
+required check's wall-clock tail that TASK-34917 and TASK-34916 left open for an
+owner decision; the owner chose to land the ten shards without `max-parallel`
+(2026-10-15).

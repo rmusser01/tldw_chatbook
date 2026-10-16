@@ -90,8 +90,8 @@ chats; changing only Streaming does not reset other fields.
 
 ### When a chat reaches its context limit
 
-What happens depends on **When limit nears** in Conversation settings >
-Context and memory:
+What happens depends on **When limit nears** in Chat settings ▸ Context
+and memory:
 
 - **Ask** (the default). When a message you send would take the chat past its
   compaction threshold, the message is held before anything is sent or saved.
@@ -108,22 +108,23 @@ Context and memory:
 - **Off** never compacts.
 
 A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
-with a note instead: use **Compact now** in Conversation settings > Context
-and memory, then send again.
+with a note instead: use **Compact now** in Chat settings ▸ Context and
+memory (Ctrl+O), then send again.
 
 When compacting cannot make enough room, the message is not sent and the note
 says what fills the window and what to change:
 
-- **Max tokens** (Conversation settings > Model and generation) plus the
+- **Max tokens** (Chat settings ▸ Model and generation, Ctrl+O) plus the
   safety margin already use the whole window: lower Max tokens.
 - The system prompt, tools and attached context need more than the window
   leaves: remove attached sources or tools, or lower Max tokens.
 - The message does not fit and there are no older complete turns to compact:
   shorten it or its attachments, lower Max tokens, or start a new chat.
 
-If the model's context window is an estimate (shown as "Model window (est.)"),
-the card and the note say so. Set the real value in **F4 Settings > Providers
-& Models**.
+If no catalog knows the model's context window, the app assumes a size (the
+**Model window** row in Chat settings ▸ Context and memory reads "unknown,
+32,000 assumed"), and the card and the note say so. Set the real value in
+**Settings ▸ Providers & Models (F4)**, under Advanced ▸ Context window.
 
 ### Per-turn micro-compaction
 
@@ -242,7 +243,8 @@ that built the payload, never a separate estimate — so they always sum to
 the request total. Categories big enough to act on name their lever (e.g.
 Conversation → summarize older turns via `/rewind`; Attachments →
 `[agents] retire_stale_images`). Viewing the breakdown never triggers a
-model call, and an unverified model window keeps its "estimated" label.
+model call, and a model window no catalog knows still reads "unknown" with
+the size it assumes.
 
 
 ### Reading long Context and Inspector sections
@@ -546,10 +548,11 @@ being inspected. The modal stays bound to that chat and profile. **Close** and
 `Escape` return to your previous control.
 
 Hovering the cost chip shows a summary: context fullness, conversation budget,
-compaction, current spend and the next-send estimate. When the session's
-provider sends rate-limit headers (OpenAI and Anthropic do, as do many
-compatible APIs), the last line shows how much its most recent reply said was
-left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
+compaction, current spend and the next-send estimate. When no catalog knows
+the model's window, the fullness line ends "(assumed; window unknown)". When
+the session's provider sends rate-limit headers (OpenAI and Anthropic do, as
+do many compatible APIs), the last line shows how much its most recent reply
+said was left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
 14:32:53) · 39,200/40,000 tokens left (resets 14:32:06)`. The times are clock
 times from that reply. A provider that sends no rate-limit headers adds no
 line.

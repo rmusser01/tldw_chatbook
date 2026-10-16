@@ -1,0 +1,40 @@
+# Architecture parity, re-run 2026-10-04 06:43-07:06 (finding 4)
+
+Tests/Architecture + Tests/UI/test_component_pattern_governance.py, -p no:xdist -p no:randomly, both
+sides at once (detached worktrees at 337dd68692 and 88e08f2f74), serial each, env -i scratch profile,
+PYTHONPATH=<that tree>; junit counts and failure-name sets compared by name.
+
+base junit: {'passed': 3480, 'failed': 50, 'errors': 0, 'skipped': 5}  failure+error names: 50
+head junit: {'passed': 3481, 'failed': 50, 'errors': 0, 'skipped': 5}  failure+error names: 50
+names in both: 50
+head-only names (0):
+base-only names (0):
+tests only in head (5):
+  + Tests.Architecture.test_no_undefined_module_globals::test_every_private_helper_called_in_a_module_is_defined_in_it[settings_field_rows.py] ['passed']
+  + Tests.Architecture.test_rail_bool_coercion_is_shared::test_home_rail_preferences_agree_with_the_shared_helper[False-<object object at 0x…>] ['passed']
+  + Tests.Architecture.test_rail_bool_coercion_is_shared::test_home_rail_preferences_agree_with_the_shared_helper[True-<object object at 0x…>] ['passed']
+  + Tests.Architecture.test_recovery_entrypoints::test_real_route_refuses_before_side_effect_imports[False-import runpy; runpy.run_path('<tree>/tldw_chatbook/TTS/backends/chatterbox_process.py', run_name='__main__')] ['passed']
+  + Tests.Architecture.test_recovery_entrypoints::test_real_route_refuses_before_side_effect_imports[True-import runpy; runpy.run_path('<tree>/tldw_chatbook/TTS/backends/chatterbox_process.py', run_name='__main__')] ['passed']
+tests only in base (4):
+  - Tests.Architecture.test_rail_bool_coercion_is_shared::test_home_rail_preferences_agree_with_the_shared_helper[False-<object object at 0x…>] ['passed']
+  - Tests.Architecture.test_rail_bool_coercion_is_shared::test_home_rail_preferences_agree_with_the_shared_helper[True-<object object at 0x…>] ['passed']
+  - Tests.Architecture.test_recovery_entrypoints::test_real_route_refuses_before_side_effect_imports[False-import runpy; runpy.run_path('<tree>/tldw_chatbook/TTS/backends/chatterbox_process.py', run_name='__main__')] ['passed']
+  - Tests.Architecture.test_recovery_entrypoints::test_real_route_refuses_before_side_effect_imports[True-import runpy; runpy.run_path('<tree>/tldw_chatbook/TTS/backends/chatterbox_process.py', run_name='__main__')] ['passed']
+(The one extra head test is the new module's private-helper check, passed. The other "only in"
+rows are the same parametrized tests whose ids embed a tree path or an object address.)
+
+## pytest last lines
+base: 50 failed, 3480 passed, 5 skipped, 32 warnings in 1349.84s (0:22:29)
+head: 50 failed, 3481 passed, 5 skipped, 32 warnings in 1349.82s (0:22:29)
+
+## R22 governance offender lists (identical on both sides)
+### base
+E           assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']
+E           assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']
+### head
+E           assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']
+E           assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']
+
+## Warnings
+Both sides end "32 warnings"; the warnings-summary sections are byte-identical after normalising tree
+paths and line numbers (54 lines each). No Task 5 file appears in them.

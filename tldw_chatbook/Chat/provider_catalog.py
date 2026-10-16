@@ -107,6 +107,10 @@ PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
         "mistral",
     }
 )
+#: The legacy aliases alone: the custom group minus the built-in custom slots,
+#: which stay listable (ADR-146) while Console hides an alias unless it is
+#: configured or current (ADR-066).
+PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
 
 
 def provider_display_name(

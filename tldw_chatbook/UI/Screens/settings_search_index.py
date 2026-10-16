@@ -395,6 +395,8 @@ def build_field_search_index() -> None:
                     "settings-console-context-carry-forward-mode",
                     "Keep after compaction",
                 ),
+                # Capture finding 12: its button sits in a labelled row now.
+                ("settings-console-context-edit-summary-prompt", "Summary prompt"),
                 # TASK-23109 completion sweep: labels mirror the rendered rows.
                 (
                     "settings-console-exchange-capture-enabled",
@@ -421,10 +423,7 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-console-agent-max-model-turns", "Model turns (backstop)"),
                 ("settings-console-agent-max-steps", "Steps (backstop)"),
-                (
-                    "settings-console-default-user-display-name",
-                    "Default chat display name",
-                ),
+                ("settings-console-default-user-display-name", "Chat display name"),
                 ("settings-console-default-streaming", "Streaming"),
                 ("settings-console-default-temperature", "Temperature"),
                 ("settings-console-default-top-p", "Top P"),
@@ -460,12 +459,13 @@ def build_field_search_index() -> None:
                     "settings-console-background-effect-fps",
                     "Background effect frame rate",
                 ),
-                # Review finding 5: bare Button toggle with no labeled row --
-                # invisible to the drift guard's heuristic, indexed by hand.
+                # Review finding 5: a toggle with no labeled row (a Checkbox
+                # since capture finding 12), indexed by hand.
                 (
                     "settings-console-remote-images-toggle",
                     "Render images linked in assistant replies",
                 ),
+                ("settings-console-remote-images-toggle", "Render linked images"),
                 ("settings-console-remote-images-toggle", "Remote images"),
             ),
             SettingsCategoryId.APPEARANCE: (
@@ -521,16 +521,20 @@ def build_field_search_index() -> None:
                 ),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
-                ("settings-provider-value", "Provider"),
+                # TASK-33007.2: the one-row Provider control; the Select
+                # behind it is a hidden adapter.
+                ("settings-provider-search", "Provider"),
                 ("settings-provider-api-mode", "API mode"),
                 (
                     "settings-provider-api-mode",
                     "api_settings.<provider>.api_mode",
                 ),
-                ("settings-model-value", "Model"),
+                # TASK-33007.3: the picker's field; the Input behind it is a
+                # hidden adapter holding the model id.
+                ("model-search-picker-input", "Model"),
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
-                ("settings-provider-credential-env-var", "Credential env var"),
+                ("settings-provider-credential-env-var", "Env var"),
                 ("settings-model-context-window", "Model context window tokens"),
                 # TASK-23109 completion sweep: model-catalog refresh controls.
                 (
@@ -574,6 +578,10 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-model-profile-thinking-budget-tokens", "Think budget"),
                 ("settings-model-profile-streaming", "Streaming"),
+                # TASK-33007.6: the Prompt-cache snapshots disclosure's fields
+                # (ADR-119); '/' opens the closed disclosure it lands in.
+                ("settings-snapshot-enabled", "Enable prompt-cache snapshots"),
+                ("settings-snapshot-keep", "Snapshot keep count"),
             ),
             SettingsCategoryId.SPEECH_TTS: (
                 ("settings-speech-default-provider", "Default TTS Provider"),

@@ -331,6 +331,9 @@ async def test_blank_field_says_what_it_sends_and_no_placeholder_shows() -> None
         assert effort.value is Select.NULL
         line = await _painted_line(pilot, app, effort)
         assert BLANK_CHOICE_PROMPT in line and "Select" not in line, line
+        # #3057 capture finding 12 (08): one word for the state the Select
+        # shows; the help said "blank = provider default" beside "default".
+        assert "blank" not in line, line
         temperature = modal.query_one("#console-settings-temperature", Input)
         temperature.focus()
         temperature.clear()
@@ -500,17 +503,21 @@ async def test_model_view_fits_through_the_footer_without_scrolling(
 @pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
 @pytest.mark.asyncio
 async def test_modal_size_comes_from_the_width_and_height_tokens(size) -> None:
-    """AC#10: 150x22 from $ds-size-150 / $ds-size-22, capped to the viewport."""
+    """AC#10: 176x22 from $ds-chat-settings-width / $ds-size-22, capped to
+    the viewport. Rewritten on purpose by TASK-33007 capture finding 15: the
+    width was $ds-size-150, which cut every help line over 95 cells."""
     sheet = (CSS_ROOT / "features" / "_console_panels.tcss").read_text("utf-8")
     block = sheet.split("#console-settings-modal {", 1)[1].split("}", 1)[0]
-    assert "width: $ds-size-150;" in block
+    assert "width: $ds-chat-settings-width;" in block
+    tokens = (CSS_ROOT / "core" / "_variables.tcss").read_text("utf-8")
+    assert "\n$ds-chat-settings-width: 176;\n" in tokens
     assert "height: $ds-size-22;" in block
     app = CoreFirstHarness()
     modal = _modal(app, _settings())
     async with app.run_test(size=size) as pilot:
         await _open(pilot, app, modal)
         container = modal.query_one("#console-settings-modal")
-        assert (container.region.width, container.region.height) == (150, 22)
+        assert (container.region.width, container.region.height) == (176, 22)
         assert not container.has_class("-conversation-settings-wide")
 
 

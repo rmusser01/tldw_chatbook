@@ -67,12 +67,12 @@ from tldw_chatbook.Chat.console_settings_apply import (
     remember_model_draft,
 )
 from tldw_chatbook.Chat.provider_catalog import (
-    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
+from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -93,15 +93,14 @@ class ConsoleModelPopoverResult:
     compaction_mode: ContextCompactionMode
 
 
-_CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
-_CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
 #: The value row, in order: exactly the quick default mask (ADR-095 D3), so
 #: Save as model default and Ctrl+N save every value this surface shows.
 VALUE_FIELDS = ("temperature", "max_tokens", "streaming")
 _INVALID = object()
+#: Temperature's range is the draft's provider's (capture finding 25).
 _VALUE_ERRORS = {
-    "temperature": "Temperature must be a finite number from 0 to 2.",
+    "temperature": "Temperature must be a finite number from {low:g} to {high:g}.",
     "max_tokens": "Max tokens must be a whole number of at least 1 (blank: no cap).",
 }
 
@@ -112,9 +111,6 @@ _RECENT_ROWS = 6
 _SETUP_ROWS = 8
 _MATCH_ROWS = 30
 HIGHLIGHT_GLYPH = "▶"
-#: Legacy aliases are hidden unless configured or current (ADR-066); the
-#: built-in custom and custom_2 slots always stay listable (ADR-146).
-_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
 #: Column widths of one pair row (mockup (a)). The model column grows to the
 #: longest id shown, so ids render whole (spec: never truncated); a row too
 #: long for the list ends in an ellipsis (the list is ``nowrap``), so the
@@ -261,40 +257,26 @@ def _fit(text: str, width: int) -> str:
 
 
 def context_copy(tokens: int, verified: bool) -> str:
-    """Return a context window's short size, e.g. ``"200k"`` or ``"~32k"``.
+    """Return a context window's short size, e.g. ``"200k"``, or ``"?"``.
 
     Args:
         tokens: The window size in tokens.
-        verified: Whether the size is known; an estimate starts with ``~``.
+        verified: Whether the size is known. A provider or application
+            fallback is a guess, so it reads ``"?"`` (unknown), never a size
+            (TASK-33007 #12).
 
     Returns:
-        The size in ``k`` or ``M`` units.
+        The size in ``k`` or ``M`` units, or ``"?"``.
     """
+    if not verified:
+        return "?"
     if tokens >= 1_000_000:
         size = f"{round(tokens / 1_000_000, 1):g}M"
     elif tokens >= 1_000:
         size = f"{tokens // 1_000}k"
     else:
         size = str(tokens)
-    return size if verified else f"~{size}"
-
-
-def _temperature_in_range(value: float) -> bool:
-    """Return whether a parsed temperature is finite and within modal bounds.
-
-    Args:
-        value: Parsed temperature candidate.
-
-    Returns:
-        True if ``value`` is within ``[0.0, 2.0]``. NaN and infinite values
-        always return False, since any comparison against them is False.
-    """
-    return (
-        isfinite(value)
-        and _CONSOLE_POPOVER_TEMPERATURE_MIN
-        <= value
-        <= _CONSOLE_POPOVER_TEMPERATURE_MAX
-    )
+    return size
 
 
 def _widget_screen_region(widget: Widget) -> Any:
@@ -829,7 +811,7 @@ class ConsoleModelPopover(
             dict.fromkeys(
                 key
                 for key in (*self._provider_order, *sorted(used))
-                if key and (key not in _LEGACY_ALIAS_KEYS or key in used)
+                if key and (key not in PROVIDER_LEGACY_ALIAS_KEYS or key in used)
             )
         )
 
@@ -1039,7 +1021,7 @@ class ConsoleModelPopover(
     ) -> SwitcherRow:
         if self._is_current(provider, model):
             note = CURRENT_MARK
-        if provider_key(provider) in _LEGACY_ALIAS_KEYS:
+        if provider_key(provider) in PROVIDER_LEGACY_ALIAS_KEYS:
             note = f"legacy alias · {note}" if note else "legacy alias"
         return SwitcherRow(kind, provider=provider, model=model, note=note, score=score)
 
@@ -1580,8 +1562,11 @@ class ConsoleModelPopover(
         if focus is not None:
             focus.focus()
 
-    @staticmethod
-    def _parse_value(name: str, raw: str) -> object:
+    def _temperature_range(self) -> tuple[float, float]:
+        """The draft's provider's Temperature range, the one Ctrl+O holds."""
+        return temperature_range(provider_config_key(self._draft.settings.provider))
+
+    def _parse_value(self, name: str, raw: str) -> object:
         """One value control's text as its value; blank is None (no value)."""
         text = raw.strip()
         if not text:
@@ -1593,7 +1578,9 @@ class ConsoleModelPopover(
         except ValueError:
             return _INVALID
         if name == "temperature":
-            return value if _temperature_in_range(value) else _INVALID
+            low, high = self._temperature_range()
+            # NaN and infinities compare False, so they are refused too.
+            return value if isfinite(value) and low <= value <= high else _INVALID
         return value if value >= MIN_MAX_TOKENS else _INVALID
 
     def _value_input(self, name: str) -> Input:
@@ -1795,7 +1782,10 @@ class ConsoleModelPopover(
             control = self._value_input(name)
             value = self._parse_value(name, control.value)
             if value is _INVALID:
-                self._set_error(_VALUE_ERRORS[name], focus=control)
+                low, high = self._temperature_range()
+                self._set_error(
+                    _VALUE_ERRORS[name].format(low=low, high=high), focus=control
+                )
                 return None
             values[name] = value
         for name, value in values.items():

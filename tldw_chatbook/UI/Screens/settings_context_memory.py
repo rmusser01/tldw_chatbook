@@ -25,7 +25,7 @@ from ...Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )
-from ...Utils.token_counter import get_table_model_token_limit
+from ...Utils.token_counter import resolve_context_window
 
 
 SUMMARY_PROMPT_ID = "console.rewind_summarize"
@@ -103,10 +103,27 @@ class ModelContextWindowState:
     effective_tokens: int | None
     detected_tokens: int | None
     configured_override_tokens: int | None
+    #: The fallback the Console budgets with while no source knows the
+    #: window (TASK-33007 #12): shown as "assumed", never staged as a value.
+    #: None too when the provider's server reports its window (below).
+    assumed_tokens: int | None = None
+    #: Unknown here, and the Console reads it from the provider's server
+    #: (llama.cpp, Ollama, vLLM, ...): no assumed size would be true.
+    server_reported: bool = False
 
     @property
     def has_configured_override(self) -> bool:
         return self.configured_override_tokens is not None
+
+    @property
+    def unknown_copy(self) -> str:
+        """Name a window nothing here knows, in the one set of words the
+        Context window row and its title both print."""
+        if self.server_reported:
+            return "unknown here · the Console reads it from the server"
+        if self.assumed_tokens:
+            return f"unknown, {self.assumed_tokens:,} assumed"
+        return "unknown"
 
 
 def load_context_memory_values(
@@ -253,12 +270,47 @@ def model_context_window_state(
                 detected_models[model_id] = next_entry
             else:
                 detected_models.pop(model_id, None)
-    detected = _capability_or_table_window(detected_section, provider, model_id)
+    # The resolver Chat settings reads, over this config minus the override.
+    resolved = resolve_context_window(
+        provider, model_id, capabilities=ModelCapabilities(detected_section)
+    )
+    detected = resolved.tokens if resolved.verified else None
+    known = resolved.verified or configured_override is not None
+    server_reported = not known and _server_reports_window(app_config, provider)
     return ModelContextWindowState(
         configured_override or detected,
         detected,
         configured_override,
+        None if known or server_reported else resolved.tokens,
+        server_reported,
     )
+
+
+def _server_reports_window(
+    app_config: Mapping[str, object] | None, provider: str
+) -> bool:
+    """Whether the Console's live probe reads this provider's window.
+
+    The family is resolved the way the Console's gateway resolves its probe
+    target (``_project_context_window_target``), a custom endpoint through
+    its entry. The probe module is imported here so it stays off the
+    Settings route's import payload.
+
+    Args:
+        app_config: The config holding the custom endpoint registry.
+        provider: A provider id, alias or ``custom-ep:<slug>`` id.
+
+    Returns:
+        True for llama.cpp, Ollama, vLLM and the other probed families.
+    """
+    from ...Chat.console_context_window import SERVER_REPORTED_WINDOW_FAMILIES
+    from ...Chat.console_provider_support import resolve_console_provider_identity
+    from ...Chat.custom_endpoint_registry import entry_for, family_execution_key
+
+    entry = entry_for(app_config or {}, provider)
+    family = family_execution_key(entry.family) if entry else str(provider or "")
+    family = resolve_console_provider_identity(family).readiness_key or family
+    return family in SERVER_REPORTED_WINDOW_FAMILIES
 
 
 def model_context_window_save_entry(
@@ -304,14 +356,6 @@ def _model_capabilities_section(
 ) -> dict[str, Any]:
     raw = (app_config or {}).get("model_capabilities", {})
     return deepcopy(dict(raw)) if isinstance(raw, Mapping) else {}
-
-
-def _capability_or_table_window(
-    section: Mapping[str, object], provider: str, model: str
-) -> int | None:
-    value = ModelCapabilities(dict(section)).get_context_window(provider, model)
-    valid = _valid_positive_int(value)
-    return valid or get_table_model_token_limit(model, provider)
 
 
 def _valid_positive_int(value: object) -> int | None:

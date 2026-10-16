@@ -365,21 +365,10 @@ def test_windows_instance_observation_binds_mode_without_normalizing_it(
     assert case.facade.stat(case.lock, follow_symlinks=False).st_mode == mode
 
 
-def sealed(tmp_path, *, partial=False, unknown=False, mutate=None, data=b"durable"):
-    from Tests.Backup_Recovery.test_archive_reader import manifest
-
-    doc = manifest(data)
-    doc["owners"][0]["owner_id"] = "unknown.newer" if unknown else "ui.state"
-    doc["files"][0]["owner_id"] = doc["owners"][0]["owner_id"]
-    doc["consistency"] = "partial" if partial else "coherent"
-    if mutate:
-        mutate(doc)
-    path = tmp_path / "fixture.zip"
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("manifest.json", json.dumps(doc))
-        for payload in doc["files"]:
-            archive.writestr(payload["payload"], data)
-    return acquire(path, tmp_path / "archive-work", ArchiveLimits(), None, Event())
+# Defined beside manifest() in the hypothesis-free test_archive_reader, so a
+# child process that needs only this fixture (the UI lane installs no
+# hypothesis) can import it; re-exported here for its many importers.
+from Tests.Backup_Recovery.test_archive_reader import sealed
 
 
 def test_isolated_maps_explicit_new_root_without_loading_current_config(

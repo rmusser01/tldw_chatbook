@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: No changes · edits save with s | Changes affect global Console fallbacks after save.                               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │   conversation - and the whole conversation is re-sent every turn, so spend grows quadratically: 25M is typically          │  │  │                                         │
+│  category search             │  │  │   reached around turn 250. Sub-agents each get this same ceiling rather than a share of it, so one message's worst case    │  │  │ Selected category: Console Behavior     │
+│                              │  │  │   is about 3x it. 0 = unlimited. Loop detection stops identical repeated calls and 3 consecutive failures from the same    │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   tool; successful calls with changing arguments can still loop.                                                           │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Wall-clock (seconds)    │ 86400.0                                                                                         │  │  │  Save (s) — no changes                  │
+│      Providers & Models      │  │  │   = 1d. How long ONE run may take end to end. Stop works throughout. Sub-agents are bounded separately by                  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │   child_max_wall_seconds, so raising this does not extend them.                                                            │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Per-tool-call (seconds) │ 3600.0                                                                                          │  │  │ file.                                   │
+│  Interface                   │  │  │   = 1h. Ceiling on a SINGLE tool call - the real limit on long crawls, ingests, and builds, which a large wall-clock       │  │  │ Control guide                           │
+│      Appearance              │  │  │   budget alone will not save. 0 = no ceiling (Stop still works: it is polled every 0.5s while a tool runs). A call         │  │  │  Chat display name: Speaker label and   │
+│      Theme                   │  │  │   reported as timed out may still finish later on its own thread, so lowering this below ~186s can double-execute an       │  │  │  trusted character-template human       │
+│      Splash Screen           │  │  │   MCP tool.                                                                                                                │  │  │  name                                   │
+│    > Console Behavior        │  │  │  Model turns (backstop)  │ 2000                                                                                            │  │  │  Streaming: Show the reply as it is     │
+│  Data & Privacy              │  │  │   Tool-calling rounds per message. A backstop, not the usual limiter - at the default token budget a run stops on spend  ▃ │  │  │  generated.                             │
+│      Storage                 │  │  │   first, long before this.                                                                                                 │  │  │  Temperature: Lower stays focused;    ▅ │
+│      Workspaces              │  │  │  Steps (backstop)        │ 25000                                                                                           │  │  │  higher is more varied.                 │
+│      Tool Profiles           │  │  │   Individual loop steps. One tool round costs 3 (think, call, result) and the closing reply costs 1, so N turns need       │  │  │  Top P: Use only top tokens whose       │
+│      Privacy & Security      │  │  │   3*(N-1)+1 steps. Set below that and this, not the turn count, becomes your limiter. Maximum supported: 199,999 steps.    │  │  │  chances sum to P.                      │
+│      Network                 │  │  │                                                                                                                            │  │  │  Max tokens: Longest reply the model    │
+│      My Profile              │  │  │                                                                                                                            │  │  │  may give, in tokens.                   │
+│  Troubleshooting             │  │  │   Agent tool-result display cap                                                                                          ▃ │  │  │  Paste collapse: Only pasted chunks     │
+│      Diagnostics (view)      │  │  │  Display cap (chars)     │ 160                                                                                             │  │  │  over the threshold become compact      │
+│      About (view)            │  │  │   How much of an agent tool result the Console shows you here -- distinct from max_tool_result_chars, which caps what      │  │  │  placeholders; typed text stays         │
+│      Agents                  │  │  │   the model itself saw. Open a run's "View full log" (Agent rail) to read everything beyond this cap.                      │  │  │  literal                                │
+│  Expert                      │  │  │                                                                                                                            │  │  │  Threshold: Minimum pasted chunk size   │
+│      Hooks                   │  │  │   Permission summaries                                                                                                     │  │  │  before collapse                        │
+│      Internal Prompts        │  │  │   applies immediately · no Save needed                                                                                     │  │  │ Focused field guide                     │
+│      Advanced Config         │  │  │   When enabled, a fast LLM you designate receives a bounded excerpt of this conversation (your messages and the            │  │  │  Purpose: Focus a Console Behavior      │
+│   Domain Defaults ▸ (11)     │  │  │   assistant's, only) to write the approval summary.                                                                        │  │  │  field for setting-specific guidance.   │
+│                              │  │  │  Summary mode            │ Off                         ▼                                                                   │  │  │  Consequences: No field-specific        │
+│                              │  │  │  Provider                │ not set                                                                                    ▼    │  │  │  guidance is active right now.          │
+│                              │  │  │  Model                   │ empty = the provider's default model                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
