@@ -13,6 +13,7 @@ from tldw_chatbook.Canvas.web_auth import (
     is_loopback_host,
     resolve_web_access_token,
 )
+from tldw_chatbook.Web_Server.session_store import WebSessionStore
 
 
 @pytest.mark.parametrize(
@@ -693,3 +694,202 @@ def test_session_churn_never_evicts_registered_live_channels() -> None:
     with pytest.raises(AuthenticationError, match="capacity"):
         manager.authenticate_local(client_ip="127.0.0.1")
     assert first_closed == []
+
+
+def _persisted_manager(tmp_path, **overrides):
+    policy = build_web_auth_policy(
+        host="127.0.0.1",
+        port=8000,
+        access_token="tok",
+        public_url="https://chatbook.example",
+        allow_insecure_remote_http=False,
+        trusted_proxy_addresses=[],
+        direct_tls=True,
+    )
+    store = WebSessionStore(tmp_path / "web_sessions.json")
+    now = [1_000_000.0]
+    fields = dict(
+        policy=policy,
+        clock=lambda: now[0],
+        idle_timeout_seconds=30 * 86400,
+        absolute_timeout_seconds=180 * 86400,
+        session_store=store,
+    )
+    fields.update(overrides)
+    return WebAuthManager(**fields), store, now
+
+
+def test_session_survives_manager_restart(tmp_path) -> None:
+    manager, _store, _now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    revived, _revived_store, _ = _persisted_manager(tmp_path)
+    session = revived.authenticate_request(_facts(grant))
+    assert session.device_label == ""
+
+
+def test_revocation_is_persisted(tmp_path) -> None:
+    manager, _store, _now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    manager.revoke(grant.cookie_value)
+    revived, _revived_store, _ = _persisted_manager(tmp_path)
+    with pytest.raises(AuthenticationError):
+        revived.authenticate_request(_facts(grant))
+
+
+def test_short_login_is_not_persisted(tmp_path) -> None:
+    manager, store, _now = _persisted_manager(tmp_path)
+    manager.login_with_access_token("tok", client_ip="192.168.1.9", persist=False)
+    assert store.load() == {}
+
+
+def test_short_login_downgrades_to_the_legacy_short_session_timeouts(
+    tmp_path,
+) -> None:
+    manager, _store, now = _persisted_manager(tmp_path)
+    short = manager.login_with_access_token(
+        "tok", client_ip="192.168.1.9", persist=False
+    )
+    persisted = manager.login_with_access_token("tok", client_ip="192.168.1.9")
+
+    # Unchecked "Remember" is the legacy 30-minute idle / 8-hour absolute
+    # session (Spec §3.3, ADR-233 decision 5); checked keeps the configured
+    # 30-day/180-day device windows.
+    assert short.expires_at == now[0] + 8 * 60 * 60.0
+    assert persisted.expires_at == now[0] + 180 * 86400.0
+
+
+def test_short_session_idle_window_is_enforced_per_session(tmp_path) -> None:
+    manager, _store, now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token(
+        "tok", client_ip="192.168.1.9", persist=False
+    )
+
+    now[0] += 20 * 60  # inside the legacy 30-minute idle window: touch refreshes
+    assert manager.authenticate_request(_facts(grant)).session_id
+    # 31 idle minutes later the legacy window has closed, even though the
+    # manager's configured idle window (30 days) is far from over.
+    now[0] += 31 * 60
+    with pytest.raises(AuthenticationError, match="expired"):
+        manager.authenticate_request(_facts(grant))
+
+
+def test_loopback_auto_login_contract_mints_no_disk_record(tmp_path) -> None:
+    """Spec §3.1 pin: cookieless loopback entry is the in-memory auto-login."""
+
+    policy = build_web_auth_policy(host="127.0.0.1", port=8000, access_token=None)
+    store = WebSessionStore(tmp_path / "web_sessions.json")
+    manager = WebAuthManager(policy, session_store=store)
+    grant = manager.authenticate_local(
+        client_ip="127.0.0.1", device_label="Laptop", persist=False
+    )
+
+    session = manager.authenticate_request(
+        RequestFacts(
+            method="GET",
+            path="/",
+            peer_ip="127.0.0.1",
+            scheme="http",
+            host="127.0.0.1:8000",
+            cookie_value=grant.cookie_value,
+        )
+    )
+    assert session.persist is False
+    assert store.load() == {}
+
+
+def test_default_clock_is_wall_clock() -> None:
+    import time as _time
+
+    policy = build_web_auth_policy(
+        host="127.0.0.1",
+        port=8000,
+        access_token="tok",
+        public_url="https://chatbook.example",
+        allow_insecure_remote_http=False,
+        trusted_proxy_addresses=[],
+        direct_tls=True,
+    )
+    manager = WebAuthManager(policy)
+    assert manager._clock is _time.time
+
+
+def test_device_label_and_persist_flag_thread_through_login(tmp_path) -> None:
+    manager, store, now = _persisted_manager(tmp_path)
+    manager.login_with_access_token(
+        "tok", client_ip="192.168.1.9", device_label="iPhone · Safari"
+    )
+    now[0] += 10.0
+    short = manager.login_with_access_token(
+        "tok", client_ip="192.168.1.10", persist=False
+    )
+
+    labeled = manager.sessions_snapshot()[0]
+    stored = store.load()
+    assert set(stored) == {labeled.cookie_digest.hex()}
+    assert stored[labeled.cookie_digest.hex()].device_label == "iPhone · Safari"
+    assert [session.device_label for session in manager.sessions_snapshot()] == [
+        "iPhone · Safari",
+        "",
+    ]
+    assert manager.authenticate_request(_facts(short)).device_label == ""
+
+
+def test_bootstrap_exchange_and_local_login_thread_the_same_kwargs(tmp_path) -> None:
+    manager, store, _now = _persisted_manager(tmp_path)
+    nonce = manager.issue_bootstrap()
+    manager.exchange_bootstrap(
+        nonce, client_ip="203.0.113.9", device_label="Paired phone", persist=False
+    )
+    manager.authenticate_local(
+        client_ip="127.0.0.1", device_label="Laptop", persist=False
+    )
+    assert store.load() == {}
+
+
+def test_revoke_by_session_id_and_rename_device_manage_persisted_records(
+    tmp_path,
+) -> None:
+    manager, store, _now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token(
+        "tok", client_ip="192.168.1.9", device_label="old"
+    )
+    session = manager.sessions_snapshot()[0]
+    digest_hex = session.cookie_digest.hex()
+
+    assert manager.rename_device(session.session_id, "  MacBook · Chrome  ") is True
+    assert store.load()[digest_hex].device_label == "MacBook · Chrome"
+    assert manager.rename_device(session.session_id, "   ") is False
+
+    assert manager.revoke_by_session_id(session.session_id) is True
+    assert manager.revoke_by_session_id(session.session_id) is False
+    assert store.load() == {}
+    with pytest.raises(AuthenticationError):
+        manager.authenticate_request(_facts(grant))
+    assert manager.rename_device(session.session_id, "later") is False
+
+
+def test_touch_persistence_is_throttled(tmp_path) -> None:
+    manager, store, now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    session = manager.authenticate_request(_facts(grant))
+    digest_hex = session.cookie_digest.hex()
+    assert store.load()[digest_hex].last_seen_at == 1_000_000.0
+
+    now[0] += 60.0  # below the throttle interval: no disk write
+    manager.authenticate_request(_facts(grant))
+    assert store.load()[digest_hex].last_seen_at == 1_000_000.0
+
+    now[0] += 300.0  # a full interval since the previous persisted touch
+    manager.authenticate_request(_facts(grant))
+    assert store.load()[digest_hex].last_seen_at == now[0]
+
+
+def test_restart_drops_persisted_sessions_past_their_idle_window(tmp_path) -> None:
+    manager, _store, now = _persisted_manager(tmp_path)
+    grant = manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    now[0] += 31 * 86400  # beyond the 30-day idle window
+    revived, revived_store, _ = _persisted_manager(tmp_path, clock=lambda: now[0])
+
+    with pytest.raises(AuthenticationError):
+        revived.authenticate_request(_facts(grant))
+    assert revived_store.load() == {}

@@ -89,9 +89,7 @@ from tldw_chatbook.MCP.tool_results import (
     observe_dispatch,
     project_tool_result,
 )
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-    TOOL_DESCRIPTION_CAPTURE_CAP,
-)
+from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id

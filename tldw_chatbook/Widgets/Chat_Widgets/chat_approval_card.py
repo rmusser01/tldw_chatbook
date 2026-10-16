@@ -49,6 +49,11 @@ from tldw_chatbook.Utils.input_validation import MAX_APPROVAL_DENIAL_REASON_CHAR
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 
+# Re-export of the shared cap so existing importers keep working; the
+# canonical home (importable without any widget/textual deps) is
+# ``tldw_chatbook.Chat.approval_constants``.
+from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP  # noqa: F401
+
 _APPROVE_ONCE_LABEL = "Approve once"
 _DENY_LABEL = "Deny"
 _RAW_APPROVE_ONCE_LABEL = "Run once"
@@ -380,12 +385,6 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 RATIONALE_DISPLAY_CAP = 240
 CONTEXT_LABEL = "Model context:"
 SUMMARY_LABEL = "Summary:"
-
-#: ADR-090 (Qodo review #7): single named cap for tool-description capture
-#: at the three pending-row producers (MCP, local, builtin) and the
-#: summarizer prompt -- one constant so the egress bound cannot drift
-#: between tool owners.
-TOOL_DESCRIPTION_CAPTURE_CAP = 300
 
 _ARGS_SUMMARY_LIMIT = 80
 

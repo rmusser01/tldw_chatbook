@@ -1,14 +1,17 @@
 """Origin-wide browser authentication for Chatbook's served mode.
 
 The configured credential is used only to admit a browser.  Successful login
-creates an opaque, in-memory session; the long-lived credential is never put in
-a URL, cookie, response, exception, or representation.
+creates an opaque session; the long-lived credential is never put in a URL,
+cookie, response, exception, or representation.  When a ``WebSessionStore`` is
+attached, persistent sessions additionally survive process restarts on the
+wall clock (ADR-233).
 """
 
 from __future__ import annotations
 
 import hmac
 import ipaddress
+import logging
 import os
 import secrets
 import socket
@@ -18,6 +21,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from ..Web_Server.session_store import StoredSession, WebSessionStore
+
 WEB_ACCESS_TOKEN_ENV = "TLDW_CHATBOOK_WEB_ACCESS_TOKEN"
 WEB_ACCESS_TOKEN_KEYRING_SERVICE = "tldw_chatbook_web"
 WEB_ACCESS_TOKEN_KEYRING_ACCOUNT = "access_token"
@@ -25,13 +30,22 @@ SESSION_COOKIE_NAME = "chatbook_session"
 CSRF_HEADER_NAME = "X-Chatbook-CSRF"
 WEBSOCKET_PROTOCOL = "chatbook-v1"
 
-_DEFAULT_BOOTSTRAP_TTL_SECONDS = 60.0
-_DEFAULT_IDLE_TIMEOUT_SECONDS = 30 * 60.0
-_DEFAULT_ABSOLUTE_TIMEOUT_SECONDS = 8 * 60 * 60.0
+_DEFAULT_BOOTSTRAP_TTL_SECONDS = 120.0
+_DEFAULT_IDLE_TIMEOUT_SECONDS = 30 * 86400.0
+_DEFAULT_ABSOLUTE_TIMEOUT_SECONDS = 180 * 86400.0
+# A non-persisted session ("Remember this device" unchecked, or the loopback
+# auto-login) downgrades to the legacy short browser session — 30-minute
+# idle, 8-hour absolute — regardless of the configured device-session
+# windows (Spec §3.3, ADR-233 decision 5).
+_LEGACY_IDLE_TIMEOUT_SECONDS = 30 * 60.0
+_LEGACY_ABSOLUTE_TIMEOUT_SECONDS = 8 * 60 * 60.0
+_TOUCH_PERSIST_INTERVAL_SECONDS = 300.0
 _DEFAULT_LOGIN_ATTEMPTS_PER_MINUTE = 8
 _DEFAULT_MAX_SESSIONS = 512
 _DEFAULT_MAX_BOOTSTRAPS = 64
 _MAX_RATE_LIMIT_SUBJECTS = 2048
+
+logger = logging.getLogger(__name__)
 
 
 class BindPolicyError(ValueError):
@@ -101,7 +115,7 @@ class SessionGrant:
 
 @dataclass
 class BrowserSession:
-    """Private in-memory browser session state."""
+    """Private browser session state."""
 
     session_id: str
     cookie_digest: bytes = field(repr=False)
@@ -111,6 +125,13 @@ class BrowserSession:
     last_seen_at: float
     absolute_expires_at: float
     revoked: bool = False
+    device_label: str = ""
+    persist: bool = True
+    # Per-session lifetime windows: set at creation so idle/absolute expiry
+    # is enforced with the values the session was granted (legacy short pair
+    # for non-persisted sessions), not the manager's current configuration.
+    idle_timeout_seconds: float = _DEFAULT_IDLE_TIMEOUT_SECONDS
+    absolute_timeout_seconds: float = _DEFAULT_ABSOLUTE_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -400,6 +421,44 @@ def _origin_port(scheme: str, explicit_port: int | None) -> int:
     )
 
 
+def _to_stored(session: BrowserSession) -> StoredSession:
+    """Convert one live session to its digest-only disk record."""
+
+    return StoredSession(
+        digest_hex=session.cookie_digest.hex(),
+        session_id=session.session_id,
+        csrf_token=session.csrf_token,
+        client_ip=session.client_ip,
+        device_label=session.device_label,
+        created_at=session.created_at,
+        last_seen_at=session.last_seen_at,
+        absolute_expires_at=session.absolute_expires_at,
+    )
+
+
+def _from_stored(
+    record: StoredSession,
+    *,
+    idle_timeout_seconds: float = _DEFAULT_IDLE_TIMEOUT_SECONDS,
+    absolute_timeout_seconds: float = _DEFAULT_ABSOLUTE_TIMEOUT_SECONDS,
+) -> BrowserSession:
+    """Revive one disk record as a persistent live session."""
+
+    return BrowserSession(
+        session_id=record.session_id,
+        cookie_digest=bytes.fromhex(record.digest_hex),
+        csrf_token=record.csrf_token,
+        client_ip=record.client_ip,
+        created_at=record.created_at,
+        last_seen_at=record.last_seen_at,
+        absolute_expires_at=record.absolute_expires_at,
+        device_label=record.device_label,
+        persist=True,
+        idle_timeout_seconds=idle_timeout_seconds,
+        absolute_timeout_seconds=absolute_timeout_seconds,
+    )
+
+
 class WebAuthManager:
     """Own one process's bootstrap nonces, sessions, and admission rate limits."""
 
@@ -407,7 +466,7 @@ class WebAuthManager:
         self,
         policy: WebAuthPolicy,
         *,
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] = time.time,
         token_factory: Callable[[int], str] = secrets.token_urlsafe,
         bootstrap_ttl_seconds: float = _DEFAULT_BOOTSTRAP_TTL_SECONDS,
         idle_timeout_seconds: float = _DEFAULT_IDLE_TIMEOUT_SECONDS,
@@ -415,6 +474,7 @@ class WebAuthManager:
         login_attempts_per_minute: int = _DEFAULT_LOGIN_ATTEMPTS_PER_MINUTE,
         max_sessions: int = _DEFAULT_MAX_SESSIONS,
         max_bootstraps: int = _DEFAULT_MAX_BOOTSTRAPS,
+        session_store: WebSessionStore | None = None,
     ) -> None:
         self.policy = policy
         self._clock = clock
@@ -427,10 +487,64 @@ class WebAuthManager:
         self._login_limit = max(1, int(login_attempts_per_minute))
         self._max_sessions = max(1, int(max_sessions))
         self._max_bootstraps = max(1, int(max_bootstraps))
+        self._session_store = session_store
         self._bootstraps: OrderedDict[bytes, float] = OrderedDict()
         self._sessions: OrderedDict[bytes, BrowserSession] = OrderedDict()
         self._attempts: OrderedDict[str, deque[float]] = OrderedDict()
         self._revocation_callbacks: dict[str, set[Callable[[], None]]] = {}
+        self._load_persisted_sessions(self._clock())
+
+    def _load_persisted_sessions(self, now: float) -> None:
+        """Revive unexpired stored sessions; write back any prune they needed."""
+
+        if self._session_store is None:
+            return
+        records = self._session_store.load()
+        revived: list[BrowserSession] = []
+        pruned = False
+        for record in records.values():
+            if (
+                record.absolute_expires_at <= now
+                or record.last_seen_at + self._idle_timeout <= now
+            ):
+                pruned = True
+                continue
+            try:
+                # Persisted records are always minted with the configured
+                # device-session pair, so they revive under it.
+                revived.append(
+                    _from_stored(
+                        record,
+                        idle_timeout_seconds=self._idle_timeout,
+                        absolute_timeout_seconds=self._absolute_timeout,
+                    )
+                )
+            except ValueError:  # malformed digest hex: drop, keep the rest
+                pruned = True
+        revived.sort(key=lambda session: session.last_seen_at)
+        if len(revived) > self._max_sessions:  # keep the newest sessions
+            revived = revived[-self._max_sessions :]
+            pruned = True
+        for session in revived:
+            self._sessions[session.cookie_digest] = session
+        if pruned:
+            self._persist_all()
+
+    def _persist_all(self) -> None:
+        """Write the persistent sessions to disk, digest keys only."""
+
+        if self._session_store is None:
+            return
+        payload = {
+            digest.hex(): _to_stored(session)
+            for digest, session in self._sessions.items()
+            if session.persist
+        }
+        try:
+            self._session_store.save(payload)
+        except OSError as error:
+            # An unwritable store must not take working in-memory auth down.
+            logger.warning("web session persistence failed: %s", error)
 
     @property
     def rate_limit_subject_count(self) -> int:
@@ -460,13 +574,22 @@ class WebAuthManager:
         self._bootstraps[_cookie_digest(nonce)] = now + self._bootstrap_ttl
         return nonce
 
-    def exchange_bootstrap(self, nonce: str, *, client_ip: str) -> SessionGrant:
+    def exchange_bootstrap(
+        self,
+        nonce: str,
+        *,
+        client_ip: str,
+        device_label: str = "",
+        persist: bool = True,
+    ) -> SessionGrant:
         now = self._clock()
         self._prune_bootstraps(now)
         expiry = self._bootstraps.pop(_cookie_digest(nonce), None)
         if expiry is None or now >= expiry:
             raise AuthenticationError("authentication denied")
-        return self._new_session(client_ip, now)
+        return self._new_session(
+            client_ip, now, device_label=device_label, persist=persist
+        )
 
     def _record_attempt(self, client_ip: str) -> None:
         now = self._clock()
@@ -482,19 +605,43 @@ class WebAuthManager:
         while len(self._attempts) > _MAX_RATE_LIMIT_SUBJECTS:
             self._attempts.popitem(last=False)
 
-    def login_with_access_token(self, supplied: str, *, client_ip: str) -> SessionGrant:
+    def login_with_access_token(
+        self,
+        supplied: str,
+        *,
+        client_ip: str,
+        device_label: str = "",
+        persist: bool = True,
+    ) -> SessionGrant:
         self._record_attempt(client_ip)
         expected = self.policy.access_credential.reveal()
         if expected is None or not _constant_time_secret_matches(supplied, expected):
             raise AuthenticationError("authentication denied")
-        return self._new_session(client_ip, self._clock())
+        return self._new_session(
+            client_ip, self._clock(), device_label=device_label, persist=persist
+        )
 
-    def authenticate_local(self, *, client_ip: str) -> SessionGrant:
+    def authenticate_local(
+        self,
+        *,
+        client_ip: str,
+        device_label: str = "",
+        persist: bool = True,
+    ) -> SessionGrant:
         if not self.policy.local_only or not is_loopback_host(client_ip):
             raise AuthenticationError("authentication denied")
-        return self._new_session(client_ip, self._clock())
+        return self._new_session(
+            client_ip, self._clock(), device_label=device_label, persist=persist
+        )
 
-    def _new_session(self, client_ip: str, now: float) -> SessionGrant:
+    def _new_session(
+        self,
+        client_ip: str,
+        now: float,
+        *,
+        device_label: str = "",
+        persist: bool = True,
+    ) -> SessionGrant:
         self._prune_sessions(now)
         while len(self._sessions) >= self._max_sessions:
             eviction_candidate = next(
@@ -510,7 +657,16 @@ class WebAuthManager:
             self._revoke_session(eviction_candidate)
         cookie = self._token_factory(32)
         csrf = self._token_factory(24)
-        absolute_expiry = now + self._absolute_timeout
+        if persist:
+            idle_timeout = self._idle_timeout
+            absolute_timeout = self._absolute_timeout
+        else:
+            # Unchecked "Remember" is the legacy short session — 30-minute
+            # idle, 8-hour absolute — never the configured device windows
+            # (Spec §3.3, ADR-233 decision 5).
+            idle_timeout = _LEGACY_IDLE_TIMEOUT_SECONDS
+            absolute_timeout = _LEGACY_ABSOLUTE_TIMEOUT_SECONDS
+        absolute_expiry = now + absolute_timeout
         digest = _cookie_digest(cookie)
         self._sessions[digest] = BrowserSession(
             session_id=self._token_factory(18),
@@ -520,7 +676,13 @@ class WebAuthManager:
             created_at=now,
             last_seen_at=now,
             absolute_expires_at=absolute_expiry,
+            device_label=device_label,
+            persist=persist,
+            idle_timeout_seconds=idle_timeout,
+            absolute_timeout_seconds=absolute_timeout,
         )
+        if persist:
+            self._persist_all()
         return SessionGrant(cookie, csrf, absolute_expiry)
 
     def _prune_sessions(self, now: float) -> None:
@@ -529,7 +691,7 @@ class WebAuthManager:
             for session in self._sessions.values()
             if now
             >= min(
-                session.last_seen_at + self._idle_timeout,
+                session.last_seen_at + session.idle_timeout_seconds,
                 session.absolute_expires_at,
             )
         ]
@@ -680,7 +842,7 @@ class WebAuthManager:
         """Return the bounded delay until a session's next expiry boundary."""
 
         deadline = min(
-            session.last_seen_at + self._idle_timeout,
+            session.last_seen_at + session.idle_timeout_seconds,
             session.absolute_expires_at,
         )
         return max(0.0, deadline - self._clock())
@@ -703,8 +865,12 @@ class WebAuthManager:
             raise AuthenticationError("invalid session")
         if self.expire_session_if_due(session):
             raise AuthenticationError("session expired")
-        session.last_seen_at = self._clock()
+        now = self._clock()
+        previous_last_seen = session.last_seen_at
+        session.last_seen_at = now
         self._sessions.move_to_end(session.cookie_digest)
+        if now - previous_last_seen >= _TOUCH_PERSIST_INTERVAL_SECONDS:
+            self._persist_all()
 
     def _revoke_session(self, session: BrowserSession) -> None:
         self._sessions.pop(session.cookie_digest, None)
@@ -712,6 +878,7 @@ class WebAuthManager:
         callbacks = self._revocation_callbacks.pop(session.session_id, set())
         for callback in callbacks:
             callback()
+        self._persist_all()
 
     def revoke_all(self) -> None:
         for session in self._sessions.values():
@@ -726,3 +893,33 @@ class WebAuthManager:
         self._bootstraps.clear()
         for callback in callbacks:
             callback()
+        self._persist_all()
+
+    def sessions_snapshot(self) -> list[BrowserSession]:
+        """Return the live sessions ordered oldest-seen first."""
+
+        return sorted(self._sessions.values(), key=lambda session: session.last_seen_at)
+
+    def revoke_by_session_id(self, session_id: str) -> bool:
+        """Revoke one device session by its public identifier, if present."""
+
+        session = next(
+            (s for s in self._sessions.values() if s.session_id == session_id), None
+        )
+        if session is None:
+            return False
+        self._revoke_session(session)
+        return True
+
+    def rename_device(self, session_id: str, label: str) -> bool:
+        """Rename one device session and persist the new label."""
+
+        label = label.strip()[:64]
+        session = next(
+            (s for s in self._sessions.values() if s.session_id == session_id), None
+        )
+        if session is None or not label:
+            return False
+        session.device_label = label
+        self._persist_all()
+        return True

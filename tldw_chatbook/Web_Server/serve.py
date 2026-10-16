@@ -19,10 +19,12 @@ import html
 import signal
 import ssl
 import sys
+import time
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlsplit, urlunparse
 
 from loguru import logger
 
@@ -71,6 +73,8 @@ from ..Utils.optional_deps import (
     check_web_server_deps,
     require_dependency,
 )
+from ..Utils.paths import get_user_data_dir
+from .session_store import WebSessionStore
 
 _TEXTUAL_SERVE_RESIZE_HOOK = "window.onresize=()=>{this.fit()}"
 _TEXTUAL_SERVE_CANVAS_RENDERERS = (
@@ -137,6 +141,8 @@ _SERVED_SHELL_HTML = _SERVED_STATIC_ROOT.joinpath("served_shell.html").read_text
 _SERVED_SHELL_ASSETS = {
     "served-shell.css": ("text/css", "served_shell.css"),
     "served-shell.js": ("application/javascript", "served_shell.js"),
+    "devices.js": ("application/javascript", "devices.js"),
+    "qrcodegen.js": ("application/javascript", "qrcodegen.js"),
 }
 
 
@@ -576,6 +582,62 @@ def patch_textual_serve_viewport_js(source: str) -> str:
     )
 
 
+#: First-match platform markers for the served device-manager labels; the
+#: given order is a precedence chain (Android before Linux, etc.).
+_DEVICE_PLATFORM_MARKERS = (
+    "iPhone",
+    "iPad",
+    "Android",
+    "Macintosh",
+    "Windows",
+    "Linux",
+)
+#: First-match browser markers; "Edg/" must win over the Chrome/Safari tokens
+#: every Edge user agent also carries.
+_DEVICE_BROWSER_MARKERS = (
+    ("Edg/", "Edge"),
+    ("Firefox", "Firefox"),
+    ("Chrome", "Chrome"),
+    ("Safari", "Safari"),
+)
+_DEVICE_LABEL_MAX_LENGTH = 64
+
+
+def _device_label_from_user_agent(ua: str) -> str:
+    """Derive a short, non-identifying device label from a User-Agent string.
+
+    Only the first platform and first browser marker win, joined with a
+    middle dot; anything unmatched falls back to ``"Unknown device"``.  The
+    result is bounded to 64 characters (the same cap ``rename_device``
+    applies) and carries no version or detail tokens from the source string.
+    """
+
+    platform_label = next(
+        (name for name in _DEVICE_PLATFORM_MARKERS if name in ua), ""
+    )
+    browser_label = next(
+        (label for marker, label in _DEVICE_BROWSER_MARKERS if marker in ua), ""
+    )
+    label = " · ".join(part for part in (platform_label, browser_label) if part)
+    return (label or "Unknown device")[:_DEVICE_LABEL_MAX_LENGTH]
+
+
+async def _read_device_json(request) -> dict:
+    """Read one bounded JSON object body for the device-manager endpoints."""
+
+    from aiohttp import web
+
+    if request.content_length is not None and request.content_length > 4096:
+        raise web.HTTPRequestEntityTooLarge(
+            max_size=4096, actual_size=request.content_length
+        )
+    try:
+        payload = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 class ChatbookWebServerMixin:
     """Textual web server with Chatbook-specific viewport resize hardening."""
 
@@ -586,6 +648,9 @@ class ChatbookWebServerMixin:
         web_ssl_context: ssl.SSLContext | None = None,
         canvas_policy: CanvasConfigPolicy | None = None,
         canvas_profile_snapshot: ProfileSnapshot | None = None,
+        session_store: WebSessionStore | None = None,
+        session_idle_timeout_seconds: float | None = None,
+        session_absolute_timeout_seconds: float | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -595,7 +660,14 @@ class ChatbookWebServerMixin:
                 port=self.port,
                 access_token=None,
             )
-        self._web_auth = WebAuthManager(web_auth_policy)
+        manager_kwargs: dict[str, object] = {"session_store": session_store}
+        if session_idle_timeout_seconds is not None:
+            manager_kwargs["idle_timeout_seconds"] = session_idle_timeout_seconds
+        if session_absolute_timeout_seconds is not None:
+            manager_kwargs[
+                "absolute_timeout_seconds"
+            ] = session_absolute_timeout_seconds
+        self._web_auth = WebAuthManager(web_auth_policy, **manager_kwargs)
         self._web_ssl_context = web_ssl_context
         self._canvas_policy = canvas_policy or get_canvas_config_policy()
         self._canvas_disabled_latched = not self._canvas_policy.enabled
@@ -670,6 +742,28 @@ class ChatbookWebServerMixin:
             web.get(
                 "/auth/bootstrap", self.handle_login_bootstrap, name="login_bootstrap"
             ),
+            web.get("/auth/devices", self.handle_devices_page, name="devices"),
+            web.post("/auth/logout", self.handle_logout, name="logout"),
+            web.post(
+                "/auth/devices/revoke",
+                self.handle_devices_revoke,
+                name="devices_revoke",
+            ),
+            web.post(
+                "/auth/devices/revoke-all",
+                self.handle_devices_revoke_all,
+                name="devices_revoke_all",
+            ),
+            web.post(
+                "/auth/devices/rename",
+                self.handle_devices_rename,
+                name="devices_rename",
+            ),
+            web.post(
+                "/auth/devices/pair",
+                self.handle_devices_pair,
+                name="devices_pair",
+            ),
             web.get("/", self.handle_index, name="index"),
             web.get("/ws", self.handle_websocket, name="websocket"),
             web.get(
@@ -735,7 +829,7 @@ class ChatbookWebServerMixin:
 
     @staticmethod
     def _set_session_cookie(response, grant, *, secure: bool) -> None:
-        max_age = max(1, int(grant.expires_at - asyncio.get_running_loop().time()))
+        max_age = max(1, int(grant.expires_at - time.time()))
         response.set_cookie(
             SESSION_COOKIE_NAME,
             grant.cookie_value,
@@ -801,7 +895,16 @@ class ChatbookWebServerMixin:
                     self._web_auth.validate_public_request(
                         facts, require_origin=facts.origin is not None
                     )
-                    grant = self._web_auth.authenticate_local(client_ip=facts.peer_ip)
+                    grant = self._web_auth.authenticate_local(
+                        client_ip=facts.peer_ip,
+                        device_label=_device_label_from_user_agent(
+                            request.headers.get("User-Agent", "")
+                        ),
+                        # Spec §3.1: loopback auto-login stays the in-memory
+                        # session it always was; it must never mint a disk
+                        # record (ADR-233).
+                        persist=False,
+                    )
                 except AuthenticationError:
                     raise web.HTTPUnauthorized(text="Authentication denied") from None
                 request["chatbook_csrf"] = grant.csrf_token
@@ -847,7 +950,12 @@ class ChatbookWebServerMixin:
                     "<title>Chatbook sign in</title></head><body>"
                     '<main><h1>Chatbook</h1><form method="post" action="/auth/login">'
                     '<label>Access token <input type="password" name="access_token" '
-                    'autocomplete="current-password" required></label>'
+                    'autocomplete="current-password" required></label> '
+                    '<label><input type="checkbox" name="remember" value="1" checked> '
+                    "Remember this device — checked signs in a persistent "
+                    "device session; unchecked uses a short-lived in-memory "
+                    "session that ends when the server stops (safest on shared "
+                    "machines)</label>"
                     '<button type="submit">Sign in</button></form></main></body></html>'
                 ),
                 content_type="text/html",
@@ -863,8 +971,16 @@ class ChatbookWebServerMixin:
             client_ip, _scheme, _host = self._web_auth.validate_public_request(
                 facts, require_origin=True
             )
+            # The "remember me" checkbox opts the session out of disk
+            # persistence (ADR-233); the device label comes from the UA only.
+            remember = data.get("remember") == "1"
             grant = self._web_auth.login_with_access_token(
-                str(data.get("access_token", "")), client_ip=client_ip
+                str(data.get("access_token", "")),
+                client_ip=client_ip,
+                device_label=_device_label_from_user_agent(
+                    request.headers.get("User-Agent", "")
+                ),
+                persist=remember,
             )
         except AuthenticationError:
             raise web.HTTPUnauthorized(text="Authentication denied") from None
@@ -883,7 +999,11 @@ class ChatbookWebServerMixin:
                 facts, require_origin=False
             )
             grant = self._web_auth.exchange_bootstrap(
-                request.query.get("nonce", ""), client_ip=client_ip
+                request.query.get("nonce", ""),
+                client_ip=client_ip,
+                device_label=_device_label_from_user_agent(
+                    request.headers.get("User-Agent", "")
+                ),
             )
         except AuthenticationError:
             raise web.HTTPUnauthorized(text="Authentication denied") from None
@@ -892,6 +1012,162 @@ class ChatbookWebServerMixin:
             response, grant, secure=self._web_auth.policy.secure_cookies
         )
         return response
+
+    async def handle_devices_page(self, request):
+        """List every live device session and its manager controls.
+
+        The section contract consumed by ``devices.js`` and the integration
+        tests: one ``<section class="device">`` per session carrying
+        ``data-session-id`` and a ``data-current-device`` flag for the
+        requesting device, with all dynamic values HTML-escaped and the
+        per-session CSRF token in the ``chatbook-csrf`` meta tag. A
+        header-level "Sign out all devices" incident-response control sits
+        outside those sections (ADR-233 decision 4).
+        """
+
+        from aiohttp import web
+
+        current = request["chatbook_browser_session"]
+        csrf = html.escape(str(request["chatbook_csrf"]), quote=True)
+        sections = []
+        for session in self._web_auth.sessions_snapshot():
+            label = html.escape(
+                session.device_label or "Unknown device", quote=True
+            )
+            session_id = html.escape(session.session_id, quote=True)
+            created = datetime.fromtimestamp(session.created_at, UTC).isoformat()
+            last_seen = datetime.fromtimestamp(session.last_seen_at, UTC).isoformat()
+            is_current = session.session_id == current.session_id
+            marker = (
+                '<p class="device-current">This device</p>' if is_current else ""
+            )
+            action = (
+                (
+                    '<button type="button" class="device-signout">'
+                    "Sign out this device</button>"
+                )
+                if is_current
+                else (
+                    '<button type="button" class="device-revoke">'
+                    "Sign out device</button>"
+                )
+            )
+            sections.append(
+                f'<section class="device" data-session-id="{session_id}" '
+                f'data-current-device="{str(is_current).lower()}">'
+                f"<h2>{label}</h2>{marker}"
+                f'<p class="device-times">Added {created} · Last active '
+                f"{last_seen}</p>"
+                f'<input type="text" maxlength="64" name="label" '
+                f'aria-label="Device name" value="{label}"> '
+                '<button type="button" class="device-rename">Rename</button> '
+                f"{action}</section>"
+            )
+        body = (
+            '<!doctype html><html><head><meta charset="utf-8">'
+            f'<meta name="chatbook-csrf" content="{csrf}">'
+            "<title>Chatbook devices</title></head><body>"
+            "<main><h1>Your devices</h1>"
+            '<button type="button" class="device-revoke-all">'
+            "Sign out all devices</button>"
+            '<section class="device-pairing"><h2>Add a device</h2>'
+            '<button type="button" class="device-pair">Add a device</button>'
+            '<canvas class="device-pair-qr" hidden></canvas>'
+            '<p class="device-pair-hint" hidden>Scan with the other device, or '
+            "open the link below. A fresh link is fetched automatically every "
+            "100&nbsp;seconds (each link works once and expires 2 minutes "
+            "after issue).</p>"
+            '<p class="device-pair-url"></p></section>'
+            + "".join(sections)
+            + "</main>"
+            '<script src="/static/chatbook/qrcodegen.js" defer></script>'
+            '<script src="/static/chatbook/devices.js" defer></script>'
+            "</body></html>"
+        )
+        return web.Response(
+            text=body,
+            content_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def handle_logout(self, request):
+        """Revoke the requesting browser's session and delete its cookie."""
+
+        from aiohttp import web
+
+        self._web_auth.revoke(request.cookies.get(SESSION_COOKIE_NAME, ""))
+        response = web.HTTPSeeOther(location="/auth/login")
+        response.del_cookie(SESSION_COOKIE_NAME, path="/")
+        return response
+
+    async def handle_devices_revoke(self, request):
+        """Revoke one listed device session by its public identifier."""
+
+        from aiohttp import web
+
+        payload = await _read_device_json(request)
+        session_id = payload.get("session_id")
+        revoked = (
+            self._web_auth.revoke_by_session_id(session_id)
+            if isinstance(session_id, str)
+            else False
+        )
+        return web.json_response(
+            {"ok": revoked}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_devices_revoke_all(self, request):
+        """Revoke every device session, including the requesting browser's.
+
+        The incident-response control (ADR-233 decision 4): one authed POST
+        empties the session table and persists that emptiness, so even a
+        restart cannot resurrect a revoked device. The requesting session
+        dies with the rest, so the browser is expected to navigate away
+        rather than reload.
+        """
+
+        from aiohttp import web
+
+        await _read_device_json(request)
+        self._web_auth.revoke_all()
+        return web.json_response(
+            {"ok": True}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_devices_rename(self, request):
+        """Rename one listed device session (bounded, trimmed, persisted)."""
+
+        from aiohttp import web
+
+        payload = await _read_device_json(request)
+        session_id = payload.get("session_id")
+        label = payload.get("label")
+        renamed = (
+            self._web_auth.rename_device(session_id, label)
+            if isinstance(session_id, str) and isinstance(label, str)
+            else False
+        )
+        return web.json_response(
+            {"ok": renamed}, headers={"Cache-Control": "no-store"}
+        )
+
+    async def handle_devices_pair(self, request):
+        """Issue a one-use pairing URL a new device can scan (ADR-233).
+
+        The route is an authenticated POST, so the shared middleware has
+        already enforced the CSRF header; the body is read only to keep the
+        bounded-shape guard consistent with the sibling device endpoints.
+        The returned URL embeds a single-use nonce that expires with the
+        manager's bootstrap TTL (120 s), so the response is never cacheable.
+        """
+
+        from aiohttp import web
+
+        await _read_device_json(request)
+        return web.json_response(
+            {"url": self.issue_browser_bootstrap_url()},
+            headers={"Cache-Control": "no-store"},
+        )
 
     def issue_browser_bootstrap_url(self) -> str:
         """Return a one-time bootstrap URL without exposing the configured token."""
@@ -1279,7 +1555,7 @@ class ChatbookWebServerMixin:
         )
 
     async def handle_served_shell_asset(self, request):
-        """Serve only the two immutable, state-free owned shell assets."""
+        """Serve only the immutable, state-free owned shell assets."""
 
         from aiohttp import web
 
@@ -1574,6 +1850,24 @@ def create_server(
             "INSECURE DEVELOPMENT MODE: remote Chatbook content is using plaintext HTTP"
         )
 
+    session_idle_timeout_days = max(
+        1,
+        int(get_cli_setting("web_server", "session_idle_timeout_days", default=30)),
+    )
+    session_absolute_timeout_days = max(
+        1,
+        int(
+            get_cli_setting(
+                "web_server", "session_absolute_timeout_days", default=180
+            )
+        ),
+    )
+    if session_absolute_timeout_days < session_idle_timeout_days:
+        raise ValueError(
+            "web_server.session_absolute_timeout_days must be greater than or "
+            "equal to web_server.session_idle_timeout_days"
+        )
+
     logger.info("Creating web server on {}:{}", host, port)
     server = chatbook_web_server_class(
         command=command,
@@ -1584,9 +1878,49 @@ def create_server(
         web_auth_policy=web_auth_policy,
         web_ssl_context=ssl_context,
         canvas_policy=get_canvas_config_policy(web_auth_policy=web_auth_policy),
+        session_store=WebSessionStore(get_user_data_dir() / "web_sessions.json"),
+        session_idle_timeout_seconds=session_idle_timeout_days * 86400,
+        session_absolute_timeout_seconds=session_absolute_timeout_days * 86400,
     )
 
     return server
+
+
+#: Bind hosts a QR can never reach: a URL carrying one of these as its host
+#: (e.g. the auto-derived ``https://<bind-host>:<port>`` when TLS is set
+#: without an explicit public_url) is unusable from any other device.
+_PAIR_QR_UNREACHABLE_HOSTS = frozenset({"0.0.0.0", "::", ""})
+
+
+def _print_pair_qr(server, *, echo=print) -> bool:
+    """Print a one-use pairing QR for a server about to start (ADR-233 §3.3)."""
+    public_url = getattr(server, "public_url", None)
+    if not public_url:
+        echo("--pair skipped: [web_server] public_url is not configured.")
+        return False
+    url_host = urlsplit(public_url).hostname
+    if (url_host or "").lower() in _PAIR_QR_UNREACHABLE_HOSTS:
+        # create_server auto-derives https://<bind-host>:<port> under TLS, so
+        # a wildcard bind (0.0.0.0, ::) yields a URL no phone could open;
+        # printing it as a QR would advertise a dead link.
+        echo(
+            "--pair skipped: [web_server] public_url "
+            f"{public_url!r} has a wildcard/unspecified host; "
+            "configure an explicit public_url to pair."
+        )
+        return False
+    url = server.issue_browser_bootstrap_url()
+    try:
+        import qrcode
+    except ImportError:
+        echo(f"Pair with this one-use link (install 'qrcode' for a QR): {url}")
+        return True
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(url)
+    echo("Scan with your phone to sign in (valid once, for 120 seconds):")
+    qr.print_ascii(invert=True)
+    echo(url)
+    return True
 
 
 def run_web_server(
@@ -1594,6 +1928,7 @@ def run_web_server(
     port: int | None = None,
     title: str | None = None,
     debug: bool | None = None,
+    pair: bool = False,
 ):
     """
     Run the tldw_chatbook application as a web server.
@@ -1606,6 +1941,9 @@ def run_web_server(
         port: Port number (default: from config or 8000)
         title: Page title (default: from config or "tldw chatbook")
         debug: Enable debug mode (default: from config or False)
+        pair: Print a one-use phone pairing QR before serving
+            (default: False; skipped with a notice when public_url is unset
+            or its host is a wildcard/unspecified bind address)
 
     Raises:
         ImportError: If textual-serve is not installed
@@ -1626,6 +1964,9 @@ def run_web_server(
 
     # Create and run the server
     server = create_server(host=host, port=port, title=title, debug=debug)
+
+    if pair:
+        _print_pair_qr(server)
 
     logger.info("Starting web server on {}:{}", host, port)
     logger.info("Press Ctrl+C to stop the server")
@@ -1652,11 +1993,22 @@ def main():
     parser.add_argument("--port", type=int, help="Port to bind to (default: 8000)")
     parser.add_argument("--title", type=str, help="Title for the web page")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument(
+        "--pair",
+        action="store_true",
+        help="Print a QR to pair a phone before serving",
+    )
 
     args = parser.parse_args()
 
     # Run the web server with provided arguments
-    run_web_server(host=args.host, port=args.port, title=args.title, debug=args.debug)
+    run_web_server(
+        host=args.host,
+        port=args.port,
+        title=args.title,
+        debug=args.debug,
+        pair=args.pair,
+    )
 
 
 if __name__ == "__main__":

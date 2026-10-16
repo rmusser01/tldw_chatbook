@@ -42,9 +42,7 @@ from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
     approval_stamp,
 )
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-    TOOL_DESCRIPTION_CAPTURE_CAP,
-)
+from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.execution_log import (
     KILL_SWITCH_DENIED_DECISION,
     POLICY_DENIED_DECISION,
