@@ -284,7 +284,7 @@ def test_ordinary_provider_readiness_is_unchanged(provider, ready, reason):
     ("provider", "blocked"), [("custom-ep:gpu-box", False), ("custom-ep:gone", True)]
 )
 def test_home_console_readiness_seam_handles_a_registry_default(provider, blocked):
-    """Home's readiness (``_home_console_provider_ready``) rides this seam."""
+    """Home's readiness (``_home_console_model_state``) rides this seam."""
     config = {**_config(), "chat_defaults": {"provider": provider, "model": "model-a"}}
     settings = build_default_console_session_settings(config)
     readiness = build_console_settings_readiness(
@@ -624,7 +624,7 @@ async def test_home_readiness_computes_a_malformed_default(request, provider):
             # The badge's own seam; ``#home-details-body`` mounts on a timer
             # (test_home_model_badge_reports_blocked_without_credential flakes
             # on NoMatches at HEAD).
-            ready = home._home_console_provider_ready(
+            ready, _failed = home._home_console_model_state(
                 background_credentials=False, allow_fresh_load=False
             )
             assert ready is False

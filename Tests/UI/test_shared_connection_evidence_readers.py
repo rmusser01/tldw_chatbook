@@ -90,9 +90,9 @@ async def test_a_refused_test_reaches_home_and_the_library_lock_pre_check(
         library = SimpleNamespace(app_instance=app, app=host)
 
         def home_ready() -> bool:
-            return home._home_console_provider_ready(
+            return home._home_console_model_state(
                 background_credentials=False, allow_fresh_load=False
-            )
+            )[0]
 
         assert home_ready() is True
         assert LibraryScreen._console_setup_would_block(library) is False

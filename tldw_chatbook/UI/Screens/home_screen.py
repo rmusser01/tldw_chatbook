@@ -705,15 +705,6 @@ class HomeScreen(BaseAppScreen):
             logger.debug(f"Home content snapshot seam call failed: {exc}")
             return None
 
-    def _home_console_provider_ready(
-        self, *, background_credentials: bool, allow_fresh_load: bool = True
-    ) -> bool:
-        """Return Console provider readiness (see ``_home_console_model_state``)."""
-        return self._home_console_model_state(
-            background_credentials=background_credentials,
-            allow_fresh_load=allow_fresh_load,
-        )[0]
-
     def _home_console_model_state(
         self, *, background_credentials: bool, allow_fresh_load: bool = True
     ) -> tuple[bool, bool]:
