@@ -585,7 +585,9 @@ def unsaved_field_count(dirty_keys: Iterable[str]) -> int:
     Video Gen stages the same way; any other key is a field of its own.
     """
     names = {k.removeprefix("field::").removeprefix("cleared::") for k in dirty_keys}
-    return len({"swarmui::swarm_token" if n == "swarmui::api_key" else n for n in names})
+    return len(
+        {"swarmui::swarm_token" if n == "swarmui::api_key" else n for n in names}
+    )
 
 
 # Global scalar fields that render as a plain-text Input (task 5): label
