@@ -5334,6 +5334,9 @@ class SettingsScreen(BaseAppScreen):
         # have moved while Settings was suspended).
         mount_already_refreshed = self._settings_mount_visit_refreshed
         self._settings_mount_visit_refreshed = False
+        # TASK-33007.11: focus Esc released stays released when a dialog
+        # closes; Textual's resume would focus the nav bar, where Enter leaves.
+        self.AUTO_FOCUS = "" if self.focused is None and not mount_already_refreshed else None
         under_theme_dialog = self._suspended_under_theme_dialog
         self._suspended_under_theme_dialog = False
         if self._manual_sync_run_in_flight:

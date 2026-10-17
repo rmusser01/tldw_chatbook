@@ -6199,7 +6199,10 @@ async def test_settings_focus_help_line_never_describes_the_nav_bar(request):
     nothing focused (a dialog closing, F4 back from another screen) Textual's
     auto-focus parks focus on the nav bar's first button, whose tooltip the
     focus-help line then mirrored. The line describes Settings' own controls
-    only; Settings' Tab already treats a nav button as nothing focused."""
+    only; Settings' Tab already treats a nav button as nothing focused.
+
+    TASK-33007.11 (rewritten on purpose): the resume no longer parks focus on
+    Home at all, so the bar is focused by hand to keep the help-line pin."""
     from textual.screen import ModalScreen
 
     app = _build_test_app()
@@ -6219,7 +6222,11 @@ async def test_settings_focus_help_line_never_describes_the_nav_bar(request):
         await pilot.pause()
         await pilot.pause()
 
-        assert screen.focused is home  # Textual's auto-focus, app-wide
+        assert screen.focused is None  # released focus stays released
+        assert str(help_line.renderable) == ""
+        home.focus()  # the bar can still take focus another way
+        await pilot.pause()
+        assert screen.focused is home
         assert str(home.tooltip).strip()
         assert str(help_line.renderable) == ""
 

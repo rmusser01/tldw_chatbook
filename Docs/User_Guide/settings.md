@@ -399,7 +399,9 @@ connection reads as not tested.
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press
 **Esc**, then **s** to save or **r** to revert. Revert asks first: **Keep editing**
-retains the draft; **Discard changes** restores the saved values. When the
+retains the draft; **Discard changes** restores the saved values. Either way
+nothing takes focus after the dialog, so **s** and **r** work at once and
+**Enter** stays in Settings. When the
 discarded draft changed the provider, model, endpoint, API key or env var, it
 also marks the last Test result stale and discards a check still running; a draft
 that changed only generation defaults such as Temperature keeps the result.
