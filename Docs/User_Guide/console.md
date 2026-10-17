@@ -581,8 +581,9 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   name is never cut. Below 100 columns the row shows only the pair and
   Change; the context window still reads in **Request estimate**. Change is
   the only way to change the model: it opens **Switch model** (below) in pick
-  mode over Chat settings, listing the same provider·model pairs, plus any
-  models a listing here found. **Enter**
+  mode over Chat settings, listing the same provider·model pairs, plus the
+  models a listing here found while the chat still uses the **Endpoint** that
+  listed them (change the Endpoint and its old listing is dropped). **Enter**
   picks a pair and returns to Chat settings with the draft moved to that
   exact provider and model; nothing is applied until **Apply**. **Esc** returns
   with nothing changed and focus on Change. Pick mode shows no values or

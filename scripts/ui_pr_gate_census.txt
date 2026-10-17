@@ -610,3 +610,8 @@ Tests/UI/test_console_switcher_local_probe.py::test_find_filters_not_running_by_
 Tests/UI/test_settings_configuration_hub.py::test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick
 # TASK-33002.9 (review round 1): a Test that probes nothing toasts its summary with markup=False (6 s, private profile).
 Tests/UI/test_settings_provider_test_draft.py::test_a_test_that_probes_nothing_toasts_its_summary_literally
+# Phase 9 Task 6 (2026-10-17) appends its Tests/UI tests that no lane ran, each
+# a node id (test_console_endpoint_discovery.py holds a red that is not this
+# task's), each 3 of 3 serial alone.
+# TASK-33006.19: pick mode offers a listing only for the endpoint that listed it (5 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it

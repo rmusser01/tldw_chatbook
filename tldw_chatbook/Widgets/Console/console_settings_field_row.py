@@ -79,8 +79,8 @@ if TYPE_CHECKING:
     )
 
 #: Opens Switch model in pick-only mode for Change: (origin, draft, Find
-#: text, callback, served models by provider); the callback gets
-#: ``(provider, model)`` or ``None`` on Esc.
+#: text, callback, served models by provider, each for the connection a pick
+#: uses); the callback gets ``(provider, model)`` or ``None`` on Esc.
 ModelPicker = Callable[
     [
         "ConsoleSettingsOrigin",
@@ -453,6 +453,9 @@ class ConsoleSettingsFieldRowsMixin:
     _unknown_support_fields: frozenset[str] = frozenset()
     #: The MODEL row's last readiness word, kept for context-window refreshes.
     _model_row_word = ""
+    #: What each listing served, by provider, with the connection it listed
+    #: (TASK-33006.19); the modal starts it empty.
+    _served_models: dict[str, tuple[tuple[str, str] | None, tuple[str, ...]]]
 
     def _field_row(self, name: str) -> Horizontal:
         """Build one Model view field row: label, control, Source word, help.
@@ -598,11 +601,40 @@ class ConsoleSettingsFieldRowsMixin:
         status = self.query_one("#console-settings-model-status", Static)
         _show(status, f"{self._model_row_word}{context}")
 
+    def _served_endpoint(self, provider: str) -> tuple[str, str] | None:
+        """Return the connection a pick onto ``provider`` uses (TASK-33006.19).
+
+        The draft's own provider uses the Endpoint field; another uses its
+        stored draft URL, the one a pick restores (an entry, its own URL).
+        """
+        url = (
+            self._discovery_endpoint_value(provider)
+            if provider == self._active_provider
+            else self._base_url_for_provider(provider)
+        )
+        return self._discovery_connection_identity(provider, url)
+
+    def _keep_served_models(self, provider: str, model_ids: Iterable[str]) -> int:
+        """Keep what a listing served, with the connection it listed.
+
+        Args:
+            provider: The provider the listing ran for.
+            model_ids: The ids it served.
+
+        Returns:
+            How many distinct ids it served.
+        """
+        models = tuple(dict.fromkeys(model_ids))
+        self._served_models[provider] = (self._served_endpoint(provider), models)
+        return len(models)
+
     def _open_model_picker(self, query: str = "") -> None:
         """Open Switch model in pick-only mode over Chat settings (Change, Alt+M).
 
         Pick mode lists the models this modal's listings found beside the
-        saved ones; a listing never picks one (spec rule 1).
+        saved ones, each only while its provider still uses the connection
+        that listed it (TASK-33006.19); a listing never picks one (spec
+        rule 1).
 
         Nothing opens while the close guard or a default recovery holds the
         modal: its Tab trap would lose focus to Change (review I4).
@@ -617,9 +649,12 @@ class ConsoleSettingsFieldRowsMixin:
             or self._default_recovery_layout_phase is not None
         ):
             return
-        self._model_picker(
-            self._origin, self._draft, query, self._model_picked, self._served_models
-        )
+        served = {
+            provider: models
+            for provider, (endpoint, models) in self._served_models.items()
+            if endpoint == self._served_endpoint(provider)
+        }
+        self._model_picker(self._origin, self._draft, query, self._model_picked, served)
 
     def pick_created_endpoint(self, provider_id: str | None) -> None:
         """Land a just-created entry on a pair (New endpoint… and ``/endpoint``).
@@ -660,7 +695,7 @@ class ConsoleSettingsFieldRowsMixin:
         except Exception:  # noqa: BLE001 - an unlisted entry still opens pick mode
             result = None
         self._set_model_discover_status("")
-        self._served_models[provider_id] = tuple(result.model_ids) if result else ()
+        self._keep_served_models(provider_id, result.model_ids if result else ())
         self._open_model_picker(f"{name} ")
 
     def _model_picked(self, pair: tuple[str, str] | None) -> None:

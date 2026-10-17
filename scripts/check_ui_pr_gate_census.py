@@ -358,7 +358,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # tick (TASK-33005.7): 331.
 # tick (TASK-33005.7): 331; a Test that probes nothing toasts its summary
 # literally (TASK-33002.9): 332.
-MINIMUM_FILES = 336
+# Phase 9 Task 6 (2026-10-17) appends its Tests/UI node ids that no lane ran,
+# each 3 of 3 serial alone: pick mode offers a listing only for the endpoint
+# that listed it (TASK-33006.19): 333.
+MINIMUM_FILES = 337
 
 
 def read_census(path: Path) -> list[str]:

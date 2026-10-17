@@ -1281,10 +1281,10 @@ class ConsoleSettingsModal(
         ) = None
         self._default_recovery_layout_phase: ConsoleDefaultSavePhase | None = None
         # Entry-creation follow-up probe (provider, base_url), consumed once
-        # a pick lands on the created entry; and what each listing served,
-        # which pick mode lists beside the saved models (TASK-33006.4).
+        # a pick lands on the created entry; and what each listing served, which
+        # pick mode lists beside the saved models (TASK-33006.4, .19).
         self._pending_entry_discovery: tuple[str, str] | None = None
-        self._served_models: dict[str, tuple[str, ...]] = {}
+        self._served_models = {}
         streaming_field = self._draft_field("streaming")
         self._model_discovery_generation = 0
         self._current_model_discovery_identity: ConsoleModelDiscoveryIdentity | None = (
@@ -5347,8 +5347,7 @@ class ConsoleSettingsModal(
                 f"Could not list models from {endpoint_display(result.base_url)}."
             )
             return
-        self._served_models[provider] = tuple(dict.fromkeys(result.model_ids))
-        count = len(self._served_models[provider])
+        count = self._keep_served_models(provider, result.model_ids)
         self._set_model_discover_status(_model_availability_copy(count, ""))
         if fenced:
             self._current_model_discovery_identity = identity

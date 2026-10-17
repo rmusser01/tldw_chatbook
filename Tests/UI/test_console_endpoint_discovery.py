@@ -8,7 +8,18 @@ from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_session_settings import ModalHarness
-from Tests.UI.test_console_settings_model_change import pick_mode_opener, real_rebase
+from Tests.UI.test_console_settings_core_first import (
+    CoreFirstHarness,
+    _open,
+    _settings,
+)
+from Tests.UI.test_console_settings_model_change import (
+    pick_modal,
+    pick_mode_opener,
+    press_change,
+    real_rebase,
+    settle,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -1346,3 +1357,42 @@ async def test_a_cloud_key_check_failure_retries_in_settings_not_chat_settings()
     assert claim is not None
     assert claim.value == ConsoleProviderReturnIntent("session-1")
     assert notes == ["Press t to test OpenAI again."]
+
+
+async def _pick_mode_pairs(pilot, app, modal) -> set[tuple[str, str]]:
+    """Press Change, read the pairs pick mode offers, and Esc back."""
+    switcher = await press_change(pilot, app, modal)
+    pairs = {(row.provider, row.model) for row in switcher._rows}
+    await pilot.press("escape")
+    await settle(pilot, app)
+    assert app.screen is modal
+    return pairs
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it():
+    """TASK-33006.19: Test connection's listing is kept with the endpoint it
+    listed. Once the Endpoint changes, pick mode no longer offers what the
+    old one served; back on the endpoint that listed it, it is offered again."""
+
+    async def connection(_identity):
+        return ProviderProbeResult("reachable", ("model-a", "served-y"))
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(), connection_tester=connection)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await settle(pilot, app)
+        served = ("llama_cpp", "served-y")
+        assert served in await _pick_mode_pairs(pilot, app, modal)
+
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        base_url.value = "http://127.0.0.1:9100"
+        await settle(pilot, app)
+        assert served not in await _pick_mode_pairs(pilot, app, modal)
+
+        base_url.value = "http://127.0.0.1:9099"
+        await settle(pilot, app)
+        assert served in await _pick_mode_pairs(pilot, app, modal)
