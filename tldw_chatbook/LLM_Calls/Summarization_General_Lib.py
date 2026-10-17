@@ -319,20 +319,32 @@ def _dispatch_to_api(
         api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(api_name_lower, api_name_lower)
         logging.debug(f"Dispatching to API: {api_name_lower}")
 
-        handler = _SUMMARIZER_DISPATCH.get(api_name_lower)
-        if handler is None:
+        # TASK-33641.10: every argument by keyword, so none can land on a
+        # parameter of another name. Names resolve at call time (the analyze
+        # and privacy suites monkeypatch them).
+        if api_name_lower == "mock-llm":
+            return summarize_with_mock_llm(
+                text_to_summarize=text_to_summarize,
+                custom_prompt_arg=custom_prompt_arg,
+                api_key=api_key,
+                temp=temp,
+                system_message=system_message,
+                streaming=streaming,
+            )
+        if api_name_lower not in _SUMMARIZER_CHAT_SPECS:
             error_msg = f"Error: Invalid API Name '{api_name}'"
             logging.error(error_msg)
             return error_msg
-        # NOTE: the handler functions load API keys, models, etc. from
-        # config themselves when the provided arguments are None.
-        return handler(
-            api_key,
-            text_to_summarize,
-            custom_prompt_arg,
-            temp,
-            system_message,
-            streaming,
+        # The core loads API keys, models, etc. from config itself when the
+        # provided arguments are None.
+        return _summarize_via_chat_api(
+            api_name_lower,
+            api_key=api_key,
+            input_data=text_to_summarize,
+            custom_prompt_arg=custom_prompt_arg,
+            temp=temp,
+            system_message=system_message,
+            streaming=streaming,
         )
 
     except Exception as e:
@@ -719,13 +731,6 @@ def summarize_with_mock_llm(
             safe_metadata_token(type(e).__name__),
         )
         return f"Error: OpenAI mock function unexpected error: {str(e)}"
-
-
-#
-#
-
-
-# FIXME
 
 
 #
@@ -1253,85 +1258,3 @@ def _reasoning_only_completion_detail(result: Any) -> str:
     if parts:
         return " (" + "; ".join(parts) + ")"
     return ""
-
-
-# --- TASK-33245: dispatch table replacing the per-provider elif chain ---
-# Late-binding on purpose: the analyze/privacy suites monkeypatch the
-# module-level provider names, so entries must be lambdas resolving
-# globals at call time -- direct function references would bypass them.
-_SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
-    "openai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "openai", ak, text, cp, temp, sm, st
-    ),
-    "anthropic": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "anthropic", ak, text, cp, temp, sm, st
-    ),
-    "cohere": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "cohere", ak, text, cp, temp, sm, st
-    ),
-    "google": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "google", ak, text, cp, temp, sm, st
-    ),
-    "groq": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "groq", ak, text, cp, temp, sm, st
-    ),
-    "huggingface": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "huggingface", ak, text, cp, temp, sm, st
-    ),
-    "openrouter": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "openrouter", ak, text, cp, temp, sm, st
-    ),
-    "deepseek": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "deepseek", ak, text, cp, temp, sm, st
-    ),
-    "mistral": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "mistral", ak, text, cp, temp, sm, st
-    ),
-    # --- Mocking test LLM calls ---
-    "mock-llm": lambda ak, text, cp, temp, sm, st: summarize_with_mock_llm(
-        text, cp, ak, temp, sm, st
-    ),
-    # --- Local LLM Calls (adapters preserve each function's original
-    # argument order) ---
-    "llama.cpp": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "llama.cpp", ak, text, cp, temp, sm, st
-    ),
-    "kobold": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "kobold", ak, text, cp, temp, sm, st
-    ),
-    "ooba": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "ooba", ak, text, cp, temp, sm, st
-    ),
-    "tabbyapi": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "tabbyapi", ak, text, cp, temp, sm, st
-    ),
-    "vllm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "vllm", ak, text, cp, temp, sm, st
-    ),
-    "local-llm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "local-llm", ak, text, cp, temp, sm, st
-    ),
-    "custom-openai-api": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "custom-openai-api", ak, text, cp, temp, sm, st
-    ),
-    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "custom-openai-api-2", ak, text, cp, temp, sm, st
-    ),
-    "ollama": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "ollama", ak, text, cp, temp, sm, st
-    ),
-    # --- engine presets (task-34895): no legacy function ever existed;
-    # the chat handler resolves keys/models from api_settings ---
-    "moonshot": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "moonshot", ak, text, cp, temp, sm, st
-    ),
-    "zai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "zai", ak, text, cp, temp, sm, st
-    ),
-    "aphrodite": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "aphrodite", ak, text, cp, temp, sm, st
-    ),
-    "mlx_lm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "mlx_lm", ak, text, cp, temp, sm, st
-    ),
-}
