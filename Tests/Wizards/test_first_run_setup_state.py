@@ -2588,6 +2588,66 @@ class TestProviderTrustChain:
             setup_state.PROVIDER_PROBE_NONE,
         )
 
+    @pytest.mark.parametrize(
+        ("state", "category", "summary"),
+        [
+            ("unreachable", "forbidden", "unreachable: forbidden"),  # a 403
+            (  # a 404, as the shared probe reports one
+                "model_listing_unavailable",
+                "http_status",
+                "Model listing unavailable; chat endpoint not tested",
+            ),
+        ],
+        ids=["403", "404"],
+    )
+    def test_a_test_that_could_not_list_reads_as_the_listing_reads_it(
+        self, state, category, summary
+    ):
+        """TASK-33008 review round 4: a 403 or a 404 to Test read as the shared
+        verdict's "…; chat endpoint not tested" on Provider, while the listing
+        of the same server read "Model listing unavailable…"."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Chat.provider_test_evidence import (
+            ProviderReadinessSnapshot,
+            provider_readiness_verdict,
+        )
+        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+            SettingsEndpointProbeOutcome,
+            provider_probe_result_from_settings_outcome,
+        )
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        evidence = provider_probe_result_from_settings_outcome(
+            SettingsEndpointProbeOutcome(
+                state=state, category=category, summary=summary
+            )
+        )
+        shared = provider_readiness_verdict(
+            ProviderReadinessSnapshot(
+                configuration="configured",
+                endpoint=evidence.endpoint,
+                model="unconfirmed",
+                category=evidence.category,
+            )
+        ).detail
+        assert shared != setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        identity = SimpleNamespace(
+            provider_key="llama_cpp",
+            credential_source="stored",
+            connection_identity=("llama_cpp", "http://127.0.0.1:8080"),
+        )
+        owner = SimpleNamespace(
+            _key_required_at=None, _refresh_auth_readiness=lambda: None
+        )
+
+        told = first_run_model_discovery.tested_evidence_detail(
+            owner, identity, evidence, shared
+        )
+
+        assert told == setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        assert owner._key_required_at is None
+
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
             provider_configured=True,
