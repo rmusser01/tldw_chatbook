@@ -25,11 +25,10 @@ one tooltip); segment detail lives in the destinations the segments open.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from rich import markup as rich_markup
-from rich.cells import cell_len
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -50,21 +49,6 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCa
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     UNSCOPED_LABEL as SCOPE_ROW_UNSCOPED_LABEL,
 )
-
-
-def _cost_label_forms(state: ConsoleCostState) -> list[str]:
-    """Every form of the cost label, longest first: the full and compact
-    labels, then each with whole " · " segments dropped from its end.
-
-    Ported from the chip era (dev 3212e3984d's room-aware fitting): the
-    cost segment picks the longest form that fits the room left on the
-    line, and "…" only when none does.
-    """
-    forms: list[str] = []
-    for label in (state.label, state.compact_label):
-        parts = label.split(" · ")
-        forms += (" · ".join(parts[:end]) for end in range(len(parts), 0, -1))
-    return sorted(dict.fromkeys(forms), key=cell_len, reverse=True)
 
 
 def _items_word(count: int) -> str:
@@ -619,7 +603,7 @@ class ConsoleStatusChips(Horizontal):
     def _build_segments(self) -> list[StatusSegment]:
         """The full segment list, in the strip's order (see old compose)."""
         state = self.state
-        return [
+        segments = [
             self._temporary_segment(),
             # TASK-2154.18 (FB-08): the run segment sits left-most so it
             # stays visible when the strip scrolls horizontally.
@@ -658,6 +642,11 @@ class ConsoleStatusChips(Horizontal):
             # when there is no cost state (see ``_cost_chip_render``).
             self._cost_segment(),
         ]
+        # The cost segment keeps the chip era's width-aware label choice
+        # (compact under 120 columns, full above); anything still clipped
+        # at the edge is reachable through the strip's own scrolling --
+        # arrows, wheel, Shift+arrows -- which is first-class now.
+        return segments
 
     def _refresh_text(self) -> None:
         """Rebuild all segments from state and push them at the line."""
@@ -1003,7 +992,8 @@ class ConsoleStatusChips(Horizontal):
         Returns:
             ``label``: segment text (the full ``state.label``; the
             room-aware form selection applies after layout via
-            ``_apply_cost_segment_forms``). ``tooltip``: hover text
+            form selection applies on resize/``sync_cost_state``).
+            ``tooltip``: hover text
             (carried for API compatibility, not rendered since TASK-35160
             -- the breakdown modal carries the provenance). ``hidden``:
             ``True`` when ``state`` is ``None``. ``alert``/``cold``:
@@ -1030,93 +1020,14 @@ class ConsoleStatusChips(Horizontal):
         self._cost_state = state
         self._refresh_text()
 
-    def _apply_cost_segment_forms(self) -> None:
-        """Fit the cost segment: pick the longest label form that fits.
-
-        Port of the chip era's room-aware fitting (dev 3212e3984d, capture
-        fix 3 finding 4): segments before the cost segment leave less room
-        than the label needs, and the line cut it mid-word ("Current $0."
-        at 211 columns). The cost segment is LAST on the line, so its room
-        is the viewport width minus its start column; the longest form
-        whose whole " · " segments fit is shown, and "…" when none does.
-        Runs deferred so the spans reflect the just-rendered line.
-        """
-        try:
-            line = self._status_text()
-            scroller = self._scroll_scroller()
-        except NoMatches:
-            return
-        state = self._cost_state
-        if state is None:
-            return
-        cost_start = next(
-            (
-                start
-                for name, start, _end in line.segment_spans
-                if name == "cost"
-            ),
-            None,
-        )
-        if cost_start is None:
-            return
-        room = scroller.scrollable_content_region.width - cost_start
-        if room <= 0:
-            return
-        forms = _cost_label_forms(state)
-        label = next((f for f in forms if cell_len(f) <= room), "…")
-        for segment in line._segments:
-            if segment.name == "cost" and segment.label != label:
-                line.set_segments(
-                    [label if s.name == "cost" else s.label for s in line._segments]
-                    and [
-                        replace(s, label=label) if s.name == "cost" else s
-                        for s in line._segments
-                    ]
-                )
-                break
-
-    def _refit_cost_segment(self) -> None:
-        """Deferred cost-segment refit (layout watcher entry point)."""
-        self.call_after_refresh(self._apply_cost_segment_forms)
-
-    def on_layout_refresh(self, _event: object) -> None:
-        """Refit the cost segment after a layout of this screen moved it.
-
-        The one refit for a move: a segment before it that changes width,
-        shows or hides, and a viewport that resizes. Capture findings 4
-        (02c): a refit the change scheduled itself runs after the ACTIVE
-        screen's refresh, which can come before this screen lays out the
-        new widths (under a dialog; or Switch model's result callback
-        beating the segments' Layout messages), so it fitted from the old
-        places. Still deferred: relabelled straight from here the segment
-        kept its old width (a layout was pending on it).
-        """
-        self._refit_cost_segment()
-
-    def on_mount(self) -> None:
-        """Check the cost segment after any layout that changes the line's
-        total width (Textual posts no Resize for that, only for a new strip
-        size)."""
-        strip = self.query_one("#console-status-chip-scroll", HorizontalScroll)
-        self.watch(
-            strip,
-            "virtual_size",
-            self._refit_cost_segment,
-            init=False,
-        )
-        self.screen.screen_layout_refresh_signal.subscribe(
-            self, self.on_layout_refresh
-        )
-
     def on_resize(self, _event: events.Resize) -> None:
-        """Refresh segments (and the cost segment's room-aware form).
+        """Rebuild segments; the room-aware cost form follows the width.
 
         Args:
-            _event: Textual resize notification; sizes are read from the
-                widgets.
+            _event: Textual resize notification; unused (the scroller's
+                content width is read fresh in ``_fit_cost_segment``).
         """
         self._refresh_text()
-        self._refit_cost_segment()
 
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh segment labels and emphasis from a new snapshot."""
