@@ -13836,3 +13836,22 @@ reviewed dispatch survived, but only 407 old entries remain verifiable. Preserve
 every indexed existing path, including preparatory instructions, before rewriting
 it; use unique commit-qualified output names. Record an unrecovered gap instead
 of reconstructing different bytes or erasing the failed hash check.
+
+
+## Exercise cross-flow UI with actual issued identities (TASK-32694, 2026-10-16)
+
+The initial plugin-management gate found that a retained RootReview crashed the
+package-candidate collector, uninstall status depended on a deleted installation
+row, and data confirmation omitted affected workspaces. Cover adjacent journeys
+in one retained app session, using actual owner-issued review types and original
+installation/workspace identities, with standalone successful controls.
+
+Fix1 then passed direct backend reconciliation tests but its mounted Prepare path
+validated proposed next-generation targets as current roots and raised
+root_review_stale. Retain the actual before refs supplied to the same issued
+review; use those for current-state impact and the unchanged proposed targets for
+application. Never reconstruct before refs by subtracting generations. Mounted
+Prepare -> Confirm -> Saved/current-generation controls must exercise both the
+installed manager and post-uninstall History route. Here seven renewed controls
+and both actual terminal sizes caught and qualified the UI binding correction;
+simulated reboot evidence still does not qualify a real OS reboot or keychain.
