@@ -378,7 +378,7 @@ unreachable server leads with, for example, "model listing failed
 (connection refused) — start the server or check the URL", and a model the
 server's listing did not return leads with "*model* · not listed by the
 server — pick a listed model". The toast says the same in one line, as a
-warning whenever a row leads with a problem. While another setting blocks
+warning in each of these cases. While another setting blocks
 the provider, the Key row says
 "not checked until the provider is ready" rather than guessing. Until a cloud
 key is checked, the Key row says the key is present but not verified, and
