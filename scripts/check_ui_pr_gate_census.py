@@ -352,7 +352,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # task's), each 3 of 3 serial alone. TASK-33005.11's switcher rows: 321.
 # TASK-33002.9's unlisted-model lead and toast, and its key-source words: 323.
 # TASK-33005.7's Inspector Setup row and send hint, and Settings' identity row: 325.
-MINIMUM_FILES = 329
+# TASK-33005.15's three Overview tests, its rewritten no-model pin and the
+# NOT RUNNING filter: 330.
+MINIMUM_FILES = 334
 
 
 def read_census(path: Path) -> list[str]:

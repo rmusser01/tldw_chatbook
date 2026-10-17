@@ -216,10 +216,15 @@ page links to each backend's setup guide and displays these restrictions.
 
 Overview leads with configuration readiness, the last connection test (its
 leading row, then its Endpoint row, so it says whether the endpoint was
-reached), storage/privacy, and sync status. Its "Status:" is the same
-readiness word the Console shows for the default provider and model, test
-results included: after a refused test it reads "Not ready · refused :9199",
-never "Ready". **Open Providers & Models**, **Open Storage**,
+reached), storage/privacy, and sync status. Its Configuration row names the
+saved provider and model a new Console chat opens on (your default model, or,
+when that is blank, the provider's own model), and its "Status:" is the same
+readiness word that chat shows, test results included: after a refused test
+it reads "Not ready · refused :9199", never "Ready". A test run elsewhere
+(the Console, Switch model, Chat settings) updates it while Overview is on
+screen. Unsaved Providers & Models edits never stand in for the saved pair:
+the row names them after it, for example "OpenAI / gpt-4.1; Status: Ready ·
+not tested; Unsaved draft: OpenAI / gpt-4.1-mini". **Open Providers & Models**, **Open Storage**,
 and **Open Privacy & Security** take you to the corresponding settings. Use
 **Tab** to reach each action; the detail pane scrolls to the focused control,
 and paired actions stack at compact widths.

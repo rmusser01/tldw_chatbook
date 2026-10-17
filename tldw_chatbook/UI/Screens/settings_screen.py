@@ -151,13 +151,10 @@ from ...Chat.console_provider_support import (
 )
 from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
-    build_console_settings_readiness,
-    build_target_default_console_session_settings,
     chat_defaults_held_fields,
     chat_defaults_value,
     model_default_value,
     normalize_console_model_value,
-    readiness_words,
     settings_provider_catalog,
     verdict_readiness_words,
 )
@@ -5217,8 +5214,8 @@ class SettingsScreen(BaseAppScreen):
             self._subscription_readiness_gate = None
             return
         provider = (
-            str(self._resolve_provider_model_for_settings().provider or "")
-            if category is SettingsCategoryId.OVERVIEW
+            str(resolve_effective_provider_model(self._chat_defaults()).provider or "")
+            if category is SettingsCategoryId.OVERVIEW  # the saved pair (33005.15)
             else self._provider_widget_value()
         )
         # Cheap gate BEFORE the expensive resolution: readiness can only
@@ -5239,6 +5236,8 @@ class SettingsScreen(BaseAppScreen):
             self._provider_auth_source_value(provider),
             subscription_credential_status(background=True),
             subscription_readiness_revision(),
+            # TASK-33005.15: an evidence change elsewhere repaints the Status.
+            getattr(shared_connection_evidence(lambda: self.app), "version", 0),
         )
         if gate == self._subscription_readiness_gate:
             return
@@ -5249,7 +5248,7 @@ class SettingsScreen(BaseAppScreen):
             else self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
-        observation = (category.value, provider, readiness.subscription_status)
+        observation = (*gate[:2], readiness.subscription_status, gate[-1])
         self._subscription_readiness_gate = gate
         if observation == self._subscription_readiness_observation:
             return
@@ -13206,30 +13205,6 @@ class SettingsScreen(BaseAppScreen):
 
         return readiness_label(self)  # the pair and its word (TASK-33005.7)
 
-    def _provider_overview_readiness_status(self) -> str:
-        """The Overview status row's readiness word, as the Console says it.
-
-        TASK-31805: what a send would do, never the mere presence of a name.
-        TASK-33005: the Console's future-chat builder and words, test evidence
-        included, so it never reads "Ready" above a refused last test.
-
-        Returns:
-            'Ready · not tested', 'Ready · reachable/verified HH:MM' or
-            'Not ready · <reason>'.
-        """
-        resolved = self._resolve_provider_model_for_settings()
-        app_config = self._provider_readiness_app_config()
-        settings = build_target_default_console_session_settings(
-            app_config, str(resolved.provider or ""), resolved.model
-        )
-        readiness = build_console_settings_readiness(
-            # The model the Overview names, never a provider-table fallback.
-            replace(settings, model=normalize_console_model_value(resolved.model)),
-            app_config=app_config,
-            connection_evidence=shared_connection_evidence(lambda: self.app),
-        )
-        return readiness_words(readiness)
-
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -18992,10 +18967,9 @@ class SettingsScreen(BaseAppScreen):
         return re.sub(r"handoff", "transfer", str(value), flags=re.IGNORECASE)
 
     def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
-        resolved = self._resolve_provider_model_for_settings()
+        from ..Settings_Modules.readiness_lines import overview_configuration
+
         # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
-        provider = self._provider_display_label(str(resolved.provider or ""))
-        model = str(resolved.model or "not selected")
         source_rows = dict(self.server_sync_workspace_handoff_rows)
         conversation_updates = "; ".join(
             value
@@ -19007,10 +18981,8 @@ class SettingsScreen(BaseAppScreen):
         )
         return build_settings_overview(
             {
-                "configuration": (
-                    f"{provider or 'Not selected'} / {model}; Status: "
-                    f"{self._provider_overview_readiness_status()}"
-                ),
+                # TASK-31805 / TASK-33005.15: what a new chat would send with.
+                "configuration": overview_configuration(self),
                 "last_connection_test": self._provider_test_headline(
                     self._adopt_shared_provider_test_evidence()
                 ),

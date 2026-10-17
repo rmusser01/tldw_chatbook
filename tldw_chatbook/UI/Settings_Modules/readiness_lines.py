@@ -36,3 +36,49 @@ def readiness_label(screen: SettingsScreen) -> str:
     name = screen._provider_display_label(provider)
     model = _shown_model(screen) or "not selected"
     return f"Provider readiness: {name} / {model} — {key_check_verdict(screen)}"
+
+
+def overview_configuration(screen: SettingsScreen) -> str:
+    """The Overview's Configuration row: the saved pair a new chat opens on.
+
+    TASK-33005.15: the pair and its Status are a new Console chat's, from
+    saved config only: ``chat_defaults.model`` for its own provider, else
+    that provider's table model (TASK-33001.8), read against the shared
+    connection evidence (AC#1). An unsaved Providers & Models draft is named
+    after them, never shown as the Configuration (AC#4).
+
+    Args:
+        screen: The Settings screen.
+
+    Returns:
+        "<provider> / <model>; Status: <word>", plus "; Unsaved draft: <provider>
+        / <model>" while the draft holds edits.
+    """
+    from ...Chat.console_session_settings import (
+        blank_console_session_settings,
+        build_console_settings_readiness,
+        readiness_words,
+    )
+    from ...Chat.provider_test_evidence import shared_connection_evidence
+
+    app_config = screen._provider_readiness_app_config()
+    settings = blank_console_session_settings(app_config)
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config=app_config,
+        connection_evidence=shared_connection_evidence(lambda: screen.app),
+    )
+    line = (
+        f"{_pair(screen, settings.provider, settings.model)}; "
+        f"Status: {readiness_words(readiness)}"
+    )
+    draft = screen._provider_draft()
+    if draft is not None and draft.is_dirty:
+        staged = screen._resolve_provider_model_for_settings()
+        line += f"; Unsaved draft: {_pair(screen, staged.provider, staged.model)}"
+    return line
+
+
+def _pair(screen: SettingsScreen, provider: object, model: object) -> str:
+    name = screen._provider_display_label(str(provider or "")) or "Not selected"
+    return f"{name} / {str(model or '').strip() or 'not selected'}"

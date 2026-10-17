@@ -596,3 +596,13 @@ Tests/UI/test_settings_provider_test_draft.py::test_key_rows_name_their_source_i
 Tests/UI/test_console_switcher_local_probe.py::test_the_inspector_setup_row_and_send_hint_read_the_readiness_word
 # TASK-33005.7: Settings' "Provider readiness" row ends with the Readiness row's word (under a second).
 Tests/UI/test_settings_provider_test_draft.py::test_the_inspector_identity_row_reads_the_readiness_rows_word
+# TASK-33005.15: the Overview and a new chat agree on a provider table's model (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_and_a_new_chat_agree_on_a_provider_table_model
+# TASK-33005.15: evidence settled elsewhere repaints the Overview's Status through the existing poll only (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_follows_evidence_settled_elsewhere
+# TASK-33005.15: an unsaved Providers draft is named apart from the saved pair (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_names_an_unsaved_draft_apart_from_the_saved_pair
+# TASK-33005.15 (rewritten on purpose): no model anywhere still reads "Not ready · no model" (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_reports_not_ready_without_model
+# TASK-33005.15: Find filters the NOT RUNNING names as every group (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_find_filters_not_running_by_provider_name_as_every_group

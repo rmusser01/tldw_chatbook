@@ -620,6 +620,49 @@ async def test_find_counts_one_listed_provider_in_the_singular(servers):
     assert placeholder.startswith("type to search 1 model in 1 provider · "), placeholder
 
 
+@private_profile_test
+async def test_find_filters_not_running_by_provider_name_as_every_group(
+    servers, request
+):
+    """TASK-33005.15 AC#3: typing a provider name in Find filters the NOT
+    RUNNING names as it filters the other groups: the named provider stays,
+    every other name goes, and a name no server matches leaves no NOT
+    RUNNING group at all, while READY PROVIDERS keeps the typed provider's
+    rows only."""
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=_with_shipped("tabbyapi", "aphrodite"),
+            providers_models=SHIPPED_MODELS,
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        find = switcher.query_one("#console-popover-find", Input)
+
+        def groups() -> tuple[str, set[str]]:
+            quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+            ready = {row.provider for row in _group(switcher, "READY PROVIDERS")}
+            return quiet, ready - {""}
+
+        seen: dict[str, tuple[str, set[str]]] = {"": groups()}
+        for typed in ("tabby", "aphro", "openai"):
+            find.value = typed
+            await _settle(app, pilot)
+            seen[typed] = groups()
+
+    quiet, ready = seen[""]
+    assert "TabbyAPI" in quiet and "Aphrodite Engine" in quiet, quiet
+    assert {"openai", "vllm"} <= ready, ready
+    quiet, _ready = seen["tabby"]
+    assert "TabbyAPI" in quiet and "Aphrodite" not in quiet, quiet
+    quiet, _ready = seen["aphro"]
+    assert "Aphrodite Engine" in quiet and "TabbyAPI" not in quiet, quiet
+    quiet, ready = seen["openai"]
+    assert quiet == "", quiet
+    assert ready == {"openai"}, ready
+
+
 @pytest.mark.parametrize("owned_by", ("chat default", "edit"))
 async def test_a_configured_default_that_refuses_still_reads_refused(
     servers, owned_by
