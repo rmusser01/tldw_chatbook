@@ -77,15 +77,15 @@ After this phase, task-1379 re-runs the Settings critique.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 First run with a detected local server takes 2 key presses (Enter, Enter) from the Get started card to a ready composer, measured live at 211x44.
-- [ ] #2 First run with a cloud key takes no more than 12 key actions from the Get started card to a ready composer in the same chat, counting a paste as one. The count includes the key check and the return, and the user never navigates back to Console by hand. Measured live at 211x44.
+- [x] #1 First run with a detected local server takes 2 key presses (Enter, Enter) from the Get started card to a ready composer, measured live at 211x44.
+- [x] #2 First run with a cloud key takes no more than 12 key actions from the Get started card to a ready composer in the same chat, counting a paste as one. The count includes the key check and the return, and the user never navigates back to Console by hand. Measured live at 211x44.
 - [ ] #3 Every Console provider-recovery path that leaves for Settings offers a one-key return to the chat it came from. This closes C1's recovery dead end.
-- [ ] #4 No Console surface accepts or displays an API key; keys are entered only in Settings ▸ Providers & Models (D4, ADR-012).
-- [ ] #5 chat_screen.py stays within its line and method budget, and FirstRunSetupWizard.py does not grow.
-- [ ] #6 No ADR-097 ratchet rises; boot CSS bytes go down with the backdrop's removal.
-- [ ] #7 Keyboard-only live captures of both journeys at 211x44 and 235x52 are attached, taken with the real stylesheet and a scratch TLDW_CONFIG_PATH.
-- [ ] #8 Docs/User_Guide pages updated, each with a Verified-against stamp: console.md (Get started), settings.md (return action) and First_Run_Setup.md (model-step status lines).
-- [ ] #9 ./scripts/preflight.sh passes.
+- [x] #4 No Console surface accepts or displays an API key; keys are entered only in Settings ▸ Providers & Models (D4, ADR-012).
+- [x] #5 chat_screen.py stays within its line and method budget, and FirstRunSetupWizard.py does not grow.
+- [x] #6 No ADR-097 ratchet rises; boot CSS bytes go down with the backdrop's removal.
+- [x] #7 Keyboard-only live captures of both journeys at 211x44 and 235x52 are attached, taken with the real stylesheet and a scratch TLDW_CONFIG_PATH.
+- [x] #8 Docs/User_Guide pages updated where behaviour changed: console.md (Get started), settings.md (return action) and First_Run_Setup.md (model-step status lines); what was verified is recorded in Implementation Notes.
+- [x] #9 ./scripts/preflight.sh passes.
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -114,4 +114,40 @@ Verified 2026-10-16 on `feat/model-config-p8-first-run` at `00b8b2d756` (the cod
 - Module-size ratchet: only dev's 8 known rows fail.
 - `./scripts/preflight.sh` passes; ruff reports no new findings.
 - Each changed test fails without its fix.
+
+**Acceptance check (2026-10-16, head `8c8f54773e`).** Measured against origin/dev `edbf951ba7` and the merge base `14e13bb82c`. The key counts and the captures were taken before the branch's restack onto dev. `4f2bffa20f`..`7c260226ec` sat on base `5e661c1565`; `7c260226ec` is `6396f4896d` after the rebase, 988 dev commits later, among them the rest of Phase 7's Settings work. What later changed on each captured surface is named below, and the copy each capture shows is in head's code.
+- AC#1: 2 key presses, measured live at 211x44 (README "Key counts": `02a`, `02b`, `02c`). At head, `Tests/UI/test_console_local_server_discovery_card.py::test_detected_server_enter_enter_saves_config_and_unlocks_card` passes: Enter, Enter at 211x44, the card unlocks, and the pair and the endpoint are saved. Changed on that path since: `b2e1914550`, where the card's focus guard reads its own screen; that matters only under a dialog.
+- AC#2: 6 key actions against a budget of 12, measured live at 211x44 (`03a`-`03f`): Enter, paste, Esc, s, t, Enter, and back in "Chat 1" with no navigation by hand. At head two tests pass. `Tests/UI/test_console_provider_return.py::test_recovery_round_trip_returns_to_the_chat_on_one_enter` drives Enter on the card, the key, Esc, s and Enter at 211x44, and lands on the same chat id with the composer focused and `ready_to_send`. `test_a_route_that_names_no_field_arrives_on_the_return[saved-key]` drives t, then Enter back. Changed since:
+  - `b0feaea19b`: "the provider accepted the key" is said only for the recovery's provider. `03e` checks the recovery's provider, so its line holds.
+  - `e8917048fe`: the return labels are escaped, with no visible change.
+- AC#3: **not met as written.** A named custom endpoint (`custom-ep:<slug>`) leaves for Settings with no return.
+  - `open_provider_setup` (`UI/Console_Modules/model_switcher.py`) catches the `ValueError` that `ProviderSettingsNavigationTarget` raises for such an id, and posts the one-way context (R35). That covers both routes the tests drive: the card's Set up provider, and the endpoint's NEEDS SETUP row in Switch model.
+  - At head, the custom-endpoint case of `test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act` and both cases of `test_a_custom_endpoint_row_with_no_field_to_focus_arrives_where_it_can_act` pin it: all pass, and none shows a return.
+  - The controller's R37 ruling (2026-10-10) accepted this, and the copy says so: the card's line reads "except for custom endpoints", and settings.md reads "Settings remembers no way back for a custom endpoint". The AC's "Every" was not amended.
+  - Every other provider recovery that leaves the Console has its return. The card, the transcript's action, the prompts hook, a cloud Retry and the NEEDS SETUP rows go through `open_provider_setup`. Chat settings' credential detour returns to the modal. The Console's other two exits to Settings (Terminal's Privacy & Security, Hooks review) are not provider recoveries.
+  - To close it, either the owner scopes the AC to the providers a return can name, or a custom endpoint's route gets a return.
+- AC#4: at head no Console input takes a key. Every `Input` built under `Widgets/Console/`, `UI/Console_Modules/` and `chat_screen.py` was listed, and none is a password field or a key field. They are search, filter, name, path, prompt, base URL and sampling fields; Chat settings' rows edit only `MODEL_CONFIG_FIELDS`.
+  - The Console's credential controls are buttons that open Settings: the card's Set up provider and Chat settings' Configure credential.
+  - Switch model's only inputs are Find, Temperature and Max tokens, none a password. `Tests/UI/test_console_model_switcher.py::test_enter_on_needs_setup_opens_that_providers_settings_fix` pins that and passes at head.
+  - A custom endpoint template copies only `api_key_env`, never a stored key.
+  - Console surfaces show readiness words ("no key", "key rejected"), never a key. No Console capture shows a key field.
+- AC#5: `chat_screen.py` measures 24,303 lines and 739 `ChatScreen` methods against its row of 24,369/740 (`Tests/Architecture/test_screen_size_ratchet.py`, unchanged from dev).
+  - The merge base measures 24,369/740, so the branch nets -66 lines and -1 method. origin/dev now measures 24,390/741, over that same row.
+  - `FirstRunSetupWizard.py` measures 3,136 lines against 3,144 at the merge base and on origin/dev. Its row is lowered 3,144 -> 3,136, and so are its steps' rows: `first_run_model_step.py` 1,012 -> 997 and `first_run_provider_step.py` 2,458 -> 2,454.
+  - A serial run at head of both ratchet files fails only on dev's 8 known module rows.
+  - `Tests/Architecture/test_console_review_selection_controller_boundary.py::test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise` fails too: 24,303 lines against a 17,215 ceiling set 2026-08-27. It is red on dev (24,390 lines) and is not this file's budget.
+- AC#6: the ADR-097 constants are the same at head and on origin/dev: `MAX_TLDW_MODULE_COUNT` 686, `MAX_TLDW_MODULES_AT_UI_READY` 1031, `MAX_BOOT_PARSED_CSS_BYTES` 608,090, and `MAX_PASS_ADDED_MODULES` / `MAX_PASS_ADDED_LOC` / `MAX_SINGLE_ROUTE_ADDED_LOC` 558 / 425,347 / 135,111.
+  - A serial run of the four guards at head passes 14 tests. Import weight 679/686 modules; `_ui_ready` 1025/1031; pre-import 557/558 modules, 420,090/425,347 LOC and 128,371/135,111 LOC (library).
+  - Boot-parsed CSS, the bytes of the five boot sources as the census reads them, is 604,860 B at head against 605,159 B on origin/dev and at the merge base: -299 B. `widget_defaults_self.tcss` drops 164 B (the `ConsoleSetupBackdrop` segment) and `tldw_cli_modular.tcss` 135 B. Dev's sheets reproduce from their sources (`check_bundle_sync.py` run on a `git archive` of origin/dev).
+  - The snapshot `boot_css_bytes.json` reads 604,860 at head and 602,550 on dev. Dev's own sheets measure 605,159, so that +2,310 is dev's drift picked up by the refresh, not growth.
+  - The ADR-150 hex ratchet (`_HEX_GRANDFATHERED`) is unchanged from dev, and its test passes at head.
+- AC#7: the README's set, at 211x44 and 235x52: the local journey `02a`-`02c` (`02d` is at 211x44 only) and the cloud journey `03a`-`03f`. Each launch ran from this worktree with its own stylesheet and a scratch `HOME`, `XDG_*` and `TLDW_CONFIG_PATH`; keys went in by `tmux send-keys`, and the key by one bracketed paste (README "Procedure").
+- AC#8: amended. It asked for a Verified-against stamp on each page, but CLAUDE.md now says "Do not add 'Verified against' paragraphs to User Guide pages" and asks for what was verified to be recorded in the task's Implementation Notes, so the AC now says that. The branch adds no stamp. Checked at head against the code and the captures:
+  - console.md, Get started: the card's subtitle equals `CONSOLE_SETUP_CARD_SUBTITLE`. The footer under the card equals `01a`'s and the footer under a dialog `02b`'s. Also checked: Set up provider, then Esc and s, then Return to Console; the custom endpoint exception; Use detected's Enter, Enter; the scope line and the Enter labels (`console_model_popover.py`, `model_switcher.py`); and "Setup complete — …" (`console_onboarding_state.py`).
+  - console.md, "After Return to Console": matches `05c`.
+  - settings.md, "Coming back from a provider fix": the arrival line, the saved line and the accepted-key line are `ARRIVAL_COPY`, the saved copy and `KEY_ACCEPTED_COPY` in `UI/Settings_Modules/provider_return.py`. Return without saving's question and Keep editing are as in `04b`. A custom endpoint gets no return.
+  - First_Run_Setup.md, the model-step status lines: every quoted line is in `first_run_model_step.py`, `first_run_setup_state.py` or `first_run_model_discovery.py`, including `8c8f54773e`'s reading of a 403.
+- AC#9: `./scripts/preflight.sh` passes at head under a scratch `HOME`, `XDG_*` and `TLDW_CONFIG_PATH`: 12 checks, exit 0.
+- Seen while checking, not fixed: `Tests/UI/test_console_local_server_discovery_card.py::test_a_card_resumed_with_nothing_detected_runs_discovery_again` failed in a 5-file run (213 others passed) and in 1 of 3 serial reruns, at load average 30-60. Its wait for the detected action is 60 × 0.05 s.
+- Statuses: TASK-33008.1 to .5 are Done. This task stays To Do until AC#3 is ruled on.
 <!-- SECTION:NOTES:END -->
