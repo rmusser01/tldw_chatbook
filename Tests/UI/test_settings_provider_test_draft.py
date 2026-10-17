@@ -2361,32 +2361,38 @@ async def test_custom_named_credential_query_param_never_reaches_rows_or_toast(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_a_test_that_probes_nothing_toasts_its_summary_literally(
-    request, monkeypatch
-):
+async def test_a_test_that_probes_nothing_toasts_its_summary_literally(request):
     """TASK-1513 on the Test path (TASK-33002.9 review): the toast for a Test
-    that probes nothing interpolates the provider name and, once configured,
-    the model id, and notify() parses markup by default, so a "[/]" in them
-    raised MarkupError at render. It passes markup=False, as the probe's
-    toast does."""
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    that probes nothing names the model id, and notify() parses markup by
+    default, so a "[/]" in it raised MarkupError when the toast rendered. It
+    passes markup=False, as the probe's toast does, and the real toast shows
+    the id as typed."""
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "org/m[/]"}
-    app.app_config["api_settings"] = {"openai": {}}
+    app.app_config["chat_defaults"] = {"provider": "mlx_lm", "model": "org/m[/]"}
     host = StyledSettingsDestinationHarness(app, "settings")
 
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=(211, 44), notifications=True) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        assert screen._provider_live_probe_base_url() == ""  # it probes nothing
         toasts: list[tuple[str, dict]] = []
-        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+        real_notify = host.notify
+        host.notify = lambda message, **kwargs: (
+            toasts.append((message, kwargs)),
+            real_notify(message, **kwargs),
+        )
 
         screen.action_settings_test_category()
-        await pilot.pause()
+        for _ in range(50):  # Notify is a message, then a call_later to mount
+            await pilot.pause(0.02)
+            shown = [toast.render().plain for toast in host.screen.query("Toast")]
+            if shown:
+                break
 
     ((message, toast),) = toasts
-    assert message.startswith("Configuration check blocked: OpenAI"), message
-    assert toast == {"severity": "warning", "markup": False}, toast
+    assert "; model org/m[/]. Live generation has not been tested." in message
+    assert toast == {"severity": "information", "markup": False}, toast
+    assert shown == [message], shown
 
 
 @pytest.mark.asyncio
