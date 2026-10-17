@@ -13,6 +13,10 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _static_text,
 )
+from Tests.UI.test_markup_interpolation_widget_pins import (
+    _assert_toast_literal,
+    _wait_for_notification_message,
+)
 from Tests.UI.test_settings_configuration_hub import (
     StyledSettingsDestinationHarness,
     _click_scrolled_settings_button,
@@ -2375,24 +2379,15 @@ async def test_a_test_that_probes_nothing_toasts_its_summary_literally(request):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         assert screen._provider_live_probe_base_url() == ""  # it probes nothing
-        toasts: list[tuple[str, dict]] = []
-        real_notify = host.notify
-        host.notify = lambda message, **kwargs: (
-            toasts.append((message, kwargs)),
-            real_notify(message, **kwargs),
-        )
 
         screen.action_settings_test_category()
-        for _ in range(50):  # Notify is a message, then a call_later to mount
-            await pilot.pause(0.02)
-            shown = [toast.render().plain for toast in host.screen.query("Toast")]
-            if shown:
-                break
-
-    ((message, toast),) = toasts
-    assert "; model org/m[/]. Live generation has not been tested." in message
-    assert toast == {"severity": "information", "markup": False}, toast
-    assert shown == [message], shown
+        message = (
+            "Configuration check complete: MLX-LM (Apple silicon) is configured; "
+            "model org/m[/]. Live generation has not been tested."
+        )
+        notification = await _wait_for_notification_message(pilot, host, message)
+        assert notification.severity == "information"
+        await _assert_toast_literal(pilot, host, notification, message)
 
 
 @pytest.mark.asyncio
