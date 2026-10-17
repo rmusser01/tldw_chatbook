@@ -89,6 +89,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleProviderReturnIntent,
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
@@ -4890,7 +4891,7 @@ async def _select_llamacpp_console(console: ChatScreen) -> None:
     when the screen mounted its first session (before this helper ever
     runs). Without also pushing the selection through
     ``_replace_active_console_session_settings`` (the same call the real
-    Console Settings modal apply path and ``_apply_detected_local_server``
+    Console Settings modal apply path and ``adopt_detected_local_server``
     use), the already-existing session stays on its mount-time default
     provider and every send this helper is meant to unblock stays gated
     behind the first-run setup modal.
@@ -6613,8 +6614,27 @@ async def test_console_unsupported_provider_dispatch_refuses_before_custody():
         ]
 
 
+def _assert_recovery_stages_a_return_to(app, message, session_id: str) -> None:
+    """TASK-33008.1: the recovery's route to Settings carries the way back."""
+    assert message.screen_name == "settings"
+    assert message.screen_context == {
+        "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+        "provider": "huggingface",
+        "model": "meta-llama/test-model",
+        "field": "api_key",
+        "return_revision": 1,
+        "session_id": session_id,
+    }
+    claim = app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None and claim.revision == 1
+    # The handoff names the chat and nothing else: no key, endpoint or prompt.
+    assert claim.value == ConsoleProviderReturnIntent(session_id)
+
+
 @pytest.mark.asyncio
-async def test_console_add_api_key_recovery_targets_provider_settings_category():
+@private_profile_test
+async def test_console_add_api_key_recovery_targets_provider_settings_category(request):
+    """Rewritten on purpose (TASK-33008.1 AC#8): the route bears a return."""
     app = _build_test_app()
     app.app_config["api_settings"] = {"huggingface": {}}
     host = ConsoleNavigationHarness(app)
@@ -6639,18 +6659,15 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
         await pilot.click("#console-setup-modal-action")
 
         assert len(host.navigation_messages) == 1
-        message = host.navigation_messages[0]
-        assert message.screen_name == "settings"
-        assert message.screen_context == {
-            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-            "provider": "huggingface",
-            "model": "meta-llama/test-model",
-            "field": "api_key",
-        }
+        _assert_recovery_stages_a_return_to(
+            app, host.navigation_messages[0], session.id
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_add_api_key_recovery_tolerates_missing_session_settings():
+@private_profile_test
+async def test_console_add_api_key_recovery_tolerates_missing_session_settings(request):
+    """Rewritten on purpose (TASK-33008.1 AC#8): the route bears a return."""
     app = _build_test_app()
     host = ConsoleNavigationHarness(app)
 
@@ -6679,13 +6696,9 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
         await pilot.click("#console-setup-modal-action")
 
         assert len(host.navigation_messages) == 1
-        message = host.navigation_messages[0]
-        assert message.screen_context == {
-            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-            "provider": "huggingface",
-            "model": "meta-llama/test-model",
-            "field": "api_key",
-        }
+        _assert_recovery_stages_a_return_to(
+            app, host.navigation_messages[0], session.id
+        )
 
 
 @pytest.mark.asyncio

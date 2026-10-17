@@ -486,3 +486,79 @@ Tests/UI/test_console_context_controls.py::test_context_view_names_settings_as_t
 # interleaving. The gated real-service test waits for the settled list, so this
 # node is the only one that goes red without the lock.
 Tests/UI/test_study_flashcards_screen.py::test_two_awaited_card_list_rebuilds_do_not_interleave
+# TASK-33008.1 AC#9: a recovery round trip returns to the chat on one Enter (40 s).
+Tests/UI/test_console_provider_return.py::test_recovery_round_trip_returns_to_the_chat_on_one_enter
+# TASK-33008.3 AC#8: Use detected, the stub server's second model, saved by the real writer (27 s).
+Tests/UI/test_console_setup_card_switcher.py::test_detected_stub_server_second_model_is_saved_by_the_real_writer[no-endpoint-saved]
+# TASK-33008.4 AC#3: the blocked footer names only the keys that act under the card (25 s).
+Tests/UI/test_console_setup_card_keyboard.py::test_the_blocked_footer_names_only_keys_that_act_under_the_card
+# TASK-33008.3 AC#8, the untouched shipped profile (24 s).
+Tests/UI/test_console_setup_card_switcher.py::test_detected_stub_server_second_model_is_saved_by_the_real_writer[untouched-shipped-profile]
+# Ruling (c), C1: a route naming no model never borrows another provider's (30 s).
+Tests/UI/test_console_provider_return.py::test_a_route_that_names_no_model_never_borrows_another_providers_model[lists-no-models]
+# TASK-33008.3 AC#8, a shipped endpoint with another field edited (23 s).
+Tests/UI/test_console_setup_card_switcher.py::test_detected_stub_server_second_model_is_saved_by_the_real_writer[shipped-endpoint-other-field-edited]
+# Parent AC#1: Use detected, Enter, Enter saves the server and unlocks the card (21 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_detected_server_enter_enter_saves_config_and_unlocks_card
+# TASK-33008.2 AC#4: a NEEDS SETUP row's round trip without saving reopens Switch model (20 s).
+Tests/UI/test_console_provider_return.py::test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider[without-saving]
+# TASK-33008.4 AC#3 (R24): a guidance sync keeps focus on the action Tab reached (19 s).
+Tests/UI/test_console_setup_card_keyboard.py::test_a_guidance_sync_keeps_focus_on_the_action_tab_reached
+# TASK-33008.2 AC#4: the same round trip with a key saved (16 s).
+Tests/UI/test_console_provider_return.py::test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider[saves-a-key]
+# TASK-33008.1: the return lands on the chat it came from.
+Tests/UI/test_console_provider_return.py::test_return_lands_on_the_originating_chat
+# TASK-33008.1: a return to a closed chat stays put with a notice.
+Tests/UI/test_console_provider_return.py::test_return_to_a_closed_chat_stays_put_with_a_notice
+# TASK-33008.1: a failed landing settles its claim and never ends the app.
+Tests/UI/test_console_provider_return.py::test_a_failed_landing_settles_its_claim_and_never_ends_the_app
+# TASK-33008.1: a stale return applies nothing and says so.
+Tests/UI/test_console_provider_return.py::test_a_stale_return_applies_nothing_and_says_so
+# TASK-33008.1: the return waits until the Console owns the screen.
+Tests/UI/test_console_provider_return.py::test_return_is_kept_until_the_console_owns_the_screen
+# TASK-33008.1: an unused return is taken back when the Console is reached by hand.
+Tests/UI/test_console_provider_return.py::test_an_unused_return_is_taken_back_when_the_console_is_reached_by_hand
+# TASK-33008.2: a NEEDS SETUP row's return reopens Switch model on its provider.
+Tests/UI/test_console_provider_return.py::test_a_needs_setup_rows_return_reopens_switch_model_on_its_provider
+# TASK-33008.2: a return that does not land reopens nothing.
+Tests/UI/test_console_provider_return.py::test_a_return_that_does_not_land_reopens_nothing
+# TASK-33008.2: no reopen over a screen that took the Console's place.
+Tests/UI/test_console_provider_return.py::test_a_return_reopens_nothing_over_a_screen_that_took_the_consoles_place
+# TASK-33008.2: a recovery's return names no pair and reopens nothing.
+Tests/UI/test_console_provider_return.py::test_a_recoverys_return_names_no_pair_and_reopens_nothing
+# TASK-33008.1 AC#2/AC#7: the Console return shows before a save, the modal's after.
+Tests/UI/test_console_provider_return.py::test_a_console_return_is_offered_before_any_save_and_the_modals_is_not
+# TASK-33008.1: a kept Console return lapses with its handoff.
+Tests/UI/test_console_provider_return.py::test_a_kept_console_return_lapses_with_its_handoff
+# TASK-33008.1: a route with no field to focus lands on the first control that acts.
+Tests/UI/test_console_provider_return.py::test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts
+# TASK-33008.1: the return line names the chat; the key-accepted copy is the recovery's.
+Tests/UI/test_console_provider_return.py::test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy
+# TASK-33008.4 AC#3: Tab and Shift+Tab cycle every card action with the focus cue.
+Tests/UI/test_console_setup_card_keyboard.py::test_tab_and_shift_tab_cycle_every_card_action_with_the_focus_cue
+# TASK-33008 review: a sync under a dialog keeps the card's Tab stop.
+Tests/UI/test_console_setup_card_keyboard.py::test_a_sync_under_a_dialog_keeps_the_cards_tab_stop
+# TASK-33008.4 AC#1: the card draws on a plain dim fill, no backdrop widget.
+Tests/UI/test_console_setup_card_keyboard.py::test_card_draws_on_a_plain_dim_fill_with_no_backdrop_widget
+# TASK-33008.4 AC#4: the card's copy names the Settings round trip and only Enter.
+Tests/UI/test_console_setup_card_keyboard.py::test_card_copy_names_the_settings_round_trip_and_only_footer_keys
+# TASK-33008.3: the card's first focus is Use detected when one is offered.
+Tests/UI/test_console_local_server_discovery_card.py::test_setup_modal_first_focus_is_the_detected_action_when_one_is_offered
+# Capture fix: an untouched MLX-LM is not running, not ready.
+Tests/UI/test_console_switcher_local_probe.py::test_an_untouched_mlx_lm_is_not_running_not_ready
+# Capture fix: NOT RUNNING wraps so every name shows whole, and repacks on resize.
+Tests/UI/test_console_switcher_local_probe.py::test_the_not_running_line_wraps_so_every_name_shows_whole
+# Capture fix: no blank row after a probe answer shortens the list.
+Tests/UI/test_console_switcher_local_probe.py::test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers
+# Capture fix: Find counts one listed provider in the singular.
+Tests/UI/test_console_switcher_local_probe.py::test_find_counts_one_listed_provider_in_the_singular
+# TASK-33008 review round 2: adopting a detected server keeps the configured endpoint (5 s).
+Tests/UI/test_console_provider_persistence_regressions.py::test_detected_server_adoption_keeps_configured_endpoint
+# TASK-33008 review round 2: under a dialog the footer names only the keys that act (10 s).
+Tests/UI/test_console_switch_model_entry_points.py::test_a_dialog_over_a_ready_console_names_only_the_keys_that_act
+# TASK-33008 review round 5: a card covered at launch (the first-run wizard) runs discovery on the first return (6 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_a_card_covered_at_launch_runs_discovery_again_on_the_first_return
+# TASK-33008: a card resumed with nothing detected runs discovery again, and not once a server is found (6 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_a_card_resumed_with_nothing_detected_runs_discovery_again
+# TASK-33008: a card unblocked and broken again while away runs discovery on the return (5 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return

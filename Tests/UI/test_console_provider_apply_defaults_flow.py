@@ -1379,9 +1379,10 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
 ) -> None:
     """Verified adoption changes only the active session, preserving durable config."""
 
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.UI.Console_Modules import model_switcher
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
-    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 
     app = _console_app()
     _, target = _install_ready_vllm_target(app)
@@ -1393,11 +1394,11 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
     def forbidden_write(*_args, **_kwargs):
         raise AssertionError("session adoption must not write configuration")
 
-    monkeypatch.setattr(
-        chat_screen_module,
-        "save_settings_to_cli_config",
-        forbidden_write,
-    )
+    # TASK-33008.3 moved the detected-server writer (the one Console path that
+    # wrote this through chat_screen's own name) to model_switcher; chat_screen
+    # no longer imports it. Guard the writer there and at its source.
+    for module in (config_module, model_switcher):
+        monkeypatch.setattr(module, "save_settings_to_cli_config", forbidden_write)
     harness = _ConsoleFlowHarness(app)
 
     async with harness.run_test(size=(120, 42)) as pilot:
@@ -1443,10 +1444,15 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert summary.provider_row == "Provider: vLLM"
         assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
-        # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
-        assert summary.readiness_label == "Not ready · endpoint unsaved"
-        assert summary.readiness.blocker == "endpoint_not_saved"
-        assert summary.readiness.recovery_action == "save_endpoint"
+        # TASK-33008.3 (rewritten on purpose; was "Not ready · endpoint
+        # unsaved", blocker endpoint_not_saved). The session-only endpoint is
+        # the one the send path uses -- the detached resolution above is ready
+        # -- so readiness reads it as configured and no longer blocks the send
+        # it allows (ADR-117: Use in Console refreshes in-process readiness;
+        # the llama.cpp handoff already read Ready, task-16473).
+        assert summary.readiness_label == "Ready · not tested"
+        assert summary.readiness.blocker is None
+        assert summary.readiness.native_send_supported
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 

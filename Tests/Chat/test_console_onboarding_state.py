@@ -127,8 +127,14 @@ def test_the_active_step_carries_the_one_readiness_word():
 
     blocked = _build(readiness=refused)
     assert blocked.steps[0].label == "Reconnect the provider server"
-    assert blocked.steps[0].detail == readiness_words(refused)
-    assert blocked.steps[0].detail == "Not ready · refused"
+    # Rewritten on purpose (capture finding 12, 02a): the word is this chat's
+    # provider's, so the step names it. With "Use detected llama.cpp" beside
+    # it, an unnamed "Not ready · no key" read as the detected server's.
+    assert blocked.steps[0].detail == f"OpenAI: {readiness_words(refused)}"
+    assert blocked.steps[0].detail == "OpenAI: Not ready · refused"
+    # No provider to name: the fallback label is not one.
+    unnamed = _build(readiness=refused, provider_label="Provider")
+    assert unnamed.steps[0].detail == "Not ready · refused"
     pick = _build(readiness=no_model, has_model=False)
     assert [step.detail for step in pick.steps[:2]] == [
         "OpenAI",
@@ -178,6 +184,8 @@ def test_coerce_first_send_completed():
 
 
 def test_detected_server_action_offers_labeled_affordance_with_model():
+    """Rewritten on purpose (TASK-33008.3): the action opens Switch model, so
+    its tooltip no longer promises the server's first model."""
     action = build_console_detected_server_action(
         DiscoveredLocalServer(
             provider_key="llama_cpp",
@@ -189,16 +197,19 @@ def test_detected_server_action_offers_labeled_affordance_with_model():
 
     assert action is not None
     assert action.label == "Use detected llama.cpp (127.0.0.1:8080)"
-    assert (
-        action.tooltip
-        == "Sets provider to llama.cpp at 127.0.0.1:8080 and model to qwen-3."
+    assert action.tooltip == (
+        "Opens Switch model on llama.cpp at 127.0.0.1:8080. "
+        "The model you pick becomes the default for new chats."
     )
+    assert "qwen-3" not in action.tooltip
     assert action.provider_key == "llama_cpp"
     assert action.base_url == "http://127.0.0.1:8080"
     assert action.model_id == "qwen-3"
 
 
 def test_detected_server_action_without_models_asks_for_model_next():
+    """Rewritten on purpose (TASK-33008.3): one tooltip, with or without a
+    model listing; Switch model's typed-id row covers a server that lists none."""
     action = build_console_detected_server_action(
         DiscoveredLocalServer(
             provider_key="ollama",
@@ -210,9 +221,9 @@ def test_detected_server_action_without_models_asks_for_model_next():
 
     assert action is not None
     assert action.label == "Use detected Ollama (localhost:11434)"
-    assert (
-        action.tooltip
-        == "Sets provider to Ollama at localhost:11434. Pick a model next."
+    assert action.tooltip == (
+        "Opens Switch model on Ollama at localhost:11434. "
+        "The model you pick becomes the default for new chats."
     )
     assert action.model_id is None
 

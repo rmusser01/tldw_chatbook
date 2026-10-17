@@ -14,7 +14,7 @@ from copy import deepcopy
 
 import httpx
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, OptionList, Static
 
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
 import tldw_chatbook.Widgets.Console.console_model_popover as popover_module
@@ -142,7 +142,12 @@ def servers(monkeypatch) -> Servers:
 
 
 def build(
-    app, *, config=CONFIG, providers_models=PROVIDERS_MODELS, prober=True
+    app,
+    *,
+    config=CONFIG,
+    providers_models=PROVIDERS_MODELS,
+    prober=True,
+    pair=("ollama", "qwen3:4b"),
 ) -> ConsoleModelPopover:
     """The switcher as Alt+M opens it, minus the screen, on an Ollama chat
     (this chat's own row shows CURRENT, not a hint)."""
@@ -157,7 +162,7 @@ def build(
     switcher = ConsoleModelPopover(
         origin=ConsoleSettingsOrigin("session-a", None, 0),
         app_config=config,
-        initial_draft=_draft("ollama", "qwen3:4b"),
+        initial_draft=_draft(*pair),
         providers_models=providers_models,
         scope_copy="Applies to: this chat only",
         durability_copy="Temporary until this chat is promoted",
@@ -335,6 +340,9 @@ async def test_enter_on_a_server_that_did_not_answer_stays_in_place(servers):
         await pilot.pause()
         row = switcher.highlighted_row()
         assert (row.kind, row.provider) == ("setup", "llama_cpp")
+        # Round 2 finding 4: the key row says what Enter does on this row.
+        apply = switcher.query_one("#console-popover-apply", Button)
+        assert str(apply.label) == "Enter explain"
         await pilot.press("enter")
         await pilot.pause()
         assert app.screen is switcher
@@ -426,6 +434,190 @@ async def test_an_untouched_shipped_default_that_refuses_is_quietly_not_running(
     assert [row.kind for row in quiet] == ["info"], quiet
     assert "TabbyAPI" in quiet[0].text and "Aphrodite Engine" in quiet[0].text
     assert not any(f"refused :{TABBY}" in line or f"refused :{APHRODITE}" in line for line in lines)
+
+
+@pytest.mark.parametrize("owned", (False, True), ids=("untouched", "set-up"))
+async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
+    """Capture finding 11: a plain Alt+M listed "MLX-LM (Apple silicon) · no
+    models reported · type its name and an id" under READY PROVIDERS on a
+    profile that never set it up. MLX-LM is a server (chat_with_mlx_lm posts
+    to it), not an in-process engine, but no models route lets the switcher
+    probe it, so the shipped template's endpoint and placeholder model read
+    Ready. Still at the template and never used, it is listed as not running,
+    as a probed shipped default that refuses is; set up, it stays READY."""
+    config = _with_shipped("local_mlx_lm")
+    if owned:
+        config["api_settings"]["local_mlx_lm"]["model"] = "my-mlx-model"
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=config,
+            providers_models={**SHIPPED_MODELS, "local_mlx_lm": ["None"]},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        ready = " ".join(row.text for row in _group(switcher, "READY PROVIDERS"))
+        quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+        placeholder = switcher.query_one("#console-popover-find", Input).placeholder
+        ready_keys = [
+            key
+            for key in switcher._provider_order
+            if popover_module._is_ready(switcher._readiness.get(key))
+        ]
+
+    assert ("MLX-LM" in ready) is owned, ready
+    # Round 2 finding 3: Find counts only the providers READY PROVIDERS lists.
+    assert "local_mlx_lm" in ready_keys
+    listed = len(ready_keys) - (0 if owned else 1)
+    noun = "provider" if listed == 1 else "providers"
+    assert f" in {listed} {noun} " in placeholder, placeholder
+    # Capture fix round 1: nothing checked it, so the line says so rather
+    # than claim it is not running.
+    assert ("MLX-LM (Apple silicon) (not checked)" in quiet) is not owned, quiet
+    assert 5678 not in servers.ports  # Never contacted either way.
+
+
+_UNTOUCHED = (
+    *("ollama", "tabbyapi", "aphrodite", "vllm"),
+    *("custom", "custom_2", "local_mlx_lm"),
+)
+#: Without Ollama the names make one 132-cell row in the 134 cells the list
+#: has at 211, and two rows in the 114 it has at 120.
+_UNTOUCHED_BUT_OLLAMA = _UNTOUCHED[1:]
+
+
+@pytest.mark.parametrize(
+    ("opened", "size", "shipped", "rows"),
+    (
+        ((211, 44), (211, 44), _UNTOUCHED, 2),
+        ((120, 44), (120, 44), _UNTOUCHED, 2),
+        ((211, 44), (120, 44), _UNTOUCHED_BUT_OLLAMA, 2),
+        ((120, 44), (211, 44), _UNTOUCHED_BUT_OLLAMA, 1),
+    ),
+    ids=("211x44", "120x44", "211x44-shrunk-to-120x44", "120x44-widened-to-211x44"),
+)
+async def test_the_not_running_line_wraps_so_every_name_shows_whole(
+    servers, opened, size, shipped, rows
+):
+    """Round 2 finding 2: seven untouched servers on one NOT RUNNING row were cut
+    at the dialog's edge to "MLX-LM (Apple silicon) (not ch…" at both full
+    sizes. The names are packed into as many rows as the list's width needs.
+    Capture fix 2 round 1 finding 2: they were packed only when the rows were
+    built, so a list opened at 211 and shrunk to 120 cut them again, and one
+    widened kept more rows than it needed; a resize repacks them."""
+    app = _harness()
+    async with app.run_test(size=opened) as pilot:
+        switcher = build(
+            app,
+            pair=("openai", "gpt-5.1"),  # 05d: an OpenAI chat
+            config=_with_shipped(*shipped),
+            providers_models={
+                **SHIPPED_MODELS,
+                **{key: [] for key in shipped if key not in SHIPPED_MODELS},
+            },
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        if size != opened:
+            await pilot.resize_terminal(*size)
+            await _settle(app, pilot)
+        quiet = [row.text for row in _group(switcher, "NOT RUNNING")]
+        lines = list_lines(app, switcher)
+
+    joined = " · ".join(text.strip() for text in quiet)
+    names = ("TabbyAPI", "vLLM", "MLX-LM (Apple silicon) (not checked)")
+    for name in names + ("Ollama",) * ("ollama" in shipped):
+        assert name in joined, quiet
+    assert len(quiet) == rows, quiet
+    for text in quiet:
+        assert line_with(lines, text.strip()), text  # painted whole, no "…"
+    assert not any(line.endswith("…") for line in lines), lines
+
+
+async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(servers):
+    """Capture findings 5 (1): one fresh launch of 05d's profile at 211x44 drew
+    a blank row under "MLX-LM (Apple silicon) (not checked)", gone after a
+    resize. Each probe answer rebuilds the rows, and a server that leaves READY
+    for NOT RUNNING's packed row shortens the list by one. When another widget
+    in the dialog got its layout to the screen while one answer's layout was
+    still pending on the list, the list's box was measured and cached at that
+    length, and the next answer's refresh(layout=True) did not invalidate it
+    (Textual bumps the cache key only when no layout is pending). The rows
+    were packed against the laid-out width all along. Made deterministic:
+    three answers behind and laid out, one answer, a sibling's layout first,
+    then the other two. (A list that grows shows its scrollbar for a frame,
+    and the scrollbar's own layout refresh happens to clear the stale box:
+    the shrinking steps are the case.)"""
+    servers.hold = threading.Event()
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            pair=("openai", "gpt-5.1"),  # 05d: an OpenAI chat
+            config=_with_shipped(*_UNTOUCHED),
+            providers_models={
+                **SHIPPED_MODELS,
+                **{key: [] for key in _UNTOUCHED if key not in SHIPPED_MODELS},
+            },
+        )
+        await app.push_screen(switcher)
+        await _wait(pilot, lambda: switcher._first_readiness_done and servers.requests)
+        behind = dict(switcher._readiness)  # every local server Ready, unprobed
+        servers.hold.set()
+        await _settle(app, pilot)
+        answered = dict(switcher._readiness)
+        pairs = switcher.query_one("#console-popover-pairs", OptionList)
+        settled = pairs.option_count
+
+        late = ("aphrodite", "ollama", "tabbyapi")
+        switcher._readiness.update({key: behind[key] for key in late})
+        switcher._rebuild_rows()  # three READY rows, four names on one row
+        await _settle(app, pilot)
+        assert pairs.option_count == settled + 2
+        switcher._readiness["tabbyapi"] = answered["tabbyapi"]
+        switcher._rebuild_rows()  # one answer: a row shorter, its layout pending
+        # Another widget in the dialog reaches the screen with its layout first.
+        label = switcher.query_one("#console-popover-values-label", Static)
+        label.refresh(layout=True)
+        label._check_refresh()
+        switcher._refresh_layout()
+        switcher._readiness.update(answered)
+        switcher._rebuild_rows()  # the other two: a row shorter again
+        await _settle(app, pilot)
+        lines = list_lines(app, switcher)
+
+    assert lines[-1] == "  MLX-LM (Apple silicon) (not checked)", lines
+    assert all(line.strip() for line in lines), lines
+    assert len(lines) == settled
+
+
+async def test_find_counts_one_listed_provider_in_the_singular(servers):
+    """Round 2 finding 3, seen live after its fix: with MLX-LM out of the count
+    a profile with one cloud key read "14 models in 1 providers"."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    config = {
+        "api_settings": {
+            "openai": {"api_key": "sk-cloud"},
+            "local_mlx_lm": deepcopy(
+                DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]
+            ),
+        }
+    }
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            pair=("openai", "gpt-5.1"),
+            config=config,
+            providers_models={"openai": ["gpt-5.1"], "local_mlx_lm": []},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        placeholder = switcher.query_one("#console-popover-find", Input).placeholder
+
+    assert placeholder.startswith("type to search 1 model in 1 provider · "), placeholder
 
 
 @pytest.mark.parametrize("owned_by", ("chat default", "edit"))

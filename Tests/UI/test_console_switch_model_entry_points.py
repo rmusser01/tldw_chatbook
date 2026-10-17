@@ -209,6 +209,62 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_dialog_over_a_ready_console_names_only_the_keys_that_act(
+    request,
+) -> None:
+    """Capture fix 3 round 1 finding 2 (05a, 05c, 05d): under Switch model over
+    a ready Console the footer still named every Console key, and none acts
+    under a dialog. While one covers the Console the footer names only Ctrl+P
+    and Ctrl+Q (a re-registration included): each key it leaves out is
+    pressed and changes nothing. The Console's keys are back when it closes."""
+    app = _console_app()
+    harness = _Harness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _open_console(harness, pilot)
+        drawn = console.query_one(AppFooterStatus).query_one("#footer-key-quit", Static)
+        await _until(
+            pilot, lambda: "Alt+M switch model" in str(drawn.render()), "the footer"
+        )
+
+        await pilot.press("alt+m")
+        switcher = await _switcher_ready(harness, pilot)
+        console._register_console_footer_shortcuts()  # a sync while covered
+        await pilot.pause()
+        drawn_text = str(drawn.render())
+        hinted = {
+            hint.split(" ", 1)[0]
+            for part in drawn_text.split(" | ")
+            for hint in part.split(" · ")
+        }
+        assert hinted == {"Ctrl+P", "Ctrl+Q"}, drawn_text
+
+        for key in (
+            "f1",
+            "f6",
+            "ctrl+shift+f",
+            "alt+m",
+            "ctrl+k",
+            "ctrl+t",
+            "alt+i",
+            "alt+a",
+            "alt+c",
+        ):
+            focused = harness.focused
+            await pilot.press(key)
+            await pilot.pause(0.2)
+            assert harness.screen is switcher and harness.focused is focused, key
+
+        await pilot.press("escape")
+        await _until(pilot, lambda: harness.screen is console, "the dialog to close")
+        await _until(
+            pilot,
+            lambda: "Alt+M switch model" in str(drawn.render()),
+            "the Console's keys to come back",
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_rail_streaming_row_follows_apply_new_chat_and_switching_back(
     request,
 ) -> None:

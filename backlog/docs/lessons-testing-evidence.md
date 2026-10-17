@@ -837,6 +837,19 @@ plugin masks exactly this failure. A new mounted-app file carries the marker its
 counts for a NEW file is one plain `pytest <file> -n0` run from the worktree root
 with no plugin on `PYTHONPATH` -- as CI runs it.
 
+**TASK-33008 final fix wave, 2026-10-11: one `Tests/ProductionApp` path on the command
+line fails collection for every Tests/UI file named beside it.**
+`Tests/ProductionApp/conftest.py` re-points `HOME`, the `XDG_*` directories and
+`TLDW_CONFIG_PATH` when it is imported, and pytest imports the conftest of every directory
+named on the command line before it collects anything. A covering run that named 33
+Tests/UI files and one ProductionApp file ended `12 failed, 673 passed, 366 errors`: 21 of
+the Tests/UI files, `test_app_instance_warning.py` among them, failed collection in the
+xdist workers with `raw_source_selection_changed`. Collect-only pairs named the directory:
+Tests/UI with Tests/ProductionApp gave 3 errors and nothing collected; with
+Tests/integration, Tests/Notes or Tests/State it collected cleanly. Run Tests/ProductionApp
+in an invocation of its own, and read a wall of collection errors as the command line's
+doing before the branch's.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
@@ -868,6 +881,40 @@ reaches the unchanged geometry assertions; restoring the actual retired bare
 `Select { width: 100%; margin-bottom: 1; }` rule and rebuilding the bundle makes
 the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
 not the final qualification of a guard intended to run in CI.
+
+**TASK-33008.2, 2026-10-11.** A one-line change to `SettingsScreen._stage_provider_value` was
+covered by tests that fail here in their bodies with `RecoveryRequired`
+(`Tests/UI/test_settings_configuration_hub.py`'s provider-navigation tests, which the phase's
+ledger counts as "not evidence" in this worktree). They ran, unedited, from a temporary file under `Tests/UI`
+that imports each test function and wraps it in `private_profile_test` (an inner coroutine with
+the function's own fixture names plus `request`, and the function's `pytestmark` copied over, so
+a parametrised test keeps its cases). 29 cases passed in about 70 seconds; the file
+was deleted and never committed. Two limits, both met: a fixture defined in the test's own
+module does not come along (`fixture 'no_snapshot_splash' not found`), and each case starts a
+child pytest, so under load two focus assertions that wait one `pilot.pause()` failed and then
+passed alone three times. This is diagnosis for a local change, as above: it does not make the
+tests run in CI.
+
+## A fix round that measures a finding's premise false must stop there (TASK-33008.3, 2026-10-11)
+
+**Incident.** Phase 8's final review said that on the Get started card's
+Switch model, Save as model default "ran as Ctrl+N" and that the model's own
+defaults were therefore never written. Final fix wave 1 measured it before
+fixing: the press did write `[api_settings.llama_cpp.model_defaults.model-a]`,
+because Ctrl+N's action writes that profile and `chat_defaults` on top. The
+report recorded the measurement, and the remedy went in anyway: only Enter
+kept the swap. The new test then pinned a contradiction sixteen lines apart:
+the scope line "Applies to: this chat · also the default for new chats"
+before the press, and `chat_defaults.model == ""` after it. The card
+unlocked, no new-chat default was saved, and the next new chat was blocked
+again, against the task's AC#5, the guide and the opener's docstring. Wave 2
+put the swap back.
+
+**What to do.** When your own measurement contradicts a finding's premise,
+its remedy is no longer a fix: report the measurement first, and re-read the
+AC the code serves before changing it. Read a new test's assertions against
+each other as well as against the code. One that asserts what the screen
+says and then the opposite of it is pinning a bug.
 
 ## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
 
@@ -1446,6 +1493,17 @@ layout shrank the virtual height from 83 to 81 and clamped scroll from 64 to 62
 while Retry remained focused. A focus event cannot repair later content growth.
 Follow the Library rail pattern: schedule current-focus reveal after virtual-size
 layout settles. The attempted general deferred-scroll guard was removed.
+
+## A focus-trap test in a bare harness can pass with no trap at all
+
+**TASK-33008.4, 2026-10-06.** The first Tab-cycle test for the Get started
+card mounted only the card in a harness App. It passed at base, where Tab did
+not move between the card's actions in the real Console: the card's buttons
+were the harness's only focusable widgets, so Textual's own `focus_next`
+walked exactly them and wrapped. One focusable widget outside the card (an
+`Input` standing in for the workbench) made the test fail at base for the real
+reason, focus escaping to it. Give a harness focus test something focusable
+outside the trap, and watch it fail at base before trusting it.
 
 ## Retained option controls need event-order tests across reset
 
@@ -3684,6 +3742,46 @@ its real reason in the comment.
 widget it sizes whose content changes after mount, and run the painted tests
 without it.
 
+**Recurred twice, TASK-33008 capture fix 3, 2026-10-13.** (1) Switch model's
+Enter button follows the highlighted row's kind since capture fix 2 and was
+relabelled with `apply.label = ...` alone: 05c drew "Enter apply to this chat"
+in the 28 cells of "Enter choose a model first", and the 38-cell "…and new
+chats" label would have been cut to 28. The existing label tests compared
+strings only; asserting `region.width == cell_len(label) + 2` failed 4/4.
+(2) A Static relabelled from its PARENT's `on_resize` (the Console's cost chip,
+chosen to fit the room left on the status row) kept its old 47-cell region
+through five pilot pauses even with `chip.refresh(layout=True)`; a second
+refresh, or running the relabel through `call_after_refresh`, took. Cause not
+traced further.
+
+**Traced, TASK-33008 capture fix 4, 2026-10-13.** `Widget.refresh(layout=True)` bumps
+`_layout_updates` (part of the box-model cache key) only when no layout is already
+pending on that widget. The cost chip still had one pending from its mount when it was
+relabelled, and a layout had already used that bump, so the next layout reused the
+cached box model: a spy saw `_layout_required` True and `_layout_updates` 1 before the
+relabel, no `get_content_width` call in the layout after it, and width 43 for an
+18-cell label. A deferred relabel works because by then the chip's idle has cleared the
+pending flag.
+
+**Recurred on an auto-height OptionList, TASK-33008 capture fix 5, 2026-10-13.** Switch
+model drew a blank row under its last row on one fresh launch in three: each probe
+answer rebuilt the rows a row shorter, and when another widget's layout reached the
+screen while one rebuild's layout was still pending on the list, the list was measured
+at that length and reused after the next rebuild. Two traps in reproducing it: a bare
+`screen._refresh_layout()` re-arranges nothing (the parent's arrangement cache holds
+until a descendant's `_check_refresh` clears it), and a list that GROWS shows its
+scrollbar for a frame, whose own layout refresh bumps the list and hides the bug; only
+shrinking steps after a sibling's `_check_refresh` went red. The fix bumps the list's
+`_layout_updates` on every rebuild.
+
+**What to do.** Same as above, and when a relabel depends on geometry, run it
+after the refresh rather than inside the resize handler, then assert the
+region, not the string. When the content can change again before that widget's
+idle (a burst of async answers), its own `refresh(layout=True)` is not enough
+either, and deferring the change is no fix when the answers drive it: bump its
+`_layout_updates` with every change, as Switch model's `_rebuild_rows` does
+(`console_model_popover.py`, after `add_options`).
+
 ---
 
 ## Test embedded panes at their allocated width, not the terminal width
@@ -4849,6 +4947,37 @@ that mattered: does the widget eventually appear at all?
 
 ---
 
+## A full GC pause can fill a fixed sub-second wait — adding tests upstream moves it onto a fixed victim (TASK-33008.5, 2026-10-05)
+
+**Incident.** TASK-33008.5 added one parametrized test (six cases) to
+`Tests/Wizards/test_first_run_setup_wizard.py`. A test 3,600 lines further down,
+`test_optional_step_failure_is_removed_and_reported_in_summary`, then failed with
+`assert 'RAG' in ''` in 5 of 5 file-level runs at head. It passed in 3 of 3 runs
+without the new test (base, base plus the production change, head with the new test
+deselected), passed standalone, and passed in a pair run with the new test. So it was
+not a state leak, not the production change, and not load: the same test lost every
+time. That is the opposite of the rotating victim in "Removing a per-test
+gc.collect()" above.
+
+A scratch pytest plugin found the cause in one run. It logged `gc.callbacks` pauses
+over 50 ms and wrapped `SummaryStep._render_rows`. The file runs on one xdist worker
+(`--dist loadfile`), and once it has built a few hundred Textual apps a
+generation-2 collection takes about 340 ms and up to 600 ms (199 pauses over 50 ms
+in a 288 s run, one every 1.4 s at the median). The
+victim shows the Summary and then waits a fixed `pilot.pause(0.4)`. A 359 ms pause
+landed inside that window, the rows were still empty, and teardown cancelled the
+render. Collections fire on allocation counts, so the test order fixes where they
+land. Six more app runs upstream moved one onto this test.
+
+**What to do.** When a test fails only at file level, always the same test, and a
+pair run with the suspected predecessor passes, log `gc.callbacks` before bisecting
+for shared state. Fix the victim, not the trigger: wait on the condition (here, the
+rows are non-empty) with a bound of seconds. Moving the new tests elsewhere only
+hides it until the next person adds a test. Expect it wherever a file this large has
+a fixed wait under about half a second.
+
+---
+
 ## A keyboard funnel through `Button.press()` dies silently when the button gains a real disabled state
 
 **The trap.** A key handler that "clicks" a button via `Button.press()` inherits
@@ -5290,6 +5419,24 @@ owner-preserving `try/finally` cleanup. Setting only `HOME` or `TLDW_TEST_MODE`
 after import is too late; even an early HOME-only change leaves an ambient
 `TLDW_CONFIG_PATH` authoritative. A metrics failure must not abandon resources,
 and a setup failure must not be reported as behavioral RED.
+
+**Recurrence with a write — TASK-33008.2 fix round 1, 2026-10-10.** A scratch
+probe that only imported a test module (`Tests.UI.test_console_model_switcher`,
+for its popover harness) was run from the scratchpad with `--rootdir` and `-c`
+pointing at the worktree. Neither option loads `Tests/conftest.py`: only a test
+file's own location does. The harness read the configuration under the real
+`HOME`, and that admitted the user's real recovery registry: it created
+`~/.config/tldw_cli/recovery-bootstrap/ancestry-settled.json` (birth time equal
+to the run's minute; `config.toml`, the data directory and both lock files were
+unchanged). The mechanism was then reproduced under a scratch `HOME`, where the
+same run created the same file. "Read-only" is therefore not a property of a
+probe that reads the configuration: on a profile this code has not started on,
+the first read writes the registry's ancestry record, and a build without that
+record (`origin/main` then) raises `unknown_record` when its scan of the
+registry root meets a file it does not know (read from the code, not run).
+The probe was rerun as a temporary file under `Tests/UI/` and deleted, which is
+what the rule above already said to do. Check the registry directory's times
+after any run that might have escaped, not only `config.toml`'s.
 
 ---
 
@@ -5740,6 +5887,70 @@ recompose context savers), use the synchronous `Screen.set_focus(widget)`, not
 `widget.focus()`. And remember `set_focus` on a non-focusable (hidden/disabled)
 widget does nothing and reports nothing — a focus-restore path that can name a
 display-managed widget needs the target to be focusable, or a fallback.
+
+---
+
+## `focus()` on a disabled widget does nothing, and `focusable` is True for a `display: none` widget
+
+**TASK-33008.1, 2026-10-10.** A provider recovery opens Settings with focus in
+the field its blocker names. Two routes name a field that Settings disables: the
+API key under a Claude subscription, and the key of a named custom endpoint. The
+focus call did nothing there, so focus stayed on the screen's first widget, the
+nav bar's Home button, and the next Enter opened Home. Each route took its own
+review round to find, because every test drove a route whose field was enabled.
+The first fix fell back to one control, which is disabled for every other
+provider, so the second route failed the same way. A probe then tested the
+fallback candidates with `focusable` and passed, yet `focusable` reads `visible`
+(the `visibility` rule), not `display`: `Button("x").display = False` leaves it
+True (Textual 8.2.8), and one candidate is hidden through `display`.
+
+A third round found the same landing on two routes that name no field at all:
+the NEEDS SETUP row in Switch model of a custom endpoint that lists no models,
+and the row of one whose entry was deleted. The second fix looked for a landing
+only when a named field was disabled. Its note also said that no entry reaches
+Settings with a deleted id, because the card for such a chat opens Switch model.
+Switch model was the entry: the function behind its row had been called
+directly, and the row itself was never pressed.
+
+That round's first landing for the deleted entry was `#settings-provider-value`,
+the selector its review named. A test on the real app passed: the id held focus,
+and Enter set the Select's `expanded`. Only a live run showed that nothing on
+screen had focus. That Select backs the Provider control from a row hidden with
+`display: none`, and an ancestor's `display` does not stop `focus()` either.
+Enter opened a list nobody saw, and Down then Enter changed the provider unseen.
+
+A later review found one more arrival with no landing: a cloud Retry that
+arrives on an edit kept from an earlier visit. Every mounted test had made its
+unsaved edit after arriving. A kept draft takes another arrival branch
+(`_apply_same_provider_return_context`) and withdraws the return the rule
+landed on, so focus stayed on the category button with Return without saving
+on screen.
+
+The review after that pressed Enter on the new landing. Return without saving
+fences itself while its confirmation is open: the handler disables the button
+before it pushes the dialog. Textual blurs a focused widget when it is disabled
+(`Widget.watch_disabled`), so Settings held no focus under the dialog, the
+dialog's opener restore (`SafeModalDismissMixin.on_mount`) had nothing to
+remember, and after Keep editing the screen's auto focus took its first
+focusable widget, the nav bar's Home button. In the review's run Enter, Enter,
+Enter from the landing opened Home. Both kinds of return did this, and the
+handler was dev's own. No test saw it: every test of this dialog answered
+Discard changes, but for one that cancelled and read the fence, not focus.
+
+**What to do.** Before focusing a widget that a route names, ask whether it can
+be disabled, and give the rule a landing for that case. Test fallback candidates
+with `w.display and not w.disabled`, not `focusable`. When one such route turns
+up, list every state that disables the named fields and every route that names
+no field, and drive each one before closing the finding. Drive it from the
+control the user presses, to the end: a screen that only opens another list is
+not where the route ends. Drive each arrival a second time with the state that
+outlives the screen (a kept draft) already there, not only made after arriving.
+A handler that disables the control it was pressed from before it opens a
+dialog puts focus back itself on the dialog's cancel path, and a test takes the
+dialog's default answer as well as its confirm, then reads focus.
+Assert that the widget in focus is painted, as well as
+its id: `_fully_on_screen` in `Tests/UI/test_console_provider_return.py` reads
+the compositor's visible widgets, and is False for a widget inside a hidden row.
 
 ---
 
@@ -14878,6 +15089,34 @@ and committed without `./scripts/preflight.sh`; the next task's implementer hit 
 inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
 `logger.*` change -> read the rows, `--write`") binds the controller too.
 
+### TASK-33008.2: run preflight before the long covering runs, not after them
+
+Fix round 2 (2026-10-10) added one `query_one` after an `await` in the switcher's readiness
+worker, to read what the error line showed. The covering runs went first: a 5-minute parallel
+set and the 16-minute serial `Tests/Architecture` directory, both with the base's failures and
+no other. Preflight went last, and its worker-contract check
+(`scripts/check_textual_worker_contract.py`) refused the lookup. No test under
+`Tests/Architecture` wraps that check, so the 16-minute run could not have shown it. The fix
+changed the code (the line's text is recorded where it is set, and the worker reads no widget),
+which voided both runs, and both were run again. Preflight takes about 35 seconds: run it as
+soon as the change is written, and start the long runs only once it exits 0.
+
+### TASK-33008.2: a provider-route test must route a provider that is not the saved default
+
+Settings pinned a new Providers & Models draft to the saved default provider, not to the provider
+a route had opened the page on. On Groq's page, with OpenAI the default, the first typed key
+character made the Provider row read "OpenAI", the edit was compared with OpenAI's saved key (the
+same text read as "no changes to save"), and Chat settings' route offered no Return without
+saving. The save still wrote Groq's table, because the save reads the widgets. TASK-33008.1's
+real-app tests could not see any of it: each routed the provider that was also the saved
+default, so the wrong pin was the right provider. TASK-33008.2's NEEDS SETUP row is always
+another provider; its round-trip test picked a different key text to get past the fault
+(2026-10-10), and the fix came a day later by a controller ruling. In a test that opens
+Settings on a provider: make that provider differ from `chat_defaults.provider`, give both the
+same key text, and assert what the page shows while the edit is unsaved, not only what the save
+writes. The order of edits matters too: a model picked before the key reached the same wrong
+pin by another line.
+
 ## Trace recovery tests need the failure before a boundary exists
 
 **TASK-31976, 2026-09-07.** A user reported “Trace capture blocked” on a fresh
@@ -19665,6 +19904,32 @@ controller's sign-off or record the survivor (file:line) in the task notes
 and the matching lessons file so the next task starts from the full list —
 a half-removed pattern reads as "handled" to every future grep that only
 checks the seam the task named.
+
+**Recurrence inside one class — TASK-33008.2 fix rounds 2 and 3, 2026-10-10.**
+Fix round 2 gave Switch model's Enter its own line for the moment before
+providers are listed ("Still checking providers…") by editing the
+`_set_error` call in `ConsoleModelPopover._activate`. The sentence it
+replaced there, "Choose a model: type to search, then Enter.", was written a
+second time further down the class in `_validated_draft`, which Ctrl+O and
+the Chat settings… button reach without passing through `_activate`. That
+copy kept printing the old line, and the new clear, which matches the new
+line only, left it on screen. The next review found it by reading the code,
+and it cost a fix round. `grep -n "Choose a model"` on the file prints both sites. The
+sibling need not be another class: before changing when a user-facing
+sentence is shown, grep the SENTENCE, and let one method choose it for every
+site (here `_refuse_no_pair`).
+
+**Recurrence, a second marker for the same row — TASK-33008.2, 2026-10-11.**
+Fix round 1 spared the reopened Switch model's own row from three row caps by
+testing the highlight pair (`_leads`). A later ruling added a second way for
+the list to say which provider it reopened on, `reopened_provider`, for a
+return that names no model and so has no pair. Only the highlight was taught
+the new marker. The eight-row NEEDS SETUP cap still asked `_leads`, cut that
+provider's one row and left nothing highlighted, while the guide said the row
+"is the one highlighted"; the next review found it by reading the code. When
+a second marker for the same thing is added, grep every reader of the first
+(`grep -n "_leads\|_highlight_pair"` on the file prints them) and decide each
+one, in the commit that adds the marker.
 
 
 ## Malformed-response tests can stop at the wrong guard (PR #3052, TASK-34434)

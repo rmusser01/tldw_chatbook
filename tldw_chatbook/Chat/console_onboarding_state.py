@@ -7,6 +7,8 @@ from pathlib import PurePath
 from typing import Any
 from urllib.parse import urlparse
 
+from rich.cells import cell_len, set_cell_size
+
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
@@ -17,14 +19,26 @@ from tldw_chatbook.Chat.provider_catalog import provider_display_name
 CONSOLE_SETUP_CARD_TITLE = "Get started"
 #: TASK-2154.8 (FR-10): one plain-language sentence under the card title so a
 #: first-time user knows what a "provider" even is before the steps ask them
-#: to connect one. Kept provider-agnostic (no settings jargon).
+#: to connect one. Kept provider-agnostic (no settings jargon). TASK-33008.4:
+#: its second line says where cloud setup goes, and Enter is the only key it
+#: names, matching the blocked footer's Enter hint (ADR-031 rule 5).
+#: TASK-33008.2: the line promises no return for a custom endpoint, because
+#: Settings offers none there (no return can name a ``custom-ep:`` id).
 CONSOLE_SETUP_CARD_SUBTITLE = (
     "A provider is the AI service that answers your messages — "
-    "for example OpenAI, Anthropic, or a server running on this computer."
+    "for example OpenAI, Anthropic, or a server running on this computer.\n"
+    "Cloud setup opens Settings and comes back here, except for custom "
+    "endpoints. Press Enter to use the highlighted action."
 )
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
 CONSOLE_QUIET_EMPTY_COPY = "No messages yet."
 CONSOLE_SETUP_STEP_GLYPHS = {"done": "✓", "active": "●", "pending": "○"}
+#: The card's content cells: .console-setup-modal-card (features/_console.tcss)
+#: is 66 wide, padding 1 2, solid border. test_console_setup_card_fit.py
+#: measures the step lines against that rule.
+CONSOLE_SETUP_CARD_CONTENT_CELLS = 60
+#: An active step's readiness word sits on its own line, this far in.
+CONSOLE_SETUP_STEP_DETAIL_INDENT = "     "
 
 # TASK-2154.8 (FR-10): endpoint variants name the thing in plain terms first
 # ("server address") with the jargon glossed after it; "send-capable" becomes
@@ -116,8 +130,9 @@ def build_console_detected_server_action(
             exists while the blocking ``card`` is showing.
 
     Returns:
-        The action (label, tooltip, and the values to persist) or ``None``
-        when no detected server should be offered.
+        The action (label, tooltip, and the detected provider, endpoint and
+        first listed model) or ``None`` when no detected server should be
+        offered.
     """
     if server is None or card_mode != "card":
         return None
@@ -143,15 +158,14 @@ def build_console_detected_server_action(
         if isinstance(model_id, str) and model_id.strip()
     )
     model_id = model_ids[0].strip() if model_ids else None
-    if model_id:
-        tooltip = f"Sets provider to {display_name} at {host_display} and model to {model_id}."
-    else:
-        tooltip = (
-            f"Sets provider to {display_name} at {host_display}. Pick a model next."
-        )
     return ConsoleDetectedServerAction(
         label=f"Use detected {display_name} ({host_display})",
-        tooltip=tooltip,
+        # TASK-33008.3: the action opens Switch model on this provider; it no
+        # longer adopts the first listed model, so the tooltip names none.
+        tooltip=(
+            f"Opens Switch model on {display_name} at {host_display}. "
+            "The model you pick becomes the default for new chats."
+        ),
         provider_key=provider_key,
         base_url=base_url,
         model_id=model_id,
@@ -246,6 +260,21 @@ def build_console_setup_card_state(
     provider_name = str(provider_label or "Provider").strip() or "Provider"
     # TASK-33005.3: the active step carries the one readiness word.
     word = readiness_words(readiness)
+    # Capture finding 12: the word is this chat's provider's, so the step
+    # names it; beside "Use detected <server>" an unnamed "Not ready · no
+    # key" read as the server's. "Provider" is the callers' fallback, no name.
+    # The card prints this on its own line (console_setup_modal._step_text):
+    # a long name is cut so the word is never split by a wrap (TASK-33005.3).
+    budget = (
+        CONSOLE_SETUP_CARD_CONTENT_CELLS
+        - len(CONSOLE_SETUP_STEP_DETAIL_INDENT)
+        - 2
+        - cell_len(word)
+    )
+    name = provider_name
+    if cell_len(name) > budget:
+        name = set_cell_size(name, budget - 1).rstrip() + "…"
+    named_word = word if provider_name == "Provider" else f"{name}: {word}"
     step_one = ConsoleSetupStep(
         state="done" if provider_done else "active",
         label=(
@@ -253,7 +282,7 @@ def build_console_setup_card_state(
             if provider_done
             else _STEP_ONE_LABELS.get(readiness.blocker, "Finish provider setup")
         ),
-        detail=provider_name if provider_done else word,
+        detail=provider_name if provider_done else named_word,
     )
     # Step two only counts as done once the provider is actually ready AND a
     # model is set: template defaults (e.g. gpt-4o) must not pre-check the

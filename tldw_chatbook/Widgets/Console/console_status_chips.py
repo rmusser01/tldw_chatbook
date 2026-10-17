@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.cells import cell_len
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -56,6 +57,16 @@ class ConsoleChip(Static):
             Tooltip content: ``label``, plus ``HELP`` on a second line if set.
         """
         return Content(f"{label}\n{self.HELP}" if self.HELP else label)
+
+
+def _cost_label_forms(state: ConsoleCostState) -> list[str]:
+    """Every form of the cost label, longest first: the full and compact
+    labels, then each with whole " · " segments dropped from its end."""
+    forms: list[str] = []
+    for label in (state.label, state.compact_label):
+        parts = label.split(" · ")
+        forms += (" · ".join(parts[:end]) for end in range(len(parts), 0, -1))
+    return sorted(dict.fromkeys(forms), key=cell_len, reverse=True)
 
 
 def _items_word(count: int) -> str:
@@ -420,6 +431,14 @@ class ConsoleStatusChips(Horizontal):
         self.scope_state = scope_state
         self.ephemeral = ephemeral
         self._cost_state = cost_state
+        # The strip's max_scroll_x and width, and the cost chip's width, at
+        # the last layout check (see _keep_cost_chip_in_view).
+        self._cost_strip_end = 0.0
+        self._cost_strip_width = 0
+        self._cost_chip_width = 0
+        # What places the cost chip on the strip at the last layout of this
+        # screen (see _refit_after_layout).
+        self._cost_chip_place: tuple[object, ...] | None = None
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
@@ -829,7 +848,8 @@ class ConsoleStatusChips(Horizontal):
         Returns:
             ``label``: chip text (the full ``state.label``; the strip
             hasn't been laid out yet at compose time, so the width-aware
-            compact form applies on the first resize or ``sync_cost_state``).
+            compact form applies after the first layout
+            (``_refit_after_layout``) or on ``sync_cost_state``).
             ``tooltip``: hover/focus text. ``hidden``: ``True`` when
             ``state`` is ``None``. ``alert``/``cold``: ``state.alert``/
             ``state.cold``.
@@ -864,25 +884,166 @@ class ConsoleStatusChips(Horizontal):
         self._apply_cost_chip_label(chip)
         chip.tooltip = Content(state.tooltip)
         chip.display = True
+        # A chip that was hidden has no place on the strip yet (x read 0).
+        self.call_after_refresh(self._refit_cost_chip)
         chip.set_class(state.alert, "console-chip-alert")
         chip.set_class(state.cold, "console-chip-cold")
         chip.set_class(not state.alert and not state.cold, "console-chip-dim")
 
     def _apply_cost_chip_label(self, chip: ConsoleCostChip) -> None:
-        """Apply the current cost state's full or compact width-aware label."""
+        """Apply the current cost state's full or compact width-aware label.
+
+        Capture fix 3 finding 4: the chips before it can leave less room on
+        the strip than that label needs, and the strip cut it mid-word
+        ("Current $0." at 211 columns). The longest form whose whole " · "
+        segments fit is shown instead (the tooltip keeps every figure), and
+        "…" when none fits. A chip that starts past the edge is not drawn,
+        so it keeps its label for scrolling in; while the chip has focus it
+        shows that label in full (``_keep_cost_chip_in_view`` scrolls to it).
+        """
         state = self._cost_state
         if state is None:
             return
         label = state.compact_label if self.screen.size.width < 120 else state.label
+        scroll = chip.parent
+        if (
+            not chip.has_focus
+            and isinstance(scroll, HorizontalScroll)
+            and scroll.size.width
+        ):
+            visible = scroll.scrollable_content_region.width - chip.virtual_region.x
+            room = visible - chip.styles.gutter.width
+            if visible > 0 and cell_len(label) > room:
+                forms = _cost_label_forms(state)
+                label = next((f for f in forms if cell_len(f) <= room), "…")
         chip.update(label)
         chip.refresh(layout=True)
 
+    def _keep_cost_chip_in_view(self) -> None:
+        """Scroll a focused cost chip into view after a layout moved it.
+
+        Run after the layout that changed the strip's width (``on_resize``)
+        or its chips' total width (``on_mount``'s watch). A callback that the
+        relabel itself scheduled could run before the chip's new width was
+        laid out, read its old place and not scroll (measured in round 4).
+        The chip is last on the strip, so it shows whole exactly when the
+        strip sits at its end. The strip follows it when its width changed
+        while the strip's did not (focus's "…" to the full label, a longer
+        figure), or when the strip sat at its end before this layout (a
+        narrower terminal, a wider chip before it); a Shift+wheel or swipe
+        away from the end stays where the user put it. A width, not a
+        "relabelled" mark: a relabel that keeps the width lays nothing out, so
+        no check would clear the mark before a later layout read it (round 5).
+        The strip's width too: a label wider than the strip is capped at it
+        (max-width 100%), so a resize changes that chip's width unrelabelled
+        (round 6).
+        """
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        scroll = chip.parent
+        if not isinstance(scroll, HorizontalScroll):
+            return
+        # -1: a scroll to the chip can stop short of the end (41.67 of 42).
+        at_end = scroll.scroll_x >= self._cost_strip_end - 1
+        self._cost_strip_end = scroll.max_scroll_x
+        width, strip_width = chip.size.width, scroll.size.width
+        follow = at_end or (
+            width != self._cost_chip_width and strip_width == self._cost_strip_width
+        )
+        self._cost_chip_width, self._cost_strip_width = width, strip_width
+        if chip.has_focus and follow:
+            chip.scroll_visible(animate=False)
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Show the focused cost chip's full label and scroll it into view."""
+        if event.widget.id == "console-cost-chip":
+            self._refit_cost_chip()
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        """Fit the cost chip to the room left again once focus leaves it.
+
+        The fit assumes the strip at scroll 0, so a chip that starts inside
+        the strip scrolls it home first: left scrolled, the first chip was cut
+        at the left edge. Every chip before it ends before its start, so a
+        chip that focus moved to stays in view.
+        """
+        if event.widget.id == "console-cost-chip":
+            scroll = event.widget.parent
+            start = event.widget.virtual_region.x
+            if (
+                isinstance(scroll, HorizontalScroll)
+                and start < scroll.scrollable_content_region.width
+            ):
+                scroll.scroll_home(animate=False)
+            self._refit_cost_chip()
+
+    def on_mount(self) -> None:
+        """Check the cost chip after any layout that changes the chips' total
+        width (Textual posts no Resize for that, only for a new strip size)."""
+        strip = self.query_one("#console-status-chip-scroll", HorizontalScroll)
+        self.watch(
+            strip,
+            "virtual_size",
+            lambda: self.call_after_refresh(self._keep_cost_chip_in_view),
+            init=False,
+        )
+        self.screen.screen_layout_refresh_signal.subscribe(
+            self, self._refit_after_layout
+        )
+
+    def _refit_after_layout(self, _screen: object) -> None:
+        """Refit the cost chip after a layout of this screen moved it.
+
+        The one refit for a move: a chip before it that changes width, shows
+        or hides, and a strip that resizes or collapses. Capture findings 4
+        (02c): a refit the change scheduled itself runs after the ACTIVE
+        screen's refresh, which can come before this screen lays out the new
+        widths (under a dialog; or Switch model's result callback beating the
+        chips' Layout messages), so it fitted from the old places. Only a
+        move (a chip before it, the strip's width, collapse) refits, so the
+        relabel's own layout does not start another. Still deferred:
+        relabelled straight from here the chip kept its old width (a layout
+        was pending on it). The move is read from cached sizes, never a
+        region: this runs after every layout, scrolls included, and a scroll
+        lays out only what is visible, so a region of a chip past the strip's
+        edge or of a collapsed strip arranged the whole screen again on every
+        scroll frame (capture fix 4 round 2).
+        """
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        scroll = chip.parent
+        if not isinstance(scroll, HorizontalScroll):
+            return
+        place = (
+            self._collapsed,
+            chip.display,
+            scroll.outer_size.width,
+            tuple(
+                w.outer_size.width
+                for w in scroll.children
+                if w.display and w is not chip
+            ),
+        )
+        if place != self._cost_chip_place:
+            self._cost_chip_place = place
+            self.call_after_refresh(self._refit_cost_chip)
+
     def on_resize(self, _event: events.Resize) -> None:
-        """Reapply width-aware cost copy without requiring a state change.
+        """Keep a focused cost chip in view; the layout's refit relabels it.
 
         Args:
-            _event: Textual resize notification; width is read from the app.
+            _event: Textual resize notification; unused (the strip and chip
+                sizes are read from the widgets).
         """
+        self._keep_cost_chip_in_view()
+
+    def _refit_cost_chip(self) -> None:
+        """Refit the cost chip: also run (after layout) when a chip before it
+        changes width or shows, which moves it with no resize of the strip."""
         try:
             chip = self.query_one("#console-cost-chip", ConsoleCostChip)
         except NoMatches:

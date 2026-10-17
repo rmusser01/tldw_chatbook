@@ -1067,6 +1067,9 @@ SmartContentTree Tree > .selected-node {
     background: $error 15%;
     text-style: bold;
     margin-top: $ds-space-1;
+    /* TASK-33008 (capture 06b): keep the text off the wizard's frame, inset
+       like the busy line above the nav bar. */
+    padding: $ds-space-0 $ds-space-2;
 }
 /* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
    the error class and rendered reassurance as a failure. */
@@ -1237,6 +1240,13 @@ SmartContentTree Tree > .selected-node {
     min-height: $ds-size-5;
     max-height: $ds-size-7;
     border: solid $primary;
+}
+
+/* TASK-33008 (capture 06a): the Model step's list holding one status line
+ * (loading, a failure, nothing found) hugs it; the five-row floor drew two
+ * empty rows under the text. */
+#setup-model-choice.-status {
+    min-height: $ds-size-0;
 }
 
 .setup-choice-list:focus {

@@ -54,6 +54,18 @@ from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 _PICKER_MODEL_LIMIT = 20
 
 
+def _status_line(text: str, line_id: str) -> Static:
+    """A model-step status as plain text: no radio glyph, no focus, no pick.
+
+    TASK-33008.5: a status used to be a disabled radio row, so a failure drew
+    like a choice. disabled=True still matters -- an enabled non-radio child
+    becomes the RadioSet's highlighted node, and Space then asserts inside
+    Textual and exits the app. A status is never mounted beside model rows.
+    markup=False: the copy embeds typed text; a bracketed word would be eaten as a tag.
+    """
+    return Static(text, id=line_id, disabled=True, markup=False)
+
+
 class ModelStep(SetupStep):
     """Pick a default model for the chosen provider.
 
@@ -108,8 +120,8 @@ class ModelStep(SetupStep):
         self._model_id_from_custom_input: bool = False
         self._model_load_generation = 0
         # TASK-21143 (UAT S-1/M-2): the classified outcome of the discovery
-        # probe rendered for _rendered_discovery_key ("", "authentication",
-        # "connection"). Read via current_probe_failure(), which returns ""
+        # probe rendered for _rendered_discovery_key (a PROVIDER_PROBE_*
+        # value). Read via current_probe_failure(), which returns ""
         # whenever the rendered key no longer matches the live identity —
         # the same staleness discipline the rest of this step uses.
         self._rendered_probe_failure: str = ""
@@ -119,8 +131,8 @@ class ModelStep(SetupStep):
 
         Returns:
             "" when the probe succeeded, never ran, or belongs to a
-            superseded identity; otherwise "authentication" or
-            "connection" (wizard_state.PROVIDER_PROBE_*).
+            superseded identity; otherwise "authentication", "key_required"
+            or "connection" (wizard_state.PROVIDER_PROBE_*).
         """
         if self._rendered_discovery_key is None:
             return ""
@@ -135,18 +147,8 @@ class ModelStep(SetupStep):
     def confirm_before_advance(self) -> Optional[str]:
         """UAT M-2: a known-failed probe must not be Next-ed past silently."""
 
-        failure = self.current_probe_failure()
-        if failure == wizard_state.PROVIDER_PROBE_AUTH:
-            return (
-                "The API key failed an authentication check, so this model "
-                "setup is unverified. Continue anyway?"
-            )
-        if failure == wizard_state.PROVIDER_PROBE_CONNECTION:
-            return (
-                "The server couldn't be reached, so this model setup is "
-                "unverified. Continue anyway?"
-            )
-        return None
+        copy = wizard_state.PROBE_FAILURE_COPY.get(self.current_probe_failure())
+        return copy.confirm if copy else None
 
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
@@ -181,17 +183,10 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
-            with SetupRadioSet(id="setup-model-choice", classes="setup-choice-list"):
-                # disabled=True: an un-disabled placeholder is a real,
-                # toggleable RadioButton -- pressing Enter/Space while it is
-                # the only/highlighted option (e.g. an impatient user, or
-                # discovery that never resolves) would fire RadioSet.Changed
-                # and commit the literal placeholder text as the model id
-                # (see _on_model_chosen). Same reasoning applies to the two
-                # other placeholders this step ever mounts, below.
-                yield SetupRadioButton(
-                    "(loading models…)", id="setup-model-loading", disabled=True
-                )
+            with SetupRadioSet(
+                id="setup-model-choice", classes="setup-choice-list -status"
+            ):
+                yield _status_line("(loading models…)", "setup-model-loading")
             yield Label("Or enter a model name", classes="setup-field-label")
             yield Input(id="setup-model-custom", placeholder="model-id")
             yield Button(
@@ -316,7 +311,7 @@ class ModelStep(SetupStep):
         elif not provider_key:
             # F-F fix: with no provider chosen yet there is nothing to
             # discover against, so the old code simply skipped this branch
-            # and left the initial "(loading models…)" RadioButton in place
+            # and left the initial "(loading models…)" status line in place
             # forever -- a permanently-stuck loading indicator for a state
             # that was never actually loading. Replace it with copy that
             # tells the user what to do instead.
@@ -440,9 +435,9 @@ class ModelStep(SetupStep):
                     models = []
                 elif evidence.endpoint == "unreachable":
                     discovery_state = "connection_failed"
-                    failure_category = (
-                        evidence.category or "connection_error"
-                    ).replace("_", " ")
+                    failure_category = model_discovery.tested_failure_category(
+                        evidence.category
+                    )
                     models = []
                 elif evidence.endpoint == "reachable" and not models:
                     models = list(evidence.model_ids)
@@ -540,6 +535,8 @@ class ModelStep(SetupStep):
         # can try to mount fresh "setup-model-option-N" ids while the stale
         # ones are still present, raising DuplicateIds.
         await radio_set.remove_children()
+        if not radio_set.is_attached:  # Quit mid-load: a mount would raise.
+            return
         if (
             load_generation is not None
             and load_generation != self._model_load_generation
@@ -547,6 +544,14 @@ class ModelStep(SetupStep):
             return
         if discovery_key != self._current_discovery_key():
             return
+        discovery_state, probe_failure = model_discovery.classify_render(
+            self, discovery_state, failure_category
+        )
+        radio_set.set_class(not models, "-status")  # the box hugs a status line
+        # A status is no Tab stop (06a drew it focused); loading keeps the stop.
+        radio_set.can_focus = bool(models) or discovery_state == "loading"
+        if not radio_set.can_focus and radio_set.has_focus:
+            self.query("#setup-model-custom").focus()  # no NoMatches after the await
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
             # carries a "recommended" tag in its LABEL only; the clean model
@@ -572,10 +577,9 @@ class ModelStep(SetupStep):
                 self._restore_model_radio_selection(discovery_key)
         elif discovery_state == "listing_unavailable":
             await radio_set.mount(
-                SetupRadioButton(
-                    "Model listing unavailable; enter the model ID used by this endpoint.",
-                    id="setup-model-listing-unavailable",
-                    disabled=True,
+                _status_line(
+                    wizard_state.MODEL_LISTING_UNAVAILABLE_LINE,
+                    "setup-model-listing-unavailable",
                 )
             )
         elif discovery_state == "connection_failed":
@@ -583,16 +587,16 @@ class ModelStep(SetupStep):
             # TASK-21143 (UAT M-1/M-4): auth failures point at the fix (the
             # key lives one step Back — Retry cannot succeed there);
             # connection failures name the server the user has to start.
-            probe_failure = wizard_state.classify_discovery_failure(
-                discovery_state, category
-            )
-            if probe_failure == wizard_state.PROVIDER_PROBE_AUTH:
-                failed_text = (
-                    "Authentication failed — this API key was rejected. Go "
-                    "Back to fix it, or enter a model ID below."
+            # TASK-33008: a refusal with no key sent asks for one instead.
+            provider_key = getattr(discovery_key, "provider_key", "")
+            failed_text = wizard_state.probe_failure_copy(probe_failure).model_line
+            if failed_text:
+                from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+                failed_text = failed_text.format(
+                    display=provider_display_name(provider_key)
                 )
             else:
-                provider_key = getattr(discovery_key, "provider_key", "")
                 endpoint = ""
                 identity = getattr(discovery_key, "connection_identity", ())
                 if len(identity) > 1 and identity[1]:
@@ -615,54 +619,36 @@ class ModelStep(SetupStep):
                         "running, then Retry — or enter a model ID below."
                     )
             await radio_set.mount(
-                SetupRadioButton(
-                    failed_text,
-                    id="setup-model-connection-failed",
-                    disabled=True,
-                )
+                _status_line(failed_text, "setup-model-connection-failed")
             )
         elif discovery_state == "loading":
             await radio_set.mount(
-                SetupRadioButton(
-                    "(loading models…)",
-                    id="setup-model-loading",
-                    disabled=True,
-                )
+                _status_line("(loading models…)", "setup-model-loading")
             )
         elif no_provider:
             await radio_set.mount(
-                SetupRadioButton(
+                _status_line(
                     "Pick a provider first — or type a model name below",
-                    id="setup-model-no-provider",
-                    disabled=True,
+                    "setup-model-no-provider",
                 )
             )
         else:
             await radio_set.mount(
-                SetupRadioButton(
-                    "(no models found — enter one below)",
-                    id="setup-model-empty",
-                    disabled=True,
-                )
+                _status_line("(no models found — enter one below)", "setup-model-empty")
             )
         if not self.is_attached:
             return
         # TASK-21143: record the classified outcome for the trust chain
         # (tracker "!", Model-step confirm gate, Summary override) before
         # the retry-button lookup's early return can skip it.
-        self._rendered_probe_failure = wizard_state.classify_discovery_failure(
-            discovery_state, failure_category or "connection error"
-        )
+        self._rendered_probe_failure = probe_failure
         try:
             retry = self.query_one("#setup-model-retry", Button)
-            # Retry stays for connection failures (start the server, retry);
-            # it is hidden for auth failures — retrying cannot fix a
-            # rejected key, the fix lives one step Back (UAT M-1).
+            # Retry shows for connection failures only (start the server,
+            # retry); retrying cannot fix a refused or missing key, the fix
+            # lives one step Back (UAT M-1).
             retry.set_class(
-                discovery_state != "connection_failed"
-                or self._rendered_probe_failure
-                == wizard_state.PROVIDER_PROBE_AUTH,
-                "hidden",
+                probe_failure != wizard_state.PROVIDER_PROBE_CONNECTION, "hidden"
             )
         except NoMatches:
             return
@@ -700,7 +686,7 @@ class ModelStep(SetupStep):
 
         Args:
             button: The pressed radio row. Only its clean ``_model_id``
-                attribute can supply a model id; status labels are ignored.
+                attribute can supply a model id; a row without one picks nothing.
         """
         model_id = getattr(button, "_model_id", None)
         if not isinstance(model_id, str) or not model_id:
@@ -913,10 +899,9 @@ class ModelStep(SetupStep):
         """F-A fix: fall back to the RadioSet's own ``pressed_button`` when
         this step's own bookkeeping (``selected_model_id``, updated only by
         ``_on_model_chosen``/``_on_custom_model``) has nothing -- same
-        reasoning as ``ProviderStep._effective_provider_key``. The three
-        placeholder rows this step ever mounts (loading / no-provider /
-        no-models-found) are all ``disabled=True`` and so can never actually
-        become ``pressed_button``.
+        reasoning as ``ProviderStep._effective_provider_key``. The status
+        lines this step mounts (see ``_status_line``) are plain text, not
+        radio rows, and so can never become ``pressed_button``.
 
         F1 fix: the fallback goes through ``_live_pressed_radio()`` rather
         than reading ``pressed_button`` directly, so a stale press left over

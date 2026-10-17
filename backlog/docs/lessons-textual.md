@@ -137,10 +137,35 @@ only surfaced because a test asserted the substring was in the rendered label:
 
 Escape with a raw string and a leading backslash (`r'\[Imported]'`) anywhere a
 literal bracket must reach the user, and **assert on the rendered label**
-(`str(widget.label)` / `str(static.renderable)`), never on the source constant —
+(`str(widget.label)` / `str(static.render())`), never on the source constant —
 a test that checks the constant passes while the UI shows nothing. This bites
 hardest on exactly the copy that most needs to be literal: names, prefixes,
 placeholders, file globs, `[Imported]`-style markers.
+
+**Correction, TASK-33008.5, 2026-10-04: `str(static.renderable)` is the source
+constant here, not the rendered text.** This entry used to recommend it. The
+repo's compatibility shim (`tldw_chatbook/__init__.py`) defines
+`Static.renderable` as `self.content`, which is what the constructor was handed.
+Measured on Textual 8.2.8:
+
+```python
+>>> w = Static('with "[Imported]" and ([bold]x)')
+>>> str(w.renderable)
+'with "[Imported]" and ([bold]x)'
+>>> str(w.render())
+'with "" and (x)'
+```
+
+The incident: the first-run wizard's model-step status line was mounted with
+`markup=False` because its copy embeds a typed endpoint, and its copy pins
+(twelve calls through one test helper, one more in the live-contract file) read
+it through `str(line.renderable)`. Those pins compare the same string with
+markup on or off, so none of them could see `markup=False` being removed; a
+reviewer found it by reading the shim. With the helper switched to
+`str(line.render())` and one case that passes `[bold]x` through the copy,
+removing `markup=False` fails that case and only that case. For a `Static`,
+read `render()`. `str(widget.label)` on a button or checkbox is rendered text,
+as the example above shows.
 
 ---
 
@@ -223,6 +248,32 @@ Rule: `call_after_refresh` orders you after *messages already queued*; it says n
 about layout. To wait for geometry, wait for the event that produces it (`Resize`, a
 widget's own "built" message), and keep a refresh-count only as the bound on a body that
 is already laid out and merely growing.
+
+**Recurred under a dialog, TASK-33008 capture fix 4, 2026-10-13 -- it is the ACTIVE
+screen's refresh.** `_on_invoke_later` hands the callback to `app.screen`. The Console
+covered by a `ModalScreen` is still current (`Screen.is_current` counts
+`app._background_screens`, which always holds the screen right under the top one) and
+lays out under the dialog, but a tick after the dialog's own refresh has already run
+the callback: the dialog had nothing to lay out. A probe saw the covered screen report
+`is_current` True and its layout signal fire with the dialog still on top, after the
+callback had run. So the cost chip's refit (scheduled with `call_after_refresh` when
+the Provider and Model chips changed width) read the old chip places: 02c drew
+"Ctx 0% · No". In the real Switch model flow the strip syncs after dismiss, from
+`push_screen`'s result callback, and that callback can still beat the chips' `Layout`
+messages to the Console (red at the base in one of two probe runs). The fix subscribes
+to the widget's OWN screen's `screen_layout_refresh_signal` (published at the end of
+every `_refresh_layout`) and refits when the chip has moved; the per-change
+`call_after_refresh` refits were then deleted, since each one relabelled a second time
+and could draw the stale fit for a tick. Rule: for "after MY screen has laid out", use
+that signal, not `call_after_refresh`. A change made with a real `ModalScreen` on top
+loses the race every time, so that is the deterministic test; without a dialog it is
+lost only some of the time. A subscriber that stays subscribed also runs after every
+scroll (`reflow_visible`), so read only cached values there (`outer_size`, `display`,
+your own flags), never `region`/`size`/`virtual_region`: for a widget outside the
+visible map, each such read arranges the whole screen on every scroll frame
+(`reflow_visible` invalidates the full map, and `find_widget` rebuilds it). Capture fix 4
+round 2 measured 5 full arranges in 5 scroll frames at the base, for a cost chip past the
+strip's edge and for a collapsed strip.
 
 ## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
 
@@ -882,6 +933,17 @@ resting list down to one row, so the help line read "1 found" before anyone type
 that echo then left the help blank, because the resting copy had only ever been written by
 the echo's refresh. Treat a `Changed` whose value equals the committed display text as no
 query (`handle_provider_search_changed`), and compose the resting copy directly.
+
+**An echo guard knows only the values it was told about (TASK-33008.2, final fix wave,
+2026-10-11).** Settings' Default model field ignores its mount echo by comparing the posted
+value with the routed model (`_navigation_model`) and with Settings' own. A route that names
+no model was changed to show the routed provider's own saved model: a third value neither
+comparison knew. On the real app DeepSeek's page arrived with a draft nobody made (provider
+and model staged), no Return to Console and focus on the nav bar's Home button. The same
+change for a provider with no saved model passed, because an empty field posts no echo.
+When a mounted field gets a new source for its value, make that source the value the guard
+compares against (`routed_model` holds the resolved model as the route's own), and test it
+with a non-empty value.
 
 ---
 

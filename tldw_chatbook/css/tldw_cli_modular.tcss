@@ -8188,19 +8188,10 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     align: center middle;
 
     background: $background 60%;
-    layers: console-setup-snow console-setup-card;
-}
-
-.console-setup-modal-backdrop-snow {
-    layer: console-setup-snow;
-    width: $ds-width-full;
-    height: $ds-height-full;
-    color: $ds-text-muted;
 }
 
 
 .console-setup-modal-card {
-    layer: console-setup-card;
 
     width: $ds-size-66;
     max-width: $ds-percent-90;
@@ -15946,6 +15937,8 @@ SmartContentTree Tree > .selected-node {
     background: $error 15%;
     text-style: bold;
     margin-top: $ds-space-1;
+
+    padding: $ds-space-0 $ds-space-2;
 }
 
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
@@ -16079,6 +16072,11 @@ SmartContentTree Tree > .selected-node {
     min-height: $ds-size-5;
     max-height: $ds-size-7;
     border: solid $primary;
+}
+
+
+#setup-model-choice.-status {
+    min-height: $ds-size-0;
 }
 
 .setup-choice-list:focus {

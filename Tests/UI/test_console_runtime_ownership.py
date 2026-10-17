@@ -1901,7 +1901,9 @@ async def test_legacy_alias_allocation_requires_current_live_tray(transition):
 
     screen = ChatScreen.__new__(ChatScreen)
     screen._closing = screen._closed = False
-    tray = SimpleNamespace(is_attached=True)
+    tray = SimpleNamespace(
+        is_attached=True, state=SimpleNamespace(new_conversation_enabled=True)
+    )
     current = [tray]
     allocations, children = [], []
     entered, release = asyncio.Event(), asyncio.Event()
@@ -1916,11 +1918,6 @@ async def test_legacy_alias_allocation_requires_current_live_tray(transition):
     tray.mount = mount
     screen.query_one = lambda *_args: current[0]
     screen.query = lambda _selector: []
-    screen._workspace = SimpleNamespace(
-        _build_console_workspace_context_state=lambda: SimpleNamespace(
-            new_conversation_enabled=True
-        )
-    )
     screen._request_console_context_allocation_reconcile = lambda: allocations.append(
         True
     )

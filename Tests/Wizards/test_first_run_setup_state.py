@@ -2435,6 +2435,219 @@ class TestProviderTrustChain:
                 == setup_state.PROVIDER_PROBE_CONNECTION
             )
 
+    def test_a_cleared_key_is_a_keyless_check_that_lifts_the_key_mark(self):
+        """TASK-33008 review: clearing a stored key stages source "draft" with
+        no text. That check sends no key, so when it gets through, the
+        "Authentication" mark a keyless refusal set is lifted again."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        def draft(source, value=""):
+            credential = setup_state.ProviderCredentialDraft(source, value, 1)
+            return setup_state.FirstRunProviderDraft("llama_cpp", "", credential)
+
+        sends = setup_state.discovery_sends_a_key
+        assert sends(draft("draft")) is False
+        assert sends(draft("draft", "sk-local")) is True
+        assert sends(draft("none")) is False
+        assert sends(draft("stored")) is True
+
+        identity = ("llama_cpp", "http://127.0.0.1:8080")
+        checked = SimpleNamespace(credential_source="draft", connection_identity=identity)
+
+        def reached(typed: str):
+            owner = SimpleNamespace(
+                _key_required_at=identity,
+                _refresh_auth_readiness=lambda: None,
+                _effective_provider_draft=lambda: draft("draft", typed),
+            )
+            first_run_model_discovery.note_probe_reached(owner, checked)
+            return owner._key_required_at
+
+        assert reached("sk-local") == identity  # a typed key was sent
+        assert reached("") is None
+
+    def test_a_subscription_table_spelled_otherwise_reads_as_readiness_reads_it(
+        self, monkeypatch
+    ):
+        """TASK-33008 review round 2: the subscription check read
+        ``api_settings["anthropic"]`` itself, while readiness takes the first
+        normalised match. ``[api_settings.Anthropic]`` was a subscription to
+        readiness and a missing key to the listing copy."""
+        from types import SimpleNamespace
+
+        import tldw_chatbook.LLM_Calls.anthropic_subscription as subscription
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        monkeypatch.setattr(
+            subscription, "subscription_credential_status", lambda **_kw: "ready"
+        )
+        config = {"api_settings": {"Anthropic": {"auth_source": "claude_subscription"}}}
+        app = SimpleNamespace(app_config=config)
+        step = SimpleNamespace(wizard=SimpleNamespace(app_instance=app))
+        keyless = setup_state.FirstRunProviderDraft(
+            "anthropic", "", setup_state.ProviderCredentialDraft("none", "", 0)
+        )
+
+        readiness = get_provider_readiness("anthropic", config, environ={})
+        assert readiness.subscription_status == "ready"
+        assert first_run_model_discovery.subscription_cannot_list(
+            step, keyless, "connection_failed", "authentication"
+        )
+
+    def test_provider_tells_a_listing_that_cannot_list_as_model_does(self):
+        """TASK-33008 review round 2: a server with no model list read "Model
+        listing unavailable…" on Model and "Couldn't discover models for
+        llama.cpp. You can continue anyway." on Provider. One cause, while Next
+        is allowed; a blocked Next keeps the step's refusal copy. Review round
+        3: Provider has no model ID field, so its line points at the next step,
+        and reading the line changes nothing (the caller marks a refused key)."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+            ModelDiscoveryError,
+            ModelDiscoveryResult,
+        )
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        no_list = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="Llama.cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="unsupported",
+            error=ModelDiscoveryError(
+                kind="unsupported_endpoint",
+                message="Models route returned 404.",
+                recovery_hint="Enter the model manually.",
+            ),
+        )
+
+        refused = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="Llama.cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="unauthorized",
+            ),
+        )
+
+        def line(ready: bool, outcome=no_list, draft=None) -> tuple[str, str]:
+            owner = SimpleNamespace(
+                wizard=None,
+                _current_provider_readiness=lambda: SimpleNamespace(ready=ready),
+                _discovery_failure_status=lambda display, failure: (
+                    f"refusal for {display} ({failure!r})"
+                ),
+            )
+            before = dict(vars(owner))
+            told = first_run_model_discovery.failed_listing(
+                owner, "llama.cpp", outcome, draft
+            )
+            assert vars(owner) == before  # no key mark, no refresh
+            return told
+
+        assert line(True) == (
+            "Model listing unavailable; you can enter the model ID on the next step.",
+            setup_state.PROVIDER_PROBE_NONE,
+        )
+        assert line(False) == ("refusal for llama.cpp ('')", "")
+        assert line(True, refused) == (
+            "refusal for llama.cpp ('authentication')",
+            setup_state.PROVIDER_PROBE_AUTH,
+        )
+        # Only a 401 rejects a key (owner ruling 2026-10-02): a 403 means the
+        # key may not list models, so the listing reads as unavailable on
+        # both steps and marks no key.
+        forbidden = replace(refused, error=replace(refused.error, category="forbidden"))
+        assert first_run_model_discovery._model_discovery_ui_outcome(forbidden) == (
+            [],
+            "listing_unavailable",
+            "",
+        )
+        assert line(True, forbidden) == (
+            setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
+            setup_state.PROVIDER_PROBE_NONE,
+        )
+        # The same ruling when no key was sent: a keyless 403 asks for no key
+        # (a keyless 401 does), so it reads as Test and Settings read it.
+        keyless = setup_state.FirstRunProviderDraft(
+            "llama_cpp", "", setup_state.ProviderCredentialDraft("none", "", 0)
+        )
+        assert line(True, refused, keyless) == (
+            "refusal for llama.cpp ('key_required')",
+            setup_state.PROVIDER_PROBE_KEY_REQUIRED,
+        )
+        assert line(True, forbidden, keyless) == (
+            setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
+            setup_state.PROVIDER_PROBE_NONE,
+        )
+
+    @pytest.mark.parametrize(
+        ("state", "category", "summary"),
+        [
+            ("unreachable", "forbidden", "unreachable: forbidden"),  # a 403
+            (  # a 404, as the shared probe reports one
+                "model_listing_unavailable",
+                "http_status",
+                "Model listing unavailable; chat endpoint not tested",
+            ),
+        ],
+        ids=["403", "404"],
+    )
+    def test_a_test_that_could_not_list_reads_as_the_listing_reads_it(
+        self, state, category, summary
+    ):
+        """TASK-33008 review round 4: a 403 or a 404 to Test read as the shared
+        verdict's "…; chat endpoint not tested" on Provider, while the listing
+        of the same server read "Model listing unavailable…"."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Chat.provider_test_evidence import (
+            ProviderReadinessSnapshot,
+            provider_readiness_verdict,
+        )
+        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+            SettingsEndpointProbeOutcome,
+            provider_probe_result_from_settings_outcome,
+        )
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        evidence = provider_probe_result_from_settings_outcome(
+            SettingsEndpointProbeOutcome(
+                state=state, category=category, summary=summary
+            )
+        )
+        shared = provider_readiness_verdict(
+            ProviderReadinessSnapshot(
+                configuration="configured",
+                endpoint=evidence.endpoint,
+                model="unconfirmed",
+                category=evidence.category,
+            )
+        ).detail
+        assert shared != setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        identity = SimpleNamespace(
+            provider_key="llama_cpp",
+            credential_source="stored",
+            connection_identity=("llama_cpp", "http://127.0.0.1:8080"),
+        )
+        owner = SimpleNamespace(
+            _key_required_at=None, _refresh_auth_readiness=lambda: None
+        )
+
+        told = first_run_model_discovery.tested_evidence_detail(
+            owner, identity, evidence, shared
+        )
+
+        assert told == setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        assert owner._key_required_at is None
+
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(
             provider_configured=True,
@@ -2450,6 +2663,15 @@ class TestProviderTrustChain:
             provider_probe_failed=False,
         )
         assert primary == "start_chatting"
+
+    def test_the_provider_notice_and_line_both_offer_to_continue(self):
+        """TASK-33008 capture 06b: back on Provider after a failed check, the
+        pinned notice said "Add one under Authentication, then continue."
+        while the step's own line said "…, or continue anyway." Next is
+        allowed there, so both say so, for every failure."""
+        for failure, copy_ in setup_state.PROBE_FAILURE_COPY.items():
+            assert copy_.provider_line.endswith("continue anyway."), failure
+            assert copy_.provider_notice.endswith(", or continue anyway."), failure
 
     def test_summary_actions_reject_non_bool_probe_state(self):
         with pytest.raises(ValueError):

@@ -1524,17 +1524,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         except IndexError:
             shown = None
         if isinstance(shown, ProviderStep):
-            failure = self.provider_probe_failure()
-            if failure == wizard_state.PROVIDER_PROBE_AUTH:
-                shown.show_step_error(
-                    "The last connection check failed: this API key was "
-                    "rejected. Update it, then continue."
-                )
-            elif failure == wizard_state.PROVIDER_PROBE_CONNECTION:
-                shown.show_step_error(
-                    "The last connection check couldn't reach the server. "
-                    "Check it's running, then continue."
-                )
+            copy = wizard_state.PROBE_FAILURE_COPY.get(self.provider_probe_failure())
+            if copy:
+                shown.show_step_error(copy.provider_notice)
         self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]

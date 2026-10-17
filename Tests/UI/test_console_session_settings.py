@@ -10866,79 +10866,11 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
         assert "wip_provider" not in console._console_send_blocked_reason()
 
 
-@pytest.mark.asyncio
-async def test_console_missing_model_opens_console_settings_from_summary() -> None:
-    app = _build_test_app()
-    app.chat_api_provider_value = "llama_cpp"
-    app.chat_api_model_value = None
-    # An empty model, not an absent one: once saved, an absent key falls back
-    # to the template's chat_defaults.model (TASK-33001.5).
-    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
-    app.app_config["api_settings"] = {
-        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
-    }
-    app.providers_models = {"llama_cpp": ["model-a"]}
-    # TASK-33001.5: an untouched chat follows the saved defaults.
-    persist_seeded_config(
-        app,
-        "chat_defaults",
-        "api_settings.llama_cpp",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _visible_console_settings_button(console, pilot)
-        # The shared Workbench recovery banner stays hidden — the setup
-        # card's action button carries this recovery instead (Phase 2 spec,
-        # section 2).
-        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
-
-        recovery_button = console.query_one("#console-setup-modal-action", Button)
-        assert str(recovery_button.label) == "Choose model"
-        assert recovery_button.display is True
-
-        recovery_button.press()
-        modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        # TASK-33006.4: Choose model lands on Change; nothing picks a model
-        # for the user. Enter opens the Console's real pick-only switcher.
-        await _wait_for_focused_id(host, pilot, "console-settings-model-change")
-        assert str(
-            modal_screen.query_one("#console-settings-model-summary", Static).render()
-        ) == "no model · llama.cpp"
-        from tldw_chatbook.Widgets.Console.console_model_popover import (
-            ConsoleModelPopover,
-        )
-
-        await pilot.press("enter")
-        for _ in range(40):
-            await pilot.pause(0.05)
-            if isinstance(host.screen, ConsoleModelPopover):
-                break
-        assert isinstance(host.screen, ConsoleModelPopover) and host.screen._pick_only
-        await host.workers.wait_for_complete()
-        await pilot.press(*"model-a", "enter")
-        for _ in range(40):
-            await pilot.pause(0.05)
-            if host.screen is modal_screen:
-                break
-        assert (modal_screen._active_provider, modal_screen._current_model_value()) == (
-            "llama_cpp",
-            "model-a",
-        )
-        readiness = modal_screen.query_one("#console-settings-readiness", Static)
-        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
-        assert "Credential · Not required" in str(readiness.renderable)
-
-        await pilot.click("#console-settings-save")
-        await _wait_for_console_top_screen(host, console, pilot)
-        await _wait_for_selector(console, pilot, "#console-settings-summary")
-        await _visible_console_settings_button(console, pilot)
-
-        text = _screen_visible_text(console)
-        assert "Model: model-a" in _summary_text(console)
-        assert "Setup required: choose a model in Chat settings." not in text
-        assert console._console_send_blocked_reason() == ""
+# TASK-33008.3: test_console_missing_model_opens_console_settings_from_summary
+# pinned the Get started card's Choose model opening Chat settings. The card
+# now opens Switch model; the rewritten test is
+# test_console_setup_card_switcher.py::
+# test_card_choose_model_opens_switch_model_and_sets_the_new_chat_default.
 
 
 @pytest.mark.asyncio

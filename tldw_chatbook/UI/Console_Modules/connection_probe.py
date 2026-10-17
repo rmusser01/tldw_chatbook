@@ -57,7 +57,8 @@ SWITCHER_PROBE_CACHE_SECONDS = 10.0
 #: At most this many switcher probes in flight for one open (AC#2).
 SWITCHER_PROBES_IN_FLIGHT = 3
 #: The only providers a switcher open may contact: keyless and URL-based.
-#: Not qwencloud (a keyed cloud) nor the in-process local providers.
+#: Not qwencloud (a keyed cloud), nor the keyless servers with no models
+#: route (MLX-LM, local-llm: servers too, not in-process engines).
 _SWITCHER_PROBE_PROVIDER_KEYS = KEYLESS_PROVIDER_KEYS & URL_BASED_PROVIDER_KEYS
 #: Per evidence owner: when each connection's last switcher probe was queued.
 _SWITCHER_PROBE_STARTS: WeakKeyDictionary[

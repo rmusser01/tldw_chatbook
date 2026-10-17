@@ -668,13 +668,15 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             self.workspace_id = str(workspace_id or "").strip()
             self.expected_available = bool(expected_available)
 
-    class Relabeled(Message):
-        """Posted after a width-driven relabel recompose.
+    class Recomposed(Message):
+        """Posted once any rebuild of the tray's children has finished.
 
-        A relabel rebuilds the tray's children from compose(), which
-        discards any controls the screen mounted out-of-band (the
+        A rebuild (a width relabel, a state change, or any other recompose)
+        discards the controls the screen mounted out-of-band (the
         transitional legacy "New conversation" alias). The screen listens
-        for this message and re-applies them.
+        for this message and re-applies them. Phase 8 round 2 finding 8: it
+        used to be posted only for a relabel, and before that rebuild ran,
+        so "New conversation" could vanish after setup or a Settings return.
         """
 
     def __init__(
@@ -842,6 +844,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             ):
                 return True
         return False
+
+    async def recompose(self) -> None:
+        """Rebuild, then say so: the screen re-applies its out-of-band controls."""
+        await super().recompose()
+        if self.is_attached:
+            self.post_message(self.Recomposed())
 
     def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
         """Return True only when the mounted DOM already IS ``state``'s DOM.
@@ -1133,7 +1141,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
-            self.post_message(self.Relabeled())
         return True
 
     def _fit_height_to_content(self) -> None:

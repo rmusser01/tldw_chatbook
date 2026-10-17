@@ -623,7 +623,8 @@ class BaseAppScreen(Screen):
 
         Args:
             source: Context owner tag (e.g. "console"); scopes clears.
-            shortcuts: ``((key, label), ...)`` pairs to render.
+            shortcuts: ``((key, label), ...)`` pairs to render; a third
+                ``False`` marks a key that does nothing here (no hint at all).
         """
         registration = (source, tuple(shortcuts))
         self._footer_shortcut_registration = registration

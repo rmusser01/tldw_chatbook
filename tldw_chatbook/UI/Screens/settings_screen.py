@@ -463,7 +463,7 @@ from .settings_speech_tts import (
 )
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.conversation_settings_navigation import (
-    ConsoleSettingsReturnTarget,
+    ConsoleProviderReturnIntent,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
@@ -4601,7 +4601,9 @@ class SettingsScreen(BaseAppScreen):
             )
         except (TypeError, ValueError):
             return
-        if conflict and outcome is not None:
+        from ..Settings_Modules.provider_return import console_return_lapsed
+
+        if (conflict and outcome is not None) or console_return_lapsed(self, target):
             return
         self._provider_return_target = target
         self._provider_navigation_conflict_target = target if conflict else None
@@ -4609,7 +4611,7 @@ class SettingsScreen(BaseAppScreen):
         if not conflict:
             self._navigation_provider = target.provider
             self._navigation_model = target.model
-            self._navigation_model_is_explicit = True
+            self._navigation_model_is_explicit = target.pins_model
             self._navigation_field = target.field
 
     def _register_footer_shortcuts(self) -> None:
@@ -13583,15 +13585,15 @@ class SettingsScreen(BaseAppScreen):
         return values if isinstance(values, Mapping) else {}
 
     def _provider_display_setting_values(self) -> dict[str, object]:
-        """Return provider values for rendering without staging navigation context."""
+        """Return values to render, staging no draft; a no-model route resolves once."""
         values = dict(self._provider_setting_values_mapping())
         if self._provider_draft() is not None or not self._navigation_provider:
             return values
         provider = self._navigation_provider
+        from ..Settings_Modules.provider_return import routed_model
+
         # The model _apply_navigation_provider_context puts in the field.
-        model = str(self._navigation_model or "").strip()
-        if not model and not self._navigation_model_is_explicit:
-            model = str(values.get("model") or "").strip()
+        model = routed_model(self, values)  # never another provider's; resolves once
         display_values = dict(values)
         display_values.update(
             {
@@ -13748,7 +13750,7 @@ class SettingsScreen(BaseAppScreen):
         fields = self._provider_return_dirty_field_names()
         if not fields:
             return "No existing provider changes."
-        return f"Existing unsaved changes: {', '.join(fields)}."
+        return f"Unsaved changes: {', '.join(fields)}."  # this visit's too
 
     def _provider_navigation_conflict_copy(self) -> str:
         target = self._provider_navigation_conflict_target
@@ -13772,32 +13774,15 @@ class SettingsScreen(BaseAppScreen):
         )
         return f"Discard changes and configure {provider}"
 
-    def _provider_return_continuation_copy(self) -> str:
-        if (
-            self._provider_return_outcome
-            is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
-        ):
-            return (
-                "Credential saved. Return to Chat settings to check "
-                "readiness; provider acceptance is not yet verified."
-            )
-        if (
-            self._provider_return_outcome
-            is ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-        ):
-            return (
-                "Provider settings saved. Return to Chat settings to check "
-                "readiness; generation is not yet verified."
-            )
-        return "Provider settings handoff is inactive."
+    def _provider_return_destination(self) -> str:
+        """Where the return goes: a recovery's Console chat, or Chat settings."""
+        target = self._provider_return_target
+        return "Chat settings" if target is None else target.destination
 
     def _provider_can_return_without_saving(self) -> bool:
-        return bool(
-            self._provider_return_target is not None
-            and self._provider_navigation_conflict_target is None
-            and self._provider_return_outcome is None
-            and self._provider_same_target_has_draft()
-        )
+        from ..Settings_Modules.provider_return import can_return_without_saving
+
+        return can_return_without_saving(self)
 
     def _provider_return_actions_disabled(self) -> bool:
         """Return whether confirmation or committed navigation owns the return."""
@@ -13809,6 +13794,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_provider_return_widgets(self) -> None:
         """Refresh the bounded handoff regions without recomposing provider inputs."""
+        from ..Settings_Modules import provider_return
 
         try:
             existing = self.query_one(
@@ -13825,22 +13811,25 @@ class SettingsScreen(BaseAppScreen):
                 "#settings-provider-conflict-discard", Button
             ).label = self._provider_conflict_discard_label()
             continuation = self.query_one("#settings-provider-return-continuation")
-            continuation.display = self._provider_return_outcome is not None
+            continuation.display = provider_return.return_outcome(self) is not None
             self.query_one(
                 "#settings-provider-return-continuation-status", Static
-            ).update(self._provider_return_continuation_copy())
-            self.query_one(
-                "#settings-provider-return", Button
-            ).disabled = self._provider_return_actions_disabled()
+            ).update(provider_return.continuation_copy(self))
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).display = self._provider_can_return_without_saving()
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).disabled = self._provider_return_actions_disabled()
-            self.query_one(
-                "#settings-provider-conflict-return", Button
-            ).disabled = self._provider_return_actions_disabled()
+            # The target can change kind without a recompose: relabel both returns.
+            label = escape_markup(f"Return to {self._provider_return_destination()}")
+            for selector in (
+                "#settings-provider-return",
+                "#settings-provider-conflict-return",
+            ):
+                button = self.query_one(selector, Button)
+                button.label = label
+                button.disabled = self._provider_return_actions_disabled()
         except QueryError:
             return
 
@@ -13866,7 +13855,11 @@ class SettingsScreen(BaseAppScreen):
     def _claim_provider_return_intent(
         self,
     ) -> (
-        tuple[PendingHandoffStore, HandoffClaim, ConversationSettingsReturnIntent]
+        tuple[
+            PendingHandoffStore,
+            HandoffClaim,
+            ConversationSettingsReturnIntent | ConsoleProviderReturnIntent,
+        ]
         | None
     ):
         target = self._provider_return_target
@@ -13876,10 +13869,9 @@ class SettingsScreen(BaseAppScreen):
         claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
         if claim is None:
             return None
-        if (
-            claim.revision != target.return_revision
-            or type(claim.value) is not ConversationSettingsReturnIntent
-        ):
+        # The exact revision and the exact kind: the modal's intent for its
+        # own target, or the Console intent of the chat the target names.
+        if claim.revision != target.return_revision or not target.matches(claim.value):
             store.release(claim)
             return None
         return store, claim, claim.value
@@ -13909,17 +13901,14 @@ class SettingsScreen(BaseAppScreen):
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self.app.notify(
-                "Chat settings return is no longer available.",
+                f"{self._provider_return_destination()} return is no longer available.",
                 severity="warning",
+                markup=False,
             )
             self._settle_provider_return_state()
             return False
         store, claim, intent = claimed
-        target = ConsoleSettingsReturnTarget(
-            **intent.to_context(),
-            return_revision=claim.revision,
-            outcome=outcome,
-        )
+        target = intent.return_target(claim.revision, outcome)
         if not store.release(claim):
             self._settle_provider_return_state()
             return False
@@ -17994,6 +17983,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._provider_test_result = detail
         self._update_provider_test_result()
+        self._update_provider_return_widgets()  # its line quotes the Key check
         self.app.notify(
             summary,
             severity=(
@@ -18547,8 +18537,8 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "Reduce motion"),
                 (
                     "Purpose",
-                    "Renders the splash screen and Console setup backdrop as "
-                    "static frames instead of full-screen animations.",
+                    "Renders the splash screen, character expressions and the "
+                    "Buddy as static frames instead of animations.",
                 ),
                 ("Saved as", "appearance.reduce_motion"),
                 ("Validation", "enabled or disabled"),
@@ -23149,8 +23139,8 @@ class SettingsScreen(BaseAppScreen):
                         self._appearance_bool_label("reduce_motion"),
                         id="settings-appearance-reduce-motion",
                         tooltip=(
-                            "Render the splash screen and Console setup backdrop "
-                            "and character expressions as static frames instead of animations."
+                            "Render the splash screen, character expressions and "
+                            "the Buddy as static frames instead of animations."
                         ),
                     )
                 with Horizontal(classes="settings-input-row"):
@@ -24557,7 +24547,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_navigation_conflict_target = None
         self._navigation_provider = provider
         self._navigation_model = model
-        self._navigation_model_is_explicit = return_target is not None
+        self._navigation_model_is_explicit = (
+            return_target is not None and return_target.pins_model
+        )
         self._navigation_field = field
         self._select_category(category_value, restore_focus=True)
         self._after_category_panes(
@@ -24655,9 +24647,9 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
             return
-        provider_settings = self._provider_setting_values_mapping()
+        provider_settings = self._provider_display_setting_values()  # the shown pair
         model_value = (
-            str(model or "").strip()
+            str(model or self._navigation_model or "").strip()
             if self._navigation_model_is_explicit
             else str(model or provider_settings.get("model") or "").strip()
         )
@@ -24701,10 +24693,13 @@ class SettingsScreen(BaseAppScreen):
         field_selectors = {
             "api_key": "#settings-provider-api-key",
             "endpoint": "#settings-provider-endpoint-value",
+            "model": "#model-search-picker-input",
             "credential_env_var": "#settings-provider-credential-env-var",
             "reasoning": "#settings-model-profile-reasoning-effort",
         }
-        selector = field_selectors.get(str(field or "").strip())
+        from ..Settings_Modules.provider_return import route_focus
+
+        selector = route_focus(self, field_selectors.get(str(field or "").strip()))
         if not selector:
             return
         self._pending_navigation_focus_selector = selector
@@ -31176,7 +31171,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_navigation_conflict_target = None
         self._navigation_provider = target.provider
         self._navigation_model = target.model
-        self._navigation_model_is_explicit = True
+        self._navigation_model_is_explicit = target.pins_model
         self._navigation_field = target.field
         self._apply_navigation_provider_context(
             target.provider,
@@ -31196,8 +31191,10 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-provider-return")
     def handle_provider_return(self, event: Button.Pressed) -> None:
+        from ..Settings_Modules.provider_return import return_outcome
+
         event.stop()
-        outcome = self._provider_return_outcome
+        outcome = return_outcome(self)  # A Console return needs no save first.
         if outcome is not None:
             self._return_to_conversation_settings(outcome)
 
@@ -31209,6 +31206,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-provider-return-without-save")
     def handle_provider_return_without_saving(self, event: Button.Pressed) -> None:
         """Reuse the category discard guard before returning unsaved."""
+        from ..Settings_Modules.provider_return import discard_question
 
         event.stop()
         if (
@@ -31222,6 +31220,8 @@ class SettingsScreen(BaseAppScreen):
         async def _cancel_return() -> None:
             self._provider_return_confirmation_open = False
             self._update_provider_return_widgets()
+            # The fence above disabled this button, which took its focus.
+            self.query("#settings-provider-return-without-save").focus()
 
         async def _return_after_revert() -> None:
             try:
@@ -31240,8 +31240,8 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.app.push_screen(
                 ConfirmationDialog(
-                    title="Revert Settings changes",
-                    message="Discard all unsaved changes to Providers & Models?",
+                    title="Return without saving",
+                    message=discard_question(self),
                     confirm_label="Discard changes",
                     cancel_label="Keep editing",
                     confirm_callback=_return_after_revert,
@@ -33807,7 +33807,7 @@ class SettingsScreen(BaseAppScreen):
                     self._provider_return_outcome = None
                     self._navigation_provider = conflict_target.provider
                     self._navigation_model = conflict_target.model
-                    self._navigation_model_is_explicit = True
+                    self._navigation_model_is_explicit = conflict_target.pins_model
                     self._navigation_field = conflict_target.field
                     self._apply_navigation_provider_context(
                         conflict_target.provider,

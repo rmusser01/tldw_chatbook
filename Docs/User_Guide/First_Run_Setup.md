@@ -52,6 +52,42 @@ press **Retry** on the Model step. A model list that arrives after a failed
 **Test connection** replaces that test's result. A different key or address
 always counts as a new check.
 
+When the Model step has no models to list, the list box shows one line of
+plain text instead:
+
+- "(loading models…)" while it asks the server.
+- "Pick a provider first — or type a model name below" when no provider is chosen.
+- "(no models found — enter one below)" when the server lists none.
+- "Model listing unavailable; enter the model ID used by this endpoint." when the server has no model list, when it answers the model list with a 403 (that key may not list models, which says nothing about chatting, so the key is not marked as rejected), or when Anthropic uses your Claude subscription: its model list needs an API key, and the subscription is not one. The Provider step names the same cause, after its own model check and after **Test connection** alike: "Model listing unavailable; you can enter the model ID on the next step."
+- "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected.
+- "*Provider* needs an API key and none was set. Go Back to add one, or enter a model ID below." when the server refused a check that carried no key (a llama.cpp server started with `--api-key`, say).
+
+  These two show no **Retry**, because retrying cannot fix a key. The Provider
+  step names the same cause, after its own model check and after **Test
+  connection** alike (a Test's line starts with ✗): "*Provider* rejected this
+  API key. Update it, or continue anyway." or "*Provider* needs an API key and
+  none was set. Add one under Authentication, or continue anyway." In both
+  cases the section is
+  titled "Authentication", not "Authentication (optional)", because a server
+  that refuses a key, or asks for one, wants one. The title stays while that
+  provider and address are selected, until a check of that address that sends
+  no key gets through (the server was restarted without `--api-key`).
+
+  Under a key you typed, the line says what the last **Test connection** or
+  model check of that key found: "Key staged — the server rejected it; update
+  it above." after a 401, and "Key staged — the server did not refuse it." when
+  the server answered. Before any check of that key, or when the check could
+  not reach the server or got no usable model list (as after a 403 to **Test
+  connection** or to the model check: that key may not list models, which
+  says nothing about chatting), it reads "Key staged — it will be checked
+  when you continue."
+- "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
+
+The line is a message, not an option: it has no radio marker, and the arrow
+keys, Space and Enter cannot select it. Tab skips it (while models load it
+holds the list's place), so focus goes to the **Or enter a model name** field
+below, which always works.
+
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the
 arrow keys and set up here, hosted presets included (Together, Fireworks,
@@ -202,7 +238,8 @@ Cloning for a consistent voice.
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved — and if the connection check failed while you were setting up (a
-rejected API key, an unreachable local server), the summary says so instead
+rejected API key, a server that needs a key you didn't set, an unreachable
+local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
 past the model step asks for an explicit "Continue anyway". The Voice line names
 the voice replies use — service, model and voice (for example "✓ Voice —

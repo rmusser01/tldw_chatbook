@@ -27,6 +27,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleProviderReturnIntent,
     ConversationSettingsReturnIntent,
 )
 from tldw_chatbook.UI.Navigation.vllm_handoff import (
@@ -186,6 +187,48 @@ def test_conversation_settings_return_handoff_replaces_and_detaches() -> None:
         "focus_control_id": None,
     }
     assert store.acknowledge(claim) is True
+
+
+def test_console_provider_return_shares_the_single_return_slot() -> None:
+    """TASK-33008.1 AC#5: a Console return carries no key, endpoint or prompt
+    text, and the newer request of either kind supersedes the older one.
+
+    TASK-33008.2 (R43): besides the chat id it may name the provider and the
+    model Switch model reopens on, and the store's own copy keeps both."""
+    store = PendingHandoffStore()
+    modal = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    console = ConsoleProviderReturnIntent("session-2", "openai", "gpt-5")
+    store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, modal)
+    revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, console)
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision - 1
+        )
+        == "superseded"
+    )
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None
+    assert claim.revision == revision
+    assert claim.value == console
+    assert claim.value is not console
+    assert tuple(item.name for item in fields(claim.value)) == (
+        "session_id",
+        "switcher_provider",
+        "switcher_model",
+    )
+    assert (claim.value.switcher_provider, claim.value.switcher_model) == (
+        "openai",
+        "gpt-5",
+    )
+    store.release(claim)
+    newer = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, modal)
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "superseded"
+    )
+    assert store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN).revision == newer
 
 
 def test_conversation_settings_return_handoff_requires_exact_ack_and_supports_release() -> None:

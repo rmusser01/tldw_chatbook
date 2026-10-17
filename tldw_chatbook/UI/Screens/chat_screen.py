@@ -348,11 +348,6 @@ from ...Chat.Chat_Deps import (
     ChatProviderError,
     ChatRateLimitError,
 )
-from ...Chat.console_provider_endpoints import (
-    first_configured_endpoint,
-    normalize_generic_endpoint_for_compare,
-    safe_endpoint_display,
-)
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
@@ -381,6 +376,7 @@ from ...Chat.local_server_discovery import (
     discover_local_servers,
 )
 from ...Chat.custom_endpoint_registry import provider_identity_key
+from ...Chat.console_provider_endpoints import with_provider_endpoint
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_readiness import (
     get_provider_readiness,
@@ -465,7 +461,6 @@ from ...config import (
     get_cli_setting,
     load_settings,
     save_setting_to_cli_config,
-    save_settings_to_cli_config,
 )
 from ...Library.library_rag_service import LibraryRagSearchRequest
 from ...Library.library_rag_state import (
@@ -1187,9 +1182,25 @@ CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
 #: advertising "Enter send" is a lie -- Enter activates the focused setup-card
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
+#: Capture finding 3 (ADR-031 rule 5): every other workbench key returns at
+#: once, or only puts focus back on the card, while the card blocks (Alt+M
+#: and Ctrl+O included, R10), so the blocked footer names only F1 and Ctrl+P.
+#: F6 is listed as unavailable so the app-wide cluster leaves it out too.
 CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
     ("Enter", "continue setup"),  # the real action leads, as collapsed's Esc does
-    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] in ("F1", "Ctrl+P")),
+    ("F6", "next pane", False),
+)
+
+#: Capture fix 3 finding 3 (02b): a dialog over the Console (Switch model, over
+#: the card or not) takes Enter, the Console's own keys do not reach it, and
+#: every app key but Ctrl+P and Ctrl+Q is inert under a modal (measured: F1, F6
+#: and Ctrl+Shift+F do nothing there), so while one covers the Console the
+#: footer names only the palette beside the app's Ctrl+Q.
+CONSOLE_WORKBENCH_SHORTCUTS_COVERED = (
+    ("Ctrl+P", "palette"),
+    ("F1", "help", False),
+    ("F6", "next pane", False),
 )
 
 #: TASK-25733: the same lie as the setup-blocked case above, from a different
@@ -2737,10 +2748,15 @@ class ChatScreen(BaseAppScreen):
         self,
         provider: str,
         model: str | None,
+        app_config: Mapping[str, object] | None = None,
     ) -> ConsoleSettingsReadiness:
-        """Resolve future-chat readiness through the target default chain."""
+        """Resolve future-chat readiness through the target default chain.
 
-        app_config = self._provider_readiness_app_config()
+        ``app_config`` stands in for the saved configuration (TASK-33008.3:
+        the Get started card reads a detected server's endpoint in memory).
+        """
+
+        app_config = app_config or self._provider_readiness_app_config()
         settings = build_target_default_console_session_settings(
             app_config,
             provider,
@@ -3537,7 +3553,10 @@ class ChatScreen(BaseAppScreen):
 
         target = ConsoleSettingsReturnTarget.from_context(context)
         if target is None:
-            logger.debug("Ignoring invalid Conversation settings return context")
+            from ..Console_Modules.provider_return import capture_provider_return
+
+            if not capture_provider_return(self, context):  # a recovery's return
+                logger.debug("Ignoring invalid Conversation settings return context")
             return
         if self._pending_conversation_settings_return_target == target:
             return
@@ -3714,6 +3733,10 @@ class ChatScreen(BaseAppScreen):
     def _consume_pending_conversation_settings_return(self) -> None:
         """Schedule the mounted restore once, retaining transient failures."""
 
+        if self._pending_console_provider_return is not None:
+            from ..Console_Modules.provider_return import consume_provider_return
+
+            consume_provider_return(self)  # TASK-33008.1: a recovery's return.
         if (
             self._conversation_settings_return_restore_in_progress
             or self._pending_conversation_settings_return_target is None
@@ -4669,7 +4692,9 @@ class ChatScreen(BaseAppScreen):
         elif action_id == "provider-recovery":
             await self._open_console_provider_recovery()
         elif action_id == CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION:
-            self._apply_detected_local_server()
+            from ..Console_Modules.model_switcher import open_setup_card_switcher
+
+            open_setup_card_switcher(self, self._console_detected_local_server)
         elif action_id == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION:
             # task-32140: the "Get started" card's needs-no-provider action
             # -- same destination as the command-palette "new_note" quick
@@ -4993,6 +5018,11 @@ class ChatScreen(BaseAppScreen):
         replaced by "Enter continue setup", which is what Enter actually does
         with focus on the setup card's primary action.
         """
+        if self._console_covered_by_dialog():
+            self.register_footer_shortcuts(
+                source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS_COVERED
+            )
+            return
         if self._console_setup_modal_blocking():
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
         elif self._console_composer_collapsed:
@@ -5033,6 +5063,11 @@ class ChatScreen(BaseAppScreen):
             shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_covered_by_dialog(self) -> bool:
+        """Return whether a modal screen sits above this one in the stack."""
+        stack = self.app.screen_stack
+        return self in stack[:-1] and stack[-1].is_modal
 
     def _console_rail_focus_active(self) -> bool:
         """Return whether live focus is inside either mounted rail (TASK-32322)."""
@@ -6971,6 +7006,13 @@ class ChatScreen(BaseAppScreen):
     #: Class-level default so it is readable on a screen built by ``__new__``
     #: (several Console tests construct one without running ``__init__``).
     _console_mount_visit_refreshed: bool = False
+    #: Set by ``on_screen_suspend``: the next resume re-arms local-server
+    #: discovery even when it also consumes the token above. A screen pushed
+    #: at launch (the first-run wizard) covers Console before its attach
+    #: reconciliation finishes; view-start re-claims the token on the return,
+    #: so the deferred resume that follows reads as the mount's although it
+    #: is the user's first return (TASK-33008).
+    _console_discovery_rearm_pending: bool = False
     _pending_resume_local_conversation_id: str | None = None
     _pending_character_conversation_target: "CharacterConversationActivationRequest | None" = None
     _failed_character_conversation_target: "CharacterConversationActivationRequest | None" = None
@@ -6985,6 +7027,7 @@ class ChatScreen(BaseAppScreen):
         None
     )
     _conversation_settings_return_restore_in_progress: bool = False
+    _pending_console_provider_return: object | None = None  # provider_return.py
 
     _console_attach_reconciled: bool = False
     _console_attach_visit_generation: int = 0
@@ -8883,11 +8926,18 @@ class ChatScreen(BaseAppScreen):
             model=selected_model,
             base_url=selection.base_url,
         )
+        app_config = self._provider_readiness_app_config()
+        if not selection.configured_endpoint_fallback_allowed and selection.base_url:
+            # A session-only endpoint is what a send uses, unguarded by the
+            # gateway's unsaved-endpoint check: read it as configured.
+            app_config = with_provider_endpoint(
+                app_config, provider_config_key(settings.provider), selection.base_url
+            )
         # TASK-33620.4: NEVER `active_run` here (the settings modal alone gates
         # on it), so consumers' `wait_for_active_run` guards are belt-and-braces.
         readiness = build_console_settings_readiness(
             effective_settings,
-            app_config=self._provider_readiness_app_config(),
+            app_config=app_config,
             connection_evidence=shared_connection_evidence(lambda: self.app),
         )
         model_warning = self._console_model_capability_warning(
@@ -12939,7 +12989,9 @@ class ChatScreen(BaseAppScreen):
 
         if _console_screen_is_torn_down(self) or not workspace_context.is_attached:
             return
-        state = self._workspace._build_console_workspace_context_state()
+        # The state the tray shows: this runs after every tray rebuild, and a
+        # fresh build here would queue work that pushes state again.
+        state = workspace_context.state
 
         if not self.query("#console-new-workspace-conversation"):
             new_button = Button(
@@ -12967,9 +13019,9 @@ class ChatScreen(BaseAppScreen):
                 return
             self._request_console_context_allocation_reconcile()
 
-    @on(ConsoleWorkspaceContextTray.Relabeled)
-    def _on_console_workspace_context_relabeled(self) -> None:
-        """Re-mount out-of-band tray controls after a width-driven relabel."""
+    @on(ConsoleWorkspaceContextTray.Recomposed)
+    def _on_console_workspace_context_recomposed(self) -> None:
+        """Re-mount out-of-band tray controls after any tray rebuild."""
         self.call_after_refresh(
             lambda: self.run_worker(
                 self._sync_console_legacy_workspace_context_aliases,
@@ -14052,13 +14104,6 @@ class ChatScreen(BaseAppScreen):
             modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
         except QueryError:
             return
-        # TASK-2154.10 (AC-04): vestibular-accessible static backdrop when the
-        # user opts into reduced motion; refreshed with every guidance sync.
-        modal.reduced_motion = bool(
-            self.app_instance.app_config.get("appearance", {}).get(
-                "reduce_motion", False
-            )
-        )
         modal.sync_card_state(
             card_state,
             action_label=action_label,
@@ -14081,9 +14126,10 @@ class ChatScreen(BaseAppScreen):
                 self.call_after_refresh(modal.focus_primary_action)
 
     def _maybe_start_console_local_discovery(self) -> None:
-        """Start the one-shot local-server discovery worker while blocked.
+        """Start the local-server discovery worker while blocked.
 
-        Discovery runs at most once per screen, in its own exclusive worker
+        Discovery runs once per visit to a blocking card with nothing found
+        (``on_screen_resume`` re-arms it), in its own exclusive worker
         group so it can never cancel (or be duplicated alongside) the Console
         UI sync workers. Results only ever add a secondary card affordance;
         a quiet network stays quiet.
@@ -14109,7 +14155,16 @@ class ChatScreen(BaseAppScreen):
         if not callable(discover):
             discover = discover_local_servers
         try:
-            servers = tuple(await discover(self._provider_readiness_app_config()) or ())
+            # In its own thread and loop, as the switcher's probe: on the UI
+            # thread the recovery guard refused every plain launch's only
+            # attempt (raw_operation_provenance_invalid), so "Use detected"
+            # never appeared (TASK-33008.3).
+            servers = tuple(
+                await asyncio.to_thread(
+                    asyncio.run, discover(self._provider_readiness_app_config())
+                )
+                or ()
+            )
         except Exception:
             logger.debug("Console local-server discovery failed", exc_info=True)
             return
@@ -14117,125 +14172,6 @@ class ChatScreen(BaseAppScreen):
             return
         self._console_detected_local_server = servers[0]
         self._sync_console_transcript_guidance()
-
-    def _apply_detected_local_server(self) -> None:
-        """Adopt the detected local server as the Console provider.
-
-        Persists ``chat_defaults.provider``/``model`` and the provider's
-        ``api_settings`` endpoint via ``save_settings_to_cli_config``, then
-        applies the same selection to the active session as an explicit user
-        choice (mirroring the settings-modal apply path) and re-evaluates the
-        setup card from the fresh on-disk config (task-177 mechanics; no
-        boot-time snapshots).
-
-        task-16476: a provider that already has a DIFFERENT user-configured
-        endpoint keeps it -- the endpoint write fills only when absent, and
-        the detected endpoint is applied to the session instead, so "Use
-        detected ..." stays effective without clobbering persisted config
-        (discovery is loopback-only and can never see the LAN server the
-        configured endpoint may point at).
-        """
-        server = self._console_detected_local_server
-        if server is None:
-            return
-        model_id = server.model_ids[0] if server.model_ids else None
-        app_config = self._provider_readiness_app_config()
-        provider_key = provider_config_key(server.provider_key)
-        provider_settings = self._config_section(
-            self._config_section(app_config, "api_settings"),
-            provider_key,
-        )
-        configured_endpoint = first_configured_endpoint(provider_settings)
-        provider_values: dict[str, object] = {}
-        # Qodo review (PR #1720): compare connection identities, not raw
-        # strings -- a configured endpoint differing only by a trailing
-        # slash (or a llama.cpp endpoint-path suffix) is the SAME server and
-        # must not warn or skip the canonicalizing write. Same vocabulary
-        # ``_endpoint_differs_for_provider`` uses.
-        if configured_endpoint and self._adoption_endpoints_differ(
-            provider_key, configured_endpoint, server.base_url
-        ):
-            self.app_instance.notify(
-                "Keeping the saved endpoint "
-                f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
-                f"for {provider_key}; using the detected "
-                "server for this session only.",
-                severity="warning",
-            )
-        else:
-            provider_values["api_url"] = server.base_url
-        chat_defaults: dict[str, object] = {"provider": server.provider_key}
-        if model_id:
-            provider_values["model"] = model_id
-            chat_defaults["model"] = model_id
-        if provider_values:
-            try:
-                saved = save_settings_to_cli_config(
-                    {
-                        f"api_settings.{server.provider_key}": provider_values,
-                        "chat_defaults": chat_defaults,
-                    }
-                )
-            except Exception:
-                saved = False
-        else:
-            try:
-                saved = save_settings_to_cli_config({"chat_defaults": chat_defaults})
-            except Exception:
-                saved = False
-        if not saved:
-            logger.warning(
-                "Could not persist detected local server defaults to config; "
-                "applying to this session only"
-            )
-        settings = build_default_console_session_settings(
-            self._provider_readiness_app_config(),
-            server.provider_key,
-            model_id,
-        )
-        settings = replace(settings, base_url=server.base_url)
-        self._session._replace_active_console_session_settings(
-            replace(settings, source="user")
-        )
-        self._sync_console_transcript_guidance()
-        self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
-        )
-
-    @staticmethod
-    def _adoption_endpoints_differ(
-        provider_key: str,
-        configured_endpoint: str,
-        detected_endpoint: str,
-    ) -> bool:
-        """Return whether adoption endpoints differ by connection identity.
-
-        Qodo review (PR #1720): raw string inequality treats a trailing
-        slash (or a llama.cpp endpoint-path suffix) as a different server,
-        warning and skipping the write for what is the same connection. Uses
-        the same normalization vocabulary as
-        ``_endpoint_differs_for_provider``.
-
-        Args:
-            provider_key: Normalized provider readiness key.
-            configured_endpoint: Persisted endpoint for the provider.
-            detected_endpoint: Discovered server base URL.
-
-        Returns:
-            ``True`` only when the two endpoints normalize to different
-            connection identities.
-        """
-        if provider_key in {"llama_cpp", "local_llamacpp"}:
-            configured = normalize_generic_endpoint_for_compare(
-                normalize_llamacpp_base_url(configured_endpoint)
-            )
-            detected = normalize_generic_endpoint_for_compare(
-                normalize_llamacpp_base_url(detected_endpoint)
-            )
-            return configured != detected
-        return normalize_generic_endpoint_for_compare(
-            configured_endpoint
-        ) != normalize_generic_endpoint_for_compare(detected_endpoint)
 
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""
@@ -19727,32 +19663,26 @@ class ChatScreen(BaseAppScreen):
 
             return await retry_console_connection(self)
         if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
+            from ..Console_Modules.model_switcher import open_card_recovery_switcher
+
+            if open_card_recovery_switcher(self):  # The card's Choose provider/model.
+                return
             await self._open_console_settings(
                 focus_model=(
                     target == "hidden" or self._is_console_choose_model_action(_label)
                 )
             )
             return
+        from ..Console_Modules.model_switcher import open_provider_setup
+
         provider, model, settings = self._active_console_provider_model_display()
         settings_provider = settings.provider if settings is not None else None
-        provider_context = str(settings_provider or provider or "").strip()
-        screen_context: dict[str, object] = {
-            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-        }
-        if provider_context:
-            screen_context["provider"] = provider_context
         settings_model = settings.model if settings is not None else None
-        model_context = str(model or settings_model or "").strip()
-        if model_context:
-            screen_context["model"] = model_context
-        field_context = self._console_provider_recovery_field()
-        if field_context:
-            screen_context["field"] = field_context
-        self.post_message(
-            NavigateToScreen(
-                TAB_SETTINGS,
-                screen_context=screen_context,
-            )
+        open_provider_setup(  # Settings, with the way back to this chat.
+            self,
+            str(settings_provider or provider or "").strip(),
+            str(model or settings_model or "").strip() or None,
+            field=self._console_provider_recovery_field(),
         )
 
     def _console_change_review_run_id(
@@ -22702,6 +22632,7 @@ class ChatScreen(BaseAppScreen):
           leave running/installed across a suspend.
         """
         self._console_attach_visit_generation += 1
+        self._console_discovery_rearm_pending = True
         if not self._hooks.review_open:
             self._hooks.cancel_pending()
         for resume_worker in (
@@ -22777,6 +22708,13 @@ class ChatScreen(BaseAppScreen):
             asyncio.ensure_future(self._realtime.teardown()),
             asyncio.ensure_future(self._dictation.suspend()),
         ]
+        # Capture finding 7: the screen on top draws the app's notices, so a
+        # dialog's rack and this one (docked elsewhere) drew each twice.
+        # Textual shows the live ones here again on resume.
+        for rack in self.query("ToastRack"):
+            rack.display = False
+        # Capture fix 3 finding 3: a dialog over the Console takes its keys.
+        self._register_console_footer_shortcuts()
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
@@ -22896,6 +22834,14 @@ class ChatScreen(BaseAppScreen):
         # `_restore_console_workbench_focus` below would just re-apply the
         # stale block and the modal could stick even after setup completed
         # elsewhere.
+        rearm_discovery = (
+            self._console_discovery_rearm_pending or not mount_already_refreshed
+        )
+        self._console_discovery_rearm_pending = False
+        if rearm_discovery and self._console_detected_local_server is None:
+            # Nothing found yet: a server may have started. The sync below
+            # starts discovery only if it finds the card blocking.
+            self._console_local_discovery_started = False
         self._sync_console_transcript_guidance()
         if not mount_already_refreshed:
             self.sync_task_resume_state()

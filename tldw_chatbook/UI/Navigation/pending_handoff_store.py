@@ -22,7 +22,10 @@ from .audio_cpp_model_handoff import (
     AudioCppModelLibraryRequest,
     AudioCppModelLibraryResult,
 )
-from .conversation_settings_navigation import ConversationSettingsReturnIntent
+from .conversation_settings_navigation import (
+    ConsoleProviderReturnIntent,
+    ConversationSettingsReturnIntent,
+)
 from .vllm_handoff import VllmConsoleIntent, VllmDefaultIntent
 from .llamacpp_handoff import LlamaCppConsoleIntent, LlamaCppDefaultIntent
 from ..Screens.study_scope_models import (
@@ -696,6 +699,11 @@ class PendingHandoffStore:
                 config_revision=value.config_revision,
             )
         if channel is HandoffChannel.CONVERSATION_SETTINGS_RETURN:
+            # One slot for both returns, so either kind supersedes the other.
+            if isinstance(value, ConsoleProviderReturnIntent):
+                return ConsoleProviderReturnIntent(
+                    value.session_id, value.switcher_provider, value.switcher_model
+                )
             if not isinstance(value, ConversationSettingsReturnIntent):
                 raise TypeError("Conversation settings return handoff must be typed")
             return ConversationSettingsReturnIntent(

@@ -99,8 +99,14 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     if result.status == "success":
         models = list(_model_ids_from_discovery_result(result))
         return models, "available" if models else "empty", ""
+    # A 403 means this key may not list models: only a 401 rejects a key
+    # (owner ruling 2026-10-02, PR #2958 review; as Test and Settings read it).
     if result.status == "unsupported" or (
-        result.error is not None and result.error.kind == "unsupported_endpoint"
+        result.error is not None
+        and (
+            result.error.kind == "unsupported_endpoint"
+            or result.error.category == "forbidden"
+        )
     ):
         return [], "listing_unavailable", ""
     error_kind = result.error.kind if result.error is not None else ""
@@ -139,6 +145,240 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
     except ValueError:
         return GENERIC_DISCOVERY_FAILURE_CATEGORY
     return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
+
+
+def tested_failure_category(category: object) -> str:
+    """The Model step's failure category for a failed Test's probe category.
+
+    TASK-33008 review: a Test's 401 ("unauthorized") reached
+    ``classify_discovery_failure``, which reads only "authentication" as a
+    key problem, so every surface after Provider said "not reachable".
+    """
+
+    if category == "unauthorized":
+        return "authentication"
+    return str(category or "connection_error").replace("_", " ")
+
+
+def classify_render(step: Any, state: str, category: str) -> tuple[str, str]:
+    """The Model step's discovery state and PROVIDER_PROBE_* value to render."""
+
+    draft = step._current_provider_draft()
+    if subscription_cannot_list(step, draft, state, category):
+        state = "listing_unavailable"
+    key_sent = wizard_state.discovery_sends_a_key(draft)
+    return state, wizard_state.classify_discovery_failure(
+        state, category, key_sent=key_sent
+    )
+
+
+def subscription_cannot_list(
+    step: Any, provider_draft: object, state: str, category: str
+) -> bool:
+    """Whether a refused listing is a Claude subscription's, not a missing key.
+
+    TASK-33008 review: a subscription signs chat in, but discovery never
+    carries it, so a keyless Anthropic model list is refused. The copy said
+    the server "needs an API key and none was set", steering the user to a
+    key they do not need. Such a listing reads as unavailable instead.
+
+    The table is found the way readiness finds it (``provider_settings_for_key``,
+    the first normalised match), so ``[api_settings.Anthropic]`` reads as a
+    subscription here too, not only in readiness (review round 2).
+    """
+
+    app_config = getattr(getattr(step.wizard, "app_instance", None), "app_config", None)
+    if (
+        state != "connection_failed"
+        or category != "authentication"
+        or getattr(provider_draft, "provider", "") != "anthropic"
+        or wizard_state.discovery_sends_a_key(provider_draft)
+        or not isinstance(app_config, Mapping)
+    ):
+        return False
+    from tldw_chatbook.config import provider_settings_for_key
+    from tldw_chatbook.LLM_Calls.anthropic_subscription import anthropic_auth_source
+
+    settings = provider_settings_for_key(app_config.get("api_settings"), "anthropic")
+    return anthropic_auth_source(settings) == "claude_subscription"
+
+
+def failed_listing(
+    owner: Any, display: str, outcome: object, provider_draft: object
+) -> tuple[str, str]:
+    """The Provider step's line for a failed listing, told as the Model step
+    tells it, and the ``PROVIDER_PROBE_*`` failure it names. It changes
+    nothing: the caller marks a refused key (``note_probe_failure``).
+
+    TASK-33008 (capture 06a): the two steps told one 401 two ways. Review
+    round 2: a listing Model reads as "Model listing unavailable" (no model
+    list, or a Claude subscription's) read "Couldn't discover models for
+    {display}. You can continue anyway." here; it names Model's cause now,
+    with this step's own action, while Next is allowed. A missing or untyped
+    outcome reads as a connection failure.
+    """
+
+    try:
+        _models, state, category = _model_discovery_ui_outcome(outcome)
+    except ValueError:
+        state, category = "connection_failed", ""
+    if subscription_cannot_list(owner, provider_draft, state, category):
+        state = "listing_unavailable"
+    failure = wizard_state.classify_discovery_failure(
+        state, category, key_sent=wizard_state.discovery_sends_a_key(provider_draft)
+    )
+    try:  # Model's cause only while Next is allowed
+        unavailable = state == "listing_unavailable" and bool(
+            owner._current_provider_readiness().ready
+        )
+    except Exception:  # noqa: BLE001 - unreadable readiness: the step's own copy
+        unavailable = False
+    if unavailable:
+        return wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE, failure
+    return owner._discovery_failure_status(display, failure), failure
+
+
+def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
+    """Remember a check that was refused for its key (capture 06b).
+
+    ``checked`` is the discovery key or Test identity the check ran under.
+    From then on the Provider step's Authentication section is not called
+    optional while it shows that connection (see ``auth_title``), and the
+    section is scrolled into view: the line says "Add one under
+    Authentication", and at 211x44 it sat below the step's fold. Review
+    round 2 (capture 06d): a server that refused a key that was sent asks
+    for a key too, so that refusal marks the section as well. Review round
+    4: every failed check redraws the key line, so a 403 or a timeout after
+    a 401 to the same key does not leave "the server rejected it" standing.
+    """
+
+    refused = failure in {
+        wizard_state.PROVIDER_PROBE_KEY_REQUIRED,
+        wizard_state.PROVIDER_PROBE_AUTH,
+    }
+    if refused:  # before the refresh: ``auth_title`` reads the mark
+        owner._key_required_at = checked.connection_identity
+    owner._refresh_auth_readiness()
+    if refused:
+        auth = owner.query_one("#setup-provider-auth-toggle")
+        # After the refresh, so the line's new height is laid out first.
+        # ponytail: a check settled before the step's first layout (the app
+        # mid-batch) finds no size and does not scroll; checks are network
+        # round trips, so retry on the step's Resize only if that is seen.
+        owner.call_after_refresh(
+            lambda: auth.is_attached and auth.scroll_visible(animate=False)
+        )
+
+
+def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:
+    """Forget ``note_probe_failure``'s mark once a check of that connection
+    sent no key and got through: the server no longer asks for one (it was
+    restarted without --api-key), so the section is optional again.
+
+    "Sent no key" is the rule that set the mark (``discovery_sends_a_key``):
+    a stored key being cleared is source "draft" with no text, and reading
+    the source alone kept the mark for good on the listing path.
+
+    Every settled Test, and every listing that answered, comes here; a
+    failed listing goes to ``note_probe_failure``. Both refresh the key line
+    (``staged_key_line``, review rounds 2 and 4).
+    """
+
+    key_sent = checked.credential_source != "none"
+    if checked.credential_source == "draft":
+        draft = owner._effective_provider_draft()
+        key_sent = wizard_state.discovery_sends_a_key(draft)
+    if (
+        endpoint == "reachable"
+        and not key_sent
+        and owner._key_required_at == checked.connection_identity
+    ):
+        owner._key_required_at = None
+    owner._refresh_auth_readiness()
+
+
+def tested_evidence_detail(
+    owner: Any, identity: Any, evidence: Any, detail: str
+) -> str:
+    """The Provider line for a settled Test, moving the key mark as it reads.
+
+    TASK-33008: a 401 to a Test that sent no key asks for one, as the
+    listing does, instead of saying the server rejected a key. Review round
+    2 (capture 06d): a 401 to a key that was sent marks the section too.
+    Round 3: that 401 is told as the listing tells it as well, not in the
+    shared verdict's own words. Round 4: so is a listing Test could not get
+    (a 403, a 404), which the shared verdict calls "chat endpoint not tested".
+    """
+
+    if evidence.category == "unauthorized":
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+        failure = (
+            wizard_state.PROVIDER_PROBE_KEY_REQUIRED
+            if identity.credential_source == "none"
+            else wizard_state.PROVIDER_PROBE_AUTH
+        )
+        detail = owner._discovery_failure_status(
+            provider_display_name(identity.provider_key), failure
+        )
+        note_probe_failure(owner, failure, identity)
+    elif evidence.endpoint == "model_listing_unavailable":
+        detail = wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+    note_probe_reached(owner, identity, evidence.endpoint)
+    return detail
+
+
+#: The line under a typed key that no check has answered.
+STAGED_KEY_LINE = "Key staged — it will be checked when you continue."
+
+
+def staged_key_line(owner: Any) -> str:
+    """The line under a typed key, from the last check of it (capture 06d).
+
+    It said "it will be checked when you continue" under a key a Test had
+    just seen refused. The Test of this key and address, or failing that its
+    model listing, now says what it found: a 401 rejected the key, an answer
+    did not. A check that is running, could not reach the server, or got no
+    usable list keeps the line: Next still checks the key.
+    """
+
+    key = owner._model_discovery_key(owner._effective_provider_draft())
+    if key is None:
+        return STAGED_KEY_LINE
+    evidence = owner._test_evidence_for_discovery_key(key)
+    if evidence is not None:
+        refused = evidence.category == "unauthorized"
+        answered = evidence.endpoint == "reachable"
+    else:
+        try:
+            outcome = owner._selected_provider_outcomes.get(key)
+            _models, state, category = _model_discovery_ui_outcome(outcome)
+        except ValueError:  # no listing of this key yet
+            return STAGED_KEY_LINE
+        refused = state == "connection_failed" and category == "authentication"
+        answered = state in {"available", "empty"}
+    if refused:
+        return "Key staged — the server rejected it; update it above."
+    if answered:
+        return "Key staged — the server did not refuse it."
+    return STAGED_KEY_LINE
+
+
+def auth_title(owner: Any, requires_api_key: bool) -> str:
+    """The Provider step's Authentication title.
+
+    TASK-33008 (capture 06b): a keyless provider's section said "(optional)"
+    under a line saying its server needs a key. It drops the word when the
+    provider needs a key, or when a check against the connection on screen
+    was refused for want of one (``note_probe_failure``).
+    """
+
+    if not requires_api_key and owner._key_required_at is not None:
+        key = owner._model_discovery_key(owner._effective_provider_draft())
+        requires_api_key = getattr(key, "connection_identity", None) == (
+            owner._key_required_at
+        )
+    return "Authentication" if requires_api_key else "Authentication (optional)"
 
 
 def _first_run_discovery_staged_settings(

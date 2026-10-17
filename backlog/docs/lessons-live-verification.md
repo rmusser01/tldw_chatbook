@@ -402,6 +402,42 @@ Mount handler, after Textual sets `is_mounted`, passed the four controls and
 original failing hook-review journey; mounted missing controls still raise.
 Queryability and a guard alone do not replace a current-state mount replay.
 
+## A card with no detected server may mean discovery never ran: count the server's requests
+
+**TASK-33008.3, 2026-10-04.** The live check of the Get started card's "Use
+detected \<server\>" ran at 211x44 on a scratch profile, with a stub listing
+models on `127.0.0.1:8080`. On four launches, at base `fba5026064` and with the
+task's change, the card never offered the action and the stub logged zero
+requests. The same `discover_local_servers(load_settings())` call in a bare
+interpreter found the stub at once. A scratch launcher that wrapped the call
+showed the cause: the first attempt, made by the card's mount-time worker,
+raised `ProviderReconnectRequired`, caused by
+`RecoveryRequired('raw_operation_provenance_invalid')` from
+`raw_participants._check`; a retry 1.7 s later succeeded. Discovery runs once
+per screen and its `except` logs at debug level, so the refusal reads as "no
+server found". The mounted tests inject `app.console_local_server_discovery`,
+which bypasses the refused function, so they stay green.
+
+**Fixed in the same task (fix round 1, 2026-10-05).** The card's worker now
+runs discovery in its own thread and loop (`asyncio.to_thread(asyncio.run,
+...)`, the switcher probe's pattern). Same scratch profile and stub: before the
+change, zero requests and no action; after it, two `GET /v1/models` and "Use
+detected llama.cpp (127.0.0.1:8080)" focused on the first launch. A guess that
+does NOT reproduce it: setting `raw_participants._local.operation` to a stray
+object — `_runtime_operation` ignores an unregistered operation. The mounted
+real-discovery test passes at both base and head, so the thread is pinned by
+recording the discovery thread, not by a reproduction. The hop moves one
+caller; it does not fix the cause. `raw_participants._local` is a
+`threading.local`, so a raw scope held across an `await` on the UI loop is
+seen, and refused, by every other task on that thread (TASK-33641.6).
+
+**What to do.** Count the stub's requests before reading the card: zero means
+discovery did not run, not that nothing answered. A test that injects the
+discovery seam does not cover the real entry point. Send a human gap between
+keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
+Enter`): two keys in one tmux write reach the card before Switch model mounts,
+and the second is dropped.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
@@ -3633,6 +3669,23 @@ with pauses beyond the debounce interval and assert both text and cursor/selecti
 Preserve the search cursor on programmatic refocus. The two-theme failing test,
 minimal `select_on_focus=False` repair and corrected native captures are retained
 in `Docs/superpowers/qa/2026-09-18-console-appearance/README.md`.
+
+**Recurrence — TASK-33008.2, 2026-10-11.** Switch model opens with a query
+in Find ("<provider> ", kept with its space "for the model id") and its own
+status line says "type its name and an id". Find takes focus on open, the
+query was selected, and the first key replaced the provider's name: the id
+paired with the chat's provider instead, and Enter moved the chat to OpenAI ·
+llama-live-x where SambaNova was meant. No test that opened the list with a
+query pressed a text key (each set `find.value`; the ones that typed opened
+with an empty Find), so it was found on a live look at the guide's new
+sentence. A
+field that opens with text the user is told to type after needs one test
+that presses the keys (`pilot.press(*"gpt-new")`) and asserts the whole value.
+That fix changed the constructor only. The list's own refocus was left: Enter
+on an "… N more" row puts "<provider> " in Find and focuses it, and reached
+from Temperature that focus still selected the name (the next review read it
+from the code). Grep every `.focus()` on the field, and press the keys from a
+state where the field does not already hold focus.
 
 
 ## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)

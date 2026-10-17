@@ -389,6 +389,7 @@ class ProviderStep(SetupStep):
         self._selected_discovery_generation = 0
         self._selected_discovery_state = "idle"
         self._listed_after_test = False  # models arrived after the last test
+        self._key_required_at: tuple[str, str] | None = None  # see auth_title
         self._selected_discovery_credential_decision: tuple[str, str | int] | None = (
             None
         )
@@ -1285,11 +1286,7 @@ class ProviderStep(SetupStep):
         readiness = self._current_provider_readiness()
         self._subscription_readiness_status = readiness.subscription_status
         auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
-        auth.title = (
-            "Authentication"
-            if readiness.requires_api_key
-            else "Authentication (optional)"
-        )
+        auth.title = model_discovery.auth_title(self, readiness.requires_api_key)
         test_button = self.query_one("#setup-provider-test", Button)
         target = self._probe_target()
         identity = self._provider_current_draft_identity() if target else None
@@ -1345,9 +1342,7 @@ class ProviderStep(SetupStep):
                 f"Found {env_var} in your environment; nothing to store.{unavailable}"
             )
         elif credential_source == "draft":
-            status.update(
-                f"Key staged — it will be checked when you continue.{unavailable}"
-            )
+            status.update(model_discovery.staged_key_line(self) + unavailable)
         else:
             status.update(unavailable.strip())
 
@@ -1677,10 +1672,8 @@ class ProviderStep(SetupStep):
             self._selected_provider_models[discovery_key] = models
             if model_outcome is not None:
                 self._selected_provider_outcomes[discovery_key] = model_outcome
-            setattr(
-                self.wizard,
-                "_first_run_selected_provider_models",
-                dict(self._selected_provider_models),
+            self.wizard._first_run_selected_provider_models = dict(
+                self._selected_provider_models
             )
             self.wizard._first_run_selected_provider_outcomes = dict(
                 self._selected_provider_outcomes
@@ -1705,10 +1698,17 @@ class ProviderStep(SetupStep):
             status = self.query_one("#setup-provider-probe-status", Static)
             if models:
                 status.update(f"Found {len(models)} model(s) for {display}.")
+                model_discovery.note_probe_reached(self, discovery_key)
             elif failed:
-                status.update(self._discovery_failure_status(display))
+                line, failure = model_discovery.failed_listing(
+                    self, display, model_outcome, provider_draft
+                )
+                status.update(line)
+                model_discovery.note_probe_failure(self, failure, discovery_key)
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
+                if model_outcome is not None:  # the listing answered "success"
+                    model_discovery.note_probe_reached(self, discovery_key)
             else:
                 status.update("")
         finally:
@@ -1716,16 +1716,14 @@ class ProviderStep(SetupStep):
             if done is not None and generation == self.probe_generation:
                 done.set()
 
-    def _discovery_failure_status(self, display: str) -> str:
+    def _discovery_failure_status(self, display: str, failure: str = "") -> str:
         """Failure copy that never promises what Next will refuse.
 
-        task-31820 (release UAT): with a keyed cloud provider and no
-        credential, this status said "You can continue anyway." while
-        commit() was simultaneously hard-blocking Next with "API key
-        required." -- both on screen at once. Promise continuation only
-        when the readiness gate would actually allow it; when it wouldn't,
-        name the unblock instead (the key input sits directly below, and
-        "go Back" matches the pinned refusal's vocabulary).
+        task-31820 (release UAT): a keyed cloud provider with no credential
+        said "You can continue anyway." while commit() hard-blocked Next with
+        "API key required." Continuation is promised only when the readiness
+        gate allows it; otherwise the copy names the unblock. TASK-33008:
+        ``failure`` names a refused key or a missing one, as Model does.
         """
         try:
             readiness = self._current_provider_readiness()
@@ -1733,7 +1731,8 @@ class ProviderStep(SetupStep):
         except Exception:
             return f"Couldn't discover models for {display}."
         if ready:
-            return f"Couldn't discover models for {display}. You can continue anyway."
+            copy = wizard_state.probe_failure_copy(failure)
+            return copy.provider_line.format(display=display)
         # Qodo (PR #2445): name the provider's OWN unblock -- "add an API
         # key" is wrong for auth modes that need a login instead (e.g. a
         # Claude subscription). readiness.recovery is the same string
@@ -2342,15 +2341,12 @@ class ProviderStep(SetupStep):
             model="unconfirmed",
             category=evidence.category,
         )
-        verdict = provider_readiness_verdict(snapshot)
-        prefix = (
-            "✓ "
-            if evidence.endpoint == "reachable"
-            else ("✗ " if evidence.endpoint == "unreachable" else "")
+        detail = provider_readiness_verdict(snapshot).detail
+        detail = model_discovery.tested_evidence_detail(
+            self, identity, evidence, detail
         )
-        self.query_one("#setup-provider-probe-status", Static).update(
-            f"{prefix}{verdict.detail}"
-        )
+        prefix = {"reachable": "✓ ", "unreachable": "✗ "}.get(evidence.endpoint, "")
+        self.query_one("#setup-provider-probe-status", Static).update(prefix + detail)
 
     @staticmethod
     def _cloud_probe_base_url(provider_key: str) -> str:
@@ -2435,7 +2431,7 @@ class ProviderStep(SetupStep):
 
     @staticmethod
     def _display_value_for(provider_key: str) -> str:
-        # chat_screen._apply_detected_local_server (line ~9137) persists the
+        # model_switcher.adopt_detected_local_server persists the
         # RAW provider_key into chat_defaults["provider"] (e.g. "llama_cpp",
         # "openai") — not a human display name. Mirror that exact string
         # form here so this step's commit and the live Console apply path
