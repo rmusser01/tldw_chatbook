@@ -389,7 +389,8 @@ names the address the field shows, for example "https://api.openai.com/v1
 generation works. Running it again replaces the previous probe result: while
 the new probe runs the Endpoint row says "checking the model listing", and
 each fact appears once. If the tested values change, run **Test (t)**
-again. The last result for the saved connection is kept for the rest of the
+again. Saving the values you tested keeps the result, and the rows then show
+the saved values, no longer marked "(draft)". The last result for the saved connection is kept for the rest of the
 session, whichever surface ran it: leave Settings and return, and the rows show
 it, including a **Test connection & list models** run in Chat settings of the
 same provider, endpoint and key. Nothing is saved; after a restart every

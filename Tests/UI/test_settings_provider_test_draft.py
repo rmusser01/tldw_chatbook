@@ -2923,3 +2923,53 @@ async def test_a_cloud_provider_is_one_connection_in_settings_and_chat_settings(
     assert replace(in_settings, draft_generation=0) == replace(
         in_chat_settings, draft_generation=0
     )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_redraws_the_test_rows_from_the_saved_values(request):
+    """TASK-33005.8: after 't' and Save the rows kept '(draft)' on the saved
+    Endpoint until a return visit. Save carries the evidence to the saved
+    connection and redraws the rows from the saved values on this visit."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9099"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        screen.set_focus(None)  # Esc's release: t and s are the screen's keys
+        await pilot.pause()
+
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await pilot.press("t")
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
+        tested = _assert_labelled_rows(_provider_test_result_text(screen))
+        assert tested["Endpoint"] == (
+            "http://localhost:9099 (draft) · model listing reached"
+        )
+
+        await pilot.press("s")
+        for _ in range(100):
+            if not screen._category_has_unsaved_changes(
+                SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                break
+            await pilot.pause(0.05)
+        await pilot.pause()
+
+        detail = _provider_test_result_text(screen)
+        assert "(draft)" not in detail, detail
+        rows = _assert_labelled_rows(detail)
+        assert rows["Endpoint"] == "http://localhost:9099 · model listing reached"
+        assert rows["Model"] == "llama-3 · listed by the server"
+        assert rows["Readiness"] == tested["Readiness"]

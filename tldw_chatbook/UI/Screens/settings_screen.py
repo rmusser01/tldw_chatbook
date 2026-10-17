@@ -3930,6 +3930,7 @@ class SettingsScreen(BaseAppScreen):
     _PROVIDER_TEST_STALE_COPY = (
         "Provider settings changed since the last check — re-run Configuration check."
     )
+    _PROVIDER_TEST_SENTINELS = (_PROVIDER_TEST_NOT_RUN_COPY, _PROVIDER_TEST_STALE_COPY)
 
     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
         from ...Tool_Packs.service import ToolProfileListing
@@ -14875,11 +14876,7 @@ class SettingsScreen(BaseAppScreen):
         if key != "model":
             return
         identity = self._provider_current_draft_identity()
-        evidence = (
-            self._provider_evidence_store().evidence_for(identity)
-            if identity is not None
-            else None
-        )
+        evidence = self._provider_evidence_store().evidence_for(identity)
         selected_model = str(value or "").strip()
         if evidence is not None and evidence.endpoint == "testing":
             self._provider_evidence_store().invalidate(identity)
@@ -17196,11 +17193,7 @@ class SettingsScreen(BaseAppScreen):
             else None
         )
         identity = self._provider_current_draft_identity()
-        evidence = (
-            self._provider_evidence_store().evidence_for(identity)
-            if identity is not None
-            else None
-        )
+        evidence = self._provider_evidence_store().evidence_for(identity)
         # TASK-33001.3 / TASK-33002.2: the rows are rebuilt from the one
         # current evidence value on every render, so no fact can repeat.
         return self._build_provider_readiness_findings(
@@ -17621,10 +17614,7 @@ class SettingsScreen(BaseAppScreen):
         """
         if self._provider_test_result == self._PROVIDER_TEST_NOT_RUN_COPY:
             identity = self._provider_current_draft_identity()
-            if (
-                identity is not None
-                and self._provider_evidence_store().evidence_for(identity) is not None
-            ):
+            if self._provider_evidence_store().evidence_for(identity) is not None:
                 self._provider_test_result = self._provider_readiness_test_report()[0]
         return self._provider_test_result
 
@@ -17956,10 +17946,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_draft_generation = (
             getattr(self, "_provider_test_draft_generation", 0) + 1
         )
-        if self._provider_test_result in (
-            self._PROVIDER_TEST_NOT_RUN_COPY,
-            self._PROVIDER_TEST_STALE_COPY,
-        ):
+        if self._provider_test_result in self._PROVIDER_TEST_SENTINELS:
             return
         self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
         self._update_provider_test_result()
@@ -33710,6 +33697,10 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if not evidence_preserved:
                     self._mark_provider_test_result_stale()
+                elif self._provider_test_result not in self._PROVIDER_TEST_SENTINELS:
+                    # TASK-33005.8: rows built from the draft drop "(draft)".
+                    self._provider_test_result = self._provider_readiness_test_report()[0]
+                    self._update_provider_test_result()
                 if self._navigation_provider:
                     # A deep link's form now holds the model that was saved.
                     self._navigation_model = model
