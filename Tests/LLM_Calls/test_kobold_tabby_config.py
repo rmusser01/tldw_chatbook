@@ -139,6 +139,8 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
         return _fake_settings.get(section, {}).get(key, default)
 
     monkeypatch.setattr(_general, "get_cli_setting", _fake_get_cli_setting)
+    # TASK-33001.14: the [api_settings] key rung reads the loaded settings.
+    monkeypatch.setattr(_general, "load_settings", lambda: _fake_settings)
 
     result = drain(
         analyze(

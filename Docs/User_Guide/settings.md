@@ -266,6 +266,10 @@ own `[api_settings.<provider>]` table, so it stays the key in use if you set
 the env var later; a save of other rows alone copies nothing. No other `[API]`
 key is shown in that row or copied.
 
+Summaries (Library analysis, web search) send the key the **API key** row
+resolves for their provider, so "no credential", **Clear** and an **Env var**
+choice decide for them as they do for the **Key check**.
+
 Open **Saved model list**, then use **Tab** to reach the discovered-model
 list, arrow keys to move, and **Space** to select a model; its row then starts
 with **selected** and its box shows an **X**. An unchecked row's box stays

@@ -1,6 +1,6 @@
 # ADR 012: Provider Credential Settings Boundary
 
-Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17; amended 2026-10-10: a "stored" save writes a key copied from legacy `[API]`, TASK-33001.15)
+Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17; amended 2026-10-10: a "stored" save writes a key copied from legacy `[API]`, TASK-33001.15; amended 2026-10-17: a summary resolves its key as readiness does, TASK-33001.14)
 Date: 2026-06-30
 Related Task: [backlog/tasks/task-145 - Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md](../tasks/task-145%20-%20Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md)
 Supersedes: N/A
@@ -285,6 +285,38 @@ in place and never revalidated (TASK-33001.13).
   and that table keeps the old gap.
 - The list is made at load. After a save in the same session it still names
   the table, so a later save writes the table's current key again, unchanged.
+
+## Amendment 2026-10-17: a summary resolves its key as readiness does (TASK-33001.14)
+
+Every summary goes through
+`LLM_Calls/Summarization_General_Lib.py::_summarize_via_chat_api` (TASK-34895).
+When its caller passed no key, it read only `get_cli_setting("<provider>_api",
+"api_key")`. That reads the raw TOML, which has no `<provider>_api` tables: the
+loader builds them in memory. So a KoboldCpp or TabbyAPI summary never sent the
+key of the variable its table names, while readiness resolved that key. A cloud
+summary with no caller key (web search passes none) refused with "API Key Not
+Provided" even when Settings held a key. Nothing read `credential_source`.
+
+**Ruling: with no caller key, a summary takes the key that
+`resolve_provider_credential` returns for the provider's `[api_settings]`
+table.** "none" sends nothing, "stored" sends only the table's key, and
+"environment" sends only the variable the table names. Only when that yields no
+key and no source is recorded does the old `<provider>_api` read apply.
+
+Four differences from readiness remain:
+
+- **A key the caller passes** outranks the table, "none" included. Library
+  ingest passes the key readiness resolved; web search passes none.
+- **A hand-written `[<provider>_api] api_key`.** With no source recorded and no
+  key resolved, a summary still reads one from config.toml. The loader never
+  writes one.
+- **A key left in a table under "none" or "environment".** Settings deletes the
+  table's key on those saves. One written by hand is still read by the chat
+  handler's own fallback when the summary hands it no key (`chat_with_kobold`
+  reads `api_settings.koboldcpp.api_key`), so it can be sent while readiness
+  resolves none.
+- **`[API] kobold_api_key` and `tabby_api_key`** reach neither readiness nor a
+  summary: the loader does not copy them into `api_settings`.
 
 ## Links
 

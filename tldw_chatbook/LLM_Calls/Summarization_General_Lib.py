@@ -32,7 +32,13 @@ from loguru import logger
 #
 # Import Local
 from tldw_chatbook.Logging_Config import logging
-from tldw_chatbook.config import get_cli_setting, without_ciphertext
+from tldw_chatbook.config import (
+    ProviderSettingsError,
+    get_cli_setting,
+    load_settings,
+    provider_settings_for_key,
+    without_ciphertext,
+)
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
@@ -738,10 +744,10 @@ def summarize_with_mock_llm(
 # section: the diagnostic ledger pins this module's statement counts
 # (Tests/LLM_Calls/test_summarization_diagnostic_privacy.py).
 #
-# Key resolution mirrors the legacy functions exactly (parameter key,
-# then the legacy `<provider>_api` section; ciphertext never a key), so
-# keyless users see the same in-band refusal the per-provider functions
-# produced.
+# Key resolution: parameter key, then the key readiness resolves
+# (TASK-33001.14), then the legacy `<provider>_api` section while no
+# credential_source is recorded; ciphertext is never a key, and keyless
+# users see the same in-band refusal the per-provider functions produced.
 
 _CHAT_SUMMARIZER_DEFAULT_SYSTEM = (
     "You are a helpful AI assistant who does whatever the user requests."
@@ -1092,6 +1098,25 @@ def _resolve_summarizer_temp(spec: "_SummarizerChatSpec", temp: Any) -> Any:
     return spec.default_temp
 
 
+def _readiness_credential(endpoint: str) -> tuple[str | None, str | None]:
+    """The key readiness resolves for ``endpoint``, and the recorded source."""
+    from ..Chat.provider_readiness import (
+        configured_provider_credential_source,
+        provider_config_key,
+        resolve_provider_credential,
+    )
+
+    provider_key = provider_config_key(endpoint)
+    try:
+        table = provider_settings_for_key(
+            load_settings().get("api_settings"), provider_key
+        )
+    except ProviderSettingsError:
+        return None, None
+    key = resolve_provider_credential(provider_key, table, environ=os.environ)[0]
+    return key, configured_provider_credential_source(table)
+
+
 def _summarize_via_chat_api(
     spec_key: str,
     api_key,
@@ -1140,16 +1165,20 @@ def _summarize_via_chat_api(
         ChatAPIError,
     )
 
-    # Key resolution mirrors the legacy functions exactly: parameter key
-    # first, then the legacy `<provider>_api` section; `enc:` ciphertext is
-    # never a credential. Refusing HERE (in-band, before the chat dispatch)
-    # keeps the legacy refusal shape and keeps the chat handler's own
-    # settings resolution off the keyless path entirely.
-    raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
+    # Key resolution: the parameter key first; then (TASK-33001.14, ADR-012)
+    # the key readiness resolves for the provider's [api_settings] table, so
+    # credential_source decides here as it does for the Console; the legacy
+    # `<provider>_api` section only while no source is recorded. `enc:`
+    # ciphertext is never a credential. Refusing HERE (in-band, before the
+    # chat dispatch) keeps the legacy refusal shape.
+    raw_config_key = None
     if api_key and api_key.strip():
         resolved_key = api_key
     else:
-        resolved_key = without_ciphertext(raw_config_key)
+        resolved_key, source = _readiness_credential(spec.endpoint)
+        if resolved_key is None and source is None:
+            raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
+            resolved_key = without_ciphertext(raw_config_key)
     if not (resolved_key and resolved_key.strip()):
         # Refuse where the provider requires a key, and wherever a key WAS
         # declared but is ciphertext -- `enc:` text is never a credential,

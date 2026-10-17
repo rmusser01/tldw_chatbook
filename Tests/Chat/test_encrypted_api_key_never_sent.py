@@ -377,6 +377,8 @@ def test_summarizers_never_send_ciphertext(monkeypatch, sent, api_name, passed_k
         return default if value is None else value
 
     monkeypatch.setattr(general_lib, "get_cli_setting", setting)
+    # TASK-33001.14: the [api_settings] rung reads the loaded settings.
+    monkeypatch.setattr(general_lib, "load_settings", lambda: config)
 
     result = general_lib._dispatch_to_api(
         "text to summarize", "summarize", api_name, passed_key, 0.1, None, False
