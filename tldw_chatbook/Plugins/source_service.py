@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -311,6 +313,17 @@ def validate_catalog_binding(
         raise ValueError("catalog_package_interpretation_changed")
 
 
+@dataclass(frozen=True)
+class CandidateDiscardReview:
+    """Session-issued exact reference release; never a producer snapshot."""
+
+    reference: AcquisitionReference
+    token: str
+    expires_at: float
+    authority_marker: object
+    protected_identity: str
+
+
 class SourceService:
     """Async IO uses PluginService; synchronous search reads an immutable view."""
 
@@ -587,6 +600,7 @@ class SourceService:
         selection: tuple[str, ...],
         workspace_id: str | None,
         selected_locator: SourceLocator | None = None,
+        enable_in_workspace: bool = False,
     ) -> PluginReview:
         """Review the exact selected entry and explicit remote locator for installation."""
 
@@ -598,7 +612,10 @@ class SourceService:
             try:
                 self.plugins._admission._workspace(workspace_id)
                 return self._coordinator.review(
-                    inspection, selection=selection, workspace_id=workspace_id
+                    inspection,
+                    selection=selection,
+                    workspace_id=workspace_id,
+                    enable_in_workspace=enable_in_workspace,
                 )
             except BaseException:
                 self._discard_candidate(inspection)
@@ -626,6 +643,8 @@ class SourceService:
         *,
         selection: tuple[str, ...],
         workspace_id: str | None,
+        dialect: str | None = None,
+        enable_in_workspace: bool = False,
     ) -> PluginReview:
         """Authenticate the complete direct producer result before ordinary review."""
 
@@ -634,16 +653,202 @@ class SourceService:
                 self._coordinator.owner, self._coordinator.authority, snapshot
             )
             inspection = bind_source_inspection(
-                snapshot.inspection, acquisition_reference=reference
+                (
+                    self._selected_acquired_inspection(snapshot, reference, dialect)
+                    if dialect is not None
+                    else snapshot.inspection
+                ),
+                acquisition_reference=reference,
             )
             validate_inspection_source(self._coordinator, inspection)
             self.plugins._admission._workspace(workspace_id)
             self._remember(inspection)
             return self._coordinator.review(
-                inspection, selection=selection, workspace_id=workspace_id
+                inspection,
+                selection=selection,
+                workspace_id=workspace_id,
+                enable_in_workspace=enable_in_workspace,
             )
 
         return await self.plugins._call(operation)
+
+    @staticmethod
+    def _selected_acquired_inspection(snapshot, reference, dialect):
+        """Choose format over verified bytes, retaining authenticated physical provenance."""
+        observed = inspect_package(
+            Path(reference.materialized_identity), dialect=dialect
+        )
+        original = snapshot.inspection
+        return observed.model_copy(
+            update={
+                "source_identity": original.source_identity,
+                "materialized_identity": reference.materialized_identity,
+                "source_digest": original.source_digest,
+                "link_targets": dict(original.link_targets),
+            }
+        )
+
+    async def inspect_acquired(self, snapshot: AcquiredSnapshot, *, dialect=None):
+        """Authenticate the unchanged producer before choosing an interpretation."""
+
+        def operation():
+            reference = verify_snapshot(
+                self._coordinator.owner, self._coordinator.authority, snapshot
+            )
+            inspection = self._selected_acquired_inspection(
+                snapshot, reference, dialect
+            )
+            return bind_source_inspection(inspection, acquisition_reference=reference)
+
+        return await self.plugins._call(operation)
+
+    async def review_candidate(
+        self,
+        candidate: PackageInspection,
+        *,
+        selection,
+        workspace_id,
+        enable_in_workspace=False,
+    ):
+        """Reissue exact retained candidate inputs, without reacquiring a source."""
+
+        def operation():
+            from .review import inspection_identity
+
+            reference = (
+                candidate.catalog_binding.package
+                if candidate.catalog_binding
+                else candidate.acquisition_reference
+            )
+            if reference is None or self._candidate_inputs.get(
+                reference.operation_id
+            ) != (inspection_identity(candidate), None):
+                raise ValueError("candidate_review_required")
+            validate_inspection_source(self._coordinator, candidate)
+            self.plugins._admission._workspace(workspace_id)
+            return self._coordinator.review(
+                candidate,
+                selection=selection,
+                workspace_id=workspace_id,
+                enable_in_workspace=enable_in_workspace,
+            )
+
+        return await self.plugins._call(operation)
+
+    async def list_persisted_candidates(self, *, limit=50, offset=0):
+        """List authenticated custody; unresolved inventory protects every entry."""
+        validate_page(limit, offset)
+
+        def operation():
+            from .acquisition import _inventory, _qualify
+
+            owner, authority = self._coordinator.owner, self._coordinator.authority
+            records = _inventory(owner, authority)
+            try:
+                protected, roots = self._protected()
+                unresolved = None
+            except (ValueError, OSError):
+                protected, roots, unresolved = (
+                    set(),
+                    set(),
+                    "acquisition_dependencies_unknown",
+                )
+            rows = []
+            for record in sorted(records, key=lambda value: value["operation_id"])[
+                offset : offset + limit
+            ]:
+                reason = unresolved
+                reference = (
+                    AcquisitionReference.model_validate(record["result_reference"])
+                    if record.get("result_reference")
+                    else None
+                )
+                if record["phase"] != "terminal" or reference is None:
+                    reason = reason or "acquisition_custody_unsettled"
+                elif not record["recovery_referenced"]:
+                    reason = reason or "reference_already_released"
+                elif reference.operation_id in protected or self._contains_locator(
+                    reference, roots
+                ):
+                    reason = reason or "acquisition_reference_in_use"
+                else:
+                    try:
+                        _qualify(owner, record)
+                        verify_reference(owner, authority, reference)
+                    except (ValueError, OSError):
+                        reason = "acquisition_custody_recovery_required"
+                rows.append(
+                    {
+                        "operation_id": record["operation_id"],
+                        "reference": reference,
+                        "phase": record["phase"],
+                        "reason": reason,
+                    }
+                )
+            return tuple(rows)
+
+        return await self.plugins._call(operation)
+
+    def _reference_discard_identity(self, reference):
+        from .acquisition import _inventory, _qualify
+
+        owner, authority = self._coordinator.owner, self._coordinator.authority
+        protected, roots = self._protected()
+        if reference.operation_id in protected or self._contains_locator(
+            reference, roots
+        ):
+            raise ValueError("acquisition_reference_in_use")
+        verify_reference(owner, authority, reference)
+        record = next(
+            row
+            for row in _inventory(owner, authority)
+            if row["operation_id"] == reference.operation_id
+        )
+        _qualify(owner, record)
+        return canonical_json(
+            {"record": record, "protected": sorted(protected), "roots": sorted(roots)}
+        )
+
+    async def review_candidate_discard(self, reference: AcquisitionReference):
+        def operation():
+            cache = getattr(self, "_discard_reviews", {})
+            cache = {
+                key: value
+                for key, value in cache.items()
+                if value.expires_at > time.monotonic()
+            }
+            if len(cache) >= 1000:
+                raise ValueError("candidate_review_limit")
+            review = CandidateDiscardReview(
+                reference,
+                uuid4().hex,
+                time.monotonic() + 900,
+                self._coordinator.authority.load_marker(),
+                self._reference_discard_identity(reference),
+            )
+            cache[review.token] = review
+            self._discard_reviews = cache
+            return review
+
+        return await self.plugins._call(operation)
+
+    async def discard_candidate_reference(self, review: CandidateDiscardReview):
+        def operation():
+            if (
+                not isinstance(review, CandidateDiscardReview)
+                or getattr(self, "_discard_reviews", {}).get(review.token) is not review
+                or time.monotonic() >= review.expires_at
+                or self._coordinator.authority.load_marker() != review.authority_marker
+                or self._reference_discard_identity(review.reference)
+                != review.protected_identity
+            ):
+                raise ValueError("candidate_discard_review_stale")
+            release_snapshot(
+                self._coordinator.owner, self._coordinator.authority, review.reference
+            )
+            self._discard_reviews.pop(review.token)
+
+        await self.plugins._call(operation)
 
     async def check_updates(
         self, installation_id: str
@@ -843,6 +1048,18 @@ class SourceService:
         states = [authority.verify_current()] + [
             item.snapshot for item in transition_inventory(authority)
         ]
+        from .data_cleanup import RootReview
+        from .review import PluginReview
+
+        reviews = tuple(self._coordinator._reviews.values())
+        for review in reviews:
+            if isinstance(review, RootReview):
+                # Root reviews retain their original authority and physical custody.
+                states.append(json.loads(review.authority_json))
+                roots.update(row["path"] for row in review.targets)
+            elif not isinstance(review, PluginReview):
+                # Domain refusal is shared with other unresolved custody states.
+                raise ValueError("acquisition_dependencies_unknown")  # noqa: TRY004
         for state in states:
             for row in state["revisions"]:
                 if row.get("acquisition_reference"):
@@ -855,7 +1072,9 @@ class SourceService:
                     binding = CatalogBinding.model_validate(row["catalog_binding"])
                     protect(binding.catalog)
                     protect(binding.package)
-        for review in self._coordinator._reviews.values():
+        for review in reviews:
+            if isinstance(review, RootReview):
+                continue
             inspection = review.inspection
             if inspection.acquisition_reference:
                 protect(inspection.acquisition_reference)
@@ -1052,6 +1271,7 @@ class SourceService:
         return await self.plugins._call(operation)
 
     def _discard_candidate(self, candidate) -> None:
+        from .data_cleanup import RootReview
         from .models import AcquiredSnapshot
         from .review import inspection_identity
 
@@ -1071,9 +1291,13 @@ class SourceService:
             )[0] != inspection_identity(candidate):
                 raise ValueError("candidate_review_required")
             references = self._candidates[reference.operation_id]
+        # Validate the complete mixed registry before invalidating any draft.
+        self._protected()
         self._candidates.pop(reference.operation_id, None)
         self._candidate_inputs.pop(reference.operation_id, None)
         for token, review in tuple(self._coordinator._reviews.items()):
+            if isinstance(review, RootReview):
+                continue
             owned = (
                 review.inspection.catalog_binding.package
                 if review.inspection.catalog_binding

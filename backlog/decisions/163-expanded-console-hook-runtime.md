@@ -645,3 +645,20 @@ ADR197/230/232. Do not restore removed facades, move work back to views, introdu
 new schedulers or treat history as renewed authority. This is direct integration
 of the accepted hook/ownership contracts; behavioral and native lifetime checks
 must run on the rebased source before qualification.
+
+### Explicit managed-plugin tests (R102)
+
+ADR162 Task24/R101–R103 specifies the lazy Console-owned test review/reservation
+adapter. An existing real session supplies captured authority, host event context,
+permissions, budgets and process/MCP lifetime ownership. UI cannot fabricate these
+inputs. Explicit Run may initialize disclosed SessionStart hooks; test effects are
+displayed, not injected into conversation context; no model request is made.
+Cancellation retains actual cleanup and remote uncertainty through existing owners.
+
+### I6 current Console test admission (2026-10-17 integration)
+
+Explicit managed-plugin tests use current asynchronous configuration capture and the actual originating Console session, runtime and received-turn/reservation owners. A shared private nonawaiting publication helper preserves the ordinary submission's existing admission checks. The explicit test path first refuses pending received turns/claims and busy or full capacity, then reserves without an intervening await; it never claims or consumes a received turn. Recapture/currentness, consent, persona/profile/parent ceilings, scope cancellation and original process/root terminal custody remain mandatory. Synthetic initialization and test effects stay outside later conversation context; test-only cleanup cannot retire another turn's or live session's resources.
+
+The existing private MCP composer may retain its actual empty owned-provider group only on the explicit discovery path. That flag does not bypass its kill switch, source/currentness, permissions or captured maximums; normal callers still receive no empty catalog. Discovery uses the exact selected owned component and existing ConnectionOwnership, grants no tools, and detaches only leases acquired by the test's original owner. Review makes no connection/model request. The actual lazy app mixin owns management operations. Existing R4/R12 closed reference forms and complete-set configuration remain authoritative; do not import a later prefill helper into this increment. Current route-owned Plugins CSS and boot-loaded standalone modal rules stay under R15, with unchanged caps.
+
+This directly integrates existing ADR162/163 contracts through current private seams. Original validation counts are historical; TASK32695 AC15 qualifies the latest dev source with real Console capture/reservation, empty discovery and normal-run controls, cancellation/cleanup, complete configuration and both modal visit orders.

@@ -1021,6 +1021,15 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         snapshot = self._detail_snapshot
         if snapshot is None or snapshot.source != "local":
             return []
+        if isinstance(snapshot.detail.get("plugin_owner"), dict):
+            return [
+                Button(
+                    "Manage in Plugins…",
+                    id="mcp-detail-edit",
+                    classes="console-action-secondary",
+                    compact=True,
+                )
+            ]
         if self._delete_armed:
             return [
                 Button(

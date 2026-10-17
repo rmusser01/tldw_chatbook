@@ -874,3 +874,103 @@ The removed `UI/Workbench/route_inventory.py` is not restored. Shared route and 
 ### I5 route-owned Plugins styling (2026-10-17 integration)
 
 Apply the existing ADR097 first-navigation stylesheet owner. The current builder splits only `plugins`-prefixed browser selectors from `features/_plugins.tcss` into generated `screen_feature_plugins.tcss`; the app's existing route CSS map loads it on Plugins entry. Shared-selector, singular `plugin-review` and type-only modal rules stay in the normal boot remainder, so standalone plugin review/authority/status modals retain first-open styling. Current classifier/cascade rules and all startup caps remain unchanged. There is no new loader, Screen.CSS_PATH feature duplication, modal owner, token or cap exception. Existing source builder alone generates the sheets; qualify source synchronization, the full boot budget, first navigation and standalone modal first use at both terminal sizes.
+
+### Task24 / I6 exact management owners (R101–R103)
+
+The management UI consumes issued immutable reviews and the single app-owned
+PluginService/SourceService. Acquired format selection authenticates the unchanged
+full producer before reinspection; reference-discard separately authenticates
+terminal custody and the complete protected dependency union. Install-and-enable
+records only a named workspace intent, atomically with the default-disabled,
+untrusted installation. Trust and configuration remain separate gates.
+
+R101 adds the existing select result kind to the public reviewed selection path.
+It drains through the revision owner, commits exact selection/current revision and
+advances installation authority without changing trust, mappings or activation.
+
+Operation history derives from authenticated transition/current-marker evidence,
+never SQLite hints. App-owned UI awaiters preserve submitted work across navigation;
+restart resolves durable evidence, and session-only failure or uncertain cleanup
+never becomes durable success or confirmed stop. Nonsecret drafts survive Close;
+secrets remain exclusively in the owning ephemeral credential flow.
+
+R102 permits explicit hook/connection tests only through a lazy Console-owned
+review/reservation adapter for an existing real session in the captured workspace.
+It uses normal current authority, permission/persona/parent ceilings, process and
+MCP owners, budgets and cleanup. Review executes nothing; explicit execution
+discloses initialization, makes no model request and displays test effects without
+injecting them into conversation context. No UI-fabricated caller context.
+
+R103 exposes explicit reviewed reboot reconciliation only with a separately
+protected namespace/current-marker-matching clean checkpoint, exact native root
+identities and drained current users. The existing root owner retains that
+positive proof across its own fenced dirty publication and rechecks it at apply.
+Changed boot alone, SQL row absence, operator assertion and released locks never
+prove whole-root quiescence. Dirty, unknown, legacy, reconstructed, reduced-backend,
+remote-uncertain and pending-rebind cases remain Recovery required without proof;
+show specific reasons and available actual stop/wait/retry/resume actions. There
+is no automatic rebind, new persistent proof store or universal recovery claim.
+
+Concrete APIs/scope and controls: `.superpowers/sdd/2026-09-15-managed-plugins-delivery/`
+`task-24-seam-proposal-e817ec8df5.md`, its root-proof addendum and root seam decision.
+ADR required: yes; this amends ADR162 and the ADR163 Console execution handoff.
+
+### Reviewed management removal (R105)
+
+Management device-wide disable/uninstall obtains an actual issued PluginReview
+through PluginService.review_removal before confirmation. The existing
+coordinator binds current revision, authority and consequences.
+PluginService.begin_reviewed_removal validates the retained original object,
+kind, expiry and installation from minimal facade custody, then uses the existing
+immediate fence/cancel request and worker persistence. It carries the original
+review and operation ID; worker revalidation cannot replace them with newer
+state. Refusal after sealing remains a conservative session-only block with an
+honest persistence error, without deletion or automatic reopening. Scoped
+disable uses review_activation(intent="disabled") and commit. Existing emergency
+begin_disable/begin_uninstall behavior is unchanged. Same-request retry retains
+custody; navigation never retargets the reviewed installation or workspace.
+
+## Task24 Fix1 — bounded saved-root impact (R110 / CLI9)
+
+RootUsage.blocker_status(roots, *, limit=50, offset=0) returns the existing
+one-pass owner projection as blockers plus blockers_complete. Existing blockers
+keeps its tuple/page contract. Completeness means offset==0 and the entire
+collected projection fits the requested limit, never atomic quiescence or a
+permission grant. Preserve short live-lock then separate storage access; never
+hold the live fence lock over database reads. PluginService.data_status adds
+this completeness field without a new runtime owner or raised page cap.
+
+Before saved-root confirmation, disclose exact IDs/generations/paths and actual
+owner/workspace/reason/recovery/cleanup metadata. Unknown coverage, missing or
+false completeness, or oversized disclosure disables confirmation. Reread exact
+refs and the displayed projection before submit; changed users or generations
+require renewed review. Normal owner revalidation/fencing/drain still governs
+users arriving later. Wait, cancel operation and cancel affected work remain
+distinct. Uninstalled packages remain absent; history routes by original exact
+installation ID to their retained roots through existing data owners. Mixed
+PluginReview/RootReview acquisition protection retains original dependencies,
+root custody and fail-closed behavior for unknown review kinds.
+
+ADR required: existing ADR162 amendment for the additive status projection; no
+new ADR/schema/owner. ADR163/150/097 remain unchanged. Fix1 retains all initial
+failed phases and qualifies the three Important review findings independently.
+
+
+### Fix1 exact retained-owner pages (R111 / CLI10)
+
+PluginService.data_status accepts optional installation_id and filters the
+authenticated original root owner before page slicing and exact-ref equality.
+The row need not still be installed. Missing IDs return no roots; mismatching
+exact refs refuse. Existing no-filter and installed attached-root exact-ref
+callers retain behavior. The manager's256-root review bound counts only the
+exact target installation, with one bounded lookahead; unrelated roots cannot
+strand retained cleanup. No name matching, fabricated install, raised page cap
+or new authority. ADR162 records this additive read-only facade argument.
+
+### I6 current Console test admission (2026-10-17 integration)
+
+Explicit managed-plugin tests use current asynchronous configuration capture and the actual originating Console session, runtime and received-turn/reservation owners. A shared private nonawaiting publication helper preserves the ordinary submission's existing admission checks. The explicit test path first refuses pending received turns/claims and busy or full capacity, then reserves without an intervening await; it never claims or consumes a received turn. Recapture/currentness, consent, persona/profile/parent ceilings, scope cancellation and original process/root terminal custody remain mandatory. Synthetic initialization and test effects stay outside later conversation context; test-only cleanup cannot retire another turn's or live session's resources.
+
+The existing private MCP composer may retain its actual empty owned-provider group only on the explicit discovery path. That flag does not bypass its kill switch, source/currentness, permissions or captured maximums; normal callers still receive no empty catalog. Discovery uses the exact selected owned component and existing ConnectionOwnership, grants no tools, and detaches only leases acquired by the test's original owner. Review makes no connection/model request. The actual lazy app mixin owns management operations. Existing R4/R12 closed reference forms and complete-set configuration remain authoritative; do not import a later prefill helper into this increment. Current route-owned Plugins CSS and boot-loaded standalone modal rules stay under R15, with unchanged caps.
+
+This directly integrates existing ADR162/163 contracts through current private seams. Original validation counts are historical; TASK32695 AC15 qualifies the latest dev source with real Console capture/reservation, empty discovery and normal-run controls, cancellation/cleanup, complete configuration and both modal visit orders.

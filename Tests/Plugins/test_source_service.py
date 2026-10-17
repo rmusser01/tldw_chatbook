@@ -1232,3 +1232,147 @@ async def test_import_local_read_failure_stays_per_item_when_preview_is_unchange
     assert len(result.failures) == 1
     assert result.failures[0].code == "import_item_unavailable"
     assert sources.list_sources() == before
+
+
+async def test_persisted_reference_discard_uses_retained_review_and_rechecks_identity(
+    source_stack, native_package
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service = source_stack
+    op = "persisted-display-candidate"
+    snapshot = await service.acquire_snapshot(
+        select_local_source(native_package()),
+        op,
+        await service.acquisition_destination(op),
+    )
+    sources = SourceService(service)
+    rows = await sources.list_persisted_candidates()
+    row = next(item for item in rows if item["operation_id"] == op)
+    assert row["reason"] is None
+    review = await sources.review_candidate_discard(row["reference"])
+    with pytest.raises(ValueError):
+        await sources.discard_candidate_reference(replace(review, token="forged"))
+    assert Path(snapshot.materialized_identity).exists()
+    await sources.discard_candidate_reference(review)
+    assert Path(
+        snapshot.materialized_identity
+    ).exists(), "reference discard is not physical cleanup"
+    after = next(
+        item
+        for item in await sources.list_persisted_candidates()
+        if item["operation_id"] == op
+    )
+    assert after["reason"] == "reference_already_released"
+
+
+async def test_selected_format_authenticates_unchanged_full_producer(
+    source_stack, native_package
+):
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service = source_stack
+    op = "format-reviewed"
+    snapshot = await service.acquire_snapshot(
+        select_local_source(native_package()),
+        op,
+        await service.acquisition_destination(op),
+    )
+    sources = SourceService(service)
+    inspected = await sources.inspect_acquired(snapshot, dialect="portable")
+    assert inspected.dialect == "portable"
+    forged = snapshot.model_copy(
+        update={
+            "inspection": snapshot.inspection.model_copy(
+                update={"source_identity": "forged"}
+            )
+        }
+    )
+    with pytest.raises(ValueError):
+        await sources.inspect_acquired(forged, dialect="portable")
+    review = await sources.review_acquired(
+        snapshot, dialect="portable", selection=("skill:review",), workspace_id=None
+    )
+    assert (await service.commit(review, review.operation_id)).committed
+    assert not (await service.management_snapshot(None))[0].trusted
+
+
+async def test_retained_root_review_keeps_candidate_inventory_and_discard_safe(
+    source_stack, native_package
+):
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service, sources = source_stack, SourceService(source_stack)
+    snapshots = []
+    for name in ("installed-shared", "unsubmitted-draft"):
+        snapshots.append(
+            await service.acquire_snapshot(
+                select_local_source(native_package()),
+                name,
+                await service.acquisition_destination(name),
+            )
+        )
+    installed = await sources.review_acquired(
+        snapshots[0], selection=("skill:review",), workspace_id=None
+    )
+    await service.commit(installed, installed.operation_id)
+    root_review = await service.review_data_creation(installed.installation_id)
+    draft = await sources.review_acquired(
+        snapshots[1], selection=("skill:review",), workspace_id=None
+    )
+    rows = await sources.list_persisted_candidates()
+    assert (
+        next(row for row in rows if row["operation_id"] == "installed-shared")["reason"]
+        == "acquisition_reference_in_use"
+    )
+    await sources.discard_candidate(snapshots[1])
+    rows = await sources.list_persisted_candidates()
+    assert (
+        next(row for row in rows if row["operation_id"] == "unsubmitted-draft")[
+            "reason"
+        ]
+        == "reference_already_released"
+    )
+    protected = next(row for row in rows if row["operation_id"] == "installed-shared")
+    with pytest.raises(ValueError, match="acquisition_reference_in_use"):
+        await sources.review_candidate_discard(protected["reference"])
+    assert await service._call(
+        lambda: service._coordinator._reviews.get(root_review.token) is root_review
+    )
+    with pytest.raises(ValueError):
+        await service.commit(draft, draft.operation_id)
+    assert Path(snapshots[0].materialized_identity).exists()
+
+
+async def test_unknown_review_custody_blocks_discard_before_mutation(
+    source_stack, native_package
+):
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service, sources = source_stack, SourceService(source_stack)
+    operation = "unknown-review-custody"
+    snapshot = await service.acquire_snapshot(
+        select_local_source(native_package()),
+        operation,
+        await service.acquisition_destination(operation),
+    )
+    review = await sources.review_acquired(
+        snapshot, selection=("skill:review",), workspace_id=None
+    )
+    await service._call(lambda: service._coordinator._reviews.update(unknown=object()))
+    try:
+        rows = await sources.list_persisted_candidates()
+        assert rows[0]["reason"] == "acquisition_dependencies_unknown"
+        with pytest.raises(ValueError, match="acquisition_dependencies_unknown"):
+            await sources.discard_candidate(snapshot)
+        assert await service._call(
+            lambda: service._coordinator._reviews.get(review.token) is review
+        )
+    finally:
+        await service._call(lambda: service._coordinator._reviews.pop("unknown"))

@@ -3772,6 +3772,30 @@ class ConsoleRuntime:
         except Exception:  # noqa: BLE001 -- unknown shape: the fresh path decides
             return False
 
+    def _plugin_test_owner(self):
+        from .console_plugin_tests import ConsolePluginTests
+
+        owner = getattr(self, "_plugin_tests", None)
+        if owner is None:
+            owner = self._plugin_tests = ConsolePluginTests(self)
+        return owner
+
+    async def prepare_plugin_test(
+        self, session_id, installation_id, component_id, **options
+    ):
+        """Review an explicit test against an existing Console session, without execution."""
+        return await self._plugin_test_owner().prepare(
+            session_id, installation_id, component_id, **options
+        )
+
+    async def execute_plugin_test(self, review):
+        """Keep test custody in Console when a presentation waiter leaves."""
+        return await self._plugin_test_owner().execute(review)
+
+    def discard_plugin_test(self, review):
+        """Discard only an unexecuted review; running work retains its runtime owner."""
+        return self._plugin_test_owner().discard(review)
+
     async def prepare_hooks_v2(
         self,
         session_id: str,
@@ -3780,6 +3804,7 @@ class ConsoleRuntime:
         initiator="manual",
         configuration=None,
         _hook_read=None,
+        test_only=False,
     ):
         """Initialize only at validated execution admission, never at view access.
 
@@ -3872,6 +3897,18 @@ class ConsoleRuntime:
         context_changed = owner is not None and owner.context_key != context_key
         if context_changed and native is not None and configuration is None:
             raise PermissionError("plugin_hook_workspace_admission_required")
+        if (
+            test_only
+            and engine is not None
+            and (
+                previous != signature
+                or context_changed
+                or owner is None
+                or not owner.live
+                or owner.turn_scope is not None
+            )
+        ):
+            raise PermissionError("plugin_test_requires_compatible_idle_hook_session")
         if (previous is not None and previous != signature) or context_changed:
             # The controller owns a reversible validation slot at this point.
             owner = self._hooks_v2_lifecycles.get(session_id)
@@ -3995,6 +4032,11 @@ class ConsoleRuntime:
                 enabled=configured.enabled or bool(native and native.definitions),
                 invalid_admissions=configured.v2_invalid_admissions if configured.enabled else (),
             )
+            if test_only:
+                created = getattr(self, "_plugin_test_created_engines", None)
+                if created is None:
+                    created = self._plugin_test_created_engines = {}
+                created[asyncio.current_task()] = engine
             if native is not None:
                 native.engine = engine
                 engine.native_plugins = native
@@ -4050,13 +4092,14 @@ class ConsoleRuntime:
                 lifecycle.turn_scope = None
                 raise
         if not lifecycle.live:
-            token = lifecycle.reserve(
-                lifecycle.event(
-                    "SessionStart",
-                    data={"reason": reason},
-                    initiator=initiator,
-                )
+            start_event = lifecycle.event(
+                "SessionStart", data={"reason": reason}, initiator=initiator
             )
+            if test_only:
+                start_event = start_event.model_copy(
+                    update={"origin": "host_plugin_test"}
+                )
+            token = lifecycle.reserve(start_event)
             try:
                 await lifecycle.initialize(token)
                 self._require_hook_preparation_source(source)

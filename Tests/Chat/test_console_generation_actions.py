@@ -25,6 +25,7 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
+from tldw_chatbook.Chat import console_generate_image as generation_owner
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     GenerationVariantMeta,
@@ -463,7 +464,9 @@ def test_regenerate_refused_at_cap(monkeypatch):
         lambda: SimpleNamespace(max_variants_per_message=2),
     )
     calls: list = []
-    monkeypatch.setattr(image_module, "run_generation_batch", _fake_batch(calls=calls))
+    monkeypatch.setattr(
+        generation_owner, "run_generation_batch", _fake_batch(calls=calls)
+    )
     notifications: list = []
     screen.app_instance.notify = lambda text, **kw: notifications.append((text, kw))
 
@@ -487,7 +490,9 @@ def test_regenerate_refused_while_inflight(monkeypatch):
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     calls: list = []
-    monkeypatch.setattr(image_module, "run_generation_batch", _fake_batch(calls=calls))
+    monkeypatch.setattr(
+        generation_owner, "run_generation_batch", _fake_batch(calls=calls)
+    )
     notifications: list = []
     screen.app_instance.notify = lambda text, **kw: notifications.append((text, kw))
     screen._image._console_imagegen_inflight_message_ids().add(message.id)
@@ -540,7 +545,7 @@ def test_h3_edit_regenerate_refuses_before_capacity_or_inflight_checks(monkeypat
         ),
     )
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("edit Regenerate must not dispatch")
@@ -570,7 +575,7 @@ def test_regenerate_failure_leaves_message_untouched_and_reports_error(monkeypat
     )
     calls: list = []
     monkeypatch.setattr(
-        image_module, "run_generation_batch", _failing_batch(calls=calls)
+        generation_owner, "run_generation_batch", _failing_batch(calls=calls)
     )
     notifications: list = []
     screen.app_instance.notify = lambda text, **kw: notifications.append((text, kw))
@@ -598,7 +603,7 @@ def test_regenerate_success_appends_variant_and_browses_to_new_index(monkeypatch
     )
     calls: list = []
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         _fake_batch(calls=calls, data=b"appended"),
     )
@@ -651,7 +656,7 @@ def test_regenerate_success_inherits_style_from_position_zero_meta(monkeypatch):
     )
     calls: list = []
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         _fake_batch(calls=calls, data=b"appended"),
     )
@@ -713,7 +718,7 @@ async def test_handle_console_message_action_routes_regenerate_for_generation_me
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
-    monkeypatch.setattr(image_module, "run_generation_batch", _fake_batch(calls=[]))
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _fake_batch(calls=[]))
     button = Button("regen", id=f"console-message-action-regenerate-{message.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
@@ -756,7 +761,7 @@ async def test_handle_console_message_action_blocks_generation_regenerate_when_e
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     monkeypatch.setattr(
-        image_module, "run_generation_batch", _fake_batch(calls=batch_calls)
+        generation_owner, "run_generation_batch", _fake_batch(calls=batch_calls)
     )
     button = Button("regen", id=f"console-message-action-regenerate-{message.id}")
 
@@ -1253,7 +1258,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     store.append_generation_message = _capture_append
 
     # Monkeypatch run_generation_batch and config
-    monkeypatch.setattr(image_module, "run_generation_batch", _mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _mock_batch)
     monkeypatch.setattr(
         image_module,
         "get_image_generation_config",
@@ -1473,7 +1478,7 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
         _fake_llm_context_options
     )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
         image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
@@ -1534,7 +1539,7 @@ async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
         _fake_llm_context_options
     )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
         image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
@@ -1586,7 +1591,7 @@ async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypat
         _fake_llm_context_options
     )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
         image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
@@ -1633,7 +1638,7 @@ async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
         _fake_llm_context_options
     )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
         image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
@@ -1671,7 +1676,7 @@ async def test_generate_image_handler_no_prompt_kill_switch_off_skips_llm_path(
     # _build_console_provider_selection/_ensure_console_provider_gateway) is
     # safe to call as-is here.
 
-    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
         image_module,
         "get_image_generation_config",
@@ -1710,7 +1715,7 @@ async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
 
     screen._image._console_generate_image_llm_context_options = _must_not_be_called
 
-    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
         image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
@@ -1821,7 +1826,7 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
     def _raising_batch(**kwargs):
         raise RuntimeError("adapter exploded unexpectedly")
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _raising_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _raising_batch)
 
     from tldw_chatbook.Chat.console_command_grammar import CommandParse
 
