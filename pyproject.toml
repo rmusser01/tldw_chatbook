@@ -654,6 +654,8 @@ testpaths = ["Tests"]
 # an empty argument or `.` collects from the root, and Docs/ holds test-named
 # files no conftest covers (one calls a paid provider). An explicit path under
 # Docs/ still runs. Pinned by Tests/CI/test_pytest_root_collection_skips_docs.py.
+# pytest resolves --ignore from the directory it starts in, so a run started
+# inside Tests/ (`cd Tests && pytest`) ignores Tests/Docs/ and its two tests.
 # --durations: always report the slowest tests (>=1s) so wall-clock regressions are visible in every run.
 # --strict-markers: an unregistered marker is a collection error, not a silent no-op.
 addopts = "--ignore=STests --ignore=Docs --import-mode=importlib --durations=25 --durations-min=1.0 --strict-markers -ra"

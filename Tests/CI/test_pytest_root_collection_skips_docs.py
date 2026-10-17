@@ -31,7 +31,9 @@ def pytest_collect_file(file_path, parent):
 """
 
 
-def _docs_files_visited(tmp_path: Path, *args: str) -> list[str]:
+def _docs_files_visited(
+    tmp_path: Path, *args: str
+) -> tuple[list[str], subprocess.CompletedProcess[str]]:
     (tmp_path / "docs_recorder.py").write_text(_RECORDER, encoding="utf-8")
     record = tmp_path / "visited.txt"
     environment = {
@@ -44,7 +46,7 @@ def _docs_files_visited(tmp_path: Path, *args: str) -> list[str]:
         PYTHONPATH=str(tmp_path),
         DOCS_RECORD=str(record),
     )
-    subprocess.run(
+    run = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -63,19 +65,31 @@ def _docs_files_visited(tmp_path: Path, *args: str) -> list[str]:
         cwd=PROJECT_ROOT,
         env=environment,
         capture_output=True,
+        text=True,
         timeout=120,
         check=False,
     )
-    if not record.exists():
-        return []
-    return record.read_text(encoding="utf-8").splitlines()
+    visited = record.read_text(encoding="utf-8").splitlines() if record.exists() else []
+    return visited, run
+
+
+def _output(run: subprocess.CompletedProcess[str]) -> str:
+    return f"exit {run.returncode}\n--- stdout\n{run.stdout}\n--- stderr\n{run.stderr}"
 
 
 @pytest.mark.parametrize("argument", ["", "."], ids=["empty-argument", "dot"])
 def test_a_root_run_visits_nothing_under_docs(tmp_path: Path, argument: str) -> None:
-    assert _docs_files_visited(tmp_path, argument) == []
+    visited, run = _docs_files_visited(tmp_path, argument)
+    # A run that crashed (a usage error, a recorder that failed to import or
+    # raised) leaves no record either, so only a finished collection may read
+    # as "nothing visited". With the python plugin off it collects no item and
+    # exits 5.
+    assert run.returncode in (0, 5), _output(run)
+    assert visited == [], _output(run)
 
 
 def test_an_explicit_path_under_docs_is_still_collected(tmp_path: Path) -> None:
     # Collection lists each directory on the way down, so siblings show too.
-    assert EXPLICIT_DOCS_FILE in _docs_files_visited(tmp_path, EXPLICIT_DOCS_FILE)
+    # The run exits 4: with the python plugin off the file yields no collector.
+    visited, run = _docs_files_visited(tmp_path, EXPLICIT_DOCS_FILE)
+    assert EXPLICIT_DOCS_FILE in visited, _output(run)
