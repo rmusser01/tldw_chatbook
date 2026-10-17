@@ -48,6 +48,7 @@ from typing import Callable
 from tldw_chatbook.Chat.cost_display import format_token_count
 
 __all__ = [
+    "LIVE_FRAGMENT_FLOOR",
     "TokenRateReading",
     "TokenRateTracker",
     "format_rate_chip_live_fragment",
@@ -233,6 +234,13 @@ class TokenRateTracker:
         return self._settled
 
 
+#: Live fragments below this rate are suppressed: the EMA decays toward
+#: zero (never reaching it) whenever tokens stop flowing -- tool rounds,
+#: approval waits -- and a "0.0 tok/s" fragment on the run chip would
+#: mislabel a paused phase as crawling streaming (TASK-35160 review).
+LIVE_FRAGMENT_FLOOR = 0.5
+
+
 def format_rate_chip_live_fragment(reading: TokenRateReading) -> str:
     """The live rate as a fragment for the RUN chip's existing copy.
 
@@ -240,16 +248,25 @@ def format_rate_chip_live_fragment(reading: TokenRateReading) -> str:
     it rides ``"Run: Streaming response · 42.3 tok/s"``, so streaming
     never widens the transient cluster beyond the run chip's own
     variable-width contract and idle stays byte-identical to pre-feature.
+    Review follow-up: fragments below :data:`LIVE_FRAGMENT_FLOOR` are
+    suppressed -- during tool rounds and approval waits the EMA decays
+    toward zero but never reaches it, and a "0.0 tok/s" badge would
+    mislabel the paused phase.
 
     Args:
         reading: The tracker's reading for this tick.
 
     Returns:
-        ``"42.3 tok/s"`` for a live reading with a rate; ``""`` otherwise
-        (including settled readings -- a finished response's rate belongs
-        to :func:`format_rate_chip_settled`, never the run chip).
+        ``"42.3 tok/s"`` for a live reading at or above the floor;
+        ``""`` otherwise (including settled readings -- a finished
+        response's rate belongs to :func:`format_rate_chip_settled`,
+        never the run chip).
     """
-    if reading.kind == "live" and reading.rate is not None:
+    if (
+        reading.kind == "live"
+        and reading.rate is not None
+        and reading.rate >= LIVE_FRAGMENT_FLOOR
+    ):
         return f"{reading.rate:.1f} tok/s"
     return ""
 

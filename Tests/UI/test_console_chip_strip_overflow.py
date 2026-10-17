@@ -111,6 +111,10 @@ def _line(scroller: HorizontalScroll) -> Static:
     return scroller.query_one("#console-status-text", Static)
 
 
+def _segment_names(scroller: HorizontalScroll) -> list[str]:
+    return [name for name, _start, _end in _line(scroller).segment_spans]
+
+
 def _assert_line_fully_inside_viewport(scroller: HorizontalScroll, line) -> None:
     viewport = scroller.content_region
     region = line.region
@@ -370,3 +374,40 @@ async def test_arrow_buttons_hidden_when_the_line_fits() -> None:
         right = app.query_one("#console-status-scroll-right", Button)
         assert left.display is False
         assert right.display is False
+
+
+@pytest.mark.asyncio
+async def test_cursor_outlives_visible_segment_shrink_without_crashing() -> None:
+    """Review Critical 1: the cursor is NAME-based. Walking to the end and
+    letting a segment vanish (run ends, tools hide) must never index past
+    the visible list -- the regression used to raise IndexError out of the
+    0.2s poll's render pass and kill the tick."""
+    app = _ChipsOverflowApp(_fat_state())
+    async with app.run_test(size=(110, 24)) as pilot:
+        await pilot.pause(0.2)
+        scroller = app.query_one("#console-status-chip-scroll", HorizontalScroll)
+        line = _line(scroller)
+        line.focus()
+        await pilot.pause()
+        await pilot.press("end")
+        await pilot.pause()
+        assert line._cursor_name is not None
+        names_before = _segment_names(scroller)
+
+        # A segment ABOVE the cursor vanishes (tools drop to zero): the
+        # visible list shrinks under the cursor's old index.
+        from dataclasses import replace
+
+        strip = app.query_one("#console-status-chips", ConsoleStatusChips)
+        strip.sync_state(
+            replace(_fat_state(), tools_label="Tools: —", tools_active=False)
+        )
+        await pilot.pause()
+
+        # No crash, and the cursor either kept its segment or reset.
+        names_after = _segment_names(scroller)
+        if line._cursor_name is not None:
+            assert line._cursor_name in names_after
+        # The line still renders, and a vanished segment stays gone.
+        assert "tools" not in names_after
+        del names_before
