@@ -477,9 +477,14 @@ async def test_mobile_app_js_tags_approval_surfaces_and_handles_run_status(
     # The surface tag: one badge class, rendered from the wire's surface
     # field, labelling desktop-relayed rounds "desktop" and phone ones
     # "phone" (wire text reaches only textContent, never a class name).
+    # Task 3 (#3128 minor 2c fallback): "phone" is reserved for
+    # surface === "mobile" — any other value renders the RAW surface text,
+    # so an unknown future surface is labelled explicitly, never guessed.
     assert "approval-surface" in js
     assert '=== "desktop"' in js
+    assert '=== "mobile"' in js
     assert '"desktop"' in js and '"phone"' in js
+    assert "String(round.surface)" in js
 
     # run_status handling: the desktop relay's completion pushes ride the
     # existing event envelope; the case block must resync the open chat
@@ -488,6 +493,43 @@ async def test_mobile_app_js_tags_approval_surfaces_and_handles_run_status(
     block = js[case_index : js.index("break;", case_index)]
     assert "syncOpenSession()" in block
     assert "refreshApprovals()" in block
+
+
+@pytest.mark.asyncio
+async def test_mobile_app_js_resyncs_truncated_bubbles_and_reconnects_past_1011(
+    tmp_path,
+) -> None:
+    """Task 3 (#3128 minors 5 + 7): reconnect-resync updates streamed rows,
+    and the close policy backs off for every non-4401 code (1011 included).
+
+    JS-logic execution is not possible here (the JS-marker pattern this
+    file's suite uses): the resync is pinned by its fragments — the
+    known-id branch of the merge must route into a resync helper gated on
+    "incoming content is LONGER than what is rendered", updating the row
+    via textContent only, exactly like the live-delta path. The 1011 half
+    pins that the close handler special-cases ONLY the auth-expired
+    redirect and reconnects with backoff otherwise — so the server's
+    shutdown/engine-error close (1011) reads as a transport failure.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.js")
+        assert response.status == 200
+        js = await response.text()
+
+    # Truncated-bubble resync: the known-id skip routes into the resync…
+    assert "resyncTruncatedRow(msg);" in js
+    # …gated on the incoming content being strictly longer than the
+    # rendered copy (a shorter/equal re-delivery changes nothing)…
+    assert "content.length <= knownContent.length" in js
+    # …and the row update itself is textContent-only (the tool-row
+    # variant re-derives its prefix exactly like renderMessage).
+    assert 'row.textContent = toolName ? "tool: " + toolName : content' in js
+
+    # Close policy: only the auth-expired code redirects; everything else
+    # — the server's 1011 shutdown/engine close included — reconnects on
+    # the backoff ladder.
+    assert "close.code === CLOSE_AUTH_EXPIRED" in js
+    assert "setTimeout(connectStream, delay)" in js
 
 
 @pytest.mark.asyncio

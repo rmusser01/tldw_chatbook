@@ -477,8 +477,11 @@ async def handle_mobile_stream(server: Any, request) -> Any:
     with a JSON ``pong``) and one ``{"type": "ping"}`` idle frame per
     ``IDLE_PING_SECONDS`` without outbound traffic. Inbound frames other
     than a ping are ignored in v1. Close codes: ``4401`` when the session
-    is revoked mid-stream (the client redirects to ``/auth/login``),
-    ``1011`` when the event subscription itself fails.
+    is revoked mid-stream (the client redirects to ``/auth/login``);
+    ``1011`` for every engine-side end — the event subscription failing,
+    the service/engine failing to start, and the handler's shutdown
+    cancellation — so the phone reads it as a transport failure and
+    reconnects with backoff rather than treating the stream as ended.
     """
     from aiohttp import WSMsgType, web
 
@@ -517,7 +520,13 @@ async def handle_mobile_stream(server: Any, request) -> Any:
     event_task: asyncio.Task | None = None
     close_code: int | None = None
     try:
-        events = server._get_mobile_service().events()
+        try:
+            events = server._get_mobile_service().events()
+        except Exception as error:
+            # Engine-start failure (service construction / relay attach):
+            # engine-side, never a caller mistake — 1011, not the generic
+            # transport-failure normal close (#3128 minor 7).
+            raise _StreamEngineError() from error
         loop = asyncio.get_running_loop()
         last_send = loop.time()
         receive_task = asyncio.create_task(websocket.receive())
@@ -561,7 +570,12 @@ async def handle_mobile_stream(server: Any, request) -> Any:
                 await websocket.send_json(event.to_wire())
                 last_send = loop.time()
     except asyncio.CancelledError:
-        pass  # server shutdown: drain the subscriber below
+        # Server shutdown cancels the handler mid-drain. The stream ends
+        # for an engine-side reason, not a client one, so close 1011 —
+        # the phone reconnects with backoff instead of reading a normal
+        # close as a politely-ended stream (#3128 minor 7). The subscriber
+        # still drains below.
+        close_code = CLOSE_ENGINE_ERROR
     except _StreamEngineError:
         close_code = CLOSE_ENGINE_ERROR
     except Exception as error:  # noqa: BLE001 - transport failure; the socket is gone

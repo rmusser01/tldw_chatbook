@@ -1443,3 +1443,94 @@ async def test_stream_closes_1011_when_the_engine_stream_fails(
             assert message.data == 1011
 
     await _assert_subscribers_drained(service)
+
+
+def _stream_handler_task() -> asyncio.Task | None:
+    """Find the running ``handle_mobile_stream`` task on this loop.
+
+    Test introspection only: aiohttp runs each request handler inside its
+    connection task, so the route coroutine sits somewhere down the
+    ``cr_await`` chain — walk it (bounded) looking for the handler's
+    qualname. ``None`` means no mobile stream is being served right now.
+    """
+
+    for task in asyncio.all_tasks():
+        coro: Any = task.get_coro()
+        for _ in range(30):
+            if coro is None:
+                break
+            if "handle_mobile_stream" in (getattr(coro, "__qualname__", "") or ""):
+                return task
+            coro = getattr(coro, "cr_await", None)
+    return None
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_1011_when_engine_start_fails(
+    tmp_path, mobile_surface_gate, monkeypatch
+) -> None:
+    """Task 3 (#3128 minor 7): engine-start failure closes 1011.
+
+    ``handle_mobile_stream`` acquires the service's event subscription via
+    ``server._get_mobile_service()``; when THAT raises (service
+    construction / relay attach — engine-side, never a caller mistake) the
+    socket must close with ``CLOSE_ENGINE_ERROR`` (1011), not the generic
+    transport-failure normal close, so the phone reconnects with backoff.
+    """
+
+    def _engine_start_failed() -> Any:
+        raise RuntimeError("engine start failed")
+
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+        monkeypatch.setattr(
+            client.chatbook_test_server, "_get_mobile_service", _engine_start_failed
+        )
+        async with client.ws_connect(
+            "/api/v1/mobile/stream",
+            protocols=["chatbook-v1", f"csrf.{csrf}"],
+        ) as ws:
+            message = await asyncio.wait_for(ws.receive(), timeout=5)
+            assert message.type == WSMsgType.CLOSE
+            assert message.data == 1011
+
+    await _assert_subscribers_drained(service)
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_1011_when_server_shutdown_cancels_the_handler(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """Task 3 (#3128 minor 7): shutdown cancellation closes 1011, not 1000.
+
+    Server shutdown ends ``handle_mobile_stream`` by cancelling it (the
+    handler's ``except asyncio.CancelledError`` path — its own comment
+    reads "server shutdown"). That close used to be a NORMAL close, which
+    the phone could not distinguish from a stream that ended politely; it
+    must carry ``CLOSE_ENGINE_ERROR`` (1011) so the client treats it as a
+    transport failure and reconnects with backoff. The handler task is
+    cancelled exactly the way aiohttp's teardown cancels it.
+    """
+
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+        async with client.ws_connect(
+            "/api/v1/mobile/stream",
+            protocols=["chatbook-v1", f"csrf.{csrf}"],
+        ) as ws:
+            for _ in range(100):
+                if service._event_queues:
+                    break
+                await asyncio.sleep(0.02)
+            assert service._event_queues
+            handler = _stream_handler_task()
+            assert handler is not None, "no handle_mobile_stream task is running"
+            handler.cancel()
+
+            message = await asyncio.wait_for(ws.receive(), timeout=5)
+            assert message.type == WSMsgType.CLOSE
+            assert message.data == 1011
+
+    await _assert_subscribers_drained(service)
