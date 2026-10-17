@@ -24,6 +24,8 @@ This document describes the user-owned memory systems that cross agent sessions:
 | Injection | `Chat/console_chat_controller.py`, `Chat/console_agent_bridge.py`, `Agents/agent_service.py` | snapshot build/splice; `personal_context_block` pinned per run tree; `append_personal_context` into the system prompt |
 | Settings | `Widgets/Settings_Widgets/personal_context_panel.py` | My Profile editor; Settings delegates every read/mutation to the service |
 
+The package keeps its core persistence/context exports eager. Interview-only public exports resolve on first access through the existing submodules; ordinary Console bootstrap and context/tool composition do not initialize the interview workflow. The public export list, object identities and direct submodule imports remain compatible (TASK-34406.9).
+
 ## Snapshot injection (dataflow)
 
 1. **Capture**: interviews, Settings edits, or reviewed agent proposals write encrypted, versioned records via the repository.
