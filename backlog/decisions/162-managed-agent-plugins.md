@@ -974,3 +974,25 @@ Explicit managed-plugin tests use current asynchronous configuration capture and
 The existing private MCP composer may retain its actual empty owned-provider group only on the explicit discovery path. That flag does not bypass its kill switch, source/currentness, permissions or captured maximums; normal callers still receive no empty catalog. Discovery uses the exact selected owned component and existing ConnectionOwnership, grants no tools, and detaches only leases acquired by the test's original owner. Review makes no connection/model request. The actual lazy app mixin owns management operations. Existing R4/R12 closed reference forms and complete-set configuration remain authoritative; do not import a later prefill helper into this increment. Current route-owned Plugins CSS and boot-loaded standalone modal rules stay under R15, with unchanged caps.
 
 This directly integrates existing ADR162/163 contracts through current private seams. Original validation counts are historical; TASK32695 AC15 qualifies the latest dev source with real Console capture/reservation, empty discovery and normal-run controls, cancellation/cleanup, complete configuration and both modal visit orders.
+
+## I7 authenticated cleaned-absence display (R115 / CLI2)
+
+`PluginService.data_status(roots=None, *, installation_id=None, limit=50, offset=0)`
+retains its existing exact-reference validation, original-installation filter and
+bounded pagination. Each result adds only `cleaned_absent: bool`: true when the
+authenticated published root custody is `cleaned_absent`, the existing `open_root`
+validation succeeds, and no recovery reason is present. Unknown/present custody,
+wrong boot/anchors, unexpected recreated leaves and recovery reasons produce false.
+No raw custody, checkpoint or proof body is projected.
+
+This is a point-in-time read-only display fact, not future absence, quiescence,
+root access or permission to bypass reviewed cleanup/drain/recovery. Presentation
+uses recovery reason first, then cleanup state, then known cleaned absence, then
+retained. Existing blockers and cleanup remain authoritative. Public reviewed
+create/delete/status and mounted retained-data Refresh controls cover the seam.
+
+### I7 current moved owners and typed manual routes (2026-10-17 integration)
+
+The former session capture resides in `UI/Console_Modules/turn_admission.py::capture_authority`; it passes the captured `AuthorityInputs.workspace_id` to the existing skill-context capture. Keep the original session module unchanged. The compaction preflight lives in `Chat/console_context_compaction.py::ConsoleCompactionPreflight` under ADR220 (`backlog/decisions/220-console-human-decision-coordination-ownership.md`). Add one explicitly named live `read_controller__release_compaction_submission` accessor beside the existing hook accessor and wire it at the sole current constructor. Cleanup surrounds the actual compact/finish/wait path without removing retry fences, failure latches, admission/projection rules or same-task placeholder semantics. Standalone hook preparation uses current awaited capture and actual reservation gates before nonawaiting publication; it cannot steal a pending received turn or another operation's state/scope.
+
+Current component summaries distinguish skills, commands and manual rules by exact typed identities. Preserve `execute_skill`'s accepted skill/command/manual-rule routes and `current_definition`'s exact current identity checks; the bridge and R11 selectors use them. Apply the private optional component-kind filter to supporting `read_skill_file`, which is skill-only. No display-name fallback, delimiter-derived authorization or MCP-as-instruction execution is introduced. Adapt original collision witnesses to current typed names, supporting-file wrong-kind refusal, valid manual command/rule use and retired/current-token controls. This integrates the original intent while preserving current host callers; existing ADR162/163/220 apply, with no new owner/schema/runtime or raised cap.

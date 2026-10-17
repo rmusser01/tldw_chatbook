@@ -12,6 +12,111 @@ native_package = _native_package
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_review_growth_keeps_focused_action_painted(
+    native_console, native_package, size
+):
+    from Tests.UI.test_plugins_browse import paint
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    package = native_package()
+    original = (package / "skills/review/SKILL.md").read_text()
+    for index in range(12):
+        directory = package / "skills" / f"review-{index}"
+        directory.mkdir()
+        (directory / "SKILL.md").write_text(
+            original.replace("name: review", f"name: review-{index}")
+        )
+    from tldw_chatbook.Plugins.git_source import select_local_source
+
+    operation = "focus-growth-acquisition"
+    destination = await rig.service.acquisition_destination(operation)
+    producer = await rig.service.acquire_snapshot(
+        select_local_source(package), operation, destination
+    )
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service, producer=producer, workspace_id="workspace-a"
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        button = modal.query_one("#plugin-review-prepare", Button)
+        button.focus()
+        await pilot.pause()
+        assert app.focused is button and "Review action" in paint(modal)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert modal.draft.review is not None
+        assert app.focused is button
+        assert button in modal._compositor.visible_widgets
+        assert (
+            button.region.intersection(
+                modal.query_one("#plugin-review-shell").content_region
+            )
+            == button.region
+        )
+        assert "Review action" in paint(modal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_refresh_growth_keeps_focused_action_and_cleaned_status_painted(
+    native_console, size
+):
+    from Tests.UI.test_plugins_browse import paint
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    installed = await rig.install(enable=False)
+    for _ in range(12):
+        creation = await rig.service.review_data_creation(installed.installation_id)
+        await rig.service.create_data(creation, creation.operation_id)
+    rows = await rig.service.data_status(installation_id=installed.installation_id)
+    roots = tuple(row["root"] for row in rows)
+    deletion = await rig.service.review_data_deletion(roots)
+    assert (await rig.service.delete_data(roots, deletion.operation_id)).committed
+    cleaned = await rig.service.data_status(installation_id=installed.installation_id)
+    assert len(cleaned) == 12 and all(row["cleaned_absent"] for row in cleaned)
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        button = modal.query_one("#plugin-review-refresh", Button)
+        button.focus()
+        await pilot.pause()
+        assert app.focused is button and "Refresh status" in paint(modal)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.focused is button
+        assert button in modal._compositor.visible_widgets
+        assert (
+            button.region.intersection(
+                modal.query_one("#plugin-review-shell").content_region
+            )
+            == button.region
+        )
+        painted = paint(modal)
+        assert "Refresh status" in painted
+        assert cleaned[-1]["root"].root_id in painted
+        assert "Cleaned — saved data removed; users: ()" in painted
+
+
+@pytest.mark.asyncio
 async def test_mounted_management_opens_exact_review_without_committing(native_console):
     rig = native_console
     installed = await rig.install(enable=False)
@@ -164,7 +269,7 @@ async def test_actual_first_use_setup_through_masked_dialog(tmp_path, size):
 
 @pytest.mark.asyncio
 async def test_close_reopen_preserves_synthetic_data_and_focus(native_console):
-    from textual.widgets import TextArea
+    from textual.widgets import Select, TextArea
 
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
 
@@ -183,6 +288,10 @@ async def test_close_reopen_preserves_synthetic_data_and_focus(native_console):
         )
         await pilot.pause()
         modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        modal.query_one("#plugin-review-action", Select).value = "test-hook"
+        await pilot.pause()
         field = modal.query_one("#plugin-review-test-data", TextArea)
         field.text = '{"prompt":"retained synthetic input"}'
         field.focus()
@@ -379,7 +488,8 @@ async def test_mounted_exact_reviews_cover_installed_lifecycle(
                 dialect.post_message(Select.Changed(dialect, "auto"))
                 await pilot.pause()
                 assert modal.draft.review is review
-                modal.query_one("#plugin-review-reference", Input).focus()
+                assert not modal.query_one("#plugin-review-reference", Input).display
+                modal.query_one("#plugin-review-action", Select).focus()
                 await pilot.press("escape")
                 await app.push_screen(
                     PluginReviewModal(
@@ -395,7 +505,7 @@ async def test_mounted_exact_reviews_cover_installed_lifecycle(
                         break
                 assert modal.draft.review is review
                 assert modal.draft.selection == ("skill:review",)
-                assert app.focused.id == "plugin-review-reference"
+                assert app.focused.id == "plugin-review-action"
             modal.query_one("#plugin-review-confirm", Button).focus()
             await pilot.press("enter")
             await pilot.pause()
@@ -533,6 +643,10 @@ async def test_uninstall_retained_data_status_and_history_cleanup(native_console
         await asyncio.wait_for(asyncio.shield(cleanup.task), 10)
         assert cleanup.receipt.committed
         assert not root.path.exists()
+        await press(modal, "#plugin-review-refresh")
+        body = str(modal.query_one("#plugin-review-body").render())
+        assert "Cleaned — saved data removed" in body
+        assert "retained; users" not in body
         assert not (await rig.service.management_snapshot("workspace-a"))
 
 
@@ -1118,3 +1232,164 @@ async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
         current = await original(installed.installation_id, workspace_id="workspace-a")
         assert current["mappings"] == details["mappings"]
         assert not rig.gateway.payloads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_action_inputs_hide_without_losing_drafts_or_keyboard_focus(
+    native_console, size
+):
+    from textual.widgets import Input, Select, SelectionList, TextArea
+
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    installed = await rig.install(enable=False)
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        action = modal.query_one("#plugin-review-action", Select)
+        reference = modal.query_one("#plugin-review-reference", Input)
+        synthetic = modal.query_one("#plugin-review-test-data", TextArea)
+        selection = modal.query_one("#plugin-review-selection", SelectionList)
+        assert not reference.display and not synthetic.display
+        assert not selection.display
+        action.value = "configure"
+        await pilot.pause()
+        assert reference.display and not synthetic.display and not selection.display
+        reference.value = '{"models":{}}'
+        action.value = "test-hook"
+        await pilot.pause()
+        assert not reference.display and synthetic.display and selection.display
+        synthetic.text = '{"prompt":"retained"}'
+        synthetic.focus()
+        action.value = "disable"
+        await pilot.pause()
+        assert not reference.display and not synthetic.display
+        assert app.focused is action
+        await pilot.press("tab")
+        assert app.focused is modal.query_one("#plugin-review-prepare", Button)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert modal.draft.review is not None
+        action.value = "configure"
+        await pilot.pause()
+        assert modal.draft.review is None
+        assert modal.query_one("#plugin-review-confirm", Button).disabled
+        assert reference.value == '{"models":{}}'
+        action.value = "test-hook"
+        await pilot.pause()
+        assert synthetic.text == '{"prompt":"retained"}'
+        synthetic.focus()
+        await pilot.press("escape")
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
+        reopened = app.screen
+        await reopened.workers.wait_for_complete()
+        await pilot.pause()
+        assert reopened.query_one("#plugin-review-action", Select).value == "test-hook"
+        assert (
+            reopened.query_one("#plugin-review-test-data", TextArea).text
+            == '{"prompt":"retained"}'
+        )
+        assert app.focused is reopened.query_one("#plugin-review-test-data", TextArea)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_fresh_install_inputs_are_visible_before_action_changes(
+    native_console, native_package, size
+):
+    from textual.widgets import Input, Select, SelectionList, TextArea
+
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    producer = await rig.service.review_install(
+        native_package(), selection=("skill:review",), workspace_id="workspace-a"
+    )
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service, producer=producer, workspace_id="workspace-a"
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        action = modal.query_one("#plugin-review-action", Select)
+        selection = modal.query_one("#plugin-review-selection", SelectionList)
+        dialect = modal.query_one("#plugin-review-dialect", Select)
+        assert action.value == "install"
+        assert selection.display and dialect.display
+        assert not modal.query_one("#plugin-review-reference", Input).display
+        assert not modal.query_one("#plugin-review-test-data", TextArea).display
+        reached = set()
+        for _ in range(len(modal.focus_chain) + 1):
+            reached.add(getattr(app.focused, "id", None))
+            await pilot.press("tab")
+        assert {selection.id, dialect.id} <= reached
+        assert modal.draft.review is None
+
+
+@pytest.mark.asyncio
+async def test_console_ui_capture_uses_owning_plugin_workspace(native_console):
+    """The UI builder must capture the owning session's plugin ceiling."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleProviderSelection,
+        ConsoleWorkspaceContext,
+    )
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+    rig = native_console
+    installed = await rig.install()
+    expected = rig.service.capture_maximum("workspace-a")["available_skills"]
+    assert len(expected) == 1
+    assert expected[0]["plugin_installation_id"] == installed.installation_id
+    assert not rig.service.capture_maximum("workspace-b")["available_skills"]
+    assert not rig.service.capture_maximum(None)["available_skills"]
+    other = rig.store.create_session(workspace_id="workspace-b")
+    global_session = rig.store.create_session(workspace_id=DEFAULT_WORKSPACE_ID)
+    rig.store.set_workspace_context(
+        ConsoleWorkspaceContext(active_workspace_id="workspace-b")
+    )
+    builder = ConsoleSessionController.__new__(ConsoleSessionController)
+    builder.app_instance = rig.controller.app
+    builder._provider_readiness_app_config_fn = dict
+    builder._build_provider_selection_fn = lambda _: ConsoleProviderSelection(
+        provider="llama_cpp", explicit_model="m"
+    )
+    builder._current_chat_store_accessor = lambda: rig.store
+    builder._chat_store_accessor = lambda: rig.store
+    builder._rag_source_types_accessor = list
+    builder._rag_top_k_accessor = lambda: 4
+    builder._scratch_snapshot_provider = lambda _: None
+
+    owner = builder._build_console_turn_execution_context(rig.session.id)
+    assert len(owner.skill_context_maximum["available_skills"]) == 1
+    captured = owner.skill_context_maximum["available_skills"][0]
+    assert captured["plugin_installation_id"] == installed.installation_id
+    assert captured["plugin_workspace_id"] == "workspace-a"
+    assert captured["name"] == expected[0]["name"]
+    for session in (other, global_session):
+        context = builder._build_console_turn_execution_context(session.id)
+        assert not context.skill_context_maximum["available_skills"]
+        assert not any(row.get("plugin_owned") for row in context.skill_context_maximum["available_skills"])

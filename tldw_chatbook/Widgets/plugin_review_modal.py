@@ -393,9 +393,8 @@ class PluginReviewModal(ModalScreen):
                 classes="form-input",
             )
             yield Static(
-                "Mapping references: JSON with connections, tools, models or component_tools. "
-                "For tests, select one hook/server and enter synthetic event data below. "
-                "Tests require an existing idle Console chat in this workspace and may initialize SessionStart hooks.",
+                "",
+                id="plugin-review-input-help",
                 markup=False,
             )
             yield TextArea("{}", id="plugin-review-test-data")
@@ -590,9 +589,45 @@ class PluginReviewModal(ModalScreen):
     def _loaded(self):
         self._loading = False
         self.query_one("#plugin-review-dialect", Select).disabled = False
+        self._show_action_inputs()
         matches = self.query(f"#{self.draft.focus_id}")
-        if matches:
+        if matches and matches.first().display:
             matches.first().focus()
+        else:
+            self.query_one("#plugin-review-action", Select).focus()
+
+    def _show_action_inputs(self):
+        action = self.query_one("#plugin-review-action", Select).value
+        references = {
+            "rollback": "Exact retained revision digest",
+            "configure": "Mapping JSON: connections, tools, tool_references, models or component_tools",
+            "save-profile": "MCP profile JSON with component_id and reviewed references",
+            "delete-data": "Comma-separated exact root IDs; blank selects listed roots",
+            "resume-data": "Comma-separated exact root IDs; blank selects listed roots",
+            "reconcile-data": "Comma-separated exact root IDs; blank selects listed roots",
+        }
+        test = action in {"test-hook", "test-connection"}
+        reference = self.query_one("#plugin-review-reference", Input)
+        reference.display = action in references
+        reference.placeholder = references.get(action, "")
+        self.query_one("#plugin-review-test-data", TextArea).display = test
+        self.query_one("#plugin-review-selection", SelectionList).display = (
+            action in {"install", "install-enable", "select"} or test
+        )
+        self.query_one("#plugin-review-dialect", Select).display = action in {
+            "install",
+            "install-enable",
+        }
+        help_text = self.query_one("#plugin-review-input-help", Static)
+        help_text.display = test or reference.display
+        help_text.update(
+            "Select one hook/server and enter synthetic event data. Tests require an "
+            "existing idle Console chat in this workspace and may initialize SessionStart hooks."
+            if test
+            else references.get(action, "")
+        )
+        if self.focused is not None and not self.focused.display:
+            self.query_one("#plugin-review-action", Select).focus()
 
     @on(Select.Changed, "#plugin-review-action")
     @on(SelectionList.SelectedChanged, "#plugin-review-selection")
@@ -615,6 +650,7 @@ class PluginReviewModal(ModalScreen):
         self._input_generation += 1
         self._discard_pending_review()
         self.draft.action = str(self.query_one("#plugin-review-action", Select).value)
+        self._show_action_inputs()
         self.query_one("#plugin-review-confirm", Button).disabled = True
         self._status("Inputs changed. Review again before confirming.")
 
@@ -731,6 +767,20 @@ class PluginReviewModal(ModalScreen):
                 and (not self._impact_complete() or len(body) > 65536)
             )
         )
+        # The body queues its own layout request; mark this screen before scrolling.
+        self.refresh(layout=True)
+        self.call_after_refresh(self._keep_focused_action_visible)
+
+    def _keep_focused_action_visible(self):
+        button = self.focused
+        if (
+            isinstance(button, Button)
+            and button.is_mounted
+            and button.screen is self
+            and button.display
+            and not button.disabled
+        ):
+            button.scroll_visible(animate=False, immediate=True)
 
     def _impact_complete(self):
         if self.draft.action == "create-data":
@@ -1054,7 +1104,7 @@ class PluginReviewModal(ModalScreen):
                 if row["root"].installation_id == self.installation_id:
                     lines.append(
                         f"Root {row['root'].root_id}: {row['root'].path}\n"
-                        f"{row['recovery_reason'] or row['cleanup'] or 'retained'}; users: {row['blockers']}"
+                        f"{row['recovery_reason'] or row['cleanup'] or ('Cleaned — saved data removed' if row['cleaned_absent'] else 'retained')}; users: {row['blockers']}"
                     )
                     if row["recovery_reason"]:
                         lines.append(
@@ -1069,6 +1119,7 @@ class PluginReviewModal(ModalScreen):
         cancellable = bool(job and job.runtime_status.get("cancel_operation"))
         self.query_one("#plugin-review-cancel", Button).disabled = not cancellable
         self.query_one("#plugin-review-cancel-work", Button).disabled = not cancellable
+        self.call_after_refresh(self._keep_focused_action_visible)
 
     @on(Select.Changed, "#plugin-review-dialect")
     def _dialect(self, event):
