@@ -17091,6 +17091,8 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
+        if region := self._console_transcript_region_or_none():
+            region.sync_recovery()
         # TASK-34958: cheap gate BEFORE the O(session) message pipeline
         # (snapshot materialization, projections, grouping, spec walks).
         # The store's display token covers transcript-visible mutations
@@ -17201,8 +17203,6 @@ class ChatScreen(BaseAppScreen):
             messages = send_ack.project(
                 self._console_chat_store.active_session_id, messages
             )
-        if region := self._console_transcript_region_or_none():
-            region.sync_recovery()
         if transcript is not None:
             selected_id, selected_fork_eligibility = (
                 self._message.sync_selected_fork_eligibility(transcript)
