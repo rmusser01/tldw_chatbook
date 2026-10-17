@@ -352,15 +352,38 @@ async def test_enter_on_a_server_that_did_not_answer_stays_in_place(servers):
     assert app.setup == []
 
 
-async def test_closing_mid_probe_raises_nothing_and_a_late_result_loses(servers):
+@private_profile_test
+async def test_closing_mid_probe_raises_nothing_and_a_late_result_loses(
+    servers, request, monkeypatch
+):
     """AC#8: Esc while a probe is parked, a newer test settles, then the parked
-    probe answers late: nothing raises and the newer result stands."""
+    probe answers late: nothing raises and the newer result stands.
+
+    TASK-33005.10 AC#4: the probe swallows a raise (it logs and returns) and
+    its worker does not exit on error, so "newer stands" also held when the
+    late probe crashed before settling. The late result must be offered to
+    the owner and lose there, and no probe worker may end in error."""
+    from textual.worker import WorkerState
+
     servers.hold = threading.Event()
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
+        owner = shared_connection_evidence(lambda: app)
+        offered: list[tuple[str, bool]] = []
+        publish = owner.publish
+
+        def recording_publish(evidence, **kwargs):
+            changed = publish(evidence, **kwargs)
+            if evidence.identity.provider_key == "llama_cpp":  # Ollama is probed too.
+                offered.append((evidence.endpoint, changed))
+            return changed
+
+        monkeypatch.setattr(owner, "publish", recording_publish)
         switcher = build(app)
         await app.push_screen(switcher)
         await _wait(pilot, lambda: LLAMA in servers.ports)
+        probes = [w for w in app.workers if w.group == "console-switcher-probes"]
+        assert probes
         await switcher.action_dismiss_popover()
         await _wait(pilot, lambda: not switcher.is_attached)  # popped
 
@@ -369,8 +392,11 @@ async def test_closing_mid_probe_raises_nothing_and_a_late_result_loses(servers)
         store.settle(store.begin(identity), ProviderProbeResult("reachable", ("model-a",)))
         servers.hold.set()  # The parked probe now settles "refused", late.
         await _wait(pilot, lambda: servers.in_flight == 0)
+        await _wait(pilot, lambda: ("unreachable", False) in offered)
         await pilot.pause(0.2)
         assert _evidence(app, LLAMA)[1].endpoint == "reachable"
+        assert ("unreachable", True) not in offered
+        assert [w.state for w in probes if w.state is WorkerState.ERROR] == []
     assert app.return_code in {None, 0}
 
 
