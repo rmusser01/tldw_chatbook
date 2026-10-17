@@ -659,7 +659,8 @@ does not accept it) reads *provider* in the chat's settings summary. A reasoning
 this model is not known stays visible, and its help line starts with "Support
 not verified for this model."
 
-Focus opens on **Temperature**. **Tab** walks the core fields, the four
+Focus opens on **Temperature**, or, for a model that does not take it, on
+the next core field shown (**Change** when none is). **Tab** walks the core fields, the four
 disclosure titles and the footer to **Apply to this chat**, never into
 a closed disclosure; **Shift+Tab** from Temperature reaches **Change**, then
 the view tabs. A focus target that a credential round trip cannot restore

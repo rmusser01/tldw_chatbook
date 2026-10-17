@@ -2272,7 +2272,7 @@ class ConsoleSettingsModal(
             and self._active_view == "model"
             and self._default_recovery_layout_phase is None
         ):
-            self.call_after_refresh(self._focus_highest_priority_connection)
+            self.call_after_refresh(self._focus_view_open_target)
         self.call_after_refresh(self._sync_responsive_layout)
 
     def _finish_initial_control_sync(self) -> None:
@@ -2972,7 +2972,7 @@ class ConsoleSettingsModal(
             if disabled_reason.display:
                 self.call_after_refresh(disabled_reason.focus)
             else:
-                self.call_after_refresh(self._focus_highest_priority_connection)
+                self.call_after_refresh(self._focus_view_open_target)
 
     def _default_recovery_summary(self) -> str:
         state = self._default_durability_state
@@ -3279,7 +3279,7 @@ class ConsoleSettingsModal(
             self._show_settings_view(
                 "context" if str(event.button.id).endswith("context") else "model"
             )
-            self.call_after_refresh(self._focus_highest_priority_connection)
+            self.call_after_refresh(self._focus_view_open_target)
 
     @on(Button.Pressed, f"#{MODEL_CHANGE_ID}")
     def _change_pressed(self, event: Button.Pressed) -> None:

@@ -6196,7 +6196,7 @@ async def test_console_settings_delayed_initial_focus_is_safe_after_unmount() ->
         await app.pop_screen()
         await pilot.pause()
 
-        modal._focus_highest_priority_connection()
+        modal._focus_view_open_target()
 
 
 def _unmounted_settings_modal(

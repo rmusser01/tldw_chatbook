@@ -11,7 +11,8 @@ The view opens core-first: the MODEL row, then Temperature, Max tokens,
 Streaming and the reasoning or thinking controls, then the Sampling,
 Connection, Request estimate and name disclosures. Closed, each is one row
 whose title carries its value (TASK-33006.3); Connection names the endpoint
-host and where the key comes from, never the key. Focus opens on Temperature,
+host and where the key comes from, never the key. Focus opens on Temperature
+(the next shown core field, or Change, when the model does not take it),
 or on the recovery action while a connection blocker stands, or on Change
 while no model is chosen; a restored focus target wins over all three
 (``_restore_suspended_scroll_and_focus``), and a missing or unavailable one
@@ -947,7 +948,7 @@ class ConsoleSettingsFieldRowsMixin:
             row = self.query_one(f"#{field_control_id(name)}-row")
             shown = name not in hidden
             if not shown and focused is not None and row in focused.ancestors_with_self:
-                self.call_after_refresh(self._focus_highest_priority_connection)
+                self.call_after_refresh(self._focus_view_open_target)
             row.display = shown
         display = provider_display_name(provider, self._app_config)
         # Literal Content: a registry display name is user text, and a str
@@ -1009,13 +1010,15 @@ class ConsoleSettingsFieldRowsMixin:
                 error.display for error in row.query(".console-settings-error")
             )
 
-    def _focus_highest_priority_connection(self) -> None:
+    def _focus_view_open_target(self) -> None:
         """Focus where the shown view opens (R13 of the Phase 6 plan).
 
         The Context view opens on Budget strategy. The Model view opens on
-        Temperature; on Change while no model is chosen (``select_model``);
-        or, while a connection blocker stands, on its recovery action inside
-        the Connection disclosure, which opens first.
+        its first shown core field, Temperature unless the model does not
+        take it, or on Change when none shows (TASK-33006.10); on Change
+        while no model is chosen (``select_model``); or, while a connection
+        blocker stands, on its recovery action inside the Connection
+        disclosure, which opens first.
         """
         if not self.is_mounted or not self.query(f"#{MODEL_CHANGE_ID}"):
             return
@@ -1029,14 +1032,17 @@ class ConsoleSettingsFieldRowsMixin:
             self._focus_change()
             return
         if action in _TUNING_RECOVERY_ACTIONS:
-            temperature = self.query_one("#console-settings-temperature", Input)
-            if self._is_effectively_focusable(temperature):
-                temperature.focus()
+            for name in CORE_FIELDS:
+                control = self.query_one(f"#{field_control_id(name)}")
+                if self._is_effectively_focusable(control):
+                    control.focus()
+                    return
+            self._focus_change()
             return
         disclosure = self.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
         if disclosure.collapsed:
             disclosure.collapsed = False
-            self.call_after_refresh(self._focus_highest_priority_connection)
+            self.call_after_refresh(self._focus_view_open_target)
             return
         selector = _RECOVERY_FOCUS.get(action)
         if selector is not None:

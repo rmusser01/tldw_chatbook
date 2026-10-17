@@ -27,9 +27,11 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
+    CORE_FIELDS,
     DISCLOSURE_TITLE_CELLS,
     FIELD_ROW_FIELDS,
     INVALID_ENDPOINT_HOST,
+    MODEL_CHANGE_ID,
     NAME_DISCLOSURE_ID,
     NAME_INPUT_ID,
     REQUEST_ESTIMATE_DISCLOSURE_ID,
@@ -528,3 +530,37 @@ async def test_focus_inside_a_closed_disclosure_opens_it_and_reveals_the_field()
             seed.region,
             body.content_region,
         )
+
+
+@pytest.mark.parametrize(
+    ("hidden", "opens_on"),
+    [
+        pytest.param(("temperature",), field_control_id("max_tokens"), id="next-field"),
+        pytest.param(CORE_FIELDS, MODEL_CHANGE_ID, id="change"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_ready_chat_without_temperature_opens_on_the_next_shown_field(
+    hidden, opens_on, monkeypatch
+) -> None:
+    """TASK-33006.10 AC#1: no provider drops Temperature today, so the
+    support sync is made to hide it. The Model view then opens on the next
+    shown core field, or on Change when no core field shows; never on
+    nothing."""
+    import tldw_chatbook.Widgets.Console.console_settings_field_row as field_row
+
+    real = field_row.generation_field_support
+
+    def without(provider, model, app_config):
+        shown_hidden, unknown = real(provider, model, app_config)
+        return tuple(dict.fromkeys(shown_hidden + tuple(hidden))), unknown
+
+    monkeypatch.setattr(field_row, "generation_field_support", without)
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await _focus_settled(pilot)
+        assert not modal.query_one(f"#{field_control_id('temperature')}-row").display
+        focused = app.focused
+        assert focused is not None and focused.id == opens_on, focused
