@@ -996,3 +996,23 @@ would have renumbered the task in response to its own checkpoint.
 blob identity, creation metadata and ref object type before renumbering.
 A checkpoint of the same uncommitted task is not another owner. Do not exclude
 all Codex snapshots: they can also expose another session's uncommitted claim.
+
+
+## A successful CLI edit can have a truncated piped task display
+
+**TASK-32695, managed plugins closeout, 2026-10-17.** The Backlog edit
+exited zero and correctly wrote Done, all14 acceptance checks, final notes and
+plan step62. The subsequent `task 32695 --plain` also exited zero, but Python
+`capture_output=True` retained exactly65,536 stdout bytes, stopping partway
+through the long plan before the new step or implementation notes. An exact
+readback assertion failed. Repeating only that read with stdout directed to a
+regular file produced all80,287 bytes and verified both exact sections; the
+original edit was not repeated. Both outputs and the failed assertion remain
+in this plan's evidence workspace. This establishes the observed pipe/display
+limit; it does not establish its underlying runtime cause.
+
+**What to do.** After a large task edit, verify the saved Markdown as well as
+the CLI exit. If a captured display ends mid-section, preserve it and direct
+a read-only CLI invocation's stdout to a regular file before comparing the
+full notes and plan. Do not repeat a successful edit to repair its display: an
+append-plan operation could duplicate steps.
