@@ -932,3 +932,51 @@ async def test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return(
         await _until(
             pilot, lambda: len(app._discovery_calls) == 3, "discovery on the resume"
         )
+
+
+class CoveredAtLaunchHarness(ConsolidatedCSSApp):
+    """Pushes a screen over Console right after its first push, as the app
+    pushes the first-run wizard (``call_after_refresh`` after the initial
+    screen push)."""
+
+    def __init__(self, app_instance) -> None:
+        super().__init__()
+        self.app_instance = app_instance
+        self.cover = Screen()
+
+    async def on_mount(self) -> None:
+        await self.push_screen(ChatScreen(self.app_instance))
+        self.call_after_refresh(lambda: self.push_screen(self.cover))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_card_covered_at_launch_runs_discovery_again_on_the_first_return(
+    request,
+) -> None:
+    """A screen pushed at launch (the first-run wizard) covers Console before
+    its attach reconciliation finishes, so the mount's own resume is still
+    deferred when the user leaves. The first return runs that resume; it
+    used to read as the mount's and kept discovery spent, so a server
+    started while the wizard was open was not offered on that return."""
+    app = _blocked_console_app(())
+    host = CoveredAtLaunchHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _until_clock(pilot, lambda: host.screen is host.cover, "the cover")
+        console = host.screen_stack[-2]
+        await _until_clock(
+            pilot, lambda: len(app._discovery_calls) == 1, "the first look"
+        )
+        for _ in range(20):  # the user reads the wizard for a while
+            await pilot.pause(0.05)
+
+        async def server_started(config):
+            app._discovery_calls.append(config)
+            return (_DETECTED_SERVER,)
+
+        app.console_local_server_discovery = server_started
+        await host.pop_screen()
+        detected = await _detected_action_focused(host, console, pilot)
+        assert str(detected.label) == "Use detected llama.cpp (127.0.0.1:8080)"
+        assert len(app._discovery_calls) == 2

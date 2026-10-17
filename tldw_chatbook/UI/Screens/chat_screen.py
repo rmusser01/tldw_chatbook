@@ -7006,6 +7006,13 @@ class ChatScreen(BaseAppScreen):
     #: Class-level default so it is readable on a screen built by ``__new__``
     #: (several Console tests construct one without running ``__init__``).
     _console_mount_visit_refreshed: bool = False
+    #: Set by ``on_screen_suspend``: the next resume re-arms local-server
+    #: discovery even when it also consumes the token above. A screen pushed
+    #: at launch (the first-run wizard) covers Console before its attach
+    #: reconciliation finishes; view-start re-claims the token on the return,
+    #: so the deferred resume that follows reads as the mount's although it
+    #: is the user's first return (TASK-33008).
+    _console_discovery_rearm_pending: bool = False
     _pending_resume_local_conversation_id: str | None = None
     _pending_character_conversation_target: "CharacterConversationActivationRequest | None" = None
     _failed_character_conversation_target: "CharacterConversationActivationRequest | None" = None
@@ -22625,6 +22632,7 @@ class ChatScreen(BaseAppScreen):
           leave running/installed across a suspend.
         """
         self._console_attach_visit_generation += 1
+        self._console_discovery_rearm_pending = True
         if not self._hooks.review_open:
             self._hooks.cancel_pending()
         for resume_worker in (
@@ -22826,7 +22834,11 @@ class ChatScreen(BaseAppScreen):
         # `_restore_console_workbench_focus` below would just re-apply the
         # stale block and the modal could stick even after setup completed
         # elsewhere.
-        if not mount_already_refreshed and self._console_detected_local_server is None:
+        rearm_discovery = (
+            self._console_discovery_rearm_pending or not mount_already_refreshed
+        )
+        self._console_discovery_rearm_pending = False
+        if rearm_discovery and self._console_detected_local_server is None:
             # Nothing found yet: a server may have started. The sync below
             # starts discovery only if it finds the card blocking.
             self._console_local_discovery_started = False
