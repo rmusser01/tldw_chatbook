@@ -368,7 +368,9 @@ after a Clear those still show or spend the key the user removed (TASK-35227).
 A second older difference holds whatever `credential_source` says. The TTS
 projection and the Voice step read `api_settings.<provider>.api_key`, then
 `[API] <provider>_api_key`, then the environment, but `_credential_states`
-ranks an exported `OPENAI_API_KEY` or `ELEVENLABS_API_KEY` first.
+ranks an exported `OPENAI_API_KEY` or `ELEVENLABS_API_KEY` first. Which
+reader that puts out of line depends on the source as well as on where the
+key is saved. With no source recorded:
 
 - **A table key.** The projection's order is the 2026-09-19 order, so the
   panel is out of line: it says the key comes from outside Chatbook and the
@@ -382,6 +384,14 @@ ranks an exported `OPENAI_API_KEY` or `ELEVENLABS_API_KEY` first.
 - **ElevenLabs.** No table names its variable. The loader's `elevenlabs_api`
   dict and the panel take `ELEVENLABS_API_KEY` before `[API]`, while the
   projection and `get_api_key("elevenlabs")` take `[API]` first.
+
+A recorded source moves chat and readiness, so the reader out of line can
+flip. Under "stored" they send the table's key, or the `[API]` key the bridge
+copied there, as `get_api_key`, the projection and the Voice step do, so the
+panel is out of line for an `[API]` key too. Under "environment" they send
+only the variable, as the panel says, so the projection and the Voice step
+are out of line for a table key too, and `get_api_key` with them. Under
+"none" they send nothing, and every other reader still finds a key.
 
 The two surfaces that save the OpenAI TTS key, Settings ▸ Speech & TTS
 Set/Replace (`Event_Handlers/STTS_Events/stts_events.py`) and the Voice step's
