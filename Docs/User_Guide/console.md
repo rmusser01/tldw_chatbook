@@ -953,7 +953,11 @@ custom endpoint's row opens Settings too, where its own entry is edited, but
 Settings offers no way back from there, so nothing reopens for it.
 
 - **After a save.** A provider that lists models reads "Ready · not tested"
-  on each, and **Enter** applies the highlighted pair to this chat. A chat
+  on each, and **Enter** applies the highlighted pair to this chat. The save
+  itself, even of only a key, made that provider and the model Settings
+  showed the default for new chats, and Settings' line above **Return to
+  Console** said so ("New chats use …"); the scope line's "this chat only"
+  is about this pick. A chat
   that holds work keeps its own pair through the save, so this is the step
   that moves it; a chat with no messages and no edited settings already
   follows the saved pair, and the list marks it **● CURRENT**. While no

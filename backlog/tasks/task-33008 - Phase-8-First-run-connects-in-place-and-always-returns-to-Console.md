@@ -1,40 +1,41 @@
 ---
 id: TASK-33008
 title: 'Phase 8: First run connects in place and always returns to Console'
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-09-26 11:47'
+created_date: 2026-09-26 11:47
 labels:
-  - model-config-redesign
-  - phase-8
-  - console
-  - settings
-  - ux
-  - readiness
+- model-config-redesign
+- phase-8
+- console
+- settings
+- ux
+- readiness
 dependencies:
-  - TASK-33001
-  - TASK-33004
-  - TASK-33005
-  - TASK-33007
+- TASK-33001
+- TASK-33004
+- TASK-33005
+- TASK-33007
 references:
-  - 'tldw_chatbook/UI/Screens/chat_screen.py'
-  - 'tldw_chatbook/UI/Navigation/pending_handoff_store.py'
-  - 'tldw_chatbook/UI/Navigation/conversation_settings_navigation.py'
-  - 'tldw_chatbook/Widgets/Console/console_setup_modal.py'
-  - 'tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py'
-  - 'tldw_chatbook/UI/Screens/settings_screen.py'
-  - 'Docs/User_Guide/console.md'
-  - 'Docs/User_Guide/settings.md'
-  - 'Docs/User_Guide/First_Run_Setup.md'
-  - 'PRODUCT.md'
-  - 'backlog/decisions/012-provider-credential-settings-boundary.md'
-  - 'backlog/decisions/033-application-session-state-ownership.md'
-  - 'backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md'
-  - 'backlog/decisions/095-conversation-owned-console-generation-settings.md'
-  - 'backlog/decisions/097-boot-budget-ratchets.md'
-  - 'qa/model-config-ux-review-2026-09-26/judge-synthesis.md'
-  - 'qa/model-config-ux-review-2026-09-26/verified-claims.md'
+- tldw_chatbook/UI/Screens/chat_screen.py
+- tldw_chatbook/UI/Navigation/pending_handoff_store.py
+- tldw_chatbook/UI/Navigation/conversation_settings_navigation.py
+- tldw_chatbook/Widgets/Console/console_setup_modal.py
+- tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py
+- tldw_chatbook/UI/Screens/settings_screen.py
+- Docs/User_Guide/console.md
+- Docs/User_Guide/settings.md
+- Docs/User_Guide/First_Run_Setup.md
+- PRODUCT.md
+- backlog/decisions/012-provider-credential-settings-boundary.md
+- backlog/decisions/033-application-session-state-ownership.md
+- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/095-conversation-owned-console-generation-settings.md
+- backlog/decisions/097-boot-budget-ratchets.md
+- qa/model-config-ux-review-2026-09-26/judge-synthesis.md
+- qa/model-config-ux-review-2026-09-26/verified-claims.md
 priority: high
+updated_date: 2026-10-17 17:23
 ---
 
 ## Description
@@ -90,6 +91,7 @@ After this phase, task-1379 re-runs the Settings critique.
 - [x] #11 The Console status row's cost chip fits the room the chips before it leave: it shows the longest form whose whole " · " figures fit, never a figure cut at the edge; "…" when no form fits; every figure while it has focus. It refits once, after the layout, when that room changes (a chip before it changes width, a pair applied from Switch model, the chip shown again after layout) (owner decision D4, 2026-10-17).
 - [x] #12 A focused cost chip stays in view when its label grows or the row moves; a refit that keeps its label, a same-width relabel and a resize leave the user's own scroll of the row alone; and when focus leaves the chip the row scrolls back to its start (D4).
 - [x] #13 Scrolling the Console does not lay out the whole screen to place the cost chip: a scroll keeps the strip's fast path (D4).
+- [x] #14 After a save from a Console provider recovery that leaves new chats on the page's provider (a key, Env var, Endpoint or model save), the line above Return to Console names the pair new chats now use ("New chats use <Provider> · <model>."), so a key-only save from a Switch model NEEDS SETUP row no longer reads as touching only this chat; the save itself is unchanged (owner decision D5, 2026-10-17).
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -108,6 +110,19 @@ After this phase, task-1379 re-runs the Settings critique.
   - AC#11: `test_the_cost_chip_drops_whole_segments_to_fit_the_strip`, `test_the_cost_chip_shows_an_ellipsis_when_no_form_fits`, `test_the_cost_chip_refits_when_a_chip_before_it_changes`, `test_a_pair_applied_under_a_dialog_refits_the_cost_chip`, `test_the_cost_chip_fits_when_it_is_shown_after_layout`, `test_a_change_that_moves_the_cost_chip_refits_it_once`.
   - AC#12: `test_a_focused_cost_chip_relabelled_longer_stays_in_view`, `test_a_focused_cost_chip_in_view_stays_in_view_when_the_row_moves`, `test_a_refit_that_keeps_the_focused_chips_label_keeps_the_scroll`, `test_a_same_width_relabel_does_not_undo_a_later_swipe`, `test_a_capped_cost_chip_does_not_undo_a_swipe_on_resize`, `test_leaving_the_cost_chip_scrolls_the_strip_home`.
   - AC#13: `test_scrolling_beside_the_strip_keeps_the_scroll_fast_path`.
+- D5, a key-only save from a NEEDS SETUP route: the copy, not the behaviour (new AC#14). Every Providers & Models save that writes a connection goes through `build_provider_setup_mutation`, which writes `[chat_defaults]` = the page's provider and model; measured on the real journey (Groq's row, a chat that holds work, key only): `chat_defaults` became groq · llama-3.1-8b-instant while the reopened Switch model read "Applies to: this chat only". It is not only a key (the owner asked whether Env keys or other things are affected): an Env var save (the same `CREDENTIAL_SAVED` outcome) and an Endpoint save do it too; a model default, context window, API mode or Sign in with change alone writes no `[chat_defaults]`.
+  - The strings: the switcher has no reopen notice; its scope line (`SCOPE_THIS_CHAT`) and Enter label speak of its own pick, which is true, so they stay. The line that reports the save is Settings' return continuation (`UI/Settings_Modules/provider_return.py::continuation_copy`): "Credential saved. Return to Console to continue in “Chat 1”; provider acceptance is not yet verified." It now names the pair, read the way a Ctrl+T chat reads it (`blank_console_session_settings`, `provider_model_pair`): "Credential saved. New chats use Groq · llama-3.1-8b-instant. Return to Console to continue in “Chat 1”; …". The sentence shows after any Console return's save that leaves new chats on the page's provider, so an Endpoint save says it too, and is left out when the default is another provider's (a model default saved for a provider that is not the default). Chat settings' two strings are unchanged. The save's own result row already says "new chats and open chats nobody has used yet take them" (`PROVIDER_SAVED_COPY`), without the pair.
+  - Tests (red on the old copy first): `Tests/UI/test_console_provider_return.py::test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy` (the copy's cases, including a default on another provider and one with no model) and `::test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider[saves-a-key]` (the real journey: the saved `[chat_defaults]` and the line), both already in the UI census; `::test_recovery_round_trip_returns_to_the_chat_on_one_enter` (census) and `::test_a_key_check_after_the_save_updates_the_return_line` are rewritten on purpose to the new line. The four passed 3 of 3 serial runs together.
+  - Docs: settings.md ("Coming back from a provider fix") and console.md ("After Return to Console", After a save).
+- Also asked (Env keys): D2's "sent no key" counts a key from an env var as sent (identity source `environment`), so a 403 to it gets no hint, as for a saved or typed key.
+- Follow-ups filed (each checked on origin/dev `111f8e48fc` first; none had a task): TASK-35301 (custom-endpoint returns), TASK-35302 (`python -m tldw_chatbook.app`), TASK-35303 (the project-instruction row's `NoMatches`), TASK-35304 (the Voice step's 403), TASK-35305 (a Fast Lane bootstrap guard; it would flag 4 of today's 92 sandboxed targets), TASK-35306 and TASK-35307 (two stale tests), TASK-35308 (the launch-cover return skips `notify_rail_opened`), TASK-35309 (four Library size rows).
+- Verified 2026-10-17 on this branch's code (the D5 commit's tree), against base `111f8e48fc` in a detached worktree:
+  - The 36 files that name the touched listing, evidence and wizard symbols (xdist, by file): head 542 failed, 2929 passed; base 541 failed, 2916 passed. 455 of head's are the local `RecoveryRequired` noise. The one node failing at head only, `Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript` (a snapshot count under load), passes 2 of 2 serial runs at head and fails 1 of 2 at base. An earlier head run of the same files had `test_a_listing_403_converts_to_the_non_blocking_listing_result` as its only head-only node; it is rewritten on purpose above.
+  - `Tests/UI/test_console_provider_return.py` whole (xdist, per test): 57 passed at head and at base.
+  - Negative controls: with D2's source reverted its new tests fail (16 nodes, among them every hinted case); with the key check removed the six sent-a-key pins fail; with the subscription guard removed its case fails. D5's two pins fail on the old copy.
+  - Size ratchets (the module, screen and Library files, serial): the same 11 rows fail at head and base, dev's 7 module rows and the 4 Library rows of TASK-35309. settings_screen.py measures 35,817 lines (row 35,818), first_run_model_step.py 997 (row 997), console_settings_modal.py 6,189 (row 6,193); first_run_provider_step.py and FirstRunSetupWizard.py are not touched.
+  - `Tests/Performance/test_ui_ready_module_census.py` (serial): 4 passed. The four ADR-097 boot guards (import weight, UI-ready census, pre-import payload, boot CSS; serial): 19 passed.
+  - Tests/CI (by file): 959 passed, 1 skipped. `./scripts/preflight.sh` under a scratch HOME, `XDG_*` and `TLDW_CONFIG_PATH`: exit 0. ruff on the touched Python files: 235 findings at head and at base, none new, and no file's formatting changes.
 **Capture fixes (after `a57bc97f87`, Phase 8 full-screen captures).** Five capture-fix waves and their rounds (70 commits to `1c1730f4b0`, about 680 production lines) fixed what the live captures showed; `qa/model-config-33008-captures/README.md` records each retake. By area:
 - Console status row: the cost chip fits the room left by the chips before it, drops whole figures, keeps a focused chip in view and refits after a model switch or a layout change. No subtask's acceptance criteria cover this work; it is recorded here, not in a subtask, and AC#11 to AC#13 describe it (owner decision D4, 2026-10-17).
 - Footer: under the Get started card it names only the keys that act there (no F6), and under a dialog over the Console only Ctrl+P and Ctrl+Q (`CONSOLE_WORKBENCH_SHORTCUTS_COVERED`).
@@ -171,5 +186,5 @@ Verified 2026-10-16 on `feat/model-config-p8-first-run` at `63b763816c` (the cod
   - First_Run_Setup.md, the model-step status lines: every quoted line is in `first_run_model_step.py`, `first_run_setup_state.py` or `first_run_model_discovery.py`, including `8c8f54773e`'s reading of a 403.
 - AC#9: `./scripts/preflight.sh` passes at head under a scratch `HOME`, `XDG_*` and `TLDW_CONFIG_PATH`: 12 checks, exit 0.
 - Seen while checking, not fixed: `Tests/UI/test_console_local_server_discovery_card.py::test_a_card_resumed_with_nothing_detected_runs_discovery_again` failed in a 5-file run (213 others passed) and in 1 of 3 serial reruns, at load average 30-60. Its wait for the detected action is 60 × 0.05 s.
-- Statuses: TASK-33008.1 to .5 are Done. This task stays To Do until AC#3 is ruled on.
+- Statuses: TASK-33008.1 to .5 are Done. This task stayed To Do until AC#3 was ruled on; the owner's decisions of 2026-10-17 (above) close it.
 <!-- SECTION:NOTES:END -->

@@ -996,6 +996,23 @@ baseline is not a baseline. Read what the head failure names. Here every message
 named a file the change did not touch. For a real comparison, run the test in a
 git checkout of the base.
 
+## A substring wait cannot pin an absence (TASK-33008 owner decisions, 2026-10-17)
+
+**Incident.** Decision D2 added a hint to Chat settings' Test connection line
+after a 403 that sent no key. Its test pinned the other case, a 403 to a key
+that was sent, by waiting with `_wait_for_discover_status(app, pilot, expected)`
+(Tests/UI/test_console_session_settings.py), which returns as soon as
+`expected in str(status.renderable)`. The unhinted line is a prefix of the
+hinted one, so the wait passed whether or not the hint showed: that case could
+never fail. Seen on reading the helper, before the first run. The test now
+asserts the whole line after the wait; with the key check taken out of
+`listing_refused_without_a_key` it fails.
+
+**What to do.** When a case pins that something is *not* added (a hint, a
+suffix, a warning), read how the wait or matcher compares. A `fragment in
+text` helper proves presence only. Assert equality (or `not in`) after it,
+and show the case red by putting the unwanted text back.
+
 ## A call counter on a function's home module misses every `from`-import
 
 **TASK-33005 final review I-6, 2026-10-02.** The keystroke census patched

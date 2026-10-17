@@ -474,6 +474,7 @@ def _settings(
     own_draft=False,
     key_check="Ready · not tested",
     provider="openai",
+    defaults=("openai", "gpt-5"),
 ):
     """What the Settings offer and copy read from their screen.
 
@@ -481,8 +482,14 @@ def _settings(
     narrower case of a labelled edit to the target's own provider.
     ``key_check`` is the Key check row's word, read from the last check's
     Readiness line as the real screen keeps it, for the form's ``provider``.
+    ``defaults`` is the saved ``[chat_defaults]`` pair a new chat takes.
     """
+    names = {"openai": "OpenAI", "groq": "Groq", "anthropic": "Anthropic"}
     return SimpleNamespace(
+        _app_config_mapping=lambda: {
+            "chat_defaults": {"provider": defaults[0], "model": defaults[1]}
+        },
+        _provider_display_label=lambda key: names.get(key, key),
         _provider_widget_value=lambda: provider,
         _provider_return_target=target,
         _provider_return_outcome=outcome,
@@ -668,21 +675,36 @@ def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None
     )
     other = ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
 
+    # The owner's decision of 2026-10-17 (PR #3144, D5): a save of the page's
+    # provider also makes it, with the page's model, the default for new
+    # chats, so a Console return says which pair new chats now use. A save
+    # that leaves them on another provider (a model default of a provider
+    # that is not the default) says nothing about them.
     assert continuation_copy(_settings(console, SAVED, store)) == (
-        "Credential saved. Return to Console to continue in "
-        "“Refactor plan for the g…”; provider acceptance is not yet verified."
+        "Credential saved. New chats use OpenAI · gpt-5. Return to Console to "
+        "continue in “Refactor plan for the g…”; provider acceptance is not yet "
+        "verified."
     )
     assert continuation_copy(_settings(console, other, store)) == (
+        "Provider settings saved. New chats use OpenAI · gpt-5. Return to "
+        "Console to continue in “Refactor plan for the g…”; generation is not "
+        "yet verified."
+    )
+    assert continuation_copy(_settings(console, other, store, provider="groq")) == (
         "Provider settings saved. Return to Console to continue in "
         "“Refactor plan for the g…”; generation is not yet verified."
+    )
+    no_model = _settings(console, SAVED, store, provider="groq", defaults=("groq", ""))
+    assert continuation_copy(no_model).startswith(
+        "Credential saved. New chats use Groq · no model. Return to Console"
     )
     # Capture finding 1: a key check after the save (t) that the provider
     # accepted ends the line's doubt, for a saved key only. Chat settings'
     # line and a local server's "reachable" (it may ignore the key) keep it.
     verified = "Ready · verified 21:24"
     assert continuation_copy(_settings(console, SAVED, store, key_check=verified)) == (
-        "Credential saved. Return to Console to continue in "
-        "“Refactor plan for the g…”; the provider accepted the key."
+        "Credential saved. New chats use OpenAI · gpt-5. Return to Console to "
+        "continue in “Refactor plan for the g…”; the provider accepted the key."
     )
     for unchanged in (
         _settings(console, SAVED, store, key_check="Ready · reachable 21:24"),
@@ -695,7 +717,8 @@ def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None
         assert continuation_copy(unchanged).endswith("is not yet verified.")
     store.close_session(chat.id)
     assert continuation_copy(_settings(console, SAVED, store)) == (
-        "Credential saved. Return to Console; provider acceptance is not yet verified."
+        "Credential saved. New chats use OpenAI · gpt-5. Return to Console; "
+        "provider acceptance is not yet verified."
     )
     assert continuation_copy(_settings(modal, SAVED)) == (
         "Credential saved. Return to Chat settings to check readiness; "
@@ -905,9 +928,12 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
             "focus on the Return to Console action after the save",
         )
         assert str(app.focused.label) == "Return to Console"
+        # Rewritten on purpose (owner decision 2026-10-17, D5): the line
+        # names the pair the save made the default for new chats.
         assert str(status.renderable) == (
-            f"Credential saved. Return to Console to continue in “{session.title}”; "
-            "provider acceptance is not yet verified."
+            "Credential saved. New chats use OpenAI · gpt-5. Return to Console "
+            f"to continue in “{session.title}”; provider acceptance is not yet "
+            "verified."
         )
         assert _saved_openai_key() == _KEY
 
@@ -967,7 +993,10 @@ async def test_a_key_check_after_the_save_updates_the_return_line(
             lambda: getattr(app.focused, "id", None) == "settings-provider-return",
             "focus on the Return to Console action after the save",
         )
-        line = f"Credential saved. Return to Console to continue in “{session.title}”; "
+        line = (  # D5 (2026-10-17): the save's new-chat default, rewritten on purpose
+            "Credential saved. New chats use OpenAI · gpt-5. Return to Console to "
+            f"continue in “{session.title}”; "
+        )
         assert str(status.renderable) == (
             f"{line}provider acceptance is not yet verified."
         )
@@ -2563,6 +2592,21 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
             # The key went to Groq's table; OpenAI's is as it was.
             assert _saved_config()["api_settings"]["groq"]["api_key"] == _KEY
             assert _saved_openai_key() == _KEY
+            # The owner's decision of 2026-10-17 (PR #3144, D5): saving only
+            # the key also made the row's pair the default for new chats,
+            # while the reopened list below says "this chat" of its own
+            # pick, so the line above the return says what the save did.
+            defaults = _saved_config()["chat_defaults"]
+            assert (defaults["provider"], defaults["model"]) == ("groq", _GROQ_SECOND)
+            status = settings.query_one(
+                "#settings-provider-return-continuation-status", Static
+            )
+            title = next(s.title for s in store.sessions() if s.id == session_id)
+            assert str(status.renderable) == (
+                f"Credential saved. New chats use Groq · {_GROQ_SECOND}. Return "
+                f"to Console to continue in “{title}”; provider acceptance is "
+                "not yet verified."
+            )
             await pilot.press("enter")
         else:
             without_saving = settings.query_one(

@@ -280,6 +280,28 @@ def console_return_lapsed(
     )
 
 
+def _new_chats_copy(screen: SettingsScreen) -> str:
+    """Which pair new chats use, after a save that leaves them on this page's
+    provider; else "".
+
+    The owner's decision of 2026-10-17 (PR #3144, D5): a save of a provider's
+    key, Env var, endpoint or model also makes it, with the model the page
+    shows, the default for new chats (``build_provider_setup_mutation``),
+    while Switch model, reopened by the return, says "this chat" of its own
+    pick. The save is not changed; its line says what it did. A save that
+    writes no connection (a model default of another provider) leaves new
+    chats where they were, and says nothing of them.
+    """
+    from ...Chat.console_session_settings import blank_console_session_settings
+    from .providers_models_card import provider_model_pair  # the card imports this
+
+    chat = blank_console_session_settings(screen._app_config_mapping())
+    page = provider_config_key(screen._provider_widget_value())
+    if provider_config_key(chat.provider) != page:
+        return ""
+    return f" New chats use {provider_model_pair(screen, chat.provider, chat.model)}."
+
+
 def continuation_copy(screen: SettingsScreen) -> str:
     """The status above the return action.
 
@@ -287,8 +309,9 @@ def continuation_copy(screen: SettingsScreen) -> str:
         screen: The Settings screen holding the return target and its outcome.
 
     Returns:
-        After a save: what was saved, where the return goes and what is still
-        unverified; for a Console return, once the Key check of the
+        After a save: what was saved, for a Console return which pair new
+        chats now use (``_new_chats_copy``), where the return goes and what
+        is still unverified; for a Console return, once the Key check of the
         recovery's provider reads verified, that the provider accepted the
         key. For a Console return with nothing
         saved: that nothing is unsaved and where the return goes. A Console
@@ -317,4 +340,4 @@ def continuation_copy(screen: SettingsScreen) -> str:
             provider_config_key(screen._provider_widget_value()) == target.provider
         ):
             unverified = KEY_ACCEPTED_COPY
-    return f"{saved[0]} Return to Console{chat}; {unverified}"
+    return f"{saved[0]}{_new_chats_copy(screen)} Return to Console{chat}; {unverified}"
