@@ -781,6 +781,10 @@ opens Switch model's pick mode with the entry's name
 in **Find**, offering those models beside the ones you named: pick one (or
 type a model id after the name) and the chat moves to that pair, after
 which the new server's connection is tested; **Esc** keeps the chat's pair.
+If the unsaved-changes prompt is showing when the listing ends (you pressed
+**Esc** meanwhile), pick mode does not open over it: a notice says "\<name\>
+is saved. Pick its model with Change (Alt+M).", and after **Keep editing**,
+**Change** offers the models the entry serves.
 The `/endpoint` command opens Chat settings with this flow on top and lands
 the entry the same way. Unlike a typed-in URL, an entry never trips the "Endpoint not
 saved" block, and conversations using it survive restart. Renaming, editing, and deletion

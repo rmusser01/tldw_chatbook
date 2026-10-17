@@ -141,6 +141,8 @@ MODEL_ROW_LABEL = "Model"
 #: The MODEL row's Change: the one way to change the pair (TASK-33006.4).
 MODEL_CHANGE_ID = "console-settings-model-change"
 MODEL_CHANGE_LABEL = "Change Alt+M"
+#: When pick mode cannot open after a new entry's listing (TASK-33006.25).
+CREATED_ENTRY_PICK_LATER_COPY = "{name} is saved. Pick its model with Change (Alt+M)."
 #: Streaming at chat scope is a plain On/Off choice (ADR-095:75-81); the
 #: Source word, not a third option, says when it is inherited.
 STREAMING_OPTIONS = (("On", "on"), ("Off", "off"))
@@ -628,7 +630,7 @@ class ConsoleSettingsFieldRowsMixin:
         self._served_models[provider] = (self._served_endpoint(provider), models)
         return len(models)
 
-    def _open_model_picker(self, query: str = "") -> None:
+    def _open_model_picker(self, query: str = "") -> bool:
         """Open Switch model in pick-only mode over Chat settings (Change, Alt+M).
 
         Pick mode lists the models this modal's listings found beside the
@@ -641,6 +643,9 @@ class ConsoleSettingsFieldRowsMixin:
 
         Args:
             query: Text Find opens with; New endpoint… names the new entry.
+
+        Returns:
+            Whether pick mode opened.
         """
         if (
             self._model_picker is None
@@ -648,13 +653,14 @@ class ConsoleSettingsFieldRowsMixin:
             or self.query_one("#console-settings-close-guard").display
             or self._default_recovery_layout_phase is not None
         ):
-            return
+            return False
         served = {
             provider: models
             for provider, (endpoint, models) in self._served_models.items()
             if endpoint == self._served_endpoint(provider)
         }
         self._model_picker(self._origin, self._draft, query, self._model_picked, served)
+        return True
 
     def pick_created_endpoint(self, provider_id: str | None) -> None:
         """Land a just-created entry on a pair (New endpoint… and ``/endpoint``).
@@ -680,6 +686,9 @@ class ConsoleSettingsFieldRowsMixin:
     async def _list_then_pick(self, provider_id: str, name: str) -> None:
         """List a created entry's served models, then open pick mode on it.
 
+        When pick mode cannot open (the close guard showed meanwhile), a
+        notice says the entry is saved and how to pick its model.
+
         Args:
             provider_id: The created ``custom-ep:<slug>`` id.
             name: Its display name, which Find opens with.
@@ -696,7 +705,10 @@ class ConsoleSettingsFieldRowsMixin:
             result = None
         self._set_model_discover_status("")
         self._keep_served_models(provider_id, result.model_ids if result else ())
-        self._open_model_picker(f"{name} ")
+        if not self._open_model_picker(f"{name} "):
+            # The close guard (or a default recovery) holds the modal, so say
+            # how to pick the saved entry instead (TASK-33006.25).
+            self.notify(CREATED_ENTRY_PICK_LATER_COPY.format(name=name), markup=False)
 
     def _model_picked(self, pair: tuple[str, str] | None) -> None:
         """Rebase the draft to the picked pair; Esc (None) changes nothing.

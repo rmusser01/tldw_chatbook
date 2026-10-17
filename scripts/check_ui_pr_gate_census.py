@@ -361,7 +361,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Phase 9 Task 6 (2026-10-17) appends its Tests/UI node ids that no lane ran,
 # each 3 of 3 serial alone: pick mode offers a listing only for the endpoint
 # that listed it (TASK-33006.19): 333.
-MINIMUM_FILES = 337
+# that listed it (TASK-33006.19): 333; a new entry listed under the close
+# guard says how to pick its model (TASK-33006.25): 334.
+MINIMUM_FILES = 338
 
 
 def read_census(path: Path) -> list[str]:

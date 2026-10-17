@@ -34,6 +34,9 @@ from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     switcher_readiness_words,
 )
+from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    CREATED_ENTRY_PICK_LATER_COPY,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 
 
@@ -1396,3 +1399,48 @@ async def test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_list
         base_url.value = "http://127.0.0.1:9099"
         await settle(pilot, app)
         assert served in await _pick_mode_pairs(pilot, app, modal)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it():
+    """TASK-33006.25: Esc during a new entry's listing shows the unsaved-
+    changes prompt, and pick mode cannot open over it. When the listing
+    ends, a notice says the entry is saved and how to pick its model; Keep
+    editing, then Change, offers what it served."""
+    release = asyncio.Event()
+
+    async def slow_listing(_identity):
+        await release.wait()
+        return ProviderProbeResult("reachable", ("served-x",))
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(), connection_tester=slow_listing)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        temperature = modal.query_one("#console-settings-temperature", Input)
+        temperature.focus()
+        temperature.value = "0.9"  # an unsaved edit, so Esc asks first
+        await settle(pilot, app)
+        modal.pick_created_endpoint("custom-ep:gpu-box")
+        for _ in range(4):
+            await pilot.pause()
+        await pilot.press("escape")
+        for _ in range(4):
+            await pilot.pause()
+        guard = modal.query_one("#console-settings-close-guard")
+        assert guard.display, "precondition: the close guard is showing"
+
+        release.set()
+        await settle(pilot, app)
+
+        assert app.screen is modal and guard.display
+        assert [note.message for note in app._notifications] == [
+            CREATED_ENTRY_PICK_LATER_COPY.format(name="GPU box")
+        ]
+        await pilot.press("escape")  # Keep editing
+        await settle(pilot, app)
+        assert not guard.display
+        assert ("custom-ep:gpu-box", "served-x") in await _pick_mode_pairs(
+            pilot, app, modal
+        )
