@@ -590,3 +590,32 @@ async def test_the_endpoint_row_syncs_with_an_extra_child() -> None:
             assert modal._active_provider == pair[0]
             assert base_url.display is url_shown and label.display is url_shown
             assert row.display, "New endpoint… keeps the row while entries exist"
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_chat_reopens_a_closed_connection_on_its_fix(monkeypatch) -> None:
+    """TASK-33006.14: a blocked chat composes Connection open, so the open
+    focus meets it closed only after the user closed it. Closed, then the
+    Context view and back: the Model view opens Connection again and focuses
+    the recovery action inside it."""
+    app = CoreFirstHarness()
+    _openai_missing(app, monkeypatch)
+    modal = _modal(app, _settings("openai", "gpt-5", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        connection = modal.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
+        await pilot.click(f"#{CONNECTION_DISCLOSURE_ID} CollapsibleTitle")
+        await _focus_settled(pilot)
+        assert connection.collapsed is True, "precondition: the user closed it"
+        await pilot.click("#console-settings-view-context")
+        await _focus_settled(pilot)
+        assert connection.collapsed is True, "precondition: still closed"
+
+        await pilot.click("#console-settings-view-model")
+        await _focus_settled(pilot)
+
+        assert connection.collapsed is False
+        credential = modal.query_one("#console-settings-configure-credential", Button)
+        assert app.focused is credential
+        body = modal.query_one("#console-settings-body")
+        assert body.region.contains_region(credential.region)
