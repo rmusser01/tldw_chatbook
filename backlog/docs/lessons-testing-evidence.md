@@ -13334,6 +13334,12 @@ at the read and compare the hints to what that focus should show. A test for a
 refresh must fail with the refresh removed: here only removing both resume-time
 re-registrations turned the pin red; removing one left it green.
 
+**Then check the symptom on its own.** Being right about focus did not make the
+keys right. That rail footer still dropped Alt+A and Alt+C at 211 columns, and
+the rider was first closed with AC#1 ticked while its title's symptom still
+reproduced from a rail control (caught in round-1 review). A premise-false
+close still re-checks the AC on every path into the symptom.
+
 ## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
 
 **Incident.** The actual Canvas-child test configured a 45-second page timeout,
