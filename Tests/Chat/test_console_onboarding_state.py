@@ -145,8 +145,58 @@ def test_the_active_step_carries_the_one_readiness_word():
 def test_setup_complete_collapses_to_ready_line():
     state = _build(readiness=_readiness("Ready", ready=True), has_model=True)
     assert state.mode == "ready_line"
-    assert state.body_copy == CONSOLE_READY_EMPTY_COPY
+    # TASK-33005.7 (rewritten on purpose): the line leads with the word.
+    assert state.body_copy == CONSOLE_READY_EMPTY_COPY.replace(
+        "Ready", "Ready · not tested", 1
+    )
     assert state.steps == ()
+
+
+def test_the_ready_line_leads_with_the_readiness_word_every_surface_shows():
+    """TASK-33005.7 AC#4/#5: 'Ready — type a message to begin.' was the one
+    unqualified Ready left; it now reads readiness_words for the same
+    readiness, so after a probe it says what was observed and when."""
+    from datetime import datetime
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        build_console_settings_readiness,
+        console_send_connection,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderConnectionEvidence,
+        ProviderTestEvidence,
+    )
+
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    owner = ProviderConnectionEvidence()
+    owner.publish(
+        ProviderTestEvidence(
+            console_send_connection(settings, app_config=config),
+            "reachable",
+            ("model-a",),
+            observed_at=datetime(2026, 10, 1, 9, 7).astimezone(),
+        ),
+        order=1,
+    )
+    reachable = build_console_settings_readiness(
+        settings, app_config=config, environ={}, connection_evidence=owner
+    )
+    untested = _readiness("Ready", ready=True)
+
+    for readiness, word in (
+        (untested, "Ready · not tested"),
+        (reachable, "Ready · reachable 09:07"),
+    ):
+        assert readiness_words(readiness) == word
+        assert _build(readiness=readiness, has_model=True).body_copy == (
+            f"{word} — type a message to begin."
+        )
+        named = _build(readiness=readiness, model="model-a", provider_label="llama.cpp")
+        assert named.body_copy == (
+            f"Setup complete — llama.cpp · model-a. {word} — type a message to begin."
+        )
 
 
 def test_first_send_completed_is_quiet_forever():

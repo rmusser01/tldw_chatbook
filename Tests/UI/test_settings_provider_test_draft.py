@@ -1414,6 +1414,58 @@ def test_key_rows_name_their_source_in_words_never_its_spelling(
     assert not re.search(r"\b(env|config):", detail + summary), detail + summary
 
 
+@pytest.mark.parametrize(
+    ("evidence", "word"),
+    (
+        (None, "Ready · not tested"),
+        (
+            ProviderTestEvidence(
+                _semantic_identity(
+                    "http://127.0.0.1:9099/v1/models", provider_key="llama_cpp"
+                ),
+                "unreachable",
+                (),
+                "connection_refused",
+            ),
+            "Not ready · refused :9099",
+        ),
+    ),
+    ids=("not-tested", "refused"),
+)
+def test_the_inspector_identity_row_reads_the_readiness_rows_word(evidence, word):
+    """TASK-33005.7 AC#1/#5: "Provider readiness: <provider> / <model>" named
+    the pair with no word. It ends with the Readiness row's word for the
+    same connection now (here a refused listing and an untested one)."""
+    from textual.css.query import QueryError
+
+    from tldw_chatbook.UI.Settings_Modules.readiness_lines import readiness_label
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("llama_cpp", app_config, environ={})
+    detail, _summary, _passed = screen._build_provider_readiness_findings(
+        "llama_cpp",
+        "model-a",
+        readiness,
+        draft_endpoint="http://127.0.0.1:9099",
+        dirty=set(),
+        evidence=evidence,
+    )
+
+    def unmounted(*_args, **_kwargs):
+        raise QueryError("not mounted")
+
+    screen._provider_test_result = detail
+    screen._provider_widget_value = lambda: "llama_cpp"
+    screen._provider_display_setting_values = lambda: {"model": "model-a"}
+    screen.query_one = unmounted
+
+    assert _result_rows(detail)[0] == ("Readiness", word)
+    assert readiness_label(screen) == (
+        f"Provider readiness: llama.cpp / model-a — {word}"
+    )
+
+
 def test_generation_row_and_in_flight_line_read_stored_generation_evidence():
     """TASK-33002 rider: the Generation row and the in-flight (checking) line
     report the stored generation fact, never a hard-coded "not tested"."""

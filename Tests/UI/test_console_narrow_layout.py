@@ -157,7 +157,7 @@ async def test_console_narrow_60x18_renders_ready_empty_state():
         assert transcript_region.outer_size.width > 0
         assert console.query_one("#console-context-rail-handle").display is False
         assert console.query_one("#console-inspector-rail-handle").display is False
-        assert "Ready — type a message to begin." in _visible_text(console)
+        assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
 @pytest.mark.asyncio

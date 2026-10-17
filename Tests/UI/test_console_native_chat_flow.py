@@ -10236,7 +10236,9 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await pilot.click("#console-new-chat-tab")
         second = await _wait_for_active_session_change(store, pilot, previous)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
-        await _wait_for_text(console, pilot, "Ready — type a message to begin.")
+        await _wait_for_text(
+            console, pilot, "Ready · not tested — type a message to begin."
+        )
         assert "first tab assistant reply" not in _visible_text(console)
 
         await pilot.click(f"#console-session-tab-{first.id}")
@@ -10284,7 +10286,9 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
         )
         # Ready console: the fresh empty tab shows the ready line, not the
         # blocking setup modal (which only appears when setup is incomplete).
-        await _wait_for_text(console, pilot, "Ready — type a message to begin.")
+        await _wait_for_text(
+            console, pilot, "Ready · not tested — type a message to begin."
+        )
         assert "workspace row assistant reply" not in _visible_text(console)
 
         await _click_console_workspace_conversation_for_session(

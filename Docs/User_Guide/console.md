@@ -305,8 +305,10 @@ provider name or model id contains it; clear Find to see every provider); an
 endpoint step (**Configure endpoint**) opens **Chat settings**. The composer
 stays locked until a provider and model are configured; once they are, the
 empty transcript names what is connected, for example "Setup complete — OpenAI
-· gpt-4.1-mini. Ready — type a message to begin." (a model saved as a file
-path, as llama.cpp models often are, shows its file name). That line is the
+· gpt-4.1-mini. Ready · not tested — type a message to begin." (a model saved
+as a file path, as llama.cpp models often are, shows its file name). The
+readiness word is the one the header shows, so after a test it reads, for
+example, "Ready · reachable 14:01 — type a message to begin." That line is the
 arrival receipt: it shows until your first-ever send, and nothing about it is
 sent to the model.
 
@@ -354,9 +356,11 @@ A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
 the Key check's **Test (t)** in Settings — was refused or timed out, the Console reads,
 for example, "Not ready · refused :9099" (the header badge, the Model
-section, the Chat settings rows and this card's "Reconnect the
-provider server" step), and the composer reads "Send blocked — retry the
-connection to continue". **Retry connection** tests that same server again
+section, the Chat settings rows, the Inspector's **Setup** row and this
+card's "Reconnect the provider server" step), and the composer reads "Send
+blocked — retry the connection to continue". After a 401 ("Not ready · key
+rejected") it reads "Send blocked — key rejected; update the API key to
+continue", never "add an API key". **Retry connection** tests that same server again
 in place; it opens no settings. If the server now answers, the chat is Ready and Send
 unlocks; if not, a "still unreachable" notice says so. A cloud provider's
 key check (Settings **t**) that timed out or could not connect is the

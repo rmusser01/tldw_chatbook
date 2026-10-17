@@ -198,20 +198,27 @@ def coerce_console_first_send_completed(raw: Any) -> bool:
     return False
 
 
-def _ready_line_copy(provider_label: str, model: str) -> str:
+def _ready_line_copy(
+    provider_label: str, model: str, readiness: ConsoleSettingsReadiness
+) -> str:
     """The one arrival line: what setup connected, then the ready prompt.
 
     TASK-34100.5 AC#11 (E10): first-run arrival raised a stack of toasts;
     the empty transcript now names the provider and model instead. A model
-    saved as a file path (llama.cpp) shows its file name.
+    saved as a file path (llama.cpp) shows its file name. TASK-33005.7: the
+    prompt leads with the qualified readiness word every surface shows
+    ("Ready · not tested", "Ready · reachable HH:MM", ...).
     """
+    ready = CONSOLE_READY_EMPTY_COPY
+    if readiness.operability == "ready_to_send":
+        ready = ready.replace("Ready", readiness_words(readiness), 1)
     provider = str(provider_label or "").strip()
     name = str(model or "").strip()
     if name.startswith(("/", "~")):
         name = PurePath(name).name
     if not provider or not name:
-        return CONSOLE_READY_EMPTY_COPY
-    return f"Setup complete — {provider} · {name}. {CONSOLE_READY_EMPTY_COPY}"
+        return ready
+    return f"Setup complete — {provider} · {name}. {ready}"
 
 
 def build_console_setup_card_state(
@@ -254,7 +261,8 @@ def build_console_setup_card_state(
                 mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
             )
         return ConsoleSetupCardState(
-            mode="ready_line", body_copy=_ready_line_copy(provider_label, model)
+            mode="ready_line",
+            body_copy=_ready_line_copy(provider_label, model, readiness),
         )
 
     provider_name = str(provider_label or "Provider").strip() or "Provider"

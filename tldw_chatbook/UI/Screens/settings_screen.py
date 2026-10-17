@@ -13202,14 +13202,9 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_category_button_label(category)
 
     def _provider_readiness_label(self) -> str:
-        resolved = self._resolve_provider_model_for_settings()
-        provider = str(resolved.provider or "not selected").strip()
-        model = str(resolved.model or "not selected").strip()
-        if provider and provider != "not selected":
-            return (
-                f"Provider readiness: {self._provider_display_label(provider)} / {model}"
-            )
-        return "Provider readiness: needs provider and model"
+        from ..Settings_Modules.readiness_lines import readiness_label
+
+        return readiness_label(self)  # the pair and its word (TASK-33005.7)
 
     def _provider_overview_readiness_status(self) -> str:
         """The Overview status row's readiness word, as the Console says it.
@@ -17960,6 +17955,7 @@ class SettingsScreen(BaseAppScreen):
         for selector, text in (
             ("#settings-provider-test-result", lambda: self._provider_test_result),
             ("#settings-provider-readiness", lambda: key_check_verdict(self)),
+            ("#settings-provider-inspector-readiness", self._provider_readiness_label),
         ):
             try:
                 row = self.query_one(selector, Static)

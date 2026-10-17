@@ -592,3 +592,7 @@ Tests/UI/test_console_switcher_local_probe.py::test_rows_read_verified_only_for_
 Tests/UI/test_settings_provider_test_draft.py::test_a_model_the_server_did_not_list_leads_the_rows_and_warns
 # TASK-33002.9: the Key row names its source in words, never an env:/config: spelling (under a second).
 Tests/UI/test_settings_provider_test_draft.py::test_key_rows_name_their_source_in_words_never_its_spelling
+# TASK-33005.7: the Inspector's Setup row is the readiness word, and a rejected key's send hint says so (13 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_the_inspector_setup_row_and_send_hint_read_the_readiness_word
+# TASK-33005.7: Settings' "Provider readiness" row ends with the Readiness row's word (under a second).
+Tests/UI/test_settings_provider_test_draft.py::test_the_inspector_identity_row_reads_the_readiness_rows_word

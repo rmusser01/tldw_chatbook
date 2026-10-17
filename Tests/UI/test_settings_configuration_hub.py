@@ -11234,13 +11234,16 @@ async def test_settings_provider_switch_updates_inspector_readiness():
         await pilot.pause()
 
         assert screen.query_one("#settings-model-value", Input).value == ""
+        # TASK-33005.7 (rewritten on purpose): the row ends with the word
+        # the Key check row shows for the same connection.
+        word = str(screen.query_one("#settings-provider-readiness", Static).renderable)
         assert (
             str(
                 screen.query_one(
                     "#settings-provider-inspector-readiness", Static
                 ).renderable
             )
-            == "Provider readiness: Ollama / not selected"
+            == f"Provider readiness: Ollama / not selected — {word}"
         )
 
 
@@ -11311,13 +11314,16 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
         await pilot.pause()
 
         assert model_input.value == "gpt-4o"
+        # TASK-33005.7 (rewritten on purpose): the row ends with the word
+        # the Key check row shows for the same connection.
+        word = str(screen.query_one("#settings-provider-readiness", Static).renderable)
         assert (
             str(
                 screen.query_one(
                     "#settings-provider-inspector-readiness", Static
                 ).renderable
             )
-            == "Provider readiness: OpenAI / gpt-4o"
+            == f"Provider readiness: OpenAI / gpt-4o — {word}"
         )
 
         provider.value = "anthropic"
@@ -11332,13 +11338,16 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
             str(screen.query_one("#settings-provider-readiness", Static).renderable)
             == "Not ready · no key"
         )
+        # TASK-33005.7 (rewritten on purpose): the row ends with the word
+        # the Key check row shows for the same connection.
+        word = str(screen.query_one("#settings-provider-readiness", Static).renderable)
         assert (
             str(
                 screen.query_one(
                     "#settings-provider-inspector-readiness", Static
                 ).renderable
             )
-            == "Provider readiness: Anthropic / not selected"
+            == f"Provider readiness: Anthropic / not selected — {word}"
         )
 
 

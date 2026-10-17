@@ -327,6 +327,7 @@ from ...Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_target_default_console_session_settings,
+    readiness_words,
     unsaved_console_endpoint_warning,
     validate_console_session_settings,
 )
@@ -13187,8 +13188,8 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             setup_rows = (
-                ConsoleDisplayRow(
-                    "Setup", "Provider configuration required", status="blocked"
+                ConsoleDisplayRow(  # TASK-33005.7: the word, e.g. "refused :9099"
+                    "Setup", readiness_words(setup_settings_readiness[1]), "blocked"
                 ),
                 ConsoleDisplayRow(
                     "Blocked impact",
@@ -13925,6 +13926,8 @@ class ChatScreen(BaseAppScreen):
                 return "Checking Claude subscription credential."
             if readiness.subscription_status in {"missing", "expired"}:
                 return "Log in with Claude Code to refresh the subscription credential."
+            if readiness.blocker == "credential_rejected":  # TASK-33005.7
+                return "API key rejected. Update it in Settings > Providers & Models."
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Chat settings before sending."

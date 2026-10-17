@@ -110,9 +110,12 @@ def _ready_line(*, provider_label: str, model: str) -> str:
     from tldw_chatbook.Chat.console_onboarding_state import (
         build_console_setup_card_state,
     )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
 
+    # TASK-33005.7 (rewritten on purpose): a real readiness, since the line
+    # now leads with its readiness word.
     state = build_console_setup_card_state(
-        readiness=SimpleNamespace(operability="ready_to_send", blocker=None),
+        readiness=ConsoleSettingsReadiness("Ready", "Ready.", True),
         provider_label=provider_label,
         has_model=bool(model),
         model=model,
@@ -129,7 +132,8 @@ def test_arrival_is_one_setup_complete_line_naming_the_pair() -> None:
     transcript line instead of a stack of toasts."""
 
     assert _ready_line(provider_label="OpenAI", model="gpt-4.1-mini") == (
-        "Setup complete — OpenAI · gpt-4.1-mini. Ready — type a message to begin."
+        "Setup complete — OpenAI · gpt-4.1-mini. "
+        "Ready · not tested — type a message to begin."
     )
     # A local model saved as a file path shows its file name, not the path.
     assert _ready_line(
@@ -137,5 +141,5 @@ def test_arrival_is_one_setup_complete_line_naming_the_pair() -> None:
         model="/Users/me/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     ) == (
         "Setup complete — llama.cpp · qwen2.5-0.5b-instruct-q4_k_m.gguf. "
-        "Ready — type a message to begin."
+        "Ready · not tested — type a message to begin."
     )

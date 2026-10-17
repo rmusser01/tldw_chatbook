@@ -753,9 +753,8 @@ async def test_rows_read_verified_only_for_the_models_the_key_check_listed(reque
             )
         )
         assert words[model] in line_with(lines, f" {model} ", "OpenAI"), lines
-        assert build_console_readiness_presentation(console).primary_label == (
-            words[model]
-        )
+        presentation = build_console_readiness_presentation(console)
+        assert presentation.primary_label == words[model]
         assert settings_rows["Readiness"] == words[model]
     assert "not listed by the server" in settings_rows["Model"]
 
@@ -855,6 +854,68 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         assert _rail_text(console, "#workbench-header-status") == (
             "Not ready · refused :9099"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "word", "hint"),
+    (
+        (
+            "connection_refused",
+            "Not ready · refused :9099",
+            "Send blocked — retry the connection to continue",
+        ),
+        (
+            "unauthorized",
+            "Not ready · key rejected",
+            "Send blocked — key rejected; update the API key to continue",
+        ),
+    ),
+    ids=("refused", "key-rejected"),
+)
+@private_profile_test
+async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
+    request, category, word, hint
+):
+    """TASK-33005.7 AC#2/#3/#5: the Inspector's setup line read "Provider
+    configuration required" for any blocker, and a rejected key's composer
+    hint said "add an API key". Both now say what the status row says for
+    the same readiness: the line is its word, and the hint names the
+    rejection."""
+    from Tests.UI.test_console_endpoint_discovery import _rail_text
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.Chat.console_session_settings import readiness_words
+
+    harness = _ConsoleFlowHarness(_persisted_console_app())
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        console._stop_console_credential_poll_timer()
+        settings, _readiness = console._active_console_settings_readiness()
+        identity = console_send_connection(
+            settings, app_config=console._provider_readiness_app_config()
+        )
+        store = ProviderTestEvidenceStore(lambda: harness)
+        store.settle(
+            store.begin(identity), ProviderProbeResult("unreachable", (), category)
+        )
+        console._poll_console_credential_readiness()
+        await pilot.pause()
+
+        _settings, readiness = console._active_console_settings_readiness()
+        inspector = console._build_console_inspector_state(None)
+        rows = {row.label: row.value for row in inspector.rows}
+        composer = console._console_composer_or_none()
+        status = _rail_text(console, "#workbench-header-status")
+
+    assert readiness_words(readiness) == word == status
+    assert rows["Setup"] == word
+    assert composer._send_disabled_reason == hint
+    assert "add an API key" not in hint
 
 
 async def test_a_cloud_row_whose_key_check_timed_out_opens_settings(servers):

@@ -177,6 +177,9 @@ FAST_LANE_TARGETS = (
     # TASK-33005.11: the one readiness vocabulary, a key check verifying only
     # the models it listed included (whole file, pure, about a second).
     "Tests/Chat/test_readiness_words.py",
+    # TASK-33005.7: the empty transcript's ready line leads with the readiness
+    # word (one pure node, under a second).
+    "Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

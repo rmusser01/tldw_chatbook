@@ -354,7 +354,9 @@ or blank key is reported as missing
 and nothing is sent. If the listing cannot run at all (for example while
 Chatbook uses a server), the result says "Key not checked" and records
 nothing. The result's rows appear in the inspector's **Key** block, under
-what **t** checks, so a result never pushes the card down. The result leads
+its "Provider readiness: *provider* / *model* — *word*" line (the word is the
+Key check row's) and what **t** checks, so a result never pushes the card
+down. The result leads
 with a **Readiness** row, which the Key check row repeats, in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
