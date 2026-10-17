@@ -7,8 +7,8 @@ created_date: '2026-10-17 09:11'
 labels:
 - model-config-redesign
 - follow-up
-- first-run
-- voice
+- first-run-wizard
+- tts
 dependencies:
 - TASK-33008
 references:
@@ -24,6 +24,8 @@ priority: low
 Seen while checking PR #3144 (Phase 8). The owner ruling of 2026-10-02 (PR #2958 review) is that only a 401 rejects a key; a 403 means the key may not do that request. Phase 8 applied it to the wizard's Provider and Model steps, but not to the Voice step.
 
 At origin/dev 111f8e48fc, `first_run_voice_step_state.py` (about line 338) maps a status code in {401, 403} to the failure kind `key_rejected`, and `first_run_voice_status.py` (about line 362) renders that kind as "the speech server rejected the API key". Tests/Wizards/test_first_run_voice_prefill.py::test_server_answers_are_classified pins it: its 403 case expects `key_rejected` and "rejected the API key". The ruling was made for model listings, and the Voice Test is a speech request, so the wording a 403 gets here is for the owner to confirm.
+
+The classification belongs to TASK-34100.8 (In Progress at 111f8e48fc), whose AC#2 and Implementation Notes introduced `key_rejected` and the typed `VoiceSampleError` kinds; coordinate with it before changing them.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
