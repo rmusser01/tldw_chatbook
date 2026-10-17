@@ -19922,7 +19922,7 @@ is still collected. Those runs pass `--noconftest -p no:python`, so a broken
 guard shows up as a list of visited paths and imports nothing; at the base the
 two root runs each visited all 17,093 files under `Docs/`. The option is still
 resolved from where pytest starts, so a run started inside `Tests/` is not
-covered by it, and that run ignores `Tests/Docs/` instead: its two tests
+covered by it, and that run ignores `Tests/Docs/` instead: its two test files
 (`test_console_library_controls_docs.py`, `test_user_guide_conflict_markers.py`)
 are dropped without a word. Start such runs at the root.
 
