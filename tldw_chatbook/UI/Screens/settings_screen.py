@@ -395,6 +395,7 @@ from .settings_image_gen_defaults import (
     effective_secret_value as image_gen_effective_secret_value,
     key_source_after_clear as image_gen_key_source_after_clear,
     probe_backend as image_gen_probe_backend,
+    unsaved_field_count,
     validate_draft as validate_image_gen_draft,
 )
 from .settings_video_gen_defaults import (
@@ -9324,8 +9325,8 @@ class SettingsScreen(BaseAppScreen):
         """Count the fields in ``category`` that differ from their saved values.
 
         TASK-33002.4: fields, not draft keys -- the context window and its
-        reset flag are one field, and Advanced Config's raw TOML draft counts
-        as one. Only read while the category is dirty, so never below 1.
+        reset flag are one field, as are Advanced Config's raw TOML draft and an
+        Image/Video Gen field's edit or Clear. Only read while dirty, so >= 1.
         """
         snapshot = self._speech_tts_draft_snapshot
         if category is SettingsCategoryId.PROVIDERS_MODELS:
@@ -9334,7 +9335,7 @@ class SettingsScreen(BaseAppScreen):
             count = snapshot.unsaved_field_count()
         else:
             draft = self._settings_drafts.get(category)
-            count = len(draft.dirty_keys) if draft is not None else 0
+            count = unsaved_field_count(draft.dirty_keys) if draft is not None else 0
         return max(count, 1)
 
     _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (

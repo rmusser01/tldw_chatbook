@@ -21,7 +21,7 @@ import math
 import os
 import shutil
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -574,6 +574,18 @@ def diff_to_sections(
             )
 
     return sections, deletions
+
+
+def unsaved_field_count(dirty_keys: Iterable[str]) -> int:
+    """Count the fields behind a Settings draft's dirty keys (TASK-33002.11).
+
+    A backend field stages as ``field::<backend>::<key>`` (an edit) or
+    ``cleared::<backend>::<key>`` (Clear), and Clear on SwarmUI's token also
+    clears its legacy ``api_key`` spelling: one field each, not one per key.
+    Video Gen stages the same way; any other key is a field of its own.
+    """
+    names = {k.removeprefix("field::").removeprefix("cleared::") for k in dirty_keys}
+    return len({"swarmui::swarm_token" if n == "swarmui::api_key" else n for n in names})
 
 
 # Global scalar fields that render as a plain-text Input (task 5): label
