@@ -328,7 +328,11 @@ how you find one. As for a cloud provider below, only a 401 reads "key
 rejected"; a 403 means the key may not list models and blocks nothing. When that probe sent no key, the Endpoint row of the result adds "if this server needs a key, enter one in the API key field", since a server may answer a missing key with a 403. A cloud provider gets one model listing at the endpoint a
 send would use, with the key a send would use (saved, from the env var, or
 typed and not yet saved). That listing is the key check: "Ready · verified
-14:01" with "key accepted (*N* models listed) · generation not tested", or
+14:01" with "key accepted (*N* models listed) · generation not tested". It
+verifies only the models it lists: when your model is not among them, the
+word is "Ready · reachable 14:01", the **Model** row leads with "not listed
+by the server — pick a listed model", and the notice is a warning that says
+the same. It reads
 "Not ready · key rejected" after a 401, or its own reason for a timeout
 ("timed out") or a failed connection. Any other answer checked nothing: a 403
 (this key may not list models, which says nothing about chatting), a 404, a
@@ -364,8 +368,11 @@ problem comes first and says what to do next: a missing key leads with
 "Key missing — enter one in the API key field or set *NAME*", a Databricks
 profile without a workspace URL leads with the Endpoint row, and an
 unreachable server leads with, for example, "model listing failed
-(connection refused) — start the server or check the URL". The toast says the
-same in one line. While another setting blocks the provider, the Key row says
+(connection refused) — start the server or check the URL", and a model the
+server's listing did not return leads with "*model* · not listed by the
+server — pick a listed model". The toast says the same in one line, as a
+warning whenever a row leads with a problem. While another setting blocks
+the provider, the Key row says
 "not checked until the provider is ready" rather than guessing. Until a cloud
 key is checked, the Key row says the key is present but not verified, and
 Generation says not tested; after a 401 it says "key rejected", as the

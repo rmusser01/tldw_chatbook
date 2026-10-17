@@ -350,6 +350,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Phase 9 Task 2 (2026-10-17) appends its Tests/UI tests that no lane ran,
 # each a node id (their files are slow whole or hold reds that are not this
 # task's), each 3 of 3 serial alone. TASK-33005.11's switcher rows: 321.
+# TASK-33002.9's unlisted-model lead and toast, and its key-source words: 323.
 MINIMUM_FILES = 329
 
 

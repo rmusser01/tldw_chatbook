@@ -1320,6 +1320,100 @@ def test_failed_probe_leads_with_the_failure_and_a_next_step():
     )
 
 
+@pytest.mark.parametrize(
+    ("provider", "app_config", "probe"),
+    (
+        (
+            "llama_cpp",
+            {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+            ProviderProbeResult("reachable", ("model-a", "model-b")),
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_key": "sk-test-unlisted-0123456789"}}},
+            ProviderProbeResult("reachable", ("model-a", "model-b"), key_accepted=True),
+        ),
+    ),
+    ids=("local-listing", "cloud-key-check"),
+)
+@pytest.mark.parametrize(
+    ("model", "lead", "severity"),
+    (("model-a", "Config", "information"), ("gpt-5.6-terra", "Model", "warning")),
+    ids=("listed", "unlisted"),
+)
+def test_a_model_the_server_did_not_list_leads_the_rows_and_warns(
+    provider, app_config, probe, model, lead, severity
+):
+    """TASK-33002.9 AC#1: when the listing answered but did not return the
+    chosen model, "not listed by the server — pick a listed model" leads the
+    rows (it led nothing: the order was not ready, unreachable, no model,
+    failed generation, else Config) and the toast is a warning that says so.
+    A listed model is the control: Config leads and the toast informs."""
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness(provider, app_config, environ={})
+    screen._provider_readiness_test_report = lambda **kwargs: (
+        screen._build_provider_readiness_findings(
+            provider,
+            model,
+            readiness,
+            draft_endpoint="",
+            dirty=set(),
+            evidence=kwargs["probe"],
+        )
+    )
+    screen._update_provider_test_result = lambda: None
+    screen._update_provider_return_widgets = lambda: None
+    notices: list[tuple[str, str]] = []
+    app = SimpleNamespace(
+        notify=lambda message, **kwargs: notices.append((message, kwargs["severity"]))
+    )
+
+    with patch.object(SettingsScreen, "app", new=app):
+        screen._apply_provider_endpoint_probe_outcome(probe)
+
+    rows = _result_rows(screen._provider_test_result)
+    assert rows[1][0] == lead, rows
+    ((message, toast_severity),) = notices
+    assert toast_severity == severity
+    unlisted = f"{model} · not listed by the server — pick a listed model"
+    assert (rows[1][1] == unlisted) is (lead == "Model"), rows
+    assert ("is not listed by the server" in message) is (lead == "Model"), message
+
+
+@pytest.mark.parametrize(
+    ("app_config", "environ", "words"),
+    (
+        (
+            {"api_settings": {"openai": {"api_key": "sk-config-canary-0123456789"}}},
+            {},
+            "saved in config",
+        ),
+        (
+            {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}},
+            {"OPENAI_API_KEY": "sk-env-canary-0123456789"},
+            "from env var OPENAI_API_KEY",
+        ),
+    ),
+    ids=("config", "env"),
+)
+def test_key_rows_name_their_source_in_words_never_its_spelling(
+    app_config, environ, words
+):
+    """TASK-33002.9 AC#2 (pin; true since 99f1ce4884): readiness spells a key
+    source "config:..." or "env:NAME" (spec 2026-09-26 §4.2 forbids showing
+    it). The Key row and the toast name it in words."""
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("OpenAI", app_config, environ=environ)
+    assert readiness.api_key_source.startswith(("config:", "env:"))
+
+    detail, summary, _passed = screen._build_provider_readiness_findings(
+        "OpenAI", "gpt-4o", readiness, draft_endpoint="", dirty=set()
+    )
+
+    assert dict(_result_rows(detail))["Key"].startswith(words), detail
+    assert not re.search(r"\b(env|config):", detail + summary), detail + summary
+
+
 def test_generation_row_and_in_flight_line_read_stored_generation_evidence():
     """TASK-33002 rider: the Generation row and the in-flight (checking) line
     report the stored generation fact, never a hard-coded "not tested"."""

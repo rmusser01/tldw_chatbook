@@ -17212,9 +17212,7 @@ class SettingsScreen(BaseAppScreen):
             model = str(values.get("model") or "").strip()
             draft_endpoint = str(values.get("endpoint") or "").strip()
         draft = self._provider_draft()
-        dirty = (
-            draft.dirty_keys if draft is not None else set()
-        )  # dirty_keys is a @property
+        dirty = draft.dirty_keys if draft is not None else set()  # a @property
         # Only a name typed here is the Env var field's fault.
         typed_env_var = self._provider_draft_value("credential_env_var")
         readiness = get_provider_readiness(
@@ -17379,15 +17377,16 @@ class SettingsScreen(BaseAppScreen):
                 getattr(evidence, "category", None), cloud=cloud
             )
 
+        unlisted = bool(model_ids) and listing == "reachable" and model not in model_ids
         if not model:
             model_text = "not set — choose a default model"
         else:
             model_text = f"{model} (draft)" if "model" in dirty else model
             if listing == "reachable" and model_ids:
                 model_text += (
-                    " · listed by the server"
-                    if model in model_ids
-                    else " · not listed by the server — pick a listed model"
+                    " · not listed by the server — pick a listed model"
+                    if unlisted
+                    else " · listed by the server"
                 )
 
         generation = getattr(evidence, "generation", "not_tested")
@@ -17405,7 +17404,7 @@ class SettingsScreen(BaseAppScreen):
             )
         elif listing == "unreachable":
             lead = "Endpoint"
-        elif not model:
+        elif not model or unlisted:  # TASK-33002.9: an unlisted model too
             lead = "Model"
         elif generation == "failed":
             lead = "Generation"
@@ -17543,9 +17542,8 @@ class SettingsScreen(BaseAppScreen):
 
         Returns:
             Tuple of (redacted labelled rows, one line each, redacted toast
-            summary, passed).
+            summary, passed: no model the server's listing left out).
         """
-        passed = bool(readiness.ready and model)
         display_name = self._provider_display_name(provider) if provider else "Provider"
         # Qodo #2876: a registry id's URL and credential are its entry's, never
         # the family slot's ("provider default", "not required"). The rows are
@@ -17576,6 +17574,7 @@ class SettingsScreen(BaseAppScreen):
                 "Custom endpoints"
             )
         rows = tuple((label, registry_rows.get(label, text)) for label, text in rows)
+        passed = bool(readiness.ready and model) and rows[1][0] != "Model"
         generation = dict(rows)["Generation"]
         listing = None if checking else getattr(evidence, "endpoint", None)
         choose = "" if model else " Choose a default model."
@@ -17633,6 +17632,8 @@ class SettingsScreen(BaseAppScreen):
                 f"Configuration check complete: {display_name} is configured; "
                 f"model {model}. Live generation has not been tested."
             )
+        if readiness.ready and model and not passed:  # TASK-33002.9: as its row
+            summary += f" {model} is not listed by the server — pick a listed model."
         detail = "\n".join(
             f"{label:<{_PROVIDER_TEST_LABEL_CELLS}}{text}" for label, text in rows
         )
@@ -17933,14 +17934,8 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = detail
         self._update_provider_test_result()
         self._update_provider_return_widgets()  # its line quotes the Key check
-        self.app.notify(
-            summary,
-            severity=(
-                "information"
-                if passed and probe_result.endpoint == "reachable"
-                else "warning"
-            ),
-        )
+        reached = passed and probe_result.endpoint == "reachable"  # listed (33002.9)
+        self.app.notify(summary, severity="information" if reached else "warning")
 
     def _provider_probe_generation_current(self, generation: int | None) -> bool:
         """Whether a probe launched at ``generation`` still describes the draft.

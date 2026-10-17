@@ -588,3 +588,7 @@ Tests/UI/test_study_user_text_literal.py
 Tests/UI/test_study_flashcards_quit_mid_rebuild.py
 # TASK-33005.11 (Phase 9): Switch model rows read verified only for the models the key check listed, and agree with the Console and Settings (4 s, private profile).
 Tests/UI/test_console_switcher_local_probe.py::test_rows_read_verified_only_for_the_models_the_key_check_listed
+# TASK-33002.9: a model the server did not list leads the Test rows, and the toast warns (under a second).
+Tests/UI/test_settings_provider_test_draft.py::test_a_model_the_server_did_not_list_leads_the_rows_and_warns
+# TASK-33002.9: the Key row names its source in words, never an env:/config: spelling (under a second).
+Tests/UI/test_settings_provider_test_draft.py::test_key_rows_name_their_source_in_words_never_its_spelling
