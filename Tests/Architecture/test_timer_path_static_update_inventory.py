@@ -309,13 +309,20 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "title",
     ): "NEEDS-LAYOUT: inline guidance is height:auto and display-toggled.",
     # -- tldw_chatbook/Widgets/Console/console_status_chips.py
-    #    (the sync_cost_state 'chip' row was retired by TASK-34991: the write
-    #    moved into `_apply_cost_chip_label`, whose own row below covers it.)
+    #    (TASK-35160: the strip is one text line. The former
+    #    sync_run_chip 'chip' row and the _apply_cost_chip_label row
+    #    retired with the chip widgets; the line's _rerender row below
+    #    covers every segment write.)
     (
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
-        "ConsoleStatusChips.sync_run_chip",
-        "chip",
-    ): ("NEEDS-LAYOUT: chips are width:auto -- the label length IS the width."),
+        "ConsoleStatusText._rerender",
+        "self",
+    ): (
+        "NEEDS-LAYOUT: the composed line's width IS the strip's scroll "
+        "range -- a changed line (its equality guard skips unchanged "
+        "ticks) genuinely relayouts the strip, exactly the cost class the "
+        "former chip.refresh(layout=True) carried."
+    ),
     # -- tldw_chatbook/Widgets/Console/console_transcript.py
     (
         "tldw_chatbook/Widgets/Console/console_transcript.py",
@@ -966,20 +973,6 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: equality-gated on `str(title.content) != text` "
         "(TASK-33006.5), and behind the poll's snapshot equality gate "
         "besides."
-    ),
-    # -- Widgets/Console/console_status_chips.py
-    (
-        "tldw_chatbook/Widgets/Console/console_status_chips.py",
-        "ConsoleStatusChips._apply_cost_chip_label",
-        "chip",
-    ): (
-        "NOT-PER-TICK: the tick reaches this only through sync_cost_state's "
-        "ConsoleCostState equality gate (`if state == self._cost_state: "
-        "return`), so an unchanged cost snapshot never repaints the chip. "
-        "Chips stay NEEDS-LAYOUT on a real change (width:auto -- the label "
-        "length IS the width; the method even forces `chip.refresh(layout="
-        "True)` for the compact-label swap). Retires the former "
-        "sync_cost_state row: the write moved here."
     ),
     # -- Widgets/Console/console_workspace_files_modal.py (TASK-34991
     #    FINDING, gate fixed by TASK-35028)

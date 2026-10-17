@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from rich import markup as rich_markup
+from rich.cells import cell_len
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -61,13 +62,6 @@ def _items_word(count: int) -> str:
 # TASK-35160 collapsed the strip into one text line; the classes remain as
 # the carriers of the strip's typed activation messages, because every
 # ``ChatScreen`` handler, test and extension import references them by name.
-
-
-class ConsoleChip:
-    """Namespace root for the strip's activation messages (see module doc)."""
-
-    class OpenRequested(Message):
-        """Generic segment activation (subclassed per namespace below)."""
 
 
 class ConsoleApprovalsChip:
@@ -265,9 +259,12 @@ class ConsoleStatusText(Static):
                 parts.append(" · ")
                 column += 3
             plain = self._plain_label(segment)
+            # Cell length, not len(): user-data labels (CJK/emoji names)
+            # render wide, and click spans must match the RENDERED columns.
+            width = cell_len(plain)
             start = column
-            column += len(plain)
-            spans.append((segment.name, start, start + len(plain)))
+            column += width
+            spans.append((segment.name, start, start + width))
             body = rich_markup.escape(plain)
             if self._cursor_name == segment.name:
                 body = f"[reverse]{body}[/reverse]"
@@ -518,14 +515,6 @@ class ConsoleStatusChips(Horizontal):
         self.scope_state = scope_state
         self.ephemeral = ephemeral
         self._cost_state = cost_state
-        # The strip's max_scroll_x and width, and the cost chip's width, at
-        # the last layout check (see _keep_cost_chip_in_view).
-        self._cost_strip_end = 0.0
-        self._cost_strip_width = 0
-        self._cost_chip_width = 0
-        # What places the cost chip on the strip at the last layout of this
-        # screen (see _refit_after_layout).
-        self._cost_chip_place: tuple[object, ...] | None = None
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         # TASK-35100: settled-only badge, hidden at mount (nothing has
         # settled yet); the live rate rides the run segment instead.
@@ -991,8 +980,7 @@ class ConsoleStatusChips(Horizontal):
 
         Returns:
             ``label``: segment text (the full ``state.label``; the
-            room-aware form selection applies after layout via
-            form selection applies on resize/``sync_cost_state``).
+            width-aware compact form applies under 120 columns).
             ``tooltip``: hover text
             (carried for API compatibility, not rendered since TASK-35160
             -- the breakdown modal carries the provenance). ``hidden``:
@@ -1021,11 +1009,11 @@ class ConsoleStatusChips(Horizontal):
         self._refresh_text()
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Rebuild segments; the room-aware cost form follows the width.
+        """Rebuild segments from the current state.
 
         Args:
-            _event: Textual resize notification; unused (the scroller's
-                content width is read fresh in ``_fit_cost_segment``).
+            _event: Textual resize notification; unused (segment labels
+                are width-independent; the line scrolls when it overflows).
         """
         self._refresh_text()
 
