@@ -456,6 +456,8 @@ class PluginService:
                     {
                         "root": ref,
                         "recovery_reason": reason,
+                        "cleaned_absent": reason is None
+                        and (row.get("custody") or {}).get("state") == "cleaned_absent",
                         "cleanup": deepcopy(row.get("cleanup")),
                         **self._coordinator.root_usage.blocker_status((ref,)),
                     }
@@ -1430,7 +1432,10 @@ class PluginService:
 
         return await self._call(operation)
 
-    def _checked(self, name: str, token: str, *, binding: bool = False):
+    def _checked(
+        self, name: str, token: str, *, binding: bool = False,
+        component_kind: str | None = None,
+    ):
         from .components import component_summary
 
         snapshot = self._admitted.get(token)
@@ -1446,6 +1451,11 @@ class PluginService:
             ):
                 raise PluginUnavailable("plugin_turn_retired")
         for component_id in snapshot.selection:
+            if (
+                component_kind is not None
+                and snapshot.inspection.inventory[component_id].kind != component_kind
+            ):
+                continue
             row = component_summary(
                 snapshot.installation_id,
                 snapshot.inspection,
@@ -1651,7 +1661,7 @@ class PluginService:
             from .context import instruction_block
             from .package_files import capture_package, validate_relative_member
 
-            snapshot, component_id, row = self._checked(name, admission_token)
+            snapshot, component_id, row = self._checked(name, admission_token, component_kind="skill")
             relative = validate_relative_member(path)
             component = snapshot.inspection.inventory[component_id]
             member = str(Path(component.path).parent / relative)

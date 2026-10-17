@@ -9,6 +9,7 @@ import pytest
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 from Tests.Agents.test_hooks_v2_execution import command
+from Tests.Chat.hooks_v2_owned_rig import disposed_hook_rig, disposed_mounted_hook_rig
 from Tests.Chat.test_console_fleet_wake import _controller_rig
 from Tests.Chat.test_console_runtime_lifetime import _View
 from Tests.conftest import _close_database_instance
@@ -161,10 +162,8 @@ async def test_interrupt_once_after_seal_and_revocation(
             assert not engine.processes.records
     finally:
         release.set()
-        await runtime.close_hooks_v2()
-        await runtime.dispose()
-        runs_db.close()
-        _close_database_instance(db)
+        async with disposed_hook_rig(runtime, controller, runs_db, db):
+            pass
 
 
 @pytest.mark.asyncio
@@ -240,10 +239,8 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         assert not engine.cleanup_pending
     finally:
         release.set()
-        await runtime.close_hooks_v2()
-        await runtime.dispose()
-        runs_db.close()
-        _close_database_instance(db)
+        async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
+            pass
 
 
 @pytest.mark.asyncio
@@ -448,8 +445,5 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
                 assert len(notifications.read_text().splitlines()) == 1
     finally:
         release.touch()
-        await runtime.close_hooks_v2()
-        assert not engine.processes.records
-        await runtime.dispose()
-        _close_database_instance(db)
-        runs_db.close()
+        async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
+            assert not engine.processes.records
