@@ -36,6 +36,11 @@ from Tests.console_provider_doubles import provider_resolution
 
 pytestmark = pytest.mark.bootstrap_profile
 
+_REPLY = (
+    "Sure -- watch the status line while this reply streams: the run "
+    "segment carries my live tokens-per-second rate, and when the reply "
+    "finishes it settles to the overall average figure."
+)
 _USAGE = {
     "input_tokens": 1000,
     "cache_read_input_tokens": 0,
@@ -56,20 +61,20 @@ def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") ->
     app.chat_api_model_value = model
 
 
-class _TwoChunkAnthropicGateway:
-    """Stub gateway: one chunk, hold until released, then the rest.
+class _SteadyAnthropicGateway:
+    """Stub gateway: a steady multi-chunk stream (no stall).
 
-    The hold is the streaming window: the 0.2s transcript poll keeps
-    ticking while the run is active, so the tracker accumulates real
-    observations without any sleeps of its own.
+    The fragment floor (review follow-up) suppresses decayed sub-floor
+    rates, so the live-fragment assertion needs a stream that keeps
+    tokens flowing -- this one emits ~20-char chunks on a fixed cadence,
+    the same shape as the demo recorder.
     """
 
-    def __init__(self, usage_payload: dict, *, first: str, rest: str) -> None:
+    def __init__(self, usage_payload: dict, *, reply: str) -> None:
         self._usage_payload = usage_payload
-        self._first = first
-        self._rest = rest
+        self._reply = reply
         self.started = asyncio.Event()
-        self.release = asyncio.Event()
+        self.done = asyncio.Event()
 
     async def cached_context_window(self, settings):
         from tldw_chatbook.Utils.token_counter import resolve_context_window
@@ -92,13 +97,25 @@ class _TwoChunkAnthropicGateway:
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):
+        from tldw_chatbook.Utils.token_counter import estimate_tokens
+
         signals = kwargs.get("signals")
         if signals is not None:
-            signals.record_usage_payload(self._usage_payload)
-        yield self._first
-        self.started.set()
-        await self.release.wait()
-        yield self._rest
+            signals.record_usage_payload(
+                {**self._usage_payload,
+                 "output_tokens": self._estimate or estimate_tokens(self._reply)}
+            )
+        pieces = [self._reply[i : i + 20] for i in range(0, len(self._reply), 20)]
+        for piece in pieces:
+            yield piece
+            self.started.set()
+            await asyncio.sleep(0.09)
+        self.done.set()
+
+    _estimate = None
+
+    def __init__subclasses_guard(self):
+        pass
 
 
 @pytest.mark.asyncio
@@ -106,9 +123,7 @@ async def test_rate_rides_run_chip_live_then_settles_to_badge():
     """Redesign 2026-10-16: streaming widens nothing -- the live rate is a
     fragment on the existing run chip; only after the run goes terminal
     does the compact settled badge appear in the vacated slot."""
-    gateway = _TwoChunkAnthropicGateway(
-        _USAGE, first="The answer begins, ", rest="and finishes here."
-    )
+    gateway = _SteadyAnthropicGateway(_USAGE, reply=_REPLY)
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
@@ -145,10 +160,9 @@ async def test_rate_rides_run_chip_live_then_settles_to_badge():
             )
         assert "tok/s avg" not in line_text()
 
-        # Settle: the stream finishes, usage attaches, and the line resolves
-        # to the provider-accurate overall figure, marked "avg".
-        gateway.release.set()
-        await pilot.pause(0.5)
+        # Settle: the stream finishes on its own, usage attaches, and the
+        # line resolves to the provider-accurate overall figure ("avg").
+        await pilot.pause(0.6)
         await console._sync_native_console_chat_ui()
         badge_deadline = asyncio.get_event_loop().time() + 4.0
         while asyncio.get_event_loop().time() < badge_deadline:
@@ -165,9 +179,7 @@ async def test_rate_rides_run_chip_live_then_settles_to_badge():
 
 @pytest.mark.asyncio
 async def test_rate_readout_config_off_hides_and_resets():
-    gateway = _TwoChunkAnthropicGateway(
-        _USAGE, first="The answer begins, ", rest="and finishes here."
-    )
+    gateway = _SteadyAnthropicGateway(_USAGE, reply=_REPLY)
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
@@ -182,8 +194,7 @@ async def test_rate_readout_config_off_hides_and_resets():
         console.query_one("#console-send-message", Button).press()
 
         await asyncio.wait_for(gateway.started.wait(), timeout=4.0)
-        gateway.release.set()
-        await pilot.pause(0.5)
+        await pilot.pause(0.8)
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.2)
         await console._sync_native_console_chat_ui()

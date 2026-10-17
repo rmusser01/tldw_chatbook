@@ -232,7 +232,11 @@ class ConsoleStatusText(Static):
     def __init__(self, segments: list[StatusSegment], **kwargs: Any) -> None:
         super().__init__(markup=True, **kwargs)
         self._segments = list(segments)
-        self._cursor: int = -1
+        #: The cursored segment's NAME, not its index: segments appear and
+        #: disappear between syncs (a run ends, tools hide at zero), and an
+        #: index cursor would silently jump onto a different segment -- or
+        #: index past the visible list and crash the render pass.
+        self._cursor_name: str | None = None
         self._rendered_markup: str | None = None
         # Column spans of the VISIBLE segments in the plain line
         # ``(name, start, end)`` -- click/activation target metadata, and
@@ -242,10 +246,17 @@ class ConsoleStatusText(Static):
     # -- state ---------------------------------------------------------
 
     def set_segments(self, segments: list[StatusSegment]) -> None:
-        """Replace segment state; re-render only if the composed line changed."""
+        """Replace segment state; re-render only if the composed line changed.
+
+        A cursor on a segment that just vanished resets (there is nothing
+        sensible to highlight); a cursor on a segment that only moved
+        keeps its position by name.
+        """
         self._segments = list(segments)
-        if self._cursor >= len(self._segments):
-            self._cursor = -1
+        if self._cursor_name is not None and not any(
+            s.name == self._cursor_name for s in self.visible_segments
+        ):
+            self._cursor_name = None
         self._rerender()
 
     @property
@@ -265,8 +276,8 @@ class ConsoleStatusText(Static):
         spans: list[tuple[str, int, int]] = []
         column = 0
         visible = self.visible_segments
-        for index, segment in enumerate(visible):
-            if index:
+        for segment in visible:
+            if column:
                 parts.append(" · ")
                 column += 3
             plain = self._plain_label(segment)
@@ -274,7 +285,7 @@ class ConsoleStatusText(Static):
             column += len(plain)
             spans.append((segment.name, start, start + len(plain)))
             body = rich_markup.escape(plain)
-            if self._cursor >= 0 and visible[self._cursor].name == segment.name:
+            if self._cursor_name == segment.name:
                 body = f"[reverse]{body}[/reverse]"
             elif segment.dim:
                 body = f"[dim]{body}[/dim]"
@@ -303,23 +314,30 @@ class ConsoleStatusText(Static):
     def _cursor_names(self) -> list[str]:
         return [segment.name for segment in self.visible_segments]
 
+    @property
+    def _cursor(self) -> int:
+        """Index of the cursored segment in the visible list (-1 = none)."""
+        names = self._cursor_names()
+        return names.index(self._cursor_name) if self._cursor_name in names else -1
+
     def _move_cursor(self, target: int) -> None:
         names = self._cursor_names()
         if not names:
-            self._cursor = -1
+            self._cursor_name = None
             self._rerender()
             return
         clamped = max(0, min(target, len(names) - 1))
-        if clamped == self._cursor:
+        name = names[clamped]
+        if name == self._cursor_name:
             return
-        self._cursor = clamped
+        self._cursor_name = name
         self._rerender()
         self.scroll_visible(animate=False)
         self._notify_arrows()
 
     def on_focus(self) -> None:
         """Entering the strip parks the cursor on the first visible segment."""
-        if self._cursor < 0:
+        if self._cursor_name is None:
             self._move_cursor(0)
 
     def action_cursor_left(self) -> None:
@@ -358,9 +376,8 @@ class ConsoleStatusText(Static):
 
     def action_activate_segment(self) -> None:
         """Activate the cursored segment (keyboard parity with the old chips)."""
-        names = self._cursor_names()
-        if 0 <= self._cursor < len(names):
-            self._post_for(names[self._cursor])
+        if self._cursor_name is not None:
+            self._post_for(self._cursor_name)
 
     # -- activation ----------------------------------------------------
 

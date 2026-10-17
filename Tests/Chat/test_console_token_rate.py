@@ -5,8 +5,8 @@ response, the provider-accurate overall figure at settle (measured from the
 first content observation, so time-to-first-token is excluded), and the
 edge cases the display depends on -- missing usage, late usage, message
 switches, stalls, and non-monotonic clocks. The chip rendering contract
-(``format_rate_chip_copy``) is pinned here too, so the widget keeps no
-formatting logic of its own.
+(``format_rate_chip_live_fragment`` / ``format_rate_chip_settled``) are
+pinned here too, so the widget keeps no formatting logic of its own.
 
 The token counter is injected, so no test depends on tokenizer behavior.
 The tracker is fed on every poll tick (streaming or not), so a stalled
@@ -19,6 +19,7 @@ import math
 import pytest
 
 from tldw_chatbook.Chat.console_token_rate import (
+    LIVE_FRAGMENT_FLOOR,
     TokenRateReading,
     TokenRateTracker,
     format_rate_chip_live_fragment,
@@ -310,6 +311,17 @@ class TestLiveFragment:
             format_rate_chip_live_fragment(TokenRateReading(kind="live", rate=42.34))
             == "42.3 tok/s"
         )
+
+    def test_sub_floor_fragment_is_suppressed(self) -> None:
+        """Review follow-up: the EMA decays toward zero (never reaching it)
+        during tool rounds and approval waits; a sub-floor fragment would
+        mislabel the paused phase as crawling streaming."""
+        assert format_rate_chip_live_fragment(
+            TokenRateReading(kind="live", rate=LIVE_FRAGMENT_FLOOR / 2)
+        ) == ""
+        assert format_rate_chip_live_fragment(
+            TokenRateReading(kind="live", rate=LIVE_FRAGMENT_FLOOR)
+        ) == f"{LIVE_FRAGMENT_FLOOR:.1f} tok/s"
 
     def test_non_live_readings_have_no_fragment(self) -> None:
         assert format_rate_chip_live_fragment(TokenRateReading(kind="hidden")) == ""

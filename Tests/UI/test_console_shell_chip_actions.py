@@ -53,8 +53,8 @@ def test_provider_model_assistant_segments_are_actionable():
 
 
 @pytest.mark.unit
-def test_library_sources_tools_segments_are_actionable():
-    """The Library policy and Sources/Tools segments must be activatable --
+def test_sources_tools_segments_are_actionable():
+    """The Sources and Tools segments must be activatable --
     below 150 cols they are the only route to the Inspector's staged-sources
     tray and tool rows."""
     for name in ("sources", "tools"):

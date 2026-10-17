@@ -1329,6 +1329,26 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
 
 
 @pytest.mark.unit
+def test_library_access_menu_choice_opens_the_policy_editor():
+    """Review (TASK-35160 follow-up 4): the Library access row reaches the
+    real policy-editor open path -- the SAME ``open_access`` the removed
+    status-line segment's click used, not a second implementation."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._library_policy = SimpleNamespace(
+        open_access=lambda: calls.append(True)
+    )
+
+    screen._handle_console_composer_menu_choice(ACTION_LIBRARY_ACCESS)
+
+    assert calls == [True]
+
+
+@pytest.mark.unit
 def test_prompts_menu_choice_opens_exactly_one_browse_modal():
     """The existing callback dispatch owns the one modal entry point."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen

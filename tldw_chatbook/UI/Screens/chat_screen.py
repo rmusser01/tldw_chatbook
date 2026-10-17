@@ -300,7 +300,6 @@ from ...Chat.console_prefill import (
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_token_rate import TokenRateTracker, format_rate_chip_live_fragment, format_rate_chip_settled
-from ...Utils.token_counter import estimate_tokens
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -17409,13 +17408,30 @@ class ChatScreen(BaseAppScreen):
         # (the transcript sync stashes it and runs later in the same tick).
         if active_run_copy:
             reading = self._console_rate_reading
-            rate_fragment = (
-                format_rate_chip_live_fragment(reading)
-                if reading is not None
-                else ""
+            # TASK-35160 review: merge ONLY while the run is genuinely in
+            # its streaming phase. A live reading survives tool rounds and
+            # approval waits (the EMA decays toward zero but never reaches
+            # it), and overwriting "Waiting for approval..." with
+            # "streaming · 0.0 tok/s" would mask the strip's most important
+            # ambient signal. The status gate is the primary fix; the
+            # sub-floor fragment suppression in format_rate_chip_live_
+            # fragment is the belt to its braces.
+            run_state = (
+                self._console_chat_controller.run_state
+                if self._console_chat_controller is not None
+                else None
             )
-            if rate_fragment:
-                active_run_copy = f"streaming · {rate_fragment}"
+            if (
+                run_state is not None
+                and run_state.status == ConsoleRunStatus.STREAMING
+            ):
+                rate_fragment = (
+                    format_rate_chip_live_fragment(reading)
+                    if reading is not None
+                    else ""
+                )
+                if rate_fragment:
+                    active_run_copy = f"streaming · {rate_fragment}"
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
     def _show_console_rate(self) -> bool:
@@ -17470,6 +17486,11 @@ class ChatScreen(BaseAppScreen):
                 # vacate (terminal), so streaming never shows both.
                 if reading.kind == "settled" and not self._console_active_run_copy():
                     visible, copy, tooltip = format_rate_chip_settled(reading)
+            else:
+                # No assistant row in this session (fresh/other tab): the
+                # stashed reading belongs to a DIFFERENT session's stream.
+                self._console_rate_tracker.reset()
+                self._console_rate_reading = None
         else:
             self._console_rate_tracker.reset()
             self._console_rate_reading = None
