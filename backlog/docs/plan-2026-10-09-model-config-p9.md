@@ -409,6 +409,11 @@ Must not edit: settings_screen.py (Task 7 owns it in this wave). The fix belongs
 ### Why
 
 - TASK-33001.14 (Legacy summarizers send an env key for a provider whose credential source is none): LLM_Calls/Local_Summarization_Lib.py::_resolve_provider_credential, used by the koboldcpp and tabbyapi summarizers, falls back to os.environ[api_key_env_var] and never reads credential_source. Chat/provider_readiness.py::resolve_provider_credential honours 'none'. Keep the function's distinction between a configured blank and an absent key (its comment says tests pin it), and keep the TASK-34100.4 ciphertext handling.
+  REOPENED at the restack onto Phase 8's final head (2026-10-16). The claim that the base fixed it does not hold at HEAD. The restack dropped this rider's code, tests, ADR-012 amendment and guide text. Dev's task-34895 (a79b07713e, PR #3105) now sends KoboldCpp and TabbyAPI summaries through `_summarize_via_chat_api` -> `chat_api_call`. That route reads no api_key_env_var, so an exported variable is not sent under "none". But it reads no credential_source either:
+  - it still sends a legacy [API] key under "none";
+  - it differs from readiness for "stored" (TabbyAPI), "environment" and no-source sections;
+  - no test or ADR-012 record covers any of this.
+  Local_Summarization_Lib.py is still in the tree with the unfixed resolver and no production importer. The fix now belongs on the chat-dispatch route. It needs a wave: Task 17 (Wave 5) holds the same files and the loader half of the same ruling (TASK-33641.11). The rider's notes have the measured table.
 - TASK-33001.15 (Legacy [API]-only key is not materialised when a model save records "stored"): In Chat/provider_setup_persistence.py::build_provider_setup_mutation, the credential_source == 'stored' branch, with keep_stored_credential and no typed value, validates the existing value but writes nothing. A key that config.py::_normalize_legacy_provider_api_key bridged in memory from legacy [API] therefore never reaches [api_settings.<p>] on disk, although the table now says 'stored'.
 
 ### Acceptance criteria
@@ -796,7 +801,7 @@ Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in t
 [[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14, 17], [15, 16]]
 
 - Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10). After the restack, TASK-33006.17 (a) is fixed by the base (dev's 8c033d006b). TASK-33003.19's inventory was brought current again on four modals dev added.
-- Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11).
+- Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11). After the restack, TASK-33001.14 is reopened: the restack dropped its fix, and the base does not fix it (see Task 9). It still needs a wave.
 - Rebase this branch onto Phase 8's final head.
 - Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together).
 - Wave 4: Tasks 6, 7, 8.
