@@ -5049,8 +5049,9 @@ class SettingsScreen(BaseAppScreen):
         badge = self._persistence_badge(category)
         badge_note = f"Save contract: {badge}."
         if badge.startswith("Draft") and category is not SettingsCategoryId.SPEECH_TTS:
-            # TASK-33002.10: the State line has no room left to say it.
-            badge_note += " Switching categories keeps the draft; the rail marks it with *."
+            badge_note += (  # TASK-33002.10: the State line has no room to say it.
+                " Switching categories keeps the draft; the rail marks it with *."
+            )
         if category is SettingsCategoryId.OVERVIEW:
             notes = [
                 badge_note,
@@ -5277,8 +5278,7 @@ class SettingsScreen(BaseAppScreen):
         if tested_draft != (provider, self._provider_draft_generation):
             self._provider_subscription_test = None
             return
-        detail, _summary, _passed = self._provider_readiness_test_report()
-        self._provider_test_result = detail
+        self._provider_test_result = self._run_provider_readiness_test()
         self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
