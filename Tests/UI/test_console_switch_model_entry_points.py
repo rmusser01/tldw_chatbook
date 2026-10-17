@@ -233,6 +233,47 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
+    request,
+) -> None:
+    """TASK-33006.20: after Esc closes Chat settings, the footer is the one for
+    the widget focus went back to. Opened from a rail control it leads with
+    the rail's exits; opened from the composer it is the composer's, and at
+    211x44 that keeps Alt+A and Alt+C, not the rail footer it had before."""
+    app = _console_app()
+    harness = _Harness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _open_console(harness, pilot)
+        footer = console.query_one(AppFooterStatus)
+
+        def shown() -> str:
+            return str(footer._shortcut_display.content)
+
+        await open_rail_section(console, pilot, "model")
+        toggle = console.query_one("#console-rail-section-toggle-model", Button)
+        for start, in_rail in ((toggle, True), (_composer(console), False)):
+            start.focus()
+            await pilot.pause()
+            await pilot.press("ctrl+o")
+            await _until(
+                pilot,
+                lambda: isinstance(harness.screen, ConsoleSettingsModal),
+                "Ctrl+O to open Chat settings",
+            )
+            await _close_chat_settings(harness, console, pilot)
+            assert harness.focused is start
+            await _until(
+                pilot,
+                lambda: shown().startswith("Esc composer · F6 panes") is in_rail
+                and "Alt+M switch model" in shown(),
+                f"the footer of {start.id}",
+            )
+        for hint in ("Alt+A approval", "Alt+C context rail"):
+            assert hint in shown(), (hint, shown())
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_dialog_over_a_ready_console_names_only_the_keys_that_act(
     request,
 ) -> None:
