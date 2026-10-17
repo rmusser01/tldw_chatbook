@@ -18617,7 +18617,10 @@ export BASE and HEAD to scratch trees, wrap every module-level test in
 `private_profile_test` there, and compare failing-name sets. Keep
 `Tests/ProductionApp/` out of that pytest invocation: its conftest binds
 config at startup and every Tests/UI module then fails collection with
-`RecoveryRequired`.
+`RecoveryRequired`. Since TASK-33001.11 (2026-10-17) that conftest sets only
+`TMPDIR`, so a ProductionApp path can share an invocation with Tests/UI; see
+the TASK-33001.11 paragraph in the Tests/UI `RecoveryRequired` lesson. The
+advice still holds for a scratch tree exported from before that change.
 
 ### "CI's unwrapped run is the final word" is false for Tests/ProductionApp (TASK-33001.6 fix round 1)
 
@@ -18633,7 +18636,10 @@ before this conftest loads. The file then collects, and all 3 tests fail in
 `_production_app` setup (`save_values` returns False, log `Configuration
 mutation failed (phase=lock, ..., error_type=RecoveryRequired)`). That result is
 identical at BASE and HEAD. Adding the `bootstrap_profile` marker in scratch made
-all 3 pass (rider TASK-33001.11).
+all 3 pass (rider TASK-33001.11). That rider did not adopt the marker. These
+tests write `chat_defaults` and `api_settings.*`, and the bootstrap profile is
+shared by every `bootstrap_profile` test in a worker. So it made each test
+`@private_profile_test`, and its conftest stopped rewriting `TLDW_CONFIG_PATH`.
 
 **What to do.** Before deferring a test to CI, run it in CI's collection order,
 not as a lone file: explicit file arguments load every named directory's conftest
