@@ -103,6 +103,13 @@ from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
+from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
+    ConsoleGoalSetupModal,
+)
+from tldw_chatbook.Widgets.Console.console_goal_status import (
+    ConsoleGoalHistory,
+    ConsoleGoalStatus,
+)
 from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
     ConsoleHooksReviewModal,
 )
@@ -210,6 +217,7 @@ from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
+from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
 from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -1154,7 +1162,16 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsolePromptDraftSaveDialog,
     ConsoleSaveMarkdownModal,
     ConsoleTerminalSessionModal,
+    ResponseRulesModal,
     WorkspaceArchiveReceiptModal,
+)
+# TASK-33003.19 (re-measured after the rebase onto Phase 8's final head): the
+# Goals modals the root opens are plain ModalScreens (Esc -> close/cancel)
+# outside the safe-dismissal contract, so they are named without one.
+_ROOT_PLAIN_MODAL_TYPES = (
+    ConsoleGoalHistory,
+    ConsoleGoalSetupModal,
+    ConsoleGoalStatus,
 )
 CONSOLE_MODAL_LAUNCH_EDGES = (
     _ModalLaunchEdge(
@@ -1163,6 +1180,7 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             *_CONSOLE_DIRECT_MODAL_TYPES,
             *_DIRECT_SHARED_MODAL_TYPES,
             *_ROOT_INVENTORY_ONLY_MODAL_TYPES,
+            *_ROOT_PLAIN_MODAL_TYPES,
             ChangeReviewScreen,
             ConsolePromptComparisonModal,
             ProjectInstructionNoticeModal,
@@ -1259,6 +1277,7 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
     # No source path: the class body is this owner's whole launch surface
     # (the module's request_hook_review opener is the root's, above).
     _ModalLaunchEdge(ConsoleHooksReviewModal, (ConfirmationDialog,), ()),
+    _ModalLaunchEdge(ResponseRulesModal, (ConfirmationDialog,), ()),
     _ModalLaunchEdge(
         TraceExportDialog,
         (ConfirmationDialog, EnhancedFileSave),
@@ -1594,8 +1613,15 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         GlobalFullCaptureConfirmation,
     }
 
-    assert discovered_console_types - console_contract_types == inventory_only_types
-    assert discovered_console_types == console_contract_types | inventory_only_types
+    plain_types = set(_ROOT_PLAIN_MODAL_TYPES)
+    assert (
+        discovered_console_types - console_contract_types
+        == inventory_only_types | plain_types
+    )
+    assert (
+        discovered_console_types
+        == console_contract_types | inventory_only_types | plain_types
+    )
     # No mounted row is not no contract: each still adopts safe dismissal.
     for modal_type in inventory_only_types:
         assert issubclass(modal_type, SafeModalDismissMixin), modal_type
@@ -1623,15 +1649,18 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # owner seam joins the explicit Console launch graph. TASK-33622.15 adds the
     # generated video's two quit-guarded Save-to-disk screens: 49 -> 51.
     # TASK-33003.19 re-measures it (the 51 was already stale): 33 Console
-    # contract rows, 15 shared rows, 23 inventory-only modals and the two
-    # named below, less ConsoleRagSettingsModal, whose
+    # contract rows, 15 shared rows, 24 inventory-only modals (dev's
+    # ResponseRulesModal is the 24th), the three plain Goals modals and the
+    # two named below, less ConsoleRagSettingsModal, whose
     # ConsoleLibrarySearchModal subclass is what the root opens.
-    assert len(reachable_modal_types) == 72
+    assert len(reachable_modal_types) == 76
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
         | inventory_only_types
-        # WorktreeRecoveryDialog: reachable, but a plain ModalScreen.
+        # WorktreeRecoveryDialog and the Goals modals: reachable, but plain
+        # ModalScreens.
+        | plain_types
         | {TrajectoryScreen, WorktreeRecoveryDialog}
     )
     assert reachable_modal_types == all_contract_types - {ConsoleRagSettingsModal}
