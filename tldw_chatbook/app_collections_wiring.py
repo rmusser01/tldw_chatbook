@@ -184,8 +184,15 @@ def _capture_deferred_collections_setup(app):
     )
 
     app_module = sys.modules["tldw_chatbook.app"]
+    console_skill_app_source = vars(app_module).get("_CONSOLE_SKILL_APP_SOURCE")
+    if console_skill_app_source is None:
+        # `python -m tldw_chatbook.app` (served web child) mounts the app from
+        # the __main__ block before module top-level execution reaches the
+        # _CONSOLE_SKILL_APP_SOURCE assignment further down; nothing stock to
+        # verify against yet, so defer rather than crash the boot.
+        return None
     app_type, defining, factory, factory_code, _runtime_type = (
-        app_module._CONSOLE_SKILL_APP_SOURCE
+        console_skill_app_source
     )
     fields = vars(app)
     database = fields.get("local_library_collections_db")
