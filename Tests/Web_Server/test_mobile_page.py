@@ -444,6 +444,24 @@ async def test_mobile_app_js_carries_the_library_surface(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mobile_app_js_reads_the_conversations_envelope(tmp_path) -> None:
+    """Task-2 (#3128 minor 7): the session list reads the conversations
+    route's paginated ``{"items", "page", "has_more"}`` envelope — the
+    caller takes ``items`` and ignores the pagination fields. Grep-style
+    pin over the served client, like the library-surface markers.
+    """
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.js")
+        assert response.status == 200
+        js = await response.text()
+
+    assert '"/conversations"' in js
+    # The session-list caller specifically (the library callers also read
+    # ``data.items``; this fragment pins the sessions assignment).
+    assert "state.sessions = Array.isArray(data.items)" in js
+
+
+@pytest.mark.asyncio
 async def test_mobile_app_js_tags_approval_surfaces_and_handles_run_status(
     tmp_path,
 ) -> None:

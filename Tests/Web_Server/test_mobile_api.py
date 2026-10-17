@@ -133,6 +133,23 @@ class FakeMobileService:
         # Task-3 contract: the sessions list is newest-first.
         return [dict(session) for session in reversed(list(self._sessions.values()))]
 
+    def sessions_page(
+        self, *, page: int = 1, per_page: int = 50
+    ) -> dict[str, Any]:
+        """Task-2 efficiency follow-up: window the merged listing (real
+        service windows its in-memory + persisted merge; the stub windows
+        its in-memory sessions) into the reading routes' page envelope."""
+        self.calls.append(
+            ("sessions_page", {"page": page, "per_page": per_page})
+        )
+        listing = [dict(session) for session in reversed(list(self._sessions.values()))]
+        start = (page - 1) * per_page
+        return {
+            "items": listing[start : start + per_page],
+            "page": page,
+            "has_more": start + per_page < len(listing),
+        }
+
     async def create_session(
         self, *, title: str, workspace_id: str | None = None
     ) -> dict[str, Any]:
@@ -635,16 +652,77 @@ async def test_conversations_list_shape(tmp_path, mobile_surface_gate) -> None:
         assert response.headers["Cache-Control"] == "no-store"
         body = await response.json()
         assert body == {
-            "sessions": [
+            "items": [
                 {
                     "id": "s-known",
                     "title": "phone chat",
                     "workspace_id": "global",
                     "has_folder_tools": False,
                 }
-            ]
+            ],
+            "page": 1,
+            "has_more": False,
         }
-        assert ("sessions", {}) in service.calls
+        assert ("sessions_page", {"page": 1, "per_page": 50}) in service.calls
+
+
+@pytest.mark.asyncio
+async def test_conversations_pagination_contract(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """Task-2 (#3128 minor 7): ``?page=``/``?per_page`` with the reading
+    routes' validation — ``400 invalid_page`` via the shared parser, plus
+    the per_page bounds (default 50, max 100).
+    """
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        # Explicit page/per_page pass through to the service.
+        paged = await client.get(
+            "/api/v1/mobile/conversations?page=2&per_page=100"
+        )
+        assert paged.status == 200
+        assert paged.headers["Cache-Control"] == "no-store"
+        body = await paged.json()
+        assert set(body) == {"items", "page", "has_more"}
+        assert body["page"] == 2
+        assert ("sessions_page", {"page": 2, "per_page": 100}) in service.calls
+
+        boundary = await client.get(
+            "/api/v1/mobile/conversations?page=1&per_page=1"
+        )
+        assert boundary.status == 200
+        boundary_body = await boundary.json()
+        assert [session["id"] for session in boundary_body["items"]] == ["s-known"]
+        assert boundary_body["has_more"] is False
+        assert ("sessions_page", {"page": 1, "per_page": 1}) in service.calls
+
+        for query in (
+            "page=0",
+            "page=-1",
+            "page=abc",
+            "page=1.5",
+            "page=10001",  # route-layer page ceiling (rider)
+        ):
+            response = await client.get(f"/api/v1/mobile/conversations?{query}")
+            assert response.status == 400, query
+            assert response.headers["Cache-Control"] == "no-store"
+            assert (await response.json()) == {"error": "invalid_page"}, query
+
+        for query in (
+            "per_page=0",
+            "per_page=-1",
+            "per_page=abc",
+            "per_page=1.5",
+            "per_page=101",  # route-layer per_page ceiling
+        ):
+            response = await client.get(f"/api/v1/mobile/conversations?{query}")
+            assert response.status == 400, query
+            assert (await response.json()) == {"error": "invalid_per_page"}, query
+
+        # An empty value reads as the default, like the page parameter.
+        empty = await client.get("/api/v1/mobile/conversations?per_page=")
+        assert empty.status == 200
+        assert ("sessions_page", {"page": 1, "per_page": 50}) in service.calls
 
 
 @pytest.mark.asyncio
@@ -682,7 +760,7 @@ async def test_new_conversation_creates_201_and_lists(
         assert default_session["workspace_id"] == "global"
 
         listing = await (await client.get("/api/v1/mobile/conversations")).json()
-        assert [session["id"] for session in listing["sessions"]] == [
+        assert [session["id"] for session in listing["items"]] == [
             "s-new-2",
             "s-new-1",
             "s-known",

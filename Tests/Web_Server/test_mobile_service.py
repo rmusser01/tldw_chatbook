@@ -512,6 +512,304 @@ async def test_pump_tick_in_the_return_window_delivers_fast_run_content(
 
 
 # ========================================================================= #
+# Efficiency (#3128 minors 3/7: fingerprint-gated polling, scoped pump,     #
+# paginated conversations listing)                                          #
+# ========================================================================= #
+
+
+async def _freeze_pump(service: MobileChatService) -> None:
+    """Cancel the real pump so manual ``_poll_once`` ticks are the only scan.
+
+    Same discipline as the return-window test above: deterministic track
+    state for the asserts that follow.
+    """
+    await service._ensure_started()
+    assert service._pump_task is not None
+    service._pump_task.cancel()
+    try:
+        await service._pump_task
+    except asyncio.CancelledError:
+        pass
+
+
+def _counting_materializations(engine) -> tuple[dict[str, int], Any]:
+    """Wrap the store's transcript materialization with a call counter."""
+    counter = {"calls": 0}
+    original = engine.store.messages_for_session
+
+    def counting(session_id: str):
+        counter["calls"] += 1
+        return original(session_id)
+
+    engine.store.messages_for_session = counting
+    return counter, original
+
+
+async def test_pump_ticks_do_not_rematerialize_unchanged_sessions(
+    tmp_path: Path,
+) -> None:
+    """Fingerprint-gated scanning (#3128 minor 3): a settled session's
+    transcript is NOT rebuilt on pump ticks.
+
+    The store's O(1) ``session_fingerprint`` seam gates the heavy
+    ``messages_for_session`` snapshot build: once a session's stream track
+    is terminal and the fingerprint matches the last materializing scan,
+    ticks (and direct scans) skip the materialization. A real change (a new
+    turn appending messages) re-opens the gate — behavior stays identical,
+    only the unchanged-session cost collapses.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="gated scan")
+        await service.send(session["id"], "one turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        counter, _original = _counting_materializations(engine)
+
+        # Pump ticks over the settled session: no re-materialization.
+        for _ in range(3):
+            service._poll_once(engine)
+        assert counter["calls"] == 0, "pump re-materialized an unchanged session"
+
+        # A DIRECT scan of the unchanged session skips too — this pins the
+        # fingerprint gate itself, independent of the pump's scoping (a
+        # scoped-only fix would still materialize here).
+        service._scan_stream(engine, session["id"], active=False)
+        assert counter["calls"] == 0, "unchanged scan re-materialized the transcript"
+
+        # A real change re-opens the gate: the second turn's content moves
+        # the fingerprint and the scans materialize again.
+        got.clear()
+        await service.send(session["id"], "second turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="second run_completed event",
+        )
+        assert counter["calls"] > 0, "a changed session was never re-materialized"
+        messages = await service.session_messages(session["id"])
+        assert any(
+            m["role"] == "user" and m["content"] == "second turn"
+            for m in messages["messages"]
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_session_messages_reuses_cached_wire_until_fingerprint_changes(
+    tmp_path: Path,
+) -> None:
+    """Fingerprint-gated history reads (#3128 minor 3): the phone's 12 s
+    resync no longer rebuilds an unchanged transcript.
+
+    ``session_messages`` keeps its last wire projection per session keyed
+    by the store's O(1) fingerprint; an unchanged session answers from the
+    cache (identical body, cursor validation included) and a new turn —
+    which moves the fingerprint — rebuilds it.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="cached history")
+        await service.send(session["id"], "turn one")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        counter, _original = _counting_materializations(engine)
+
+        first = await service.session_messages(session["id"])
+        after_first = counter["calls"]
+        assert after_first >= 1
+
+        # Identical repeat (the 12 s poll over a settled session): cached.
+        second = await service.session_messages(session["id"])
+        assert second == first
+        assert counter["calls"] == after_first
+
+        # The cursor variant rides the same cache.
+        tail = await service.session_messages(
+            session["id"], after_message_id=first["cursor"]
+        )
+        assert tail["messages"] == []
+        assert tail["cursor"] == first["cursor"]
+        assert counter["calls"] == after_first
+
+        # A new turn moves the fingerprint → the wire is rebuilt.
+        got.clear()
+        await service.send(session["id"], "turn two")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="second run_completed event",
+        )
+        third = await service.session_messages(session["id"])
+        assert counter["calls"] > after_first
+        assert any(
+            m["role"] == "user" and m["content"] == "turn two"
+            for m in third["messages"]
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_pump_scans_only_live_sessions(tmp_path: Path) -> None:
+    """Scoped pump (#3128 minor 4): idle and settled sessions are not
+    scanned; a session with a scheduled turn stays in scope.
+
+    The old pump iterated every session forever. The scoped pump scans
+    only sessions with an active run, a turn admission slot, or a pending
+    (non-terminal) stream track — here: a settled session (run completed,
+    terminal track) and a never-sent idle session drop out, while a turn
+    parked on a tool approval is the only scanned session, and it drops
+    out again once its run completes. (The turn is parked on an approval —
+    not on a gated provider call: delaying provider composition mid-run
+    stalls the engine's second-step MCP catalog compose, a pre-existing
+    behavior verified against the base commit and out of this task's
+    scope.)
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        settled = await service.create_session(title="settled")
+        await service.send(settled["id"], "one turn")
+        await _wait_for(
+            lambda: any(
+                e.type == "run_completed" and e.session_id == settled["id"]
+                for e in got
+            ),
+            timeout=30,
+            what="settled run_completed event",
+        )
+        idle = await service.create_session(title="idle, never sent")
+        await _freeze_pump(service)
+        engine = service._require_engine()
+
+        scanned: list[str] = []
+        original_scan = service._scan_stream
+
+        def _spy_scan(engine_arg, session_id, *, active, flush=False):
+            scanned.append(session_id)
+            return original_scan(
+                engine_arg, session_id, active=active, flush=flush
+            )
+
+        service._scan_stream = _spy_scan
+
+        # Settled + idle: out of scope — nothing is scanned.
+        service._poll_once(engine)
+        assert scanned == []
+
+        # A turn parked on its tool approval keeps its session (and only
+        # it) in scope.
+        parked = await service.create_session(
+            title="parked turn", workspace_id=workspace_id
+        )
+        await service.send(parked["id"], "list the folder")
+        approvals = await _wait_for_approvals(got, parked["id"])
+        scanned.clear()
+        service._poll_once(engine)
+        assert scanned == [parked["id"]]
+
+        # Once the run completes and the slot releases, it drops out again.
+        call = approvals[0]["calls"][0]
+        assert (
+            await service.decide_approval(
+                approvals[0]["round_id"], {call["call_id"]: "approve_once"}
+            )
+            is True
+        )
+        await _wait_for(
+            lambda: any(
+                e.type == "run_completed" and e.session_id == parked["id"]
+                for e in got
+            ),
+            timeout=30,
+            what="parked run_completed event",
+        )
+        scanned.clear()
+        service._poll_once(engine)
+        assert scanned == []
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def _wait_for_approvals(
+    got: list[Any], session_id: str
+) -> list[dict[str, Any]]:
+    """Wait until the session's approval round is mounted; return payloads."""
+    await _wait_for(
+        lambda: any(
+            e.type == "approval_requested" and e.session_id == session_id
+            for e in got
+        ),
+        timeout=30,
+        what="approval_requested event",
+    )
+    return [
+        e.payload
+        for e in got
+        if e.type == "approval_requested" and e.session_id == session_id
+    ]
+
+
+async def test_sessions_page_windows_the_merged_listing(tmp_path: Path) -> None:
+    """Paginated conversations listing (#3128 minor 7): the reading routes'
+    ``{"items", "page", "has_more"}`` envelope over the newest-first merged
+    sessions listing.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    try:
+        alpha = await service.create_session(title="alpha")
+        beta = await service.create_session(title="beta")
+        gamma = await service.create_session(title="gamma")
+
+        page_one = service.sessions_page(per_page=2)
+        assert set(page_one) == {"items", "page", "has_more"}
+        assert [s["id"] for s in page_one["items"]] == [gamma["id"], beta["id"]]
+        assert page_one["page"] == 1
+        assert page_one["has_more"] is True
+
+        page_two = service.sessions_page(page=2, per_page=2)
+        assert [s["id"] for s in page_two["items"]] == [alpha["id"]]
+        assert page_two["page"] == 2
+        assert page_two["has_more"] is False
+
+        page_three = service.sessions_page(page=3, per_page=2)
+        assert page_three["items"] == []
+        assert page_three["page"] == 3
+        assert page_three["has_more"] is False
+
+        default = service.sessions_page()
+        assert default["page"] == 1
+        assert [s["id"] for s in default["items"]] == [
+            gamma["id"],
+            beta["id"],
+            alpha["id"],
+        ]
+        assert default["has_more"] is False
+    finally:
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+# ========================================================================= #
 # Restart rehydration (ADR-234 recorded follow-up, #3128 Important 2)       #
 # ========================================================================= #
 

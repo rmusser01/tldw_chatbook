@@ -175,7 +175,10 @@
       showError(code);
       return;
     }
-    state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    // The conversations route answers the paginated envelope
+    // {"items", "page", "has_more"} like the reading routes; the session
+    // list takes items and ignores the pagination fields.
+    state.sessions = Array.isArray(data.items) ? data.items : [];
     renderSessionList();
   }
 

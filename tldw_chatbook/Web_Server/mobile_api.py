@@ -88,6 +88,13 @@ _SMALL_BODY_BYTES = 4096
 #: before the service is touched.
 _MAX_PAGE = 10_000
 
+#: Conversations-route page size (Task 2, #3128 minor 7): default
+#: ``per_page`` and its ceiling, mirroring the reading routes' bounded
+#: page parameters. A ``per_page`` beyond the ceiling is the uniform
+#: ``400 invalid_per_page`` before the service is touched.
+_DEFAULT_PER_PAGE = 50
+_MAX_PER_PAGE = 100
+
 _NO_STORE = {"Cache-Control": "no-store"}
 
 #: Title used when a new-conversation POST carries no usable title.
@@ -226,11 +233,25 @@ def _error(status: int, code: str):
 
 
 async def handle_conversations(server: Any, request) -> Any:
-    """List the mobile sessions, newest first."""
+    """List one page of the mobile sessions, newest first.
+
+    Task 2 (#3128 minor 7): the route joins the reading routes' paginated
+    contract — ``?page=``/``?per_page=`` (defaults 1/50, per_page capped
+    at 100) with the same ``{"items", "page", "has_more"}`` envelope and
+    the same ``400 invalid_page`` validation via the shared parser.
+    """
     from aiohttp import web
 
+    page = _parse_page(request.query.get("page"))
+    if page is None:
+        return _error(400, "invalid_page")
+    per_page = _parse_per_page(request.query.get("per_page"))
+    if per_page is None:
+        return _error(400, "invalid_per_page")
     service = server._get_mobile_service()
-    return web.json_response({"sessions": service.sessions}, headers=_NO_STORE)
+    return web.json_response(
+        service.sessions_page(page=page, per_page=per_page), headers=_NO_STORE
+    )
 
 
 async def handle_new_conversation(server: Any, request) -> Any:
@@ -373,6 +394,22 @@ def _parse_page(raw: str | None) -> int | None:
         return None
     page = int(raw)
     return page if 1 <= page <= _MAX_PAGE else None
+
+
+def _parse_per_page(raw: str | None) -> int | None:
+    """Read one ``?per_page=`` value; ``None`` when unusable.
+
+    Same shape as :func:`_parse_page`: missing or empty reads as the
+    default ``_DEFAULT_PER_PAGE``; anything that is not a decimal integer,
+    is below 1, or exceeds ``_MAX_PER_PAGE`` is a caller mistake (the
+    uniform ``400 invalid_per_page``).
+    """
+    if raw is None or raw == "":
+        return _DEFAULT_PER_PAGE
+    if not (raw.isascii() and raw.isdigit()):
+        return None
+    per_page = int(raw)
+    return per_page if 1 <= per_page <= _MAX_PER_PAGE else None
 
 
 async def handle_notes_page(server: Any, request) -> Any:
