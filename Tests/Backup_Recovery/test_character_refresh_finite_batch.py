@@ -165,12 +165,14 @@ def _receipt(stats, elapsed):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("display_mode", ["idle", "active", "queued-to-active"])
 async def test_changed_character_display_batches_only_inner_original_reads(
-    tmp_path, record_property
+    tmp_path, record_property, display_mode
 ):
     database = CharactersRAGDB(tmp_path / "character-display.sqlite", "finite-display")
     controller, screen, *_ = _character(database)
     before = _source_hashes()
+    pending = None
     try:
         with _original_calls(database) as live:
             started = time.monotonic()
@@ -183,9 +185,19 @@ async def test_changed_character_display_batches_only_inner_original_reads(
             "direct/action positive stopped using its original fresh scopes"
         )
         controller.invalidate_scope()
+        active = [display_mode == "active"]
+        controller._run_active = lambda: active[0]
         with _original_calls(database) as displayed:
             started = time.monotonic()
-            assert await _display(controller, screen)
+            if display_mode == "queued-to-active":
+                async with controller._presentation_scope_lock:
+                    pending = asyncio.create_task(_display(controller, screen))
+                    await asyncio.sleep(0)
+                    assert not pending.done()
+                    active[0] = True
+                assert await pending
+            else:
+                assert await _display(controller, screen)
             display_elapsed = time.monotonic() - started
         _retired(database, displayed)
         assert controller.state == expected
@@ -204,6 +216,10 @@ async def test_changed_character_display_batches_only_inner_original_reads(
         else:
             assert live["helpers"] == 4 and displayed["helpers"] == 2
     finally:
+        if pending is not None:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
         database.close()
 
 
@@ -223,12 +239,14 @@ async def test_changed_character_display_batches_only_inner_original_reads(
         "config_generation",
     ],
 )
+@pytest.mark.parametrize("display_mode", ["idle", "active"])
 async def test_character_inner_batch_rejects_changed_owner_after_final_original_pair(
-    tmp_path, member
+    tmp_path, member, display_mode
 ):
     first = CharactersRAGDB(tmp_path / "first-display.sqlite", "first-display")
     second = CharactersRAGDB(tmp_path / "second-display.sqlite", "second-display")
     controller, screen, active, current, conversation = _character(first)
+    controller._run_active = lambda: display_mode == "active"
     store = screen._console_chat_store
     entered, release = threading.Event(), threading.Event()
     changed = False
@@ -416,12 +434,15 @@ async def test_character_inner_batch_preserves_real_same_worker_borrowed_connect
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancellation", ["single", "repeated", "all_created"])
+@pytest.mark.parametrize("display_mode", ["idle", "active"])
 async def test_character_batch_cancellation_keeps_actual_native_callback_owned(
     tmp_path,
     cancellation,
+    display_mode,
 ):
     database = CharactersRAGDB(tmp_path / "cancel-display.sqlite", "finite-display")
     controller, screen, *_ = _character(database)
+    controller._run_active = lambda: display_mode == "active"
     entered, release = threading.Event(), threading.Event()
     held = False
 
@@ -453,7 +474,9 @@ async def test_character_batch_cancellation_keeps_actual_native_callback_owned(
                     issued.cancel()
             await asyncio.sleep(0)
             assert not task.done()
-            assert controller._presentation_scope_lock.locked()
+            assert controller._presentation_scope_lock.locked() is (
+                display_mode == "idle"
+            )
             assert worker_leases(database)
             release.set()
             with pytest.raises(asyncio.CancelledError):
@@ -464,5 +487,89 @@ async def test_character_batch_cancellation_keeps_actual_native_callback_owned(
     finally:
         release.set()
         if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued", [False, True])
+@pytest.mark.parametrize(
+    ("boundary", "reader"),
+    [
+        ("run_active", "refresh_if_scope_changed"),
+        ("run_active", "refresh"),
+        ("owner_capture", "refresh_if_scope_changed"),
+        ("owner_capture", "refresh"),
+        ("scope_await", "refresh"),
+    ],
+)
+async def test_active_display_keeps_dynamic_custom_no_argument_dispatch(
+    tmp_path, monkeypatch, queued, boundary, reader
+):
+    database = CharactersRAGDB(tmp_path / "dynamic-display.sqlite", "dynamic-display")
+    controller, screen, *_ = _character(database)
+    running = [not queued]
+    original = getattr(controller, reader)
+    accessor = controller._database_accessor
+    calls = []
+    mutated = False
+    entered, release = threading.Event(), threading.Event()
+    task = None
+
+    async def replacement():
+        calls.append(reader)
+        return await original()
+
+    def mutate():
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            monkeypatch.setattr(controller, reader, replacement)
+
+    def run_active():
+        if running[0] and boundary == "run_active":
+            mutate()
+        return running[0]
+
+    def database_accessor():
+        if running[0] and boundary == "owner_capture":
+            mutate()
+        return accessor()
+
+    def barrier(_frame, name, event, _argument):
+        if boundary == "scope_await" and name == "pairs" and event == "return":
+            entered.set()
+            assert release.wait(10), "test-owned original scope hold was not released"
+
+    controller._run_active = run_active
+    controller._database_accessor = database_accessor
+    before = _source_hashes()
+    try:
+        with _original_calls(database, barrier=barrier) as observed:
+            if queued:
+                async with controller._presentation_scope_lock:
+                    task = asyncio.create_task(_display(controller, screen))
+                    await asyncio.sleep(0)
+                    assert not task.done()
+                    running[0] = True
+            else:
+                task = asyncio.create_task(_display(controller, screen))
+            if boundary == "scope_await":
+                assert await asyncio.to_thread(entered.wait, 10)
+                assert worker_leases(database)
+                mutate()
+                release.set()
+            assert await task
+        _retired(database, observed)
+        assert calls == [reader], "custom no-argument callback was bypassed"
+        assert observed["callbacks"] == 4
+        assert observed["pairs"] == 3 and observed["recent"] == 1
+        assert controller._presentation_scope_key is None
+        assert before == _source_hashes()
+    finally:
+        release.set()
+        if task is not None:
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         database.close()

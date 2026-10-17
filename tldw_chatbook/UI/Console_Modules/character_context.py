@@ -945,15 +945,36 @@ class ConsoleCharacterContextController:
             return False
         if not _stock_character_presentation(self):
             return await self.refresh_if_scope_changed()
+
+        def owner_is_current() -> bool:
+            return (
+                _stock_character_presentation(self)
+                and key[1:] == self._presentation_owner_key(screen)[1:]
+            )
+
         if not force_fresh and self._run_active is not None and self._run_active():
-            return await self.refresh_if_scope_changed()
+            if not _stock_character_presentation(self):
+                return await self.refresh_if_scope_changed()
+            key = self._presentation_owner_key(screen)
+            if not _stock_character_presentation(self):
+                return await self.refresh_if_scope_changed()
+            return await self.refresh_if_scope_changed(
+                _presentation_is_current=owner_is_current
+            )
         async with self._presentation_scope_lock:
             if getattr(screen, "_console_chat_tearing_down", False) or _console_screen_is_torn_down(screen):
                 return False
             if not _stock_character_presentation(self):
                 return await self.refresh_if_scope_changed()
             if not force_fresh and self._run_active is not None and self._run_active():
-                return await self.refresh_if_scope_changed()
+                if not _stock_character_presentation(self):
+                    return await self.refresh_if_scope_changed()
+                key = self._presentation_owner_key(screen)
+                if not _stock_character_presentation(self):
+                    return await self.refresh_if_scope_changed()
+                return await self.refresh_if_scope_changed(
+                    _presentation_is_current=owner_is_current
+                )
             key = self._presentation_owner_key(screen)
             if (
                 not force_fresh
@@ -967,12 +988,6 @@ class ConsoleCharacterContextController:
             ):
                 return False
             self._presentation_scope_key = None
-
-            def owner_is_current() -> bool:
-                return (
-                    _stock_character_presentation(self)
-                    and key[1:] == self._presentation_owner_key(screen)[1:]
-                )
 
             try:
                 try:
@@ -1009,7 +1024,12 @@ class ConsoleCharacterContextController:
                 self._presentation_scope_key = None
                 raise
 
-    async def refresh_if_scope_changed(self, *, force: bool = False) -> bool:
+    async def refresh_if_scope_changed(
+        self,
+        *,
+        force: bool = False,
+        _presentation_is_current: Callable[[], bool] | None = None,
+    ) -> bool:
         """Reload the projection when its scope changed.
 
         During a run the database scope is checked at most once per
@@ -1017,6 +1037,7 @@ class ConsoleCharacterContextController:
 
         Args:
             force: Reload even when the scope is unchanged.
+            _presentation_is_current: Original display owner; direct actions stay fresh.
 
         Returns:
             True when a reload ran.
@@ -1040,14 +1061,26 @@ class ConsoleCharacterContextController:
             self.invalidate_scope()
             invalidations = self._scope_invalidations
         except _ConsoleCharacterScopeReadError:
-            await self.refresh()
+            if (
+                _presentation_is_current is not None
+                and _stock_character_presentation(self)
+            ):
+                await self.refresh(_presentation_is_current=_presentation_is_current)
+            else:
+                await self.refresh()
             self._mark_checked(started, invalidations)
             return True
         else:
             if not force and snapshot.fingerprint == self.state.scope_fingerprint:
                 self._mark_checked(started, invalidations)
                 return False
-        await self.refresh()
+        if (
+            _presentation_is_current is not None
+            and _stock_character_presentation(self)
+        ):
+            await self.refresh(_presentation_is_current=_presentation_is_current)
+        else:
+            await self.refresh()
         self._mark_checked(started, invalidations)
         return True
 
