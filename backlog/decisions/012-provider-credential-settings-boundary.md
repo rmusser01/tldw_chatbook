@@ -353,10 +353,16 @@ reads `credential_source`: it reads the table's named variable even under
 `VLLM_API_KEY` that readiness ignores under "none".
 `RAG_Search/simplified/active_config.py` and text to speech's projection
 (`TTS/legacy_bridge.py`, whose `openai_api` dict `TTS/TTS_Backends.py` hands
-to the backend) read `[API] openai_api_key` directly, and
-`Model_Artifacts/acquisition.py` (the Hugging Face resolver that Parakeet,
-OmniVoice and remote GGUF downloads use) reads `[API] huggingface_api_key`.
-So after a Clear those still spend the key the user removed (TASK-35227).
+to the backend) read `[API] openai_api_key` directly, and so do the
+Settings ▸ Speech & TTS credential state
+(`UI/Screens/settings_speech_tts.py::_credential_states`, shown as "Saved
+local config") and the first-run Voice step's key lookup
+(`UI/Wizards/first_run_voice_credentials.py::find_openai_credential`). Those
+two agree with what synthesis sends only while the projection sends that key
+too, so they must change with it. `Model_Artifacts/acquisition.py` (the
+Hugging Face resolver that Parakeet, OmniVoice and remote GGUF downloads use)
+reads `[API] huggingface_api_key`. So after a Clear those still show or spend
+the key the user removed (TASK-35227).
 
 ## Links
 
