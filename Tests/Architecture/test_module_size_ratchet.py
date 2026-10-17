@@ -240,7 +240,10 @@ _BUDGETS: dict[str, int] = {
     # its readiness poll keys on the evidence revision (-28): 35,781.
     # Its review round 1: the card's Key rows refresh writes the identity row
     # from the Key check row's verdict, so its own write here goes (-3): 35,778.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35778,
+    # Phase 9 Task 7 (TASK-33002.10, .11, 33005.8, 33007.11): its lines are
+    # offset by dropping three evidence lookups' None guards (evidence_for
+    # refuses None itself) and the stale check's sentinel pair (net -1): 35,777.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35777,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

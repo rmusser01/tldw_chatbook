@@ -365,7 +365,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # guard says how to pick its model (TASK-33006.25): 334.
 # guard says how to pick its model (TASK-33006.25): 334. Its review round 1:
 # pick mode offers a listing only where a pick of it lands (TASK-33006.19): 336.
-MINIMUM_FILES = 340
+# Phase 9 Task 7 (2026-10-17) appends three entries no lane ran, each 3 of 3
+# serial: the State line count file whole (TASK-33002.10, .11), the new
+# fallback search file (TASK-33003.14), and the Test rows after Save
+# (TASK-33005.8): 339 (after Task 6's 336, in the Wave 4 integration).
+MINIMUM_FILES = 343
 
 
 def read_census(path: Path) -> list[str]:

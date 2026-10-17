@@ -621,3 +621,9 @@ Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint
 # TASK-33006.25: a new entry listed under the close guard says how to pick its model (5 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it
+# Phase 9 Task 7 (2026-10-17), each 3 of 3 serial. TASK-33002.10 and .11: F1 help says a category switch keeps the draft, and Image/Video Gen count fields, not draft keys (whole file, ~38 s).
+Tests/UI/test_settings_state_line_unsaved_count.py
+# TASK-33003.14: '/fallback <label>' lands on each Console Behavior generation fallback; bare labels still land on Providers & Models (whole file, ~10 s, private profile).
+Tests/UI/test_settings_fallback_field_search.py
+# TASK-33005.8: after 't' and Save the Test rows show the saved values, without "(draft)", on the same visit (~6 s, private profile).
+Tests/UI/test_settings_provider_test_draft.py::test_save_redraws_the_test_rows_from_the_saved_values
