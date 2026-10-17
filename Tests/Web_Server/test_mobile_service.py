@@ -87,6 +87,35 @@ async def _shutdown(service: MobileChatService, subscriber: asyncio.Task) -> Non
     await asyncio.wait_for(service.shutdown(), timeout=15)
 
 
+class _LoopSafeGate:
+    """An ``asyncio.Event`` whose release works from any thread (TASK-35133).
+
+    The engine consumes provider streams on its private model-call
+    lifeline loop (``run_coroutine_threadsafe``, Chat/console_agent_bridge);
+    the lifeline's only doors are threadsafe submissions. A plain
+    cross-loop ``Event.set()`` resolves the parked waiter without waking
+    that loop, so the call resumes only when the loop's next timer fires
+    -- the stall watchdog's deadline (measured: exactly 90 s at the default
+    window). Gated gateway doubles park via ``wait()`` and are opened via
+    ``release()``.
+    """
+
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def wait(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        await self.event.wait()
+
+    def release(self) -> None:
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.event.set)
+        else:
+            self.event.set()
+
+
 async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
     gateway = AgentModeGateway()
     service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
@@ -227,11 +256,16 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
     """
 
     class _GatedAgentGateway(AgentModeGateway):
-        """AgentModeGateway whose provider calls park on ``gate``."""
+        """AgentModeGateway whose provider calls park on ``gate``.
+
+        The gate is ``_LoopSafeGate`` (TASK-35133): releasing it from this
+        test's loop must wake the engine's private model-call lifeline
+        loop where the parked call actually runs.
+        """
 
         def __init__(self) -> None:
             super().__init__()
-            self.gate = asyncio.Event()
+            self.gate = _LoopSafeGate()
 
         async def stream_chat(self, resolution, messages, **kwargs):
             await self.gate.wait()
@@ -257,7 +291,7 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
         with pytest.raises(MobileSendRefused):
             await service.send(session["id"], "too soon")
 
-        gateway.gate.set()
+        gateway.gate.release()
         await _wait_for(
             lambda: any(
                 e.type == "run_completed" and e.session_id == session["id"]
@@ -279,7 +313,164 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
             for m in messages
         )
     finally:
-        gateway.gate.set()  # never leave the parked turn holding shutdown
+        gateway.gate.release()  # never leave the parked turn holding shutdown
+        await _shutdown(service, subscriber)
+
+
+def _dump_asyncio_stacks() -> str:
+    """Every task's await stack + every thread's stack (TASK-35133's instrument).
+
+    On the parked-call stall this dump is the evidence: it names the exact
+    await chain the engine's second agent step is suspended in, and any
+    worker thread the contended resource is parked inside.
+    """
+    import io
+    import sys
+    import threading
+    import traceback
+
+    current = asyncio.current_task()
+    parts: list[str] = []
+    for task in sorted(asyncio.all_tasks(), key=lambda t: t.get_name()):
+        if task is current:
+            continue
+        sink = io.StringIO()
+        try:
+            task.print_stack(file=sink)
+        except Exception as exc:  # noqa: BLE001 - the dump must never mask
+            sink.write(f"    <stack unavailable: {type(exc).__name__}: {exc}>\n")
+        parts.append(
+            f"===== task {task.get_name()} "
+            f"({'done' if task.done() else 'pending'}) =====\n"
+            f"{sink.getvalue().rstrip()}"
+        )
+    frames = sys._current_frames()
+    for thread in sorted(threading.enumerate(), key=lambda t: t.name):
+        if thread is threading.current_thread():
+            continue
+        frame = frames.get(thread.ident)
+        if frame is None:
+            continue
+        parts.append(
+            f"===== thread {thread.name} =====\n"
+            + "".join(traceback.format_stack(frame)).rstrip()
+        )
+    return "\n".join(parts)
+
+
+async def test_second_agent_step_not_stalled_by_parked_provider_call(
+    tmp_path: Path,
+) -> None:
+    """TASK-35133 regression: a provider call parked mid-run must not stall
+    the engine's second agent step.
+
+    The first provider call parks on a gate only this test opens (the run
+    sits in status STREAMING under the stall watchdog). Once released, the
+    first call emits the tool call, the tool runs after its approval is
+    decided, and the SECOND provider call (the post-tool agent step) must
+    arrive within a 10 s bound.
+
+    Root cause (TASK-35133, evidenced by the timeout dump below): the engine
+    consumes provider streams on its private model-call lifeline loop
+    (``run_coroutine_threadsafe``, Chat/console_agent_bridge.py), so a
+    parked stream can only be released through that loop's threadsafe
+    door. A plain cross-loop ``asyncio.Event.set()`` resolves the waiter
+    without waking the lifeline loop, and the parked call then resumes
+    only when the loop's next timer fires -- the stall watchdog's deadline
+    (measured: exactly 90 s at the default window, the T2 report's "30s+"
+    under a 30 s window). The release must take the loop's own door
+    (``call_soon_threadsafe``); with that, the engine's second step
+    arrives in well under a second. On timeout the failure message
+    carries every asyncio task's and thread's stack.
+    """
+
+    class _ParkedFirstCallGateway(AgentModeGateway):
+        """AgentModeGateway whose FIRST provider call parks on ``gate``.
+
+        The gate is ``_LoopSafeGate`` (TASK-35133): it must be released
+        through the loop the parked call runs on, never by a plain
+        cross-loop ``Event.set()`` -- that is the stall this test guards.
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = _LoopSafeGate()
+            self.call_count = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.call_count += 1
+            if self.call_count == 1:
+                await self.gate.wait()
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = _ParkedFirstCallGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        session = await service.create_session(
+            title="parked provider call", workspace_id=workspace_id
+        )
+
+        await asyncio.wait_for(
+            service.send(session["id"], "list the folder"), timeout=5
+        )
+        # The first provider call has arrived and is parked (STREAMING).
+        await _wait_for(
+            lambda: gateway.call_count >= 1,
+            timeout=10,
+            what="first provider call to arrive",
+        )
+
+        loop = asyncio.get_running_loop()
+        released_at = loop.time()
+        gateway.gate.release()
+        # Release the tool's approval round as soon as it is raised so the
+        # measured window covers only the engine's own work, then wait for
+        # the second (post-tool) provider call. One bound over both
+        # stages; whichever stage stalls names itself in the failure.
+        deadline = released_at + 10.0
+        decided = False
+        second_call_seen = False
+        while loop.time() < deadline:
+            if not decided:
+                approvals = [
+                    e
+                    for e in got
+                    if e.type == "approval_requested"
+                    and e.session_id == session["id"]
+                ]
+                if approvals:
+                    payload = approvals[0].payload
+                    call = payload["calls"][0]
+                    assert (
+                        await service.decide_approval(
+                            payload["round_id"], {call["call_id"]: "approve_once"}
+                        )
+                        is True
+                    )
+                    decided = True
+            if gateway.call_count >= 2:
+                second_call_seen = True
+                break
+            await asyncio.sleep(0.1)
+        else:
+            stage = (
+                "approval_requested"
+                if not decided
+                else "second (post-tool) provider call"
+            )
+            raise AssertionError(
+                f"the {stage} did not arrive within 10s of releasing the "
+                "parked first provider call; asyncio task stacks follow:\n"
+                + _dump_asyncio_stacks()
+            )
+        assert second_call_seen
+        assert gateway.tool_result_messages, "fs_list result never reached provider"
+    finally:
+        gateway.gate.release()  # never leave the parked turn holding shutdown
         await _shutdown(service, subscriber)
 
 
