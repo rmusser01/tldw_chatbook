@@ -356,7 +356,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # NOT RUNNING filter: 330.
 # Its review round 1: the identity row follows the Key check row on a poll
 # tick (TASK-33005.7): 331.
-MINIMUM_FILES = 335
+# tick (TASK-33005.7): 331; a Test that probes nothing toasts its summary
+# literally (TASK-33002.9): 332.
+MINIMUM_FILES = 336
 
 
 def read_census(path: Path) -> list[str]:

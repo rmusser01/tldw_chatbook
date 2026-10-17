@@ -1363,9 +1363,9 @@ def test_a_model_the_server_did_not_list_leads_the_rows_and_warns(
     )
     screen._update_provider_test_result = lambda: None
     screen._update_provider_return_widgets = lambda: None
-    notices: list[tuple[str, str]] = []
+    notices: list[tuple[str, dict]] = []
     app = SimpleNamespace(
-        notify=lambda message, **kwargs: notices.append((message, kwargs["severity"]))
+        notify=lambda message, **kwargs: notices.append((message, kwargs))
     )
 
     with patch.object(SettingsScreen, "app", new=app):
@@ -1373,8 +1373,9 @@ def test_a_model_the_server_did_not_list_leads_the_rows_and_warns(
 
     rows = _result_rows(screen._provider_test_result)
     assert rows[1][0] == lead, rows
-    ((message, toast_severity),) = notices
-    assert toast_severity == severity
+    ((message, toast),) = notices
+    assert toast["severity"] == severity
+    assert toast.get("markup") is False  # TASK-1513: it names the model id
     unlisted = f"{model} · not listed by the server — pick a listed model"
     assert (rows[1][1] == unlisted) is (lead == "Model"), rows
     assert ("is not listed by the server" in message) is (lead == "Model"), message
@@ -2356,6 +2357,36 @@ async def test_custom_named_credential_query_param_never_reaches_rows_or_toast(
         assert toasts, "the Test produced no toast"
         assert all("SEKRET" not in toast and "mycred" not in toast for toast in toasts)
         assert toasts[-1].startswith("Model listing failed (connection refused)")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_test_that_probes_nothing_toasts_its_summary_literally(
+    request, monkeypatch
+):
+    """TASK-1513 on the Test path (TASK-33002.9 review): the toast for a Test
+    that probes nothing interpolates the provider name and, once configured,
+    the model id, and notify() parses markup by default, so a "[/]" in them
+    raised MarkupError at render. It passes markup=False, as the probe's
+    toast does."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "org/m[/]"}
+    app.app_config["api_settings"] = {"openai": {}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts: list[tuple[str, dict]] = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category()
+        await pilot.pause()
+
+    ((message, toast),) = toasts
+    assert message.startswith("Configuration check blocked: OpenAI"), message
+    assert toast == {"severity": "warning", "markup": False}, toast
 
 
 @pytest.mark.asyncio

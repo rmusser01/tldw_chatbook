@@ -608,3 +608,5 @@ Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_repor
 Tests/UI/test_console_switcher_local_probe.py::test_find_filters_not_running_by_provider_name_as_every_group
 # TASK-33005.7 (review round 1): one readiness poll tick repaints the identity row with the Key check row, from one verdict (6 s, private profile).
 Tests/UI/test_settings_configuration_hub.py::test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick
+# TASK-33002.9 (review round 1): a Test that probes nothing toasts its summary with markup=False (6 s, private profile).
+Tests/UI/test_settings_provider_test_draft.py::test_a_test_that_probes_nothing_toasts_its_summary_literally

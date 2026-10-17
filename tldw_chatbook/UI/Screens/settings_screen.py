@@ -17905,7 +17905,8 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_test_result()
         self._update_provider_return_widgets()  # its line quotes the Key check
         reached = passed and probe_result.endpoint == "reachable"  # listed (33002.9)
-        self.app.notify(summary, severity="information" if reached else "warning")
+        tone = "information" if reached else "warning"
+        self.app.notify(summary, severity=tone, markup=False)  # it names the model
 
     def _provider_probe_generation_current(self, generation: int | None) -> bool:
         """Whether a probe launched at ``generation`` still describes the draft.
@@ -34402,8 +34403,7 @@ class SettingsScreen(BaseAppScreen):
             self._provider_test_result = detail
             self._update_provider_test_result()
             self.app.notify(
-                summary,
-                severity="information" if passed else "warning",
+                summary, severity="information" if passed else "warning", markup=False
             )
             return
         if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
