@@ -10,7 +10,8 @@ the Console crossed all fifteen app-navigation buttons mid-session. WCAG
 2.1.2 does not require Tab specifically -- it requires that focus can be
 moved away using the keyboard, and that when that needs more than Tab, the
 method is advised. F6 moves focus out in a single press, and the persistent
-footer advertises "F6 next pane" at all times. The criterion is met.
+footer advertises F6 at all times ("F6 next pane", or "Esc composer · F6
+panes" with focus in a rail). The criterion is met.
 
 What the audit was right about is the third test: the rail had no bindings
 of its own, so a user who wanted every section shut had to click seven

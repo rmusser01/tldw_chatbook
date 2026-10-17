@@ -212,10 +212,11 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
         await _until(pilot, lambda: harness.screen is console, "the switcher to close")
 
         # The footer is read with the composer focused (capture finding 20,
-        # round 2). Where focus ends after the rail's Change depended on
-        # whether the Model section was already open, and with the rail
-        # focused the footer leads "Esc composer · F6 panes", which pushes
-        # Alt+A out at 211 columns: a footer width outside this test.
+        # round 2): where focus ends after the rail's Change depends on
+        # whether the Model section was already open. The rail-focus footer
+        # is pinned separately, by
+        # test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer
+        # (TASK-33006.20).
         _composer(console).focus()
         footer = console.query_one(AppFooterStatus)
         await _until(
