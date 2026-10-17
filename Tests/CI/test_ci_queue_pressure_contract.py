@@ -174,6 +174,10 @@ FAST_LANE_TARGETS = (
     # Ctrl+T session-default path fed by both surviving mirror producers.
     "Tests/Provider/test_provider_model_resolution.py",
     "Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another",
+    # TASK-33001.8 AC#4: the new-chat pair for the ordinary cases (no control
+    # selection; a control provider with its model) is unchanged (pure, under
+    # a second).
+    "Tests/Chat/test_console_session_settings.py::test_new_chats_resolve_the_chat_defaults_pair",
     # TASK-33005.11: the one readiness vocabulary, a key check verifying only
     # the models it listed included (whole file, pure, about a second).
     "Tests/Chat/test_readiness_words.py",
