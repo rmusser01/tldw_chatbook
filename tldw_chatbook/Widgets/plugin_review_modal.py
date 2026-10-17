@@ -767,6 +767,20 @@ class PluginReviewModal(ModalScreen):
                 and (not self._impact_complete() or len(body) > 65536)
             )
         )
+        # The body queues its own layout request; mark this screen before scrolling.
+        self.refresh(layout=True)
+        self.call_after_refresh(self._keep_focused_action_visible)
+
+    def _keep_focused_action_visible(self):
+        button = self.focused
+        if (
+            isinstance(button, Button)
+            and button.is_mounted
+            and button.screen is self
+            and button.display
+            and not button.disabled
+        ):
+            button.scroll_visible(animate=False, immediate=True)
 
     def _impact_complete(self):
         if self.draft.action == "create-data":
@@ -1074,6 +1088,7 @@ class PluginReviewModal(ModalScreen):
         cancellable = bool(job and job.runtime_status.get("cancel_operation"))
         self.query_one("#plugin-review-cancel", Button).disabled = not cancellable
         self.query_one("#plugin-review-cancel-work", Button).disabled = not cancellable
+        self.call_after_refresh(self._keep_focused_action_visible)
 
     @on(Select.Changed, "#plugin-review-dialect")
     def _dialect(self, event):

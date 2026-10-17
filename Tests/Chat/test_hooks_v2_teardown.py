@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from Tests.Agents.test_hooks_v2_execution import command
+from Tests.Chat.hooks_v2_owned_rig import disposed_hook_rig, disposed_mounted_hook_rig
 from Tests.Chat.test_console_fleet_wake import _controller_rig
 from Tests.Chat.test_console_runtime_lifetime import _View
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -105,17 +106,8 @@ async def test_interrupt_once_after_seal_and_revocation(
             assert not engine.processes.records
     finally:
         release.set()
-        try:
-            await runtime.dispose()
-        finally:
-            try:
-                await controller.shutdown()
-            finally:
-                try:
-                    runs_db.close()
-                finally:
-                    with db.quiesce_connections(timeout_seconds=2.0):
-                        pass
+        async with disposed_hook_rig(runtime, controller, runs_db, db):
+            pass
 
 
 @pytest.mark.asyncio
@@ -190,31 +182,8 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         assert not engine.cleanup_pending
     finally:
         release.set()
-        try:
-            try:
-                await app._shutdown_app_owned_lifecycles()
-            finally:
-                await runtime.dispose()
-        finally:
-            try:
-                await controller.shutdown()
-            finally:
-                try:
-                    runs_db.close()
-                finally:
-                    try:
-                        with db.quiesce_connections(timeout_seconds=2.0):
-                            pass
-                    finally:
-                        try:
-                            app.evaluation_orchestrator.close()
-                        finally:
-                            try:
-                                app.local_library_collections_db.close()
-                            finally:
-                                monitor = app.ui_responsiveness_monitor
-                                if monitor is not None:
-                                    await asyncio.to_thread(monitor.close)
+        async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
+            pass
 
 
 @pytest.mark.asyncio
@@ -387,29 +356,5 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
             assert len(notifications.read_text().splitlines()) == 1
     finally:
         release.touch()
-        try:
-            try:
-                await app._shutdown_app_owned_lifecycles()
-            finally:
-                await runtime.dispose()
+        async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
             assert not engine.processes.records
-        finally:
-            try:
-                await controller.shutdown()
-            finally:
-                try:
-                    runs_db.close()
-                finally:
-                    try:
-                        with db.quiesce_connections(timeout_seconds=2.0):
-                            pass
-                    finally:
-                        try:
-                            app.evaluation_orchestrator.close()
-                        finally:
-                            try:
-                                app.local_library_collections_db.close()
-                            finally:
-                                monitor = app.ui_responsiveness_monitor
-                                if monitor is not None:
-                                    await asyncio.to_thread(monitor.close)

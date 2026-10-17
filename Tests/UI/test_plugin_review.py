@@ -12,6 +12,111 @@ native_package = _native_package
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_review_growth_keeps_focused_action_painted(
+    native_console, native_package, size
+):
+    from Tests.UI.test_plugins_browse import paint
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    package = native_package()
+    original = (package / "skills/review/SKILL.md").read_text()
+    for index in range(12):
+        directory = package / "skills" / f"review-{index}"
+        directory.mkdir()
+        (directory / "SKILL.md").write_text(
+            original.replace("name: review", f"name: review-{index}")
+        )
+    from tldw_chatbook.Plugins.git_source import select_local_source
+
+    operation = "focus-growth-acquisition"
+    destination = await rig.service.acquisition_destination(operation)
+    producer = await rig.service.acquire_snapshot(
+        select_local_source(package), operation, destination
+    )
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service, producer=producer, workspace_id="workspace-a"
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        button = modal.query_one("#plugin-review-prepare", Button)
+        button.focus()
+        await pilot.pause()
+        assert app.focused is button and "Review action" in paint(modal)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert modal.draft.review is not None
+        assert app.focused is button
+        assert button in modal._compositor.visible_widgets
+        assert (
+            button.region.intersection(
+                modal.query_one("#plugin-review-shell").content_region
+            )
+            == button.region
+        )
+        assert "Review action" in paint(modal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_refresh_growth_keeps_focused_action_and_cleaned_status_painted(
+    native_console, size
+):
+    from Tests.UI.test_plugins_browse import paint
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    installed = await rig.install(enable=False)
+    for _ in range(12):
+        creation = await rig.service.review_data_creation(installed.installation_id)
+        await rig.service.create_data(creation, creation.operation_id)
+    rows = await rig.service.data_status(installation_id=installed.installation_id)
+    roots = tuple(row["root"] for row in rows)
+    deletion = await rig.service.review_data_deletion(roots)
+    assert (await rig.service.delete_data(roots, deletion.operation_id)).committed
+    cleaned = await rig.service.data_status(installation_id=installed.installation_id)
+    assert len(cleaned) == 12 and all(row["cleaned_absent"] for row in cleaned)
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        button = modal.query_one("#plugin-review-refresh", Button)
+        button.focus()
+        await pilot.pause()
+        assert app.focused is button and "Refresh status" in paint(modal)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.focused is button
+        assert button in modal._compositor.visible_widgets
+        assert (
+            button.region.intersection(
+                modal.query_one("#plugin-review-shell").content_region
+            )
+            == button.region
+        )
+        painted = paint(modal)
+        assert "Refresh status" in painted
+        assert cleaned[-1]["root"].root_id in painted
+        assert "Cleaned — saved data removed; users: ()" in painted
+
+
+@pytest.mark.asyncio
 async def test_mounted_management_opens_exact_review_without_committing(native_console):
     rig = native_console
     installed = await rig.install(enable=False)

@@ -30,6 +30,17 @@ completion after reviewed uninstall. An empty counter or a returned close call
 cannot substitute for those owner boundaries. See the
 [qualified observations](../../Docs/Plugins/compatibility.md#concrete-acceptance-observations).
 
+## Preserve source bytes before replacing a qualification fixture
+
+**TASK-32695, installed-hook qualification, 2026-10-16.** Four early
+iterations retained exact before/after hashes and test output but no matching
+full test-file copy. Later fixture edits meant those hashes could not recover
+the source that produced the passes. Fourteen affected checks were renewed
+against preserved current source; all passed, with matching copies and
+before/after hashes. The four historical missing copies remain missing.
+Copy the runnable source before each phase or rewrite; a hash, a later function
+comparison or another passing count cannot reconstruct its bytes.
+
 ## A module alias still shares the standard library's clock
 
 **TASK-32695, preimport pacing, 2026-10-16.** Patching
