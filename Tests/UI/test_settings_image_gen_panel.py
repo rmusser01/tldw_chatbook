@@ -1269,8 +1269,9 @@ async def test_backend_row_controls_visible_and_clickable_under_real_css(request
     TASK-33002.17 (ledger R11): ``scratch_config`` re-pointed
     ``TLDW_CONFIG_PATH`` after the config module had bound its source, which
     the ADR-126 admission refuses at setup (``raw_source_selection_changed``),
-    so this guard never ran. The real writer now stores the backends in this
-    case's private profile.
+    so this guard has not run since that admission landed (TASK-32628,
+    2026-09-16). The real writer now stores the backends in this case's
+    private profile.
 
     Args:
         request: Pytest request; ``private_profile_test`` runs this case in a
