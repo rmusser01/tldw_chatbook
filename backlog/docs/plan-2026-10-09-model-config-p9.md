@@ -765,19 +765,22 @@ Must not edit: providers_models_card.py (read only). Fix the picker in model_sea
 - Tests/UI/test_settings_default_model_picker.py
 - qa/model-config-33005-captures/README.md
 
-## Task 17: Legacy summarizers get their arguments and their credentials right (TASK-33641.10, TASK-33641.11)
+## Task 17: Legacy summarizers get their arguments and their credentials right (TASK-33641.10, TASK-33641.11, TASK-33001.14)
 
 Task files:
 - backlog/tasks/task-33641.10 - The-summarization-dispatcher-passes-KoboldCpp-and-Ollama-their-arguments-by-name.md
 - backlog/tasks/task-33641.11 - A-legacy-API-key-is-not-used-once-the-provider-s-credential-source-says-none-or-environment.md
+- backlog/tasks/task-33001.14 - Legacy-summarizers-send-an-env-key-for-a-provider-whose-credential-source-is-none.md
 Wave: 5
-Depends on: Task 9 (integrated)
+Depends on: Task 9 (integrated; its TASK-33001.14 half was lost in the 2026-10-16 restack and moves here)
 Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in this wave).
 
 ### Why
 
 - TASK-33641.10 (The summarization dispatcher passes KoboldCpp and Ollama their arguments by name): filed by the controller on 2026-10-11 from Task 9's review. Summarization_General_Lib.py::_dispatch_to_api calls each summarizer positionally; listed with ast, KoboldCpp gets system_message<=temp, temp<=system_message and kobold_api_ip<=streaming, and Ollama gets model<=streaming; the other 17 calls pair name to name. summarize_chunk (FIXME, no caller) passes its text as api_name. Read from the code by Task 9, not run: prove each binding through analyze() before fixing.
 - TASK-33641.11 (A legacy [API] key is not used once the provider's credential source says none or environment): filed the same way. config.py::_normalize_legacy_provider_api_key never reads credential_source (0 matches for the word in config.py), so after a Clear in Settings (credential_source none) or with an unset variable (environment), a key still under [API] is copied into the provider's table and its legacy dict: readiness resolves no key while summarize_with_openai and the like send it. Task 9 made the summarizers resolve a key as readiness does (TASK-33001.14); this is the loader's half. ADR-012: a credential the user removed is not used.
+
+- TASK-33001.14 (Legacy summarizers send an env key for a provider whose credential source is none): moved here by the controller on 2026-10-17. The 2026-10-16 restack dropped Task 9's fix for it (the full old fix is on backup/p9-before-restack-1016, 841361671c, for reference only), and dev's task-34895 (a79b07713e, PR #3105) has since moved KoboldCpp and TabbyAPI summaries onto `_summarize_via_chat_api` -> `chat_api_call`, so the old fix does not apply as written. Redo it on the chat-dispatch route; the rider's REOPENED notes hold the measured table (a legacy [API] key is still sent under "none"; TabbyAPI "stored", "environment" and no-source sections differ from readiness). TASK-33641.11's "Task 9 made the summarizers resolve a key as readiness does" is true again only once this rider is done, so do it first. Decide what happens to the orphaned LLM_Calls/Local_Summarization_Lib.py (no production importer; task-34895's notes say it was deleted, but it is in the tree) and record the choice in the rider's notes.
 
 ### Acceptance criteria
 
@@ -787,6 +790,9 @@ Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in t
 - [ ] TASK-33641.11 #1 With credential_source none or environment recorded for a provider, the loader does not copy a legacy [API] key into the provider's table or its legacy dict, proved by a real-loader test on a scratch config for at least two of the nine providers
 - [ ] TASK-33641.11 #2 A provider with no credential_source recorded keeps today's legacy fallback, pinned by the existing normalisation tests
 - [ ] TASK-33641.11 #3 Readiness and the legacy readers agree for every combination of credential_source and key location the tests cover, and the combinations are listed in this task's notes
+- [ ] TASK-33001.14 #1 A provider section with credential_source = "none" makes the legacy summarizers send no API key, even when the environment variable named by api_key_env_var is set
+- [ ] TASK-33001.14 #2 The summarizers resolve a credential the same way as resolve_provider_credential for every credential_source value, or the difference is recorded in ADR-012
+- [ ] TASK-33001.14 #3 A test with the variable exported covers the "none" case for koboldcpp and tabbyapi and fails if the env fallback ignores credential_source
 
 ### References
 
@@ -796,18 +802,46 @@ Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in t
 - Tests/LLM_Calls/ (the summarizer tests Task 9 touched)
 - backlog/decisions/012-provider-credential-settings-boundary.md
 
+## Task 18: A same-provider pick keeps the chat's session endpoint (TASK-35190)
+
+Task files:
+- backlog/tasks/task-35190 - A-same-provider-pick-of-an-unseen-model-keeps-the-chat-s-session-endpoint.md
+Wave: 7
+Depends on: Task 6 (TASK-33006.19, integrated in Wave 4)
+
+### Why
+
+- TASK-35190: filed from the TASK-33006.19 review (Wave 4, 2026-10-17). A chat whose session Endpoint differs from the configured URL (a second local server applied to one chat) is moved back to the configured URL when the user picks a same-provider model the draft has not seen, through the controller's settings rebaser, which Switch model shares. Since TASK-33006.19, Test connection at the session Endpoint can report models that Change then does not offer. The rider's description has the trace.
+
+### Acceptance criteria
+
+- [ ] TASK-35190 #1 In Chat settings, picking a saved model on the chat's own provider keeps the chat's session Endpoint (:9200) instead of resetting it to the configured URL (:9099), pinned by a test
+- [ ] TASK-35190 #2 A model that Test connection listed at the chat's session Endpoint (:9200) is offered in pick mode without retyping the Endpoint, and picking it keeps the chat on :9200, pinned by a test
+- [ ] TASK-35190 #3 A pick onto a different provider still takes that provider's own endpoint, so no session URL is carried across providers
+- [ ] TASK-35190 #4 Switch model (Alt+M) picking an unseen model on the chat's own provider also keeps the session Endpoint (:9200), so it and Chat settings land the same pick on the same Endpoint, and the quick surface still saves no Endpoint as a default, pinned by a test
+
+### References
+
+- tldw_chatbook/Chat/console_chat_controller.py
+- tldw_chatbook/Chat/console_session_settings.py
+- tldw_chatbook/Widgets/Console/console_model_popover.py
+- tldw_chatbook/Widgets/Console/console_settings_field_row.py
+- tldw_chatbook/Widgets/Console/console_settings_modal.py (net lines <= 0)
+- Tests/UI/test_console_endpoint_discovery.py
+
 ## Execution order
 
-[[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14, 17], [15, 16]]
+[[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14, 17], [15, 16], [18]]
 
 - Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10). After the restack, TASK-33006.17 (a) is fixed by the base (dev's 8c033d006b). TASK-33003.19's inventory was brought current again on four modals dev added.
-- Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11). After the restack, TASK-33001.14 is reopened: the restack dropped its fix, and the base does not fix it (see Task 9). It still needs a wave.
+- Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11). After the restack, TASK-33001.14 is reopened: the restack dropped its fix, and the base does not fix it (see Task 9). It moves to Task 17 (Wave 5).
 - Rebase this branch onto Phase 8's final head.
 - The rebase onto Phase 8's final head is done (Phase 8 merged as #3144 at 111f8e48fc, 2026-10-17); Wave 3 starts.
 - Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together) (done 2026-10-17, reviewed clean at fc9f3ec375).
-- Wave 4: Tasks 6, 7, 8 (done 2026-10-17, integrated at 0499159640). The UI PR census floor is the three tasks' entries together: 342.
+- Wave 4: Tasks 6, 7, 8 (done 2026-10-17, integrated at 0499159640). The three tasks add 10 UI PR census entries (332 -> 342). Filed during its reviews: TASK-35190 (from TASK-33006.19; planned as Task 18, Wave 7) and TASK-35020.1 (a red speech-form source pin under TASK-35020, outside this phase).
 - Wave 5: Tasks 12, 14, 17.
 - Wave 6: Tasks 15, 16.
+- Wave 7: Task 18 alone (added by the controller 2026-10-17; it shares files with Task 12 in Wave 5 and with Tasks 15 and 16 in Wave 6).
 
 ## Closed without code
 
