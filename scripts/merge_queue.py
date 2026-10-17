@@ -56,10 +56,11 @@ QUEUE_ACTOR = "github-actions[bot]"
 # The queue's own comments, as GraphQL names their author: a Bot whose login has no `[bot]`
 # (checked on this repository's queue comments, 2026-10-14). Retry and strike markers count only in
 # these: in anyone else's comment a hidden marker would let any commenter turn a PR's first failure
-# into an eviction. Only the queue posts comments with this repository's token: the only jobs that
-# can write to PRs are merge-queue.yml and derived-artifacts.yml's queue-tick, both running this
-# script (checked 2026-10-14).
+# into an eviction. A same-repo branch can still post as github-actions, by declaring
+# `pull-requests: write` in its own workflow (spec section 9), but pushing that branch already takes
+# write access, which can disarm a PR outright; a forged marker grants nothing more.
 QUEUE_COMMENTER = "github-actions"
+ATTEMPT_NOTE = "<!-- merge-queue-attempt:"
 HELD_RUN_POLLS = 10
 HELD_RUN_POLL_S = 3
 # How a re-run that GitHub answered with an error is read (`_rerun_error`):
@@ -575,24 +576,6 @@ def _marker(gh: GhApi, number: int, kind: str, sha: str) -> dict | None:
     return next((n for n in _queue_comments(gh, number) if marker in (n.get("body") or "")), None)
 
 
-def has_comment(gh: GhApi, number: int, kind: str, sha: str) -> bool:
-    """Whether the queue already posted a comment of this kind for this head.
-
-    Args:
-        gh: The GitHub client.
-        number: The PR number.
-        kind: The comment's kind, part of its hidden marker.
-        sha: The head, part of its hidden marker.
-
-    Returns:
-        True if the marker is there.
-
-    Raises:
-        GhError: The read failed.
-    """
-    return _marker(gh, number, kind, sha) is not None
-
-
 def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> timedelta | None:
     """How long ago the queue posted a comment of this kind for this head.
 
@@ -616,17 +599,27 @@ def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> ti
     return timedelta.max if posted is None else now - posted
 
 
-def _attempt_note(run: dict) -> str:
-    """The hidden note a retry comment carries: the run attempt the queue re-ran."""
-    return f"<!-- merge-queue-attempt:{int(run.get('run_attempt') or 1)} -->"
+@dataclass(frozen=True)
+class RetryNote:
+    """What the queue's retry comment for a head recorded."""
+
+    run_id: int | None  # the run it re-ran; None when the note names none
+    attempt: int  # that run's attempt it re-ran; 0 for a comment posted before attempts were recorded
+    posted: datetime | None  # when the comment was posted, if known
 
 
-def marker_attempt(gh: GhApi, number: int, kind: str, sha: str) -> tuple[int, datetime | None] | None:
-    """The run attempt the queue recorded in its comment of this kind for this head, and when it posted it.
+def _attempt_note(run_id: int, attempt: int | None) -> str:
+    """The hidden note a retry comment carries: the run and the run attempt the queue re-ran."""
+    return f"{ATTEMPT_NOTE}{int(run_id)}:{int(attempt or 1)} -->"
+
+
+def marker_attempt(gh: GhApi, number: int, kind: str, sha: str) -> RetryNote | None:
+    """What the queue recorded in its comment of this kind for this head (see `_attempt_note`).
+
+    A note in an older shape (an attempt alone, or none at all) reads with the parts it lacks unknown.
 
     Returns:
-        (the attempt, 0 when the comment carries none, as one posted before attempts were
-        recorded does; when it was posted, or None), or None if there is no such comment.
+        The note, or None if there is no such comment.
 
     Raises:
         GhError: The read failed.
@@ -636,11 +629,12 @@ def marker_attempt(gh: GhApi, number: int, kind: str, sha: str) -> tuple[int, da
         return None
     posted = _ts(node.get("createdAt"))
     body = node.get("body") or ""
-    start = body.find("<!-- merge-queue-attempt:")
-    if start < 0:
-        return 0, posted
-    digits = body[start + len("<!-- merge-queue-attempt:"):].split(" ", 1)[0]
-    return (int(digits) if digits.isascii() and digits.isdigit() else 0), posted
+    start = body.find(ATTEMPT_NOTE)
+    fields = body[start + len(ATTEMPT_NOTE):].split(" ", 1)[0].split(":") if start >= 0 else []
+    if not 1 <= len(fields) <= 2 or not all(f.isascii() and f.isdigit() for f in fields):
+        return RetryNote(None, 0, posted)
+    *run_id, attempt = (int(f) for f in fields)
+    return RetryNote(run_id[0] if run_id else None, attempt, posted)
 
 
 def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str,
@@ -863,10 +857,14 @@ def _required_runs(gh: GhApi, sha: str) -> list[dict]:
     return sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)
 
 
+def _live_or_held(run: dict) -> bool:
+    """Whether a run is live or held for approval: going again, so neither re-run nor judged."""
+    return run.get("status") in LIVE_RUN_STATUSES or _is_held(run)
+
+
 def _going_again(gh: GhApi, run_id: int) -> bool:
     """Whether a run is live or held again, i.e. a racing queue run has re-run it since we looked."""
-    fresh = gh.rest("GET", f"repos/{REPO}/actions/runs/{run_id}")
-    return fresh.get("status") in LIVE_RUN_STATUSES or _is_held(fresh)
+    return _live_or_held(gh.rest("GET", f"repos/{REPO}/actions/runs/{run_id}"))
 
 
 def _transient(exc: GhError) -> bool:
@@ -1022,13 +1020,15 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
             log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
     """Count one failure to get this head going (see STRIKE_GAP).
 
-    A rebase that did not take effect, no CI run the queue can start, or a refused approval. (An
+    A rebase that did not take effect, no CI run the queue can start, a refused approval, or the
+    queue's re-run of the required check not showing up. (An
     unclassified re-run error follows the same rule inside `_rerun`.)
 
     Args:
         gh: The GitHub client.
         pr: The front PR.
-        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`, `no-run`, `approve-error`).
+        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`, `no-run`, `approve-error`,
+            `rerun-unseen`).
         warning: The warning's text.
         eviction: The eviction for a strike at least STRIKE_GAP after the warning.
         wake_first: Wake a tick after the warning, to look again soon.
@@ -1221,25 +1221,26 @@ def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[
     )
 
 
-def _after_retry(gh: GhApi, pr: PrState, run: dict, attempt: int, posted: datetime | None, links: tuple[str, ...],
+def _after_retry(gh: GhApi, pr: PrState, run: dict, note: RetryNote, links: tuple[str, ...],
                  log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
     """Decide on a head whose required check the queue already re-ran once (its retry marker exists).
 
     The decision being acted on may be older than that re-run: a racing queue run made it, or
-    GitHub has not shown it yet. So the run is read fresh, and the PR is evicted only when the
-    queue's re-run has run (a higher `run_attempt` than the marker recorded) and the required check
-    still failed. A run that is live or held, or a check that passed since the decision, is left
-    alone. A re-run not visible yet is a `rerun-unseen` strike: one warning and a kick, an eviction
-    only if it still has not run 10 minutes later.
+    GitHub has not shown it yet. So the run and the checks are read fresh, and the PR is evicted
+    only when the required check failed after the queue's re-run started. Left alone: a run that is
+    live or held, a check that is running, missing or green since the decision, and a re-run whose
+    check has not reported yet. A re-run not visible at all yet (no higher `run_attempt` than the
+    note recorded) is a `rerun-unseen` strike: one warning and a kick, an eviction only if it still
+    has not run 10 minutes later. A failure of another run on the head than the one re-run evicts
+    at once: the head had its one retry.
 
     Args:
         gh: The GitHub client.
         pr: The front PR.
-        run: The required workflow's run, as listed.
-        attempt: The attempt the marker recorded (0 if it recorded none).
-        posted: When the marker was posted, if known. For a marker that recorded no attempt (one
-            posted before attempts were recorded), a failure older than it is the failure the
-            queue retried, so the re-run's result is not in yet.
+        run: The required workflow's run the retry decision names, as listed.
+        note: What the retry comment recorded. For a note with no attempt (posted before attempts
+            were recorded), a failure older than the comment is the failure the queue retried, so
+            the re-run's result is not in yet.
         links: The failed run URLs, for the eviction comment.
         log: Receives one line per notable step.
         now: The clock.
@@ -1251,20 +1252,9 @@ def _after_retry(gh: GhApi, pr: PrState, run: dict, attempt: int, posted: dateti
         GhError: A read failed.
     """
     fresh = gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}")
-    if fresh.get("status") in LIVE_RUN_STATUSES or _is_held(fresh):
+    if _live_or_held(fresh):
         log(f"  #{pr.number}: run {run['id']} is going again; standing down")
         return False
-    def unseen() -> bool:
-        # Keyed by the attempt, so a later re-run on the same head gets its own warning and gap.
-        return _strike(
-            gh, pr, f"rerun-unseen-{attempt}",
-            f"Merge queue: the queue's re-run of the required check on `{pr.head_sha[:10]}` has not started yet. A queue "
-            "run will look again, and remove it from the line if it still has not run 10 minutes from now.",
-            Action("evict", "the queue's re-run of the required check never started", links, "rerun"), True, log, now,
-        )
-
-    if attempt and int(fresh.get("run_attempt") or 1) <= attempt:
-        return unseen()
     runs = runs_on(gh, pr.head_sha)
     checks = counted(read_checks(gh, pr.head_sha), runs)
     checks += required_run_stand_ins(gh, pr.head_sha, checks, runs)
@@ -1273,9 +1263,26 @@ def _after_retry(gh: GhApi, pr: PrState, run: dict, attempt: int, posted: dateti
     if any(c.status != "completed" for c in checks) or not finished or finished[-1].conclusion in PASSING:
         log(f"  #{pr.number}: the required check is running, missing or green since the decision; standing down")
         return False
-    if not attempt and posted is not None and finished[-1].completed_at is not None and finished[-1].completed_at <= posted:
-        return unseen()
-    return _evict(gh, pr, Action("evict", "required check failed again after its retry", links, "failed-twice"), log)
+    failed_at = finished[-1].completed_at
+    twice = Action("evict", "required check failed again after its retry", links, "failed-twice")
+    if note.run_id is not None and note.run_id != run["id"]:
+        return _evict(gh, pr, twice, log)
+    if note.attempt:
+        unseen = int(fresh.get("run_attempt") or 1) <= note.attempt
+    else:
+        unseen = note.posted is not None and failed_at is not None and failed_at <= note.posted
+    if unseen:
+        return _strike(
+            gh, pr, "rerun-unseen",
+            f"Merge queue: the queue's re-run of the required check on `{pr.head_sha[:10]}` has not started yet. A queue "
+            "run will look again, and remove it from the line if it still has not run 10 minutes from now.",
+            Action("evict", "the queue's re-run of the required check never started", links, "rerun-unseen"), True, log, now,
+        )
+    started = _ts(fresh.get("run_started_at"))
+    if started is not None and failed_at is not None and failed_at < started:
+        log(f"  #{pr.number}: run {run['id']}'s re-run has not reported the required check yet; a later event decides")
+        return False
+    return _evict(gh, pr, twice, log)
 
 
 def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None],
@@ -1323,9 +1330,13 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
     cancelled = run.get("conclusion") == "cancelled"
     seen = None if cancelled else marker_attempt(gh, pr.number, "retry", pr.head_sha)
     if seen is not None:
-        return _after_retry(gh, pr, run, seen[0], seen[1], action.links, log, now)
+        return _after_retry(gh, pr, run, seen, action.links, log, now)
     # The attempt being re-run, read fresh (the listing can be older) and before the re-run changes it.
-    note = _attempt_note(gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}") or run)
+    fresh = gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}") or run
+    if _live_or_held(fresh):
+        log(f"  #{pr.number}: run {run['id']} is going again since the listing; standing down")
+        return False
+    note = _attempt_note(run["id"], fresh.get("run_attempt"))
     outcome = _rerun(gh, pr, run, action.suite_id is not None and not cancelled, log, sleep, now)
     if outcome == "refused":
         return _evict(gh, pr, Action("evict", "required check failed once and GitHub refused to re-run it",
