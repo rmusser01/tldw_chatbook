@@ -1994,13 +1994,28 @@ def _normalize_legacy_provider_api_key(
     #   * The modern/legacy branches validated the STRIPPED form but
     #     returned the raw one, so `api_key = " sk-xyz "` showed
     #     `sk-xyz` in readiness and spent ` sk-xyz ` (a 401).
-    modern_value = resolve_provider_api_key(
-        provider_table.get("api_key") if isinstance(provider_table, dict) else None
-    )
+    table = provider_table if isinstance(provider_table, dict) else {}
+    # TASK-33641.11 (ADR-012): a recorded `credential_source` decides as it
+    # does for `provider_readiness.resolve_provider_credential` (not imported:
+    # that is a cycle). "none" uses no key; "stored" the table's key or the
+    # legacy one copied below, never the variable; "environment" only the
+    # variable the table names. No source keeps the order below.
+    source = table.get("credential_source")
+    source = source.strip().lower() if type(source) is str else None
+    if source == "none":
+        return None
+    if source == "environment":
+        named = table.get("api_key_env_var")
+        named = named.strip() if isinstance(named, str) else ""
+        return resolve_provider_api_key(os.getenv(named)) if named else None
+
+    modern_value = resolve_provider_api_key(table.get("api_key"))
     if modern_value:
         return modern_value  # explicit modern config always wins
 
-    env_value = resolve_provider_api_key(os.getenv(env_var))
+    env_value = (
+        None if source == "stored" else resolve_provider_api_key(os.getenv(env_var))
+    )
     if env_value:
         return env_value
 

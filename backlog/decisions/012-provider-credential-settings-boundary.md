@@ -1,6 +1,6 @@
 # ADR 012: Provider Credential Settings Boundary
 
-Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17; amended 2026-10-10: a "stored" save writes a key copied from legacy `[API]`, TASK-33001.15; amended 2026-10-17: a summary resolves its key as readiness does, TASK-33001.14)
+Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17; amended 2026-10-10: a "stored" save writes a key copied from legacy `[API]`, TASK-33001.15; amended 2026-10-17: a summary resolves its key as readiness does, TASK-33001.14; amended 2026-10-17: a recorded credential source decides the legacy `[API]` bridge, TASK-33641.11)
 Date: 2026-06-30
 Related Task: [backlog/tasks/task-145 - Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md](../tasks/task-145%20-%20Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md)
 Supersedes: N/A
@@ -317,6 +317,31 @@ Four differences from readiness remain:
   resolves none.
 - **`[API] kobold_api_key` and `tabby_api_key`** reach neither readiness nor a
   summary: the loader does not copy them into `api_settings`.
+
+## Amendment 2026-10-17: a recorded credential source decides the legacy `[API]` bridge (TASK-33641.11)
+
+`config.py::_normalize_legacy_provider_api_key` resolves the key that the nine
+bridged providers' legacy `<provider>_api` dicts hold, and copies a legacy
+`[API] <provider>_api_key` into `[api_settings.<provider>]` (PR-T2 Task 7). It
+read no `credential_source`. After **Clear** in Settings ("none"), or an Env var
+choice with the variable unset ("environment"), a key still under `[API]` was
+copied into both, and chat handlers that read either spent it, while readiness
+resolved no key. "none" also kept a variable's key or a hand-written table key
+in the dict, "environment" the table's key, and "stored" the variable's key.
+
+**Ruling: a recorded `credential_source` decides the bridge as it decides
+`resolve_provider_credential`.** "none" yields no key. "stored" yields the
+table's key, or the `[API]` key copied into the table when the table has none
+(the 2026-10-10 case), and never reads the variable. "environment" yields only
+the variable the table names. Under "none" and "environment" nothing is
+copied. With no source recorded the order is unchanged: the table's key, the
+provider's conventional variable, then `[API]`.
+
+One difference remains, older than this amendment: with no source recorded,
+the bridge reads the conventional `<PROVIDER>_API_KEY`, while readiness reads
+the variable the table names. A table that names another variable can resolve
+differently. A Settings save that writes the credential records a source,
+which ends it.
 
 ## Links
 

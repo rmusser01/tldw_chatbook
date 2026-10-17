@@ -264,7 +264,9 @@ is unset: `openai_api_key`, `anthropic_api_key`, `cohere_api_key`,
 provider, model or endpoint with that provider chosen copies the key into its
 own `[api_settings.<provider>]` table, so it stays the key in use if you set
 the env var later; a save of other rows alone copies nothing. No other `[API]`
-key is shown in that row or copied.
+key is shown in that row or copied. Once a save records "no credential"
+(**Clear**) or an **Env var** for the provider, its `[API]` key is no longer
+shown, copied or sent.
 
 Summaries (Library analysis, web search) send the key the **API key** row
 resolves for their provider, so "no credential", **Clear** and an **Env var**
