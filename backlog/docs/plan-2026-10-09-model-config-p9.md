@@ -80,6 +80,7 @@ Must not edit: console_model_popover.py (Task 2 owns it): fix the [ConsoleModelP
   Restack onto Phase 8's final head (2026-10-16): the launch-declarations and inventory nodes were red again, on four modals dev added (ResponseRulesModal and three plain Goals modals), and were brought current before Wave 3. Each one is declared by the owner that opens it, as 76918d315f did; the rider's notes have the detail. The file is 120 passed at HEAD.
 - TASK-33006.17 (Repair the endpoint-creation and redirected-click tests that are red on dev): Both nodes are still red: '3 failed in 34.88s'.
   - (a) test_create_endpoint_with_live_controller_rebase_settles[*] fails on `modal._current_draft_discovery_identity().provider_key == provider_id`: 'llama_cpp' != 'custom-ep:new-live-endpoint'. Every earlier assert passes. Since TASK-32566 (1b02010541) an entry draft keeps the family key in provider_key and the custom-ep id in entry_id, so the test probably means entry_id. Confirm that before rewriting.
+    Restack onto Phase 8's final head (2026-10-16): (a) is fixed by the base. Dev's 8c033d006b (PR #3100, filed under TASK-32566) made the same rewrite, so the restack dropped this branch's edit of that file. Both params pass serially at HEAD and at origin/dev 111f8e48fc. (b) is still this branch's fix (2bdc8c65a6).
   - (b) In the redirected-click node, the Streaming Select is at Region(x=120, y=25, w=1, h=2), outside the modal content Region(x=20, y=3, w=100, h=54) at 140x60. Phase 7's single control width ($ds-size-13, 0e7aa920f9) may squeeze that row, so decide whether this is a real layout defect before touching the test.
   Node (b) is also one of 33003.19's five reds.
 - TASK-33006.24 (Steady the suspended-anchor geometry test): test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed cannot be measured today. Tests/UI/test_console_settings_geometry.py has no private_profile_test or bootstrap_profile marker, so under supported isolation every node errors at setup with RecoveryRequired raw_source_selection_changed (8 of 8 serial, and the whole file under -n 6). First make the file run under supported isolation, then measure the 20 serial runs.
@@ -794,7 +795,7 @@ Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in t
 
 [[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14, 17], [15, 16]]
 
-- Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10).
+- Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10). After the restack, TASK-33006.17 (a) is fixed by the base (dev's 8c033d006b). TASK-33003.19's inventory was brought current again on four modals dev added.
 - Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11).
 - Rebase this branch onto Phase 8's final head.
 - Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together).
