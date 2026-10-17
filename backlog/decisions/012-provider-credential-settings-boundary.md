@@ -349,7 +349,9 @@ realtime, the OpenAI and ElevenLabs TTS backends, the MCP server's chat
 tools) never reads `credential_source`: it reads the table's named variable
 even under "none", then `[API] <provider>_api_key`.
 `RAG_Search/simplified/active_config.py` and `TTS/TTS_Backends.py` read
-`[API] openai_api_key` directly. So after a Clear those still spend the key
+`[API] openai_api_key` directly, and `Model_Artifacts/acquisition.py` (the
+Hugging Face resolver that Parakeet, OmniVoice and remote GGUF downloads use)
+reads `[API] huggingface_api_key`. So after a Clear those still spend the key
 the user removed (TASK-35227).
 
 ## Links

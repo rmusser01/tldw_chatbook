@@ -267,9 +267,10 @@ the env var later; a save of other rows alone copies nothing. No other `[API]`
 key is shown in that row or copied. Once a save records "no credential"
 (**Clear**) or an **Env var** for the provider, its `[API]` key is no longer
 shown or copied, and chats and summaries no longer send it. The MCP server's
-chat tools, Console realtime, OpenAI text to speech and RAG's OpenAI
-embeddings still read the `[API]` line itself; delete it from `config.toml`
-to stop them using it.
+chat tools, Console realtime, OpenAI text to speech, RAG's OpenAI embeddings
+and Hugging Face model downloads (Parakeet speech to text, OmniVoice, the
+Models screen's remote installs) still read the `[API]` line itself; delete
+it from `config.toml` to stop them using it.
 
 Summaries (Library analysis, web search) send the key the **API key** row
 resolves for their provider, so "no credential", **Clear** and an **Env var**
