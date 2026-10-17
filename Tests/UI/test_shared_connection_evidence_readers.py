@@ -107,6 +107,8 @@ async def test_a_refused_test_reaches_home_and_the_library_lock_pre_check(
         await pilot.pause()
         header = str(home.query_one("#home-header-line").render())
         assert header == "Home | Not ready \u00b7 Local"
+        # The next action under it asks for a reconnect, not a setup.
+        assert home._current_dashboard.next_action.label == "Reconnect Console model"
 
 
 def _refused_outcome(category: str = "connection_refused"):

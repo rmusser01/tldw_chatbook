@@ -89,12 +89,15 @@ def test_home_after_skip_says_not_set_up_instead_of_blocked() -> None:
 
 def test_home_after_a_failed_connection_check_says_not_ready() -> None:
     """TASK-33005.9 (spec §5): a configured connection whose last check was
-    refused is set up but not ready, the word the Console shows for it."""
+    refused is set up but not ready, the word the Console shows for it. The
+    next action under the header asks for a reconnect, not a setup (review
+    round 2), and still opens Settings."""
     from tldw_chatbook.Home.dashboard_state import (
         HomeDashboardInput,
         _header_line,
         _status_summary_line,
         _system_status_lines,
+        choose_next_best_action,
     )
 
     failed = HomeDashboardInput(model_ready=False, model_check_failed=True)
@@ -102,6 +105,12 @@ def test_home_after_a_failed_connection_check_says_not_ready() -> None:
     assert _header_line(failed) == "Home | Not ready · Local"
     assert "Model: Not ready |" in _status_summary_line(failed)
     assert "Model not ready," in " ".join(_system_status_lines(failed))
+    action = choose_next_best_action(failed)
+    assert action.action_id == "fix_model_setup"
+    assert action.label == "Reconnect Console model"
+    assert action.reason == "Console's model failed its last connection check."
+    skipped = choose_next_best_action(HomeDashboardInput(model_ready=False))
+    assert skipped.label == "Set up Console model"
 
 
 def test_home_details_after_skip_say_not_set_up_too() -> None:

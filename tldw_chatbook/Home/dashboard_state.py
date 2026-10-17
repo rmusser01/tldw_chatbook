@@ -420,6 +420,15 @@ def choose_next_best_action(
             nothing is actually running -- F1b whole-wave review). Empty by
             default, so every other caller is unaffected.
     """
+    if not state.model_ready and state.model_check_failed:
+        # A set-up connection whose last check failed is a reconnect, the
+        # Console's word for it; same action, so it still opens Settings.
+        return HomeAction(
+            "fix_model_setup",
+            "Reconnect Console model",
+            TAB_SETTINGS,
+            "Console's model failed its last connection check.",
+        )
     if not state.model_ready:
         return HomeAction(
             "fix_model_setup",

@@ -91,7 +91,7 @@ card) is the first match in a fixed priority order:
 
 | Priority | Suggestion | Goes to |
 |---|---|---|
-| 1 | "Set up Console model" — Console needs a working model before live AI tasks. | Settings (fires whenever no usable credential+model resolves — readiness is honest, task-2764) |
+| 1 | "Set up Console model" — Console needs a working model before live AI tasks. Or, when the Model word reads "Not ready" (the default connection's last connection check failed), "Reconnect Console model" — Console's model failed its last connection check. | Settings (fires whenever Model is not Ready: no usable credential+model resolves, or the last check failed — readiness is honest, task-2764) |
 | 2 | "Review pending approvals" — Agent work is waiting for a decision. | Console |
 | 3 | "Review failed schedules" — Scheduled work needs recovery. | Schedules |
 | 4 | "Review failed work" — Failed work needs recovery. | the failed item's screen |
