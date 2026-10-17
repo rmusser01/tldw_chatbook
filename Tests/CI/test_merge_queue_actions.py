@@ -60,6 +60,9 @@ DISPATCH_ERRORS = {
 }
 
 
+QUEUE_AUTHOR = {"login": "github-actions", "__typename": "Bot"}
+
+
 class FakeGh:
     """Records every mutating call; serves scripted reads.
 
@@ -130,9 +133,17 @@ class FakeGh:
             return {"data": {}}
         self.reads += 1
         if "comments(last" in query:
-            # An entry is a body, or (body, createdAt); a bare body has no timestamp (reads as old).
-            nodes = [{"body": c[0], "createdAt": c[1]} if isinstance(c, tuple) else {"body": c}
-                     for c in self.comments.get(v["number"], [])]
+            # An entry is a body, (body, createdAt), or a dict of node fields; a bare body has no
+            # timestamp (reads as old). A comment is the queue's own (GraphQL author `github-actions`,
+            # a Bot) unless a dict names another author.
+            nodes = []
+            for entry in self.comments.get(v["number"], []):
+                if isinstance(entry, dict):
+                    node = dict(entry)
+                else:
+                    node = {"body": entry[0], "createdAt": entry[1]} if isinstance(entry, tuple) else {"body": entry}
+                node.setdefault("author", QUEUE_AUTHOR)
+                nodes.append(node)
             return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
         if "pullRequest(number" in query:
             node = self.reread.get(v["number"], self.nodes[v["number"]])
@@ -204,7 +215,8 @@ class FakeGh:
             self._record(("rerun", rid, "failed" if path.endswith("-failed-jobs") else "all"))
             if self.rerun_error:
                 raise mq.GhError(self.rerun_error)
-            self._set_run(int(rid), status="queued", conclusion=None)
+            listed = next((r for runs in self.runs.values() for r in runs if r.get("id") == int(rid)), {})
+            self._set_run(int(rid), status="queued", conclusion=None, run_attempt=int(listed.get("run_attempt") or 1) + 1)
             return None
         if method == "GET" and re.search(r"/actions/runs/\d+$", path):
             rid = int(path.rsplit("/", 1)[1])
@@ -1008,7 +1020,7 @@ def test_a_rerun_held_for_approval_is_approved():
 
 def test_a_woken_run_waits_for_the_failed_run_then_reruns_it():
     gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
-                runs={OLD: [_pr_run(70, 700)]}, run_status={70: ["in_progress", "in_progress", "completed", "queued"]})
+                runs={OLD: [_pr_run(70, 700)]}, run_status={70: ["in_progress", "in_progress", "completed", "completed", "queued"]})
     slept = []
     mq.run(gh, "on", now=lambda: NOW, sleep=slept.append, log=lambda m: None, wait_run=70)
     assert gh.run_reads[70] >= 3 and slept[:2] == [mq.WAIT_RUN_DELAY_S] * 2
@@ -1106,6 +1118,233 @@ def test_a_broken_run_that_fails_again_after_its_retry_evicts():
     assert f"<!-- merge-queue:evict-failed-twice:{OLD} -->" in comment[2]
 
 
+def test_a_retry_decided_on_a_stale_snapshot_never_evicts_a_check_that_has_since_passed():
+    """A racing queue run re-ran the required check and it passed; this run's decision still says
+    "failed once". The retry marker alone must not read as "failed again" (found reviewing the
+    tldw_server port of this queue, 2026-10-14)."""
+    run = dict(_pr_run(70, 700, conclusion="success"), run_attempt=2)
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", suite=700),
+              _check("success", completed="2026-10-03T11:30:00Z", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
+                comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nx\n<!-- merge-queue-attempt:1 -->"]})
+    action = mq.Action("retry", "required check failed once; retrying", ("https://run/1",), suite_id=700)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is False
+    assert gh.calls == []
+
+
+def test_a_pending_rerun_wakes_a_kick_that_does_not_evict_while_github_still_shows_the_old_attempt():
+    """GitHub accepted the re-run but still shows the old attempt when the woken kick decides: one
+    failure on the head is not "failed again"; it is a strike that waits for the re-run."""
+    old_attempt = {"status": "completed", "conclusion": "failure", "run_attempt": 1}
+
+    def state(**fake):
+        return FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                      runs={OLD: [_pr_run(70, 700)]}, run_status={70: [old_attempt]}, **fake)
+
+    first = state()
+    _run(first)
+    assert ("rerun", "70", "failed") in first.calls
+    retry = next(c[2] for c in first.calls if c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2])
+    assert "<!-- merge-queue-attempt:70:1 -->" in retry
+    assert any(c[0] == "dispatch" for c in first.calls), "a pending re-run wakes a kick"
+    kick = state(comments={1: [retry]})
+    _run(kick)
+    assert not any(c[0] == "disarm" for c in kick.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unseen:{OLD}" in c[2] for c in kick.calls)
+
+
+def test_a_retry_marker_in_someone_elses_comment_is_ignored():
+    """Markers count only in the queue's own comments: a hidden one in anyone else's comment must not
+    turn a first failure into an eviction."""
+    forged = {"body": f"LGTM <!-- merge-queue:retry:{OLD} -->", "author": {"login": "someone", "__typename": "User"}}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, comments={1: [forged]}, run_status={70: ["completed", "in_progress"]})
+    _run(gh)
+    assert ("rerun", "70", "failed") in gh.calls
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_an_old_retry_marker_without_an_attempt_does_not_count_the_failure_it_retried():
+    """A marker posted by the queue before attempts were recorded: a failure older than the marker is
+    the one the queue retried, so the re-run's result is not in yet. That is a strike, not an eviction."""
+    run = _pr_run(70, 700)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", completed="2026-10-03T11:00:00Z", suite=700)]},
+                runs={OLD: [run]}, comments={1: [(f"<!-- merge-queue:retry:{OLD} -->\nre-running", "2026-10-03T11:05:00Z")]})
+    action = mq.Action("retry", "x", ("https://run/1",), suite_id=700)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is False
+    assert not any(c[0] == "disarm" for c in gh.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unseen:{OLD}" in c[2] for c in gh.calls)
+
+
+@pytest.mark.parametrize("fresh", [{"status": "in_progress"}, {"status": "completed", "conclusion": "action_required"}],
+                         ids=["in-progress", "held"])
+def test_after_retry_stands_down_while_the_run_is_going_again(fresh):
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_pr_run(70, 700)]}, run_status={70: [dict(fresh, run_attempt=1)]})
+    assert mq._after_retry(gh, mq.read_pr(gh, 1), _pr_run(70, 700), mq.RetryNote(70, 1, None), (), lambda m: None,
+                           lambda: NOW) is False
+    assert gh.calls == []
+
+
+def _unreported(comments=()):
+    """The queue's re-run ran (a higher attempt) and completed, but its required check is not listed
+    yet: the newest failure is the one it retried, from before the re-run started."""
+    rerun = dict(_pr_run(70, 700, conclusion="success"), run_attempt=2, run_started_at="2026-10-03T11:10:00Z")
+    return FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", completed="2026-10-03T11:00:00Z", suite=700)]},
+                  runs={OLD: [rerun]}, comments={1: list(comments)})
+
+
+def _after(gh):
+    return mq._after_retry(gh, mq.read_pr(gh, 1), _pr_run(70, 700), mq.RetryNote(70, 1, None), ("https://run/70",),
+                           lambda m: None, lambda: NOW)
+
+
+def test_a_re_run_whose_check_has_not_reported_yet_is_a_strike_not_an_eviction():
+    """Review of #3113: this evicted (round 1), then waited unbounded with nothing woken (round 2)."""
+    gh = _unreported()
+    assert _after(gh) is False
+    assert not any(c[0] == "disarm" for c in gh.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unreported:{OLD}" in c[2] for c in gh.calls)
+    assert any(c[0] == "dispatch" for c in gh.calls), "the warning wakes a tick to look again"
+
+
+def test_a_re_run_whose_check_never_reports_evicts_after_the_strike_gap():
+    gap = (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gh = _unreported([(f"<!-- merge-queue:rerun-unreported:{OLD} -->\nwarned", gap)])
+    assert _after(gh) is True
+    assert any(c[0] == "comment" and f"merge-queue:evict-rerun-unreported:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_an_old_unseen_warning_never_turns_an_unreported_check_into_an_eviction():
+    gap = (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gh = _unreported([(f"<!-- merge-queue:rerun-unseen:{OLD} -->\nwarned", gap)])
+    assert _after(gh) is False
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_retried_run_that_ran_again_and_failed_again_evicts():
+    run = dict(_pr_run(70, 700), run_attempt=2, run_started_at="2026-10-03T11:10:00Z")
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", suite=700),
+              _check("failure", completed="2026-10-03T11:30:00Z", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
+                comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nx\n<!-- merge-queue-attempt:1 -->"]})
+    action = mq.Action("retry", "x", ("https://run/1",), suite_id=700)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is True
+    assert [c[0] for c in gh.calls] == ["comment", "disarm"]
+
+
+RETRIED = f"<!-- merge-queue:retry:{OLD} -->\nx\n"
+
+
+def _retry_once(gh):
+    action = mq.Action("retry", "x", ("https://run/1",), suite_id=700)
+    return mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW)
+
+
+def test_the_retry_note_records_the_attempt_a_fresh_read_shows_not_the_listing():
+    """Review of #3113: the listing can be older than the run; the note records what a fresh read shows."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [dict(_pr_run(70, 700), run_attempt=1)]},
+                run_status={70: [{"status": "completed", "conclusion": "failure", "run_attempt": 3}, "in_progress"]})
+    assert _retry_once(gh) is False
+    retry = next(c[2] for c in gh.calls if c[0] == "comment")
+    assert retry.endswith("<!-- merge-queue-attempt:70:3 -->")
+
+
+@pytest.mark.parametrize("fresh", ["in_progress", {"status": "completed", "conclusion": "action_required"}],
+                         ids=["in-progress", "held"])
+def test_a_retry_whose_run_went_again_since_the_listing_stands_down(fresh):
+    """Review of #3113: a racing queue run re-ran it between this run's listing and its fresh read.
+    Re-running it again would be refused, and a note from that read would over-record the attempt.
+
+    Args:
+        fresh: What the fresh read shows.
+    """
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, run_status={70: [fresh]})
+    assert _retry_once(gh) is False
+    assert gh.calls == []
+
+
+def test_a_green_check_stands_down_even_if_the_note_over_recorded_the_attempt():
+    """Review of #3113: a note can record an attempt the re-run never got past (a racing run's
+    re-run); a check green since the decision still stands down, with no warning."""
+    run = dict(_pr_run(70, 700, conclusion="success"), run_attempt=2)
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", suite=700),
+              _check("success", completed="2026-10-03T11:30:00Z", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
+                comments={1: [RETRIED + "<!-- merge-queue-attempt:70:2 -->"]})
+    assert _retry_once(gh) is False
+    assert gh.calls == []
+
+
+def test_an_old_retry_marker_without_an_attempt_evicts_a_failure_newer_than_it():
+    run = _pr_run(70, 700)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", completed="2026-10-03T11:30:00Z", suite=700)]},
+                runs={OLD: [run]}, comments={1: [(RETRIED, "2026-10-03T11:05:00Z")]})
+    assert _retry_once(gh) is True
+    assert any(c[0] == "comment" and f"merge-queue:evict-failed-twice:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_a_re_run_still_unseen_after_the_strike_gap_evicts():
+    old_attempt = {"status": "completed", "conclusion": "failure", "run_attempt": 1}
+    warned = (f"<!-- merge-queue:rerun-unseen:{OLD} -->\nwarned", (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, run_status={70: [old_attempt]},
+                comments={1: [RETRIED + "<!-- merge-queue-attempt:70:1 -->", warned]})
+    assert _retry_once(gh) is True
+    assert any(c[0] == "comment" and f"merge-queue:evict-rerun-unseen:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_a_broken_run_that_fails_again_after_its_re_run_started_evicts():
+    """The production path: a run that never reports the check stands in as a failure stamped with its
+    `updated_at`, which can equal the re-run's `run_started_at` (review of #3113)."""
+    broken = dict(_pr_run(31, 531, conclusion="startup_failure"), run_attempt=2, run_started_at="2026-10-03T11:58:00Z")
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [broken]},
+                comments={1: [RETRIED + "<!-- merge-queue-attempt:31:1 -->"]})
+    _run(gh)
+    assert ("disarm", "PR_1") in gh.calls
+    assert any(c[0] == "comment" and f"merge-queue:evict-failed-twice:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_a_broken_runs_retry_re_runs_the_run_its_link_names():
+    """Review of #3113: the newest run with a broken conclusion can be one whose check passed (its
+    queue-tick failed); the stand-in's link is its own run's URL, so that picks the right one."""
+    tick_failed = dict(_pr_run(30, 530), created_at="2026-10-03T11:30:00Z")
+    broken = _pr_run(31, 531, conclusion="startup_failure")
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("success", suite=530)]},
+                runs={OLD: [tick_failed, broken]}, run_status={31: ["completed", "in_progress"]})
+    action = mq.Action("retry", "x", ("https://run/31",))
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is False
+    assert [c[:2] for c in gh.calls if c[0] == "rerun"] == [("rerun", "31")]
+
+
+def test_a_failure_of_another_run_on_a_retried_head_evicts_at_once():
+    """Review of #3113: the note is per head. A second run on it (close and reopen) that fails after
+    the retried one passed is the head's second failure, not a re-run that has not started."""
+    other = dict(_pr_run(71, 701), run_attempt=1)
+    checks = [_check("success", completed="2026-10-03T11:20:00Z", suite=700),
+              _check("failure", completed="2026-10-03T11:40:00Z", suite=701)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [_pr_run(70, 700, conclusion="success"), other]},
+                comments={1: [RETRIED + "<!-- merge-queue-attempt:70:1 -->"]})
+    action = mq.Action("retry", "x", ("https://run/1",), suite_id=701)
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is True
+    assert any(c[0] == "comment" and f"merge-queue:evict-failed-twice:{OLD}" in c[2] for c in gh.calls)
+
+
+@pytest.mark.parametrize(("note", "expected"), [
+    ("<!-- merge-queue-attempt:70:2 -->", (70, 2)),
+    ("<!-- merge-queue-attempt:2 -->", (None, 2)),
+    ("", (None, 0)),
+    ("<!-- merge-queue-attempt:x:2 -->", (None, 0)),
+    ("<!-- merge-queue-attempt:1:2:3 -->", (None, 0)),
+    ("<!-- merge-queue-attempt:\u0663 -->", (None, 0)),
+], ids=["run-and-attempt", "attempt-only", "none", "not-digits", "too-many", "non-ascii-digit"])
+def test_retry_notes_parse_with_what_they_lack_unknown(note, expected):
+    gh = FakeGh([_node(1)], comments={1: [(RETRIED + note, "2026-10-03T11:05:00Z")]})
+    seen = mq.marker_attempt(gh, 1, "retry", OLD)
+    assert (seen.run_id, seen.attempt) == expected and seen.posted == datetime(2026, 10, 3, 11, 5, tzinfo=NOW.tzinfo)
+
+
 def test_a_refused_wake_fails_the_run_and_disarms_nobody(monkeypatch):
     monkeypatch.setenv("GITHUB_RUN_ID", "70")
     own = _pr_run(70, 700, conclusion=None, status="in_progress")
@@ -1200,7 +1439,7 @@ def test_a_rerun_refused_because_a_racing_run_got_there_first_stands_down(path, 
     else:
         checks, run = [_check("failure", suite=800)], _pr_run(80, 800)
     gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
-                rerun_error=error, run_status={80: [going]})
+                rerun_error=error, run_status={80: ["completed", going] if path == "retry" else [going]})
     _run(gh)
     assert ("rerun", "80", "all" if path == "start" else "failed") in gh.calls
     assert not any(c[0] == "disarm" for c in gh.calls)
@@ -1750,8 +1989,8 @@ class _CommentRace:
         if self.fail == "look-again" and self.reads == 2:
             raise mq.GhError("gh api graphql -f failed: gh: HTTP 502")
         marker = f"<!-- merge-queue:rebased:{NEW} -->"
-        nodes = [] if self.reads == 1 else [{"databaseId": i, "body": marker} for i in (self.racer_id, self.own_id)
-                                            if i is not None]
+        nodes = [] if self.reads == 1 else [{"databaseId": i, "body": marker, "author": QUEUE_AUTHOR}
+                                            for i in (self.racer_id, self.own_id) if i is not None]
         return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
 
     def rest(self, method, path, fields=None):
