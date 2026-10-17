@@ -33,12 +33,12 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [ ] #4 Authoring examples, diagnostics and operation documentation cover all approved component/hook contracts and limits; targeted regression, privacy, startup and resource evidence is recorded without asserting a full-suite run.
 - [x] #5 Saved-data status distinguishes authenticated cleaned absence from retained roots and unknown recovery without weakening ownership, exact-reference validation or drain gates.
 - [x] #6 Action forms show the inputs relevant to the selected operation while preserving hidden in-session drafts and keyboard access at80x24 and120x35.
-- [ ] #7 I1: An installed Cursor beforeMCPExecution deny guard prevents managed MCP dispatch; its allow control reaches normal permission review and a local non-MCP call remains a nonmatch.
-- [ ] #8 I2: Revocation and revision-drain cancellation stop every distinct owned MCP connection under the same captured run while authorized work in a different workspace remains usable.
-- [ ] #9 I3: Failed stdio termination/reap and cleanup retry retain unresolved request/root custody until positive terminal evidence; saved-data deletion stays blocked while the actual child is alive.
-- [ ] #10 I4: Real qualified file and MCP tools carry canonical operation classification through exact-definition snapshots and pre/post hook events; genuinely unavailable classification still refuses.
-- [ ] #11 I5: Reviewed typed nonsecret and secret-reference configuration makes consuming installed components ready, with exact variable-reference env syntax accepted; unset/revoked/wrong-type values refuse affected use while independent siblings remain usable.
-- [ ] #12 I6: PLUGIN_DATA remains the installation shared root, and reserved CHATBOOK_WORKSPACE_DATA resolves to the exact admitted workspace root or actual private scratch with current root grants and fences.
+- [x] #7 I1: An installed Cursor beforeMCPExecution deny guard prevents managed MCP dispatch; its allow control reaches normal permission review and a local non-MCP call remains a nonmatch.
+- [x] #8 I2: Revocation and revision-drain cancellation stop every distinct owned MCP connection under the same captured run while authorized work in a different workspace remains usable.
+- [x] #9 I3: Failed stdio termination/reap and cleanup retry retain unresolved request/root custody until positive terminal evidence; saved-data deletion stays blocked while the actual child is alive.
+- [x] #10 I4: Real qualified file and MCP tools carry canonical operation classification through exact-definition snapshots and pre/post hook events; genuinely unavailable classification still refuses.
+- [x] #11 I5: Reviewed typed nonsecret and secret-reference configuration makes consuming installed components ready, with exact variable-reference env syntax accepted; unset/revoked/wrong-type values refuse affected use while independent siblings remain usable.
+- [x] #12 I6: PLUGIN_DATA remains the installation shared root, and reserved CHATBOOK_WORKSPACE_DATA resolves to the exact admitted workspace root or actual private scratch with current root grants and fences.
 - [ ] #13 I7: Package PATH cannot change bare executable lookup for owned MCP or hooks; explicit contained package executables and unrelated permitted child environment values still work.
 - [ ] #14 I8: Every explicit three-platform workflow selection respects production ownership, command and package-capture boundaries, retains applicable and genuine unsupported/refusal controls, and makes no unexecuted native-platform success claim.
 <!-- AC:END -->
