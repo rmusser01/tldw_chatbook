@@ -15316,6 +15316,13 @@ class ConsoleChatController:
         """Forward to the documented InterruptRoundHost implementation."""
         return self._interrupt_host._console_tool_kill_switch_reader()
 
+
+    def plugin_test_admission(self, configuration):
+        """Reserve the real Console slot through the lazy explicit-test adapter."""
+        from .console_plugin_tests import plugin_test_admission
+
+        return plugin_test_admission(self, configuration)
+
     async def compose_prospective_hook_context(
         self, configuration, lifecycle, input_scope
     ):
@@ -15390,6 +15397,7 @@ class ConsoleChatController:
         maximum_definition_hashes: Mapping[str, str] | None = None,
         plugin_maximum: Mapping | None = None,
         local_kill_switch: "LocalKillSwitchRead | None" = None,
+        _retain_empty_plugin_providers: bool = False,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider for the running main loop.
 
@@ -15543,6 +15551,10 @@ class ConsoleChatController:
         catalog = provider.list_catalog()
         if not catalog:
             publish(None, None)
+            # Explicit discovery needs the actual owned connection before any
+            # tools are mapped. All ordinary callers keep the empty result.
+            if _retain_empty_plugin_providers and plugin_maximum is not None:
+                return provider
             return None
         publish(len(catalog), provider.not_connected_count)
         return provider

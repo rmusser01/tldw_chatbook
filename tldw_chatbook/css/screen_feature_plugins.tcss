@@ -290,7 +290,7 @@ $ds-conversation-menu-width: 30;
     padding: $ds-space-0 $ds-space-inset;
 }
 #plugins-status { height: auto; max-height: $ds-control-height; color: $ds-text-muted; }
-#plugins-modes, #plugins-entry-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
+#plugins-modes, #plugins-entry-actions, #plugins-management-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
     height: $ds-control-height;
 }
 #plugins-shell Button { min-width: 0; width: 1fr; }
@@ -310,11 +310,13 @@ $ds-conversation-menu-width: 30;
 .plugins-narrow #plugins-detail-pane { width: 100%; padding-left: $ds-space-0; }
 #plugins-back { height: $ds-control-height; }
 .plugins-narrow #plugins-modes, .plugins-narrow #plugins-entry-actions,
+.plugins-narrow #plugins-management-actions,
 .plugins-narrow #plugins-pager, .plugins-narrow #plugins-detail-actions,
 .plugins-narrow #plugins-back {
     height: $ds-control-height-compact;
 }
 .plugins-narrow #plugins-modes Button, .plugins-narrow #plugins-entry-actions Button,
+.plugins-narrow #plugins-management-actions Button,
 .plugins-narrow #plugins-pager Button, .plugins-narrow #plugins-detail-actions Button,
 .plugins-narrow #plugins-back {
     height: $ds-control-height-compact;

@@ -3818,6 +3818,15 @@ class MCPWorkbench(Container):
             slots = await self._fetch_credential_slots(record.get("server_id"))
             await canvas.show_server_mutations(record, slots)
             return
+        if selected is not None and selected.source == "local":
+            record = (
+                self._catalog_records.get(selected.server_key.split(":", 1)[1]) or {}
+            )
+            owner = record.get("plugin_owner")
+            if isinstance(owner, dict):
+                selected = replace(
+                    selected, detail={**selected.detail, "plugin_owner": dict(owner)}
+                )
         await canvas.show_detail(
             selected, mutations_available=self._server_mutations_available
         )
@@ -6395,6 +6404,13 @@ class MCPWorkbench(Container):
 
     async def _delete_local_profile(self, server_key: str, profile_id: str) -> None:
         try:
+            if (self._catalog_records.get(profile_id) or {}).get(
+                "plugin_owner"
+            ) is not None:
+                self.app.notify(
+                    "Manage this owned profile in Plugins.", severity="warning"
+                )
+                return
             service = self._service()
             if service is None:
                 return
@@ -6413,6 +6429,23 @@ class MCPWorkbench(Container):
             await self._sync_children()
         finally:
             self._profile_delete_in_flight = False
+
+    async def on_mcp_profile_form_manage_plugin_requested(
+        self, event: MCPProfileForm.ManagePluginRequested
+    ) -> None:
+        event.stop()
+        owner = event.owner
+        if not isinstance(owner.get("installation_id"), str):
+            self.app.notify(
+                "Plugin ownership is unavailable; refresh the profile.",
+                severity="warning",
+            )
+            return
+        from tldw_chatbook.UI.Plugins_Modules.review import open_owned_plugin
+
+        await open_owned_plugin(
+            self.app, owner["installation_id"], owner.get("component_id")
+        )
 
     def on_mcp_profile_form_submit_requested(
         self, event: MCPProfileForm.SubmitRequested
@@ -6476,6 +6509,10 @@ class MCPWorkbench(Container):
             if service is None:
                 return
             try:
+                if (self._catalog_records.get(payload.get("profile_id")) or {}).get(
+                    "plugin_owner"
+                ) is not None:
+                    raise ValueError("plugin_owned_profile_use_plugins")
                 await service.save_local_profile(payload)
             except ValueError as exc:
                 # Store-validation copy is user-ready. If the form is gone
@@ -6789,6 +6826,13 @@ class MCPWorkbench(Container):
         wouldn't run until the event loop actually scheduled this coroutine,
         leaving a window where the guard/cancel logic would see stale state.
         """
+        if (self._catalog_records.get(profile_id) or {}).get(
+            "plugin_owner"
+        ) is not None:
+            self.app.notify(
+                "Manage this plugin to review connection tests in its Console scope."
+            )
+            return
         if server_key in self._in_flight:
             self.app.notify(
                 _toast(f"{profile_id}: {action} already running."), severity="warning"

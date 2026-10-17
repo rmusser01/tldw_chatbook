@@ -4520,3 +4520,29 @@ async def test_skill_trust_buttons_carry_reason_tooltips():
         approve = pilot.app.query_one("#library-skill-trust-approve", Button)
         assert review.disabled is False
         assert approve.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_owned_skill_mount_is_literal_read_only_with_manage_and_standalone_neighbor():
+    owned = dataclasses.replace(
+        _editor_state(body="[red] package body"),
+        plugin_owned=True,
+        plugin_installation_id="owned-install",
+        plugin_component_id="skill:review",
+    )
+    app = _ProductionEditorHost(mode="editor", editor_state=owned)
+    async with app.run_test(size=(80, 24)) as pilot:
+        canvas = app.query_one(LibrarySkillsListCanvas)
+        assert not canvas.query("#library-skill-save")
+        assert not canvas.query("#library-skill-trust-review")
+        assert not canvas.query("#library-skill-body")
+        manage = canvas.query_one("#library-skill-manage-plugin", Button)
+        manage.focus()
+        await pilot.pause()
+        assert manage in app.screen._compositor.visible_widgets
+        await canvas.set_editor_mode("advanced")
+        assert not canvas.query("#library-skill-save")
+    standalone = _ProductionEditorHost(mode="editor", editor_state=_editor_state())
+    async with standalone.run_test():
+        assert standalone.query_one("#library-skill-save", Button)
+        assert standalone.query_one("#library-skill-body", TextArea)

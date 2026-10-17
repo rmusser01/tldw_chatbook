@@ -179,6 +179,22 @@ def hook_busy_sessions(
     return busy
 
 
+def _begin_hook_submission(controller, session_id: str) -> None:
+    """Publish the calling task's already-checked slot without yielding."""
+    import asyncio
+
+    from .console_chat_models import ConsoleRunState, ConsoleRunStatus
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
+        session_id=session_id,
+    )
+    submissions = getattr(controller, "_hooks_v2_submissions", None)
+    if submissions is None:
+        submissions = controller._hooks_v2_submissions = {}
+    submissions[asyncio.current_task()] = (None, None, session_id)
+
+
 async def prepare_submission_hooks(
     controller,
     session,
@@ -222,14 +238,8 @@ async def prepare_submission_hooks(
             busy = [identity for identity in busy if identity != session_id]
         if session_id in busy or len(busy) >= controller.max_parallel_runs:
             return ConsoleSubmitResult(False, False, "A run is already preparing.")
-        controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
-            session_id=session_id,
-        )
-        submissions = getattr(controller, "_hooks_v2_submissions", None)
-        if submissions is None:
-            submissions = controller._hooks_v2_submissions = {}
-        submissions[asyncio.current_task()] = (None, None, session_id)
+        _begin_hook_submission(controller, session_id)
+        submissions = controller._hooks_v2_submissions
         try:
             lifecycle = await hook_runtime.prepare_hooks_v2(
                 session_id,

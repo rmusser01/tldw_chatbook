@@ -545,3 +545,21 @@ async def test_import_escape_posts_cancelled_and_initial_focus_is_text_area():
         await pilot.press("escape")
         await pilot.pause()
         assert app.events and isinstance(app.events[-1], MCPImportPanel.Cancelled)
+
+
+@pytest.mark.asyncio
+async def test_owned_profile_has_exact_handoff_and_no_standalone_write_controls():
+    owner = {"installation_id": "installed-exact", "component_id": "mcp:docs"}
+    app = FormApp(
+        {"profile_id": "deceptive:name", "command": "example", "plugin_owner": owner}
+    )
+    async with app.run_test() as pilot:
+        form = app.query_one(MCPProfileForm)
+        assert form.plugin_owner == owner
+        assert not form.query("#mcp-form-save")
+        assert not form.query("#mcp-form-save-connect")
+        assert form.query_one("#mcp-form-manage-plugin", Button)
+        with pytest.raises(ValueError, match="plugin_owned"):
+            form.build_payload()
+        await pilot.press("escape")
+        assert isinstance(app.events[-1], MCPProfileForm.Cancelled)
