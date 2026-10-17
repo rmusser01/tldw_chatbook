@@ -13773,9 +13773,18 @@ async def test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it() -> None:
     """TASK-33008: a 403 to the listing of a typed key read as a rejected
     key, marked Authentication required and said "the server rejected it".
     Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review): a
-    403 means this key may not list models, as after a 403 to Test."""
+    403 means this key may not list models, as after a 403 to Test. Review
+    round 4: a 403 to Test is told in the listing's words on this step."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 
+    probe = AsyncMock(
+        return_value=SettingsEndpointProbeOutcome(
+            state="unreachable", summary="unreachable: forbidden", category="forbidden"
+        )
+    )
     listing = AsyncMock(
         return_value=ModelDiscoveryResult(
             provider="llama_cpp",
@@ -13793,7 +13802,7 @@ async def test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it() -> None:
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = _provider_step(wizard=wizard, probe=AsyncMock())
+    step = _provider_step(wizard=wizard, probe=probe)
 
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -13821,9 +13830,32 @@ async def test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it() -> None:
         await _until(pilot, lambda: step._selected_discovery_state == "failed")
         assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
         assert str(auth.title) == "Authentication (optional)"
-        assert str(key_line.render()) == (
-            "Key staged — it will be checked when you continue."
+        staged = "Key staged — it will be checked when you continue."
+        assert str(key_line.render()) == staged
+
+        # Review round 4: after a 401, a 403 to the same key and address left
+        # "the server rejected it" under the key; a failed check redraws it.
+        forbidden = listing.return_value
+        for category, line in (
+            ("unauthorized", "Key staged — the server rejected it; update it above."),
+            ("forbidden", staged),
+        ):
+            listing.return_value = replace(
+                forbidden, error=replace(forbidden.error, category=category)
+            )
+            step._begin_selected_provider_discovery(step._effective_provider_draft())
+            await _until(pilot, lambda: step._selected_discovery_state == "failed")
+            assert str(key_line.render()) == line
+        assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+
+        # The same 403 to Test read "…; chat endpoint not tested." here.
+        step.query_one("#setup-provider-test", Button).press()
+        await _until(
+            pilot, lambda: probe.await_count and str(status.render()) != "Testing…"
         )
+        assert probe.await_args.kwargs["credential_source"] == "draft"
+        assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        assert str(key_line.render()) == staged
 
 
 @pytest.mark.asyncio

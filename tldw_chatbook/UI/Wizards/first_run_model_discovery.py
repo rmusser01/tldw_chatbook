@@ -247,15 +247,19 @@ def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
     section is scrolled into view: the line says "Add one under
     Authentication", and at 211x44 it sat below the step's fold. Review
     round 2 (capture 06d): a server that refused a key that was sent asks
-    for a key too, so that refusal marks the section as well.
+    for a key too, so that refusal marks the section as well. Review round
+    4: every failed check redraws the key line, so a 403 or a timeout after
+    a 401 to the same key does not leave "the server rejected it" standing.
     """
 
-    if failure in {
+    refused = failure in {
         wizard_state.PROVIDER_PROBE_KEY_REQUIRED,
         wizard_state.PROVIDER_PROBE_AUTH,
-    }:
+    }
+    if refused:  # before the refresh: ``auth_title`` reads the mark
         owner._key_required_at = checked.connection_identity
-        owner._refresh_auth_readiness()
+    owner._refresh_auth_readiness()
+    if refused:
         auth = owner.query_one("#setup-provider-auth-toggle")
         # After the refresh, so the line's new height is laid out first.
         # ponytail: a check settled before the step's first layout (the app
@@ -275,8 +279,9 @@ def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") ->
     a stored key being cleared is source "draft" with no text, and reading
     the source alone kept the mark for good on the listing path.
 
-    Every settled check that is not a refusal comes here, so the key line is
-    refreshed here too (``staged_key_line``, review round 2).
+    Every settled Test, and every listing that answered, comes here; a
+    failed listing goes to ``note_probe_failure``. Both refresh the key line
+    (``staged_key_line``, review rounds 2 and 4).
     """
 
     key_sent = checked.credential_source != "none"
@@ -301,7 +306,8 @@ def tested_evidence_detail(
     listing does, instead of saying the server rejected a key. Review round
     2 (capture 06d): a 401 to a key that was sent marks the section too.
     Round 3: that 401 is told as the listing tells it as well, not in the
-    shared verdict's own words.
+    shared verdict's own words. Round 4: so is a listing Test could not get
+    (a 403, a 404), which the shared verdict calls "chat endpoint not tested".
     """
 
     if evidence.category == "unauthorized":
@@ -316,6 +322,8 @@ def tested_evidence_detail(
             provider_display_name(identity.provider_key), failure
         )
         note_probe_failure(owner, failure, identity)
+    elif evidence.endpoint == "model_listing_unavailable":
+        detail = wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
     note_probe_reached(owner, identity, evidence.endpoint)
     return detail
 
