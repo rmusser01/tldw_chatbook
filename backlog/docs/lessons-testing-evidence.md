@@ -933,6 +933,27 @@ child pytest, so under load two focus assertions that wait one `pilot.pause()` f
 passed alone three times. This is diagnosis for a local change, as above: it does not make the
 tests run in CI.
 
+## A negative control passed as a pytest plugin never reaches a `private_profile_test` body (TASK-33005.10, 2026-10-17)
+
+**Incident.** Phase 9 Task 12 checked that the rewritten
+`test_closing_mid_probe_raises_nothing_and_a_late_result_loses` fails when the
+late switcher probe raises or the evidence owner ignores begin order. The
+controls were a scratch plugin given as `-p` (through the runner's extra
+pytest arguments, then through `PYTEST_ADDOPTS`), and the test passed under
+both, which read as "the test cannot see either break". It could. The test is
+a `@private_profile_test`, and `Tests/private_profile.py` reruns the node in a
+child pytest with its own argv, `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, and
+`PYTEST_ADDOPTS` removed, so the patch was applied only in the parent, which
+runs no assertions. With the break edited into the source for the run (and
+restored with `git checkout -- <file>` after), the new test failed both ways
+and the old body still passed the raise.
+
+**What to do.** For a private-profile test, apply a negative control in the
+code the child imports: a temporary source edit, reverted at once, never a
+parent-side plugin, monkeypatch or `PYTEST_ADDOPTS`. A control that changes
+nothing is no evidence, so first check that it reaches the child: some test
+that should go red does.
+
 ## A fix round that measures a finding's premise false must stop there (TASK-33008.3, 2026-10-11)
 
 **Incident.** Phase 8's final review said that on the Get started card's
