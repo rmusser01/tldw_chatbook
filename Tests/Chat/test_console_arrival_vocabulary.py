@@ -78,13 +78,30 @@ def test_an_unknown_window_does_not_label_the_status_chip() -> None:
 
 
 def test_home_after_skip_says_not_set_up_instead_of_blocked() -> None:
-    from tldw_chatbook.Home.dashboard_state import _header_line
+    from tldw_chatbook.Home.dashboard_state import HomeDashboardInput, _header_line
 
-    skipped = SimpleNamespace(model_ready=False, runtime_source="local", server_label="")
-    ready = SimpleNamespace(model_ready=True, runtime_source="local", server_label="")
+    skipped = HomeDashboardInput(model_ready=False)
+    ready = HomeDashboardInput(model_ready=True)
 
     assert _header_line(skipped) == "Home | Not set up · Local"
     assert _header_line(ready) == "Home | Ready · Local"
+
+
+def test_home_after_a_failed_connection_check_says_not_ready() -> None:
+    """TASK-33005.9 (spec §5): a configured connection whose last check was
+    refused is set up but not ready, the word the Console shows for it."""
+    from tldw_chatbook.Home.dashboard_state import (
+        HomeDashboardInput,
+        _header_line,
+        _status_summary_line,
+        _system_status_lines,
+    )
+
+    failed = HomeDashboardInput(model_ready=False, model_check_failed=True)
+
+    assert _header_line(failed) == "Home | Not ready · Local"
+    assert "Model: Not ready |" in _status_summary_line(failed)
+    assert "Model not ready," in " ".join(_system_status_lines(failed))
 
 
 def test_home_details_after_skip_say_not_set_up_too() -> None:

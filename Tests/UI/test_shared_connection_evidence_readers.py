@@ -66,7 +66,8 @@ async def test_a_refused_test_reaches_home_and_the_library_lock_pre_check(
 ):
     """AC#1/#3: Home's Model badge seam and Library's "Use in Console" lock
     pre-check read the refused result of the default connection, as the
-    Console does, without a request."""
+    Console does, without a request; Home's header then says Not ready, the
+    Console's word for a known failure, not Not set up."""
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_home_screen import (
         HOME_MOUNT_PAUSE,
@@ -74,10 +75,13 @@ async def test_a_refused_test_reaches_home_and_the_library_lock_pre_check(
         HomeHarness,
         _active_home_screen,
     )
+    from tldw_chatbook.UI.Screens import home_screen as home_screen_module
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     app = _build_test_app()
     app.app_config.update(_LLAMA_CONFIG)
+    # The snapshot's fresh-config read sees this same config.
+    monkeypatch.setattr(home_screen_module, "load_settings", lambda: app.app_config)
     host = HomeHarness(app)
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
         await pilot.pause(HOME_MOUNT_PAUSE)
@@ -98,6 +102,11 @@ async def test_a_refused_test_reaches_home_and_the_library_lock_pre_check(
 
         assert home_ready() is False
         assert LibraryScreen._console_setup_would_block(library) is True
+
+        await home._refresh_home_content_snapshot().wait()
+        await pilot.pause()
+        header = str(home.query_one("#home-header-line").render())
+        assert header == "Home | Not ready \u00b7 Local"
 
 
 def _refused_outcome(category: str = "connection_refused"):

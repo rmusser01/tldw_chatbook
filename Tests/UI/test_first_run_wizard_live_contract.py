@@ -1717,8 +1717,8 @@ async def test_full_track_skip_everything_leaves_app_usable(
     readiness = {"console": False}
     monkeypatch.setattr(
         HomeScreen,
-        "_home_console_provider_ready",
-        lambda _self: readiness["console"],
+        "_home_console_model_state",
+        lambda _self, **_kwargs: (readiness["console"], False),
     )
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 

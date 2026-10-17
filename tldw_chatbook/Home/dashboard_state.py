@@ -241,6 +241,10 @@ class HomeDashboardInput:
     # (``model_ready`` -- send-path readiness via HomeScreen, ``acp_ready``
     # -- the ACP runtime manager snapshot).
     model_ready: bool = False
+    # TASK-33005.9 (spec §5): the default connection's last connection check
+    # failed (refused, timed out, key rejected), so Model reads "Not ready",
+    # as every model surface does; "Not set up" stays for a missing setup.
+    model_check_failed: bool = False
     acp_ready: bool = True
     runtime_source: str = RUNTIME_SOURCE_LOCAL
     active_server_id: str | None = None
@@ -306,6 +310,7 @@ class HomeContentSnapshot:
     """
 
     console_ready: bool = False
+    model_check_failed: bool = False
     conversation_count: int | None = None
     note_count: int | None = None
     media_count: int | None = None
@@ -350,6 +355,7 @@ def apply_home_content_snapshot(
     return replace(
         state,
         console_ready=snapshot.console_ready,
+        model_check_failed=snapshot.model_check_failed,
         conversation_count=snapshot.conversation_count,
         note_count=snapshot.note_count,
         media_count=snapshot.media_count,
@@ -895,10 +901,16 @@ def _home_idle_canvas_controls(
     return tuple(controls)
 
 
+def _model_word(state: HomeDashboardInput) -> str:
+    if state.model_ready:
+        return "Ready"
+    return "Not ready" if state.model_check_failed else "Not set up"
+
+
 def _status_summary_line(state: HomeDashboardInput) -> str:
     # TASK-2761: RAG/MCP segments removed -- constant fields, no producer.
     return (
-        f"Model: {'Ready' if state.model_ready else 'Not set up'} | "
+        f"Model: {_model_word(state)} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
         f"Mode: {_runtime_source_label(state.runtime_source)} | "
         f"Server: {_server_status_label(state)} | "
@@ -1063,7 +1075,7 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
         # constant fields, no producer (only Model and ACP are real here).
         (
             "Agent readiness: "
-            f"Model {'ready' if state.model_ready else 'not set up'}, "
+            f"Model {_model_word(state).lower()}, "
             f"ACP {'ready' if state.acp_ready else 'blocked'}"
         ),
         _server_event_status_line(state),
@@ -1232,7 +1244,7 @@ def _item_row(item: HomeActiveWorkItem, section_id: str, now: datetime) -> HomeR
 
 def _header_line(state: HomeDashboardInput) -> str:
     # TASK-34100.5 AC#9: a skipped setup is not set up, not "Blocked".
-    readiness = "Ready" if state.model_ready else "Not set up"
+    readiness = _model_word(state)
     source = str(state.runtime_source or RUNTIME_SOURCE_LOCAL).strip().lower()
     if source == RUNTIME_SOURCE_SERVER:
         label = str(state.server_label or "").strip()
