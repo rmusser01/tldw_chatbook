@@ -886,6 +886,15 @@ Tests/integration, Tests/Notes or Tests/State it collected cleanly. Run Tests/Pr
 in an invocation of its own, and read a wall of collection errors as the command line's
 doing before the branch's.
 
+**TASK-33001.11, 2026-10-17: that conftest no longer re-points them.** It now sets only
+`TMPDIR`; HOME, the XDG roots and `TLDW_CONFIG_PATH` stay `Tests/conftest.py`'s. Measured
+with the old and the new conftest and nothing else changed: `Tests/UI/test_app_instance_warning.py`
+named beside `Tests/ProductionApp/test_provider_selection_ownership.py` went from 2 collection
+errors to 13 tests collected, and the 17 ProductionApp files run as files (xdist) went from
+6 passed / 79 errors to 31 passed, with no test that passed before failing. Most of the rest still fail
+here in their bodies with `RecoveryRequired` (local, as above). A ProductionApp test that saves
+config needs `@private_profile_test`, like any other config writer.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard

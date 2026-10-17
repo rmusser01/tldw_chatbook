@@ -8,6 +8,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList
 
 from Tests.app_module_patches import set_app_global
+from Tests.private_profile import private_profile_test
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings
@@ -21,6 +22,10 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
 
+# TASK-33001.11: every test here saves chat_defaults and api_settings through
+# the real config writer, so each runs in its own pytest child on a fresh
+# profile (private_profile_test). The bootstrap profile is shared by every
+# bootstrap_profile test in a worker and would carry those values to the next.
 PROVIDERS_MODELS = {
     "OpenAI": ["gpt-task-648"],
     "Anthropic": ["claude-task-648"],
@@ -149,7 +154,9 @@ async def _close_production_app(app: TldwCli) -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_chat(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A fresh TldwCli mount consumes the persisted global/profile defaults."""
@@ -200,7 +207,9 @@ async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_cha
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_console_change_model_command_opens_real_picker(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """TASK-33001.6: the palette reaches providers only through the model picker."""
@@ -301,7 +310,9 @@ async def test_real_console_change_model_command_opens_real_picker(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_save_preserves_user_session(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _production_app(monkeypatch)

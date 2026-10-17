@@ -211,6 +211,7 @@ jobs:
             Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows \
             Tests/Chat/test_provider_evidence_hardening.py \
             Tests/Chat/test_first_run_connection_evidence.py \
+            Tests/ProductionApp/test_provider_selection_ownership.py \
             --timeout=180 \
             --tb=short
 

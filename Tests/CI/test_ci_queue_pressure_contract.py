@@ -191,6 +191,11 @@ FAST_LANE_TARGETS = (
     # key (two new pure files, about a second each, 3 of 3 serial).
     "Tests/Chat/test_provider_evidence_hardening.py",
     "Tests/Chat/test_first_run_connection_evidence.py",
+    # Phase 9 Task 14 (2026-10-17): model-config tests no PR lane ran, each 3
+    # of 3 serial in the lane's install set. TASK-33001.11: the production-app
+    # provider-selection tests, each in its own private-profile child (three
+    # app mounts, ~30 s).
+    "Tests/ProductionApp/test_provider_selection_ownership.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
