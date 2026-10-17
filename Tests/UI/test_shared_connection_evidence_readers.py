@@ -110,6 +110,12 @@ async def test_a_refused_test_reaches_home_and_the_library_lock_pre_check(
         # The next action under it asks for a reconnect, not a setup.
         assert home._current_dashboard.next_action.label == "Reconnect Console model"
 
+        # After the first send no Get started card returns, so the Library
+        # warns of none (search-and-rag.md says so): Console reads Not ready.
+        console_cfg = app.app_config.setdefault("console", {})
+        console_cfg.setdefault("onboarding", {})["first_send_completed"] = True
+        assert LibraryScreen._console_setup_would_block(library) is False
+
 
 def _refused_outcome(category: str = "connection_refused"):
     from tldw_chatbook.UI.Screens.settings_endpoint_probe import (

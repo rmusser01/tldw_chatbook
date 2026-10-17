@@ -487,14 +487,16 @@ manual action and **does not change the current conversation's Library
 controls**: Auto remains Never or Automatic, and Assistant remains Blocked or
 Allowed exactly as saved on the Console Library chip.
 
-If Console isn't set up yet (no provider/model configured, or the default
-connection's last connection check could not reach the server or had its key
-rejected, or a local server answered it with an error, wherever it ran:
-Settings, Chat settings, Switch model or setup), a toast warns that the
-evidence is staged and setup is what unlocks it before you navigate, and
-Console's own locked "Get started" card shows the same receipt so the
-selection is never silently lost — see [Console: First
-run](../console.md#first-run-the-get-started-card).
+Before Console's first send, if Console isn't set up yet (no provider/model
+configured, or the default connection's last connection check could not reach
+the server or had its key rejected, or a local server answered it with an
+error, wherever it ran: Settings, Chat settings, Switch model or setup), a
+toast warns that the evidence is staged and setup is what unlocks it before
+you navigate, and Console's own locked "Get started" card shows the same
+receipt so the selection is never silently lost — see [Console: First
+run](../console.md#first-run-the-get-started-card). After the first send there
+is no toast and no Get started card: a failed check shows as Console's
+ordinary **Not ready** state, and the evidence is staged as usual.
 
 ### Not the same screen as "Search"
 
