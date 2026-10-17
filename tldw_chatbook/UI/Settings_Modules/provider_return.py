@@ -285,12 +285,13 @@ def _new_chats_copy(screen: SettingsScreen) -> str:
     provider; else "".
 
     The owner's decision of 2026-10-17 (PR #3144, D5): a save of a provider's
-    key, Env var, endpoint or model also makes it, with the model the page
-    shows, the default for new chats (``build_provider_setup_mutation``),
-    while Switch model, reopened by the return, says "this chat" of its own
-    pick. The save is not changed; its line says what it did. A save that
-    writes no connection (a model default of another provider) leaves new
-    chats where they were, and says nothing of them.
+    key, Env var, Endpoint or Default model for new chats also makes it, with
+    the model the page shows, the default for new chats
+    (``build_provider_setup_mutation``), while Switch model, reopened by the
+    return, says "this chat" of its own pick. The save is not changed; its
+    line says what it did. A save that writes no connection (a Model defaults
+    change for a provider that is not the default) leaves new chats where
+    they were, and says nothing of them.
     """
     from ...Chat.console_session_settings import blank_console_session_settings
     from .providers_models_card import provider_model_pair  # the card imports this

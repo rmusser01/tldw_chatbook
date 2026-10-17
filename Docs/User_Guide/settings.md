@@ -484,10 +484,10 @@ From either place a successful save puts focus on the button, so **Esc**,
 "Credential saved. New chats use OpenAI · gpt-5. Return to Console to
 continue in “Chat 1”; provider acceptance is not yet verified.". Its middle
 sentence is there because a save of a provider's key, Env var, Endpoint or
-model also makes that provider, with the model the page shows, the default
-for new chats, even when you saved only a key: it names that pair. It is
-left out when the save leaves new chats on another provider (a model default
-saved for a provider that is not the default). Press **t** there and, once **Key check**
+Default model for new chats also makes that provider, with the model the
+page shows, the default for new chats, even when you saved only a key: it
+names that pair. It is left out when the save leaves new chats on another
+provider (a Model defaults change for a provider that is not the default). Press **t** there and, once **Key check**
 reads "Ready · verified", the status ends "the provider accepted the key."
 instead; focus stays on the button. After a save, from either place, the button
 stays through any later edit and **Return without saving** no longer shows.
