@@ -20312,3 +20312,8 @@ atomic insertion and Enter, waited for actual rendered Send readiness, and kept
 exact persisted prompts/replies, schemas and verified traces as the content
 oracles. Failed packets remain separate. This does not establish that historical
 failed drafts were valid or that any product input behavior was fixed.
+
+
+## A faster permission span can coexist with inconsistent post-save gains
+
+**TASK-34406.11,2026-10-17.** Passive native-call profiling reproduced a272ms permission read using29ms thread CPU. A1ms interpreter handoff intervention retained313 posture stats,400 content stats,324 realpath lstats and27 mount checks while reducing that profiled span to26ms. The finite-callback implementation then passed383 connected tests and independent review. Eight qualified unprofiled fresh-app sends improved Enter-to-HTTP in4/4 pairs (median2.098→1.689s), but post-save preparation in only2/4 (median910→852ms). The preregistered release gate required3/4 for both, so the branch stayed unmerged. Bill the actual requested boundary and keep adverse pairs; a component or different boundary cannot substitute for it. C monitoring also missed BEFORE_WITH lock entry: verify the observer against a real contended lock before claiming a specific lock wait from CALL/C_RETURN events.
