@@ -633,3 +633,12 @@ Tests/UI/test_settings_provider_key_check.py::test_a_save_that_changes_no_connec
 Tests/UI/test_console_mode_strip_literal_text.py
 # TASK-33006.20: after Esc closes Chat settings the footer is the focused widget's; composer, rail and Inspect footers (composer collapsed too) keep Alt+A and Alt+C at 211x44 (15 s, private profile).
 Tests/UI/test_console_switch_model_entry_points.py::test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer
+# Phase 9 Task 12 (2026-10-17) appends four entries no lane ran, each 3 of 3 serial.
+# TASK-33005.9: a refused test reaches Home, the Library lock pre-check and, from the wizard, the Console (new file, whole, 3 cases, ~9 s, private profile).
+Tests/UI/test_shared_connection_evidence_readers.py
+# TASK-33005.10 AC#4: a late switcher probe is offered to the owner and loses, and no probe worker ends in error (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_closing_mid_probe_raises_nothing_and_a_late_result_loses
+# TASK-33005.10 AC#4: the Model summary sync re-measures the rail section it grew (8 s, private profile).
+Tests/UI/test_console_resize_reflow.py::test_model_summary_sync_invalidates_mounted_context_allocation
+# TASK-33005.10 AC#4: a keyed Settings test reaches Chat settings for the same stored key (8 s, private profile).
+Tests/UI/test_settings_provider_test_draft.py::test_settings_test_result_reaches_chat_settings_for_the_same_connection[stored-key]

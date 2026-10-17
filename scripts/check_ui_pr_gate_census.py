@@ -375,6 +375,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # literal provider text (TASK-33002.19, a new file, whole) and the footer
 # after Esc closes Chat settings (TASK-33006.20, a node id): 342 (after
 # Task 7's 340, in the Wave 4 integration).
+# Phase 9 Task 12 appends four, each 3 of 3 serial: the shared-evidence
+# readers file whole (TASK-33005.9) and three TASK-33005.10 node ids (the
+# late switcher probe, the Model summary reflow, the keyed Settings case): 346.
 MINIMUM_FILES = 346
 
 

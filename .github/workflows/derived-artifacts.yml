@@ -210,6 +210,8 @@ jobs:
             Tests/Chat/test_console_session_settings.py::test_new_chats_resolve_the_chat_defaults_pair \
             Tests/Chat/test_readiness_words.py \
             Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows \
+            Tests/Chat/test_provider_evidence_hardening.py \
+            Tests/Chat/test_first_run_connection_evidence.py \
             --timeout=180 \
             --tb=short
 
