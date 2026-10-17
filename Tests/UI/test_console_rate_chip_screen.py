@@ -1,11 +1,12 @@
-"""Screen-level tests for the Console rate chip (TASK-35100).
+"""Screen-level tests for the Console rate readout (TASK-35100).
 
 Wires together the tracker math (Tests/Chat/test_console_token_rate.py),
-the chip widget (Tests/UI/test_console_rate_chip.py), and the real
-ChatScreen poll path: a stub gateway streams a reply in two chunks with a
-mid-stream stall, and the assertions ride the screen's own 0.2s sync --
-live rate visible while the stream holds, then the provider-accurate
-settled figure once usage attaches.
+the strip segment (Tests/UI/test_console_rate_chip.py), and the real
+ChatScreen poll path: a stub gateway streams a reply at a steady cadence,
+and the assertions ride the screen's own 0.2s sync -- the live rate rides
+the run segment while tokens flow (stale decayed fragments are
+suppressed), then the provider-accurate settled figure lands once usage
+attaches.
 
 Harness: mirrors ``Tests/UI/test_console_cost_chip_screen.py`` -- a real
 mounted ``ChatScreen`` behind ``ConsoleHarness``, a stub provider gateway
@@ -103,7 +104,7 @@ class _SteadyAnthropicGateway:
         if signals is not None:
             signals.record_usage_payload(
                 {**self._usage_payload,
-                 "output_tokens": self._estimate or estimate_tokens(self._reply)}
+                 "output_tokens": estimate_tokens(self._reply)}
             )
         pieces = [self._reply[i : i + 20] for i in range(0, len(self._reply), 20)]
         for piece in pieces:
@@ -112,10 +113,6 @@ class _SteadyAnthropicGateway:
             await asyncio.sleep(0.09)
         self.done.set()
 
-    _estimate = None
-
-    def __init__subclasses_guard(self):
-        pass
 
 
 @pytest.mark.asyncio

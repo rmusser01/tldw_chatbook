@@ -48,11 +48,12 @@ from typing import Callable
 from tldw_chatbook.Chat.cost_display import format_token_count
 
 __all__ = [
-    "LIVE_FRAGMENT_FLOOR",
+    "STALE_AFTER_SECONDS",
     "TokenRateReading",
     "TokenRateTracker",
     "format_rate_chip_live_fragment",
     "format_rate_chip_settled",
+    "merge_rate_into_run_copy",
 ]
 
 #: Message statuses that mean "this turn may still produce content". Any
@@ -60,6 +61,13 @@ __all__ = [
 #: ``_IN_FLIGHT_MESSAGE_STATUSES`` by value, not by import: the transcript
 #: widget is a UI module and this file's import discipline excludes it.
 _IN_FLIGHT_STATUSES = frozenset({"pending", "streaming"})
+
+
+#: A live reading older than this since the last positive token growth is
+#: STALE -- agent tool rounds and approval waits stop token growth without
+#: leaving the STREAMING run status, and a decaying EMA fragment would
+#: mislabel the pause as crawling streaming (TASK-35160 review round 2).
+STALE_AFTER_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -76,12 +84,17 @@ class TokenRateReading:
             when known, estimate otherwise). ``None`` while live.
         elapsed_seconds: The settled response's content window
             (last-seen-streaming minus first-content), for the tooltip.
+        stale: True when the live reading's last token growth is older
+            than :data:`STALE_AFTER_SECONDS` -- tool rounds and approval
+            waits stop growth without ending the run, and a stale rate
+            must not overwrite run copy that says otherwise.
     """
 
     kind: str
     rate: float | None = None
     total_tokens: int | None = None
     elapsed_seconds: float | None = None
+    stale: bool = False
 
 
 class TokenRateTracker:
@@ -113,6 +126,7 @@ class TokenRateTracker:
         self._first_content_at: float | None = None
         self._last_tokens: int | None = None
         self._last_at: float | None = None
+        self._last_growth_at: float | None = None
         self._ema: float | None = None
         self._settled: TokenRateReading | None = None
 
@@ -170,12 +184,15 @@ class TokenRateTracker:
             self._first_content_at = now
             self._last_tokens = tokens
             self._last_at = now
+            self._last_growth_at = now
             return TokenRateReading(kind="hidden")
         dt = now - self._last_at
         if dt <= 0:
             # Timer overlap: hold the current estimate, keep the baseline
             # so the next well-ordered tick measures the full delta.
             return self._live_reading()
+        if tokens > (self._last_tokens or 0):
+            self._last_growth_at = now
         instantaneous = max(0, tokens - (self._last_tokens or 0)) / dt
         alpha = 1.0 - 0.5 ** (dt / self.half_life)
         self._ema = (
@@ -191,7 +208,11 @@ class TokenRateTracker:
         rate = self._ema
         if rate is not None and not math.isfinite(rate):
             rate = None
-        return TokenRateReading(kind="live", rate=rate)
+        stale = (
+            self._last_growth_at is not None
+            and (self._last_at or 0.0) - self._last_growth_at > STALE_AFTER_SECONDS
+        )
+        return TokenRateReading(kind="live", rate=rate, stale=stale)
 
     def _settle(
         self, content: str, *, now: float, output_tokens: int | None
@@ -234,13 +255,6 @@ class TokenRateTracker:
         return self._settled
 
 
-#: Live fragments below this rate are suppressed: the EMA decays toward
-#: zero (never reaching it) whenever tokens stop flowing -- tool rounds,
-#: approval waits -- and a "0.0 tok/s" fragment on the run chip would
-#: mislabel a paused phase as crawling streaming (TASK-35160 review).
-LIVE_FRAGMENT_FLOOR = 0.5
-
-
 def format_rate_chip_live_fragment(reading: TokenRateReading) -> str:
     """The live rate as a fragment for the RUN chip's existing copy.
 
@@ -248,27 +262,62 @@ def format_rate_chip_live_fragment(reading: TokenRateReading) -> str:
     it rides ``"Run: Streaming response · 42.3 tok/s"``, so streaming
     never widens the transient cluster beyond the run chip's own
     variable-width contract and idle stays byte-identical to pre-feature.
-    Review follow-up: fragments below :data:`LIVE_FRAGMENT_FLOOR` are
-    suppressed -- during tool rounds and approval waits the EMA decays
-    toward zero but never reaches it, and a "0.0 tok/s" badge would
-    mislabel the paused phase.
+    Review round 2: STALE fragments (no token growth for
+    :data:`STALE_AFTER_SECONDS` -- tool rounds, approval waits) are
+    suppressed instead of showing a decayed rate, which also preserves
+    genuinely slow endpoints that a rate floor would have hidden.
 
     Args:
         reading: The tracker's reading for this tick.
 
     Returns:
-        ``"42.3 tok/s"`` for a live reading at or above the floor;
-        ``""`` otherwise (including settled readings -- a finished
-        response's rate belongs to :func:`format_rate_chip_settled`,
-        never the run chip).
+        ``"42.3 tok/s"`` for a fresh live reading; ``""`` otherwise
+        (including settled readings -- a finished response's rate belongs
+        to :func:`format_rate_chip_settled`, never the run chip).
     """
     if (
         reading.kind == "live"
+        and not reading.stale
         and reading.rate is not None
-        and reading.rate >= LIVE_FRAGMENT_FLOOR
+        and reading.rate > 0
     ):
         return f"{reading.rate:.1f} tok/s"
     return ""
+
+
+def merge_rate_into_run_copy(
+    active_run_copy: str,
+    reading: TokenRateReading | None,
+    *,
+    run_streaming: bool,
+    approval_pending: bool,
+) -> str:
+    """Decide the run segment's copy for one poll tick (TASK-35160 round 2).
+
+    The live rate merges into the run chip's copy ONLY when all of these
+    hold: a run copy exists, the run is in its streaming phase, no approval
+    round is parked (the copy is the approval signal in that case -- agent
+    runs stay STREAMING through them, so the status alone does not prove
+    tokens are flowing), and the reading is fresh. Anything else returns
+    the copy untouched.
+
+    Args:
+        active_run_copy: The run's own visible copy (``""`` = not active).
+        reading: The stashed tracker reading (may be ``None``).
+        run_streaming: Whether the run status is STREAMING.
+        approval_pending: Whether an approval round is parked.
+
+    Returns:
+        The run copy to display, possibly with ``" · 42.3 tok/s"`` merged.
+    """
+    if not active_run_copy or approval_pending or not run_streaming:
+        return active_run_copy
+    if reading is None or reading.kind != "live":
+        return active_run_copy
+    fragment = format_rate_chip_live_fragment(reading)
+    if not fragment:
+        return active_run_copy
+    return f"{active_run_copy} · {fragment}"
 
 
 def format_rate_chip_settled(
