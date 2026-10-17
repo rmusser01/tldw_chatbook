@@ -942,7 +942,12 @@ async def test_a_card_covered_at_launch_runs_discovery_again_on_the_first_return
     its attach reconciliation finishes, so the mount's own resume is still
     deferred when the user leaves. The first return runs that resume; it
     used to read as the mount's and kept discovery spent, so a server
-    started while the wizard was open was not offered on that return."""
+    started while the wizard was open was not offered on that return.
+
+    This catches the race only while the cover lands before the attach
+    reconciliation finishes, which nothing public can assert: after a change
+    to the attach path, revert the ``_console_discovery_rearm_pending`` fix in
+    chat_screen.py and check this test still fails."""
     app = _blocked_console_app(())
     host = CoveredAtLaunchHarness(app)
 
