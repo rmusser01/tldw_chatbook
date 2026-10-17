@@ -363,7 +363,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # that listed it (TASK-33006.19): 333.
 # that listed it (TASK-33006.19): 333; a new entry listed under the close
 # guard says how to pick its model (TASK-33006.25): 334.
-MINIMUM_FILES = 338
+# guard says how to pick its model (TASK-33006.25): 334. Its review round 1:
+# pick mode offers a listing only where a pick of it lands (TASK-33006.19): 336.
+MINIMUM_FILES = 340
 
 
 def read_census(path: Path) -> list[str]:

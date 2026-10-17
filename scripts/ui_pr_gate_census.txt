@@ -615,5 +615,9 @@ Tests/UI/test_settings_provider_test_draft.py::test_a_test_that_probes_nothing_t
 # task's), each 3 of 3 serial alone.
 # TASK-33006.19: pick mode offers a listing only for the endpoint that listed it (5 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it
+# TASK-33006.19 (review round 1): a listing is not offered once a pick of it restores another endpoint (5 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint
+# TASK-33006.19 (review round 1): a listing is offered only while a pick of it keeps the listed endpoint (4 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint
 # TASK-33006.25: a new entry listed under the close guard says how to pick its model (5 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it

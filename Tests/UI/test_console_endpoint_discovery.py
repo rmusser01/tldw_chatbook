@@ -14,6 +14,7 @@ from Tests.UI.test_console_settings_core_first import (
     _settings,
 )
 from Tests.UI.test_console_settings_model_change import (
+    pick,
     pick_modal,
     pick_mode_opener,
     press_change,
@@ -1397,6 +1398,67 @@ async def test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_list
         assert served not in await _pick_mode_pairs(pilot, app, modal)
 
         base_url.value = "http://127.0.0.1:9099"
+        await settle(pilot, app)
+        assert served in await _pick_mode_pairs(pilot, app, modal)
+
+
+async def _list_served_y(pilot, app, modal) -> None:
+    """Press Test connection; it lists model-a and served-y."""
+    modal.query_one("#console-settings-model-discover", Button).press()
+    await settle(pilot, app)
+
+
+def _served_y_modal(app, settings):
+    async def connection(_identity):
+        return ProviderProbeResult("reachable", ("model-a", "served-y"))
+
+    return pick_modal(app, settings, connection_tester=connection)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint():
+    """TASK-33006.19 review round 1: pick mode asks where a pick lands. Back
+    from OpenAI, a pick of llama.cpp·served-y restores that pair's edited
+    Endpoint (:9100), which never listed served-y, so it is not offered."""
+    app = CoreFirstHarness()
+    modal = _served_y_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await _list_served_y(pilot, app, modal)
+        await pick(pilot, app, modal, "served-y")
+        assert modal._current_model_value() == "served-y"
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        base_url.value = "http://127.0.0.1:9100"
+        await settle(pilot, app)
+        await pick(pilot, app, modal, "gpt-5")
+        assert modal._draft.settings.provider == "openai"
+
+        assert ("llama_cpp", "served-y") not in await _pick_mode_pairs(
+            pilot, app, modal
+        )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint():
+    """TASK-33006.19 review round 1: a chat on :9200 while the config says
+    :9099 lists served-y at :9200, but a pick of it would reset the unedited
+    Endpoint to :9099, so it is not offered. Once :9200 is typed, a pick
+    keeps it, and served-y is offered."""
+    app = CoreFirstHarness()
+    modal = _served_y_modal(app, replace(_settings(), base_url="http://127.0.0.1:9200"))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        assert base_url.value == "http://127.0.0.1:9200"
+        await _list_served_y(pilot, app, modal)
+        served = ("llama_cpp", "served-y")
+        assert served not in await _pick_mode_pairs(pilot, app, modal)
+
+        base_url.value = "http://127.0.0.1:9201"
+        await settle(pilot, app)
+        base_url.value = "http://127.0.0.1:9200"
         await settle(pilot, app)
         assert served in await _pick_mode_pairs(pilot, app, modal)
 

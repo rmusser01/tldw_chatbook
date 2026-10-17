@@ -966,7 +966,7 @@ def open_model_picker(
         query: Text Find opens with ("" lists everything).
         on_pick: Receives ``(provider, model)``, or ``None`` on Esc.
         served: Models Chat settings' listings found, per provider, only
-            while the provider uses the connection that listed them.
+            those a pick lands on the connection that listed them.
     """
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
 

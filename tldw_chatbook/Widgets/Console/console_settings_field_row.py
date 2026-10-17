@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     normalize_console_model_value,
     resolve_console_value_layers,
 )
+from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
@@ -79,8 +80,9 @@ if TYPE_CHECKING:
     )
 
 #: Opens Switch model in pick-only mode for Change: (origin, draft, Find
-#: text, callback, served models by provider, each for the connection a pick
-#: uses); the callback gets ``(provider, model)`` or ``None`` on Esc.
+#: text, callback, served models by provider, each one a pick lands on the
+#: connection that listed it); the callback gets ``(provider, model)`` or
+#: ``None`` on Esc.
 ModelPicker = Callable[
     [
         "ConsoleSettingsOrigin",
@@ -604,15 +606,57 @@ class ConsoleSettingsFieldRowsMixin:
         _show(status, f"{self._model_row_word}{context}")
 
     def _served_endpoint(self, provider: str) -> tuple[str, str] | None:
-        """Return the connection a pick onto ``provider`` uses (TASK-33006.19).
+        """Return the connection a listing for ``provider`` runs on now.
 
-        The draft's own provider uses the Endpoint field; another uses its
-        stored draft URL, the one a pick restores (an entry, its own URL).
+        That is the Endpoint field for the draft's own provider and an
+        entry's own URL for an entry (TASK-33006.19).
         """
+        return self._discovery_connection_identity(
+            provider, self._discovery_endpoint_value(provider)
+        )
+
+    def _pick_endpoint(
+        self, source: ConsoleSettingsDraftState, provider: str, model: str
+    ) -> tuple[str, str] | None:
+        """Return the connection a pick of ``provider``·``model`` lands on.
+
+        The draft's own pair stays put (``_model_picked`` does not rebase
+        it) and an entry keeps its own URL. Any other pair lands where the
+        rebaser a pick uses puts it, as the Endpoint field then shows it
+        (``_apply_rebased_state``): a remembered pair can restore its edited
+        Endpoint, an unseen one the configured URL (TASK-33006.19).
+
+        Args:
+            source: The draft a pick rebases from (``_snapshot_before_rebase``).
+            provider: The pair's provider.
+            model: The pair's model.
+
+        Returns:
+            The connection identity, or None when no rebase lands it.
+        """
+        current = (
+            provider_config_key(self._active_provider),
+            self._current_model_value(),
+        )
+        if (
+            self._custom_endpoint_entry_for(provider) is not None
+            or (provider_config_key(provider), model) == current
+        ):
+            return self._served_endpoint(provider)
+        try:  # no rebaser, or one that fails: _rebase_to lands nothing either
+            url = self._draft_rebaser(
+                source,
+                provider=provider,
+                model=model,
+                app_config=self._app_config,
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            ).settings.base_url
+        except Exception:  # noqa: BLE001
+            return None
         url = (
-            self._discovery_endpoint_value(provider)
-            if provider == self._active_provider
-            else self._base_url_for_provider(provider)
+            self._initial_base_url_for_provider(provider, url)
+            if self._provider_uses_base_url(provider)
+            else None
         )
         return self._discovery_connection_identity(provider, url)
 
@@ -634,7 +678,7 @@ class ConsoleSettingsFieldRowsMixin:
         """Open Switch model in pick-only mode over Chat settings (Change, Alt+M).
 
         Pick mode lists the models this modal's listings found beside the
-        saved ones, each only while its provider still uses the connection
+        saved ones, each only while a pick of it lands on the connection
         that listed it (TASK-33006.19); a listing never picks one (spec
         rule 1).
 
@@ -654,11 +698,18 @@ class ConsoleSettingsFieldRowsMixin:
             or self._default_recovery_layout_phase is not None
         ):
             return False
-        served = {
-            provider: models
-            for provider, (endpoint, models) in self._served_models.items()
-            if endpoint == self._served_endpoint(provider)
-        }
+        # ponytail: one rebase per listed model (~0.07 ms each, measured);
+        # cache by pair if listings reach thousands of models.
+        source = self._snapshot_before_rebase()
+        served = {}
+        for provider, (endpoint, models) in self._served_models.items():
+            kept = tuple(
+                model
+                for model in models
+                if self._pick_endpoint(source, provider, model) == endpoint
+            )
+            if kept or not models:  # an empty listing still marks its provider used
+                served[provider] = kept
         self._model_picker(self._origin, self._draft, query, self._model_picked, served)
         return True
 
