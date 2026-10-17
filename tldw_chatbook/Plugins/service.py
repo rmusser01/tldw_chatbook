@@ -400,7 +400,9 @@ class PluginService:
         receipt = await self.lookup_operation(identity)
         return {"receipt": receipt, "blockers": (), "cancel_operation": False}
 
-    async def data_status(self, roots=None, *, limit=50, offset=0):
+    async def data_status(
+        self, roots=None, *, installation_id: str | None = None, limit=50, offset=0
+    ):
         def operation():
             from .data_cleanup import open_root, root_ref
             from .registry import validate_page
@@ -408,6 +410,10 @@ class PluginService:
             validate_page(limit, offset)
             state = self._coordinator.published_snapshot()
             rows = state["data_roots"]
+            if installation_id is not None:
+                rows = [
+                    row for row in rows if row["installation_id"] == installation_id
+                ]
             if roots is not None:
                 wanted = {ref.root_id: ref for ref in roots}
                 rows = [row for row in rows if row["root_id"] in wanted]
@@ -431,7 +437,7 @@ class PluginService:
                         "root": ref,
                         "recovery_reason": reason,
                         "cleanup": deepcopy(row.get("cleanup")),
-                        "blockers": self._coordinator.root_usage.blockers((ref,)),
+                        **self._coordinator.root_usage.blocker_status((ref,)),
                     }
                 )
             return tuple(result)

@@ -617,6 +617,10 @@ class RootUsage:
                 )
 
     def blockers(self, roots, *, limit=50, offset=0):
+        return self.blocker_status(roots, limit=limit, offset=offset)["blockers"]
+
+    def blocker_status(self, roots, *, limit=50, offset=0) -> dict:
+        """Return bounded impact, with completeness only for the entire projection."""
         from .registry import validate_page
 
         validate_page(limit, offset)
@@ -666,7 +670,10 @@ class RootUsage:
                             "reason": reason,
                         }
                     )
-        return tuple(result[offset : offset + limit])
+        return {
+            "blockers": tuple(result[offset : offset + limit]),
+            "blockers_complete": offset == 0 and len(result) <= limit,
+        }
 
     def shutdown(self):
         self.coordinator._require_worker()

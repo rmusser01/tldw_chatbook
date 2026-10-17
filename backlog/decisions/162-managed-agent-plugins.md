@@ -763,3 +763,41 @@ honest persistence error, without deletion or automatic reopening. Scoped
 disable uses review_activation(intent="disabled") and commit. Existing emergency
 begin_disable/begin_uninstall behavior is unchanged. Same-request retry retains
 custody; navigation never retargets the reviewed installation or workspace.
+
+
+## Task24 Fix1 — bounded saved-root impact (R110 / CLI9)
+
+RootUsage.blocker_status(roots, *, limit=50, offset=0) returns the existing
+one-pass owner projection as blockers plus blockers_complete. Existing blockers
+keeps its tuple/page contract. Completeness means offset==0 and the entire
+collected projection fits the requested limit, never atomic quiescence or a
+permission grant. Preserve short live-lock then separate storage access; never
+hold the live fence lock over database reads. PluginService.data_status adds
+this completeness field without a new runtime owner or raised page cap.
+
+Before saved-root confirmation, disclose exact IDs/generations/paths and actual
+owner/workspace/reason/recovery/cleanup metadata. Unknown coverage, missing or
+false completeness, or oversized disclosure disables confirmation. Reread exact
+refs and the displayed projection before submit; changed users or generations
+require renewed review. Normal owner revalidation/fencing/drain still governs
+users arriving later. Wait, cancel operation and cancel affected work remain
+distinct. Uninstalled packages remain absent; history routes by original exact
+installation ID to their retained roots through existing data owners. Mixed
+PluginReview/RootReview acquisition protection retains original dependencies,
+root custody and fail-closed behavior for unknown review kinds.
+
+ADR required: existing ADR162 amendment for the additive status projection; no
+new ADR/schema/owner. ADR163/150/097 remain unchanged. Fix1 retains all initial
+failed phases and qualifies the three Important review findings independently.
+
+
+### Fix1 exact retained-owner pages (R111 / CLI10)
+
+PluginService.data_status accepts optional installation_id and filters the
+authenticated original root owner before page slicing and exact-ref equality.
+The row need not still be installed. Missing IDs return no roots; mismatching
+exact refs refuse. Existing no-filter and installed attached-root exact-ref
+callers retain behavior. The manager's256-root review bound counts only the
+exact target installation, with one bounded lookahead; unrelated roots cannot
+strand retained cleanup. No name matching, fabricated install, raised page cap
+or new authority. ADR162 records this additive read-only facade argument.

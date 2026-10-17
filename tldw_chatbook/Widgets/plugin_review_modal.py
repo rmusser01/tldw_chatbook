@@ -195,6 +195,12 @@ class PluginStatusModal(ModalScreen):
                 yield Button(
                     "Confirm discard", id="plugin-status-confirm", disabled=True
                 )
+            with Horizontal(classes="dialog-buttons"):
+                yield Button(
+                    "Manage saved data",
+                    id="plugin-status-data",
+                    disabled=self.candidates,
+                )
                 yield Button("Close", id="plugin-status-close")
 
     async def on_mount(self):
@@ -256,6 +262,17 @@ class PluginStatusModal(ModalScreen):
                 await self._load()
             elif identity == "plugin-status-refresh":
                 await self._load()
+            elif identity == "plugin-status-data" and not self.candidates:
+                index = self.query_one(OptionList).highlighted
+                if index is not None and self.rows[index].installation_id:
+                    job = self.rows[index]
+                    await self.app.push_screen(
+                        PluginReviewModal(
+                            self.sources,
+                            installation_id=job.installation_id,
+                            workspace_id=job.workspace_id,
+                        )
+                    )
             elif identity == "plugin-status-review":
                 listing = self.query_one(OptionList)
                 if listing.highlighted is None:
@@ -435,9 +452,15 @@ class PluginReviewModal(ModalScreen):
     async def _load(self):
         try:
             if self.installation_id:
-                self.details = await self.service.management_details(
-                    self.installation_id, workspace_id=self.workspace_id
-                )
+                try:
+                    self.details = await self.service.management_details(
+                        self.installation_id, workspace_id=self.workspace_id
+                    )
+                except ValueError as error:
+                    if str(error) != "installation_unavailable":
+                        raise
+                    await self._load_retained_data()
+                    return
                 inspection = self.details["inspection"]
                 selected = (
                     self.draft.selection
@@ -490,6 +513,80 @@ class PluginReviewModal(ModalScreen):
             self._loading = False
             self.query_one("#plugin-review-dialect", Select).disabled = False
 
+    async def _data_rows(self):
+        if self.details is not None:
+            try:
+                self.details = await self.service.management_details(
+                    self.installation_id, workspace_id=self.workspace_id
+                )
+            except ValueError as error:
+                if str(error) != "installation_unavailable":
+                    raise
+                self.details = None
+            else:
+                refs = self.details["roots"]
+                if len(refs) > 256:
+                    raise ValueError("retained_root_inventory_incomplete")
+                rows = []
+                for offset in range(0, len(refs), 50):
+                    rows.extend(
+                        await self.service.data_status(refs, limit=50, offset=offset)
+                    )
+                return tuple(rows)
+        # The root owner caps an exact review at256 targets. Never select a
+        # partial inventory, or find a replacement installation by package name.
+        rows = []
+        while len(rows) <= 256:
+            page = await self.service.data_status(
+                installation_id=self.installation_id,
+                limit=min(50, 257 - len(rows)),
+                offset=len(rows),
+            )
+            rows.extend(page)
+            if len(rows) > 256:
+                raise ValueError("retained_root_inventory_incomplete")
+            if len(page) < min(50, 257 - (len(rows) - len(page))):
+                return tuple(
+                    row
+                    for row in rows
+                    if row["root"].installation_id == self.installation_id
+                )
+        raise ValueError("retained_root_inventory_incomplete")
+
+    async def _load_retained_data(self):
+        self.details = None
+        rows = await self._data_rows()
+        actions = [
+            ("Review saved-data deletion", "delete-data"),
+            ("Resume saved-data cleanup", "resume-data"),
+            ("Review reboot reconciliation", "reconcile-data"),
+        ]
+        self.query_one("#plugin-review-action", Select).set_options(actions)
+        if self.draft.action not in {value for _, value in actions}:
+            self.draft.action = "delete-data"
+            self.draft.review = None
+        self.query_one("#plugin-review-action", Select).value = self.draft.action
+        self.query_one("#plugin-review-selection", SelectionList).display = False
+        self.query_one("#plugin-review-dialect", Select).display = False
+        if self.draft.review is not None:
+            self._render_review()
+        else:
+            self.query_one("#plugin-review-body", Static).update(
+                display_text(
+                    f"Installation {self.installation_id} is no longer installed.\n"
+                    "Retained data is managed by its original exact root identities.\n"
+                    + "\n".join(
+                        f"{row['root'].root_id} · generation {row['root'].generation} · {row['root'].path}"
+                        for row in rows
+                    ),
+                    limit=65536,
+                )
+            )
+        self._status(
+            "Retained data only. Review exact roots before cleanup; no package is reinstalled."
+        )
+        self.call_after_refresh(self._loaded)
+
     def _loaded(self):
         self._loading = False
         self.query_one("#plugin-review-dialect", Select).disabled = False
@@ -528,6 +625,7 @@ class PluginReviewModal(ModalScreen):
         ):
             self.service.cancel_revision(review)
         self.draft.review = None
+        self.draft.root_impact = ()
 
     def _capture(self):
         self.draft.selection = tuple(
@@ -568,8 +666,29 @@ class PluginReviewModal(ModalScreen):
             body = review_text(review)
         elif hasattr(review, "targets"):
             body = "Exact saved roots:\n" + "\n".join(
-                row["path"] for row in review.targets
+                f"{row['root_id']} · generation {row['generation']} · {row['path']}"
+                for row in review.targets
             )
+            if self.draft.action == "create-data":
+                body += "\nProposed new roots; no existing root users."
+            else:
+                for row in self.draft.root_impact:
+                    body += (
+                        f"\nRoot {row['root'].root_id}: recovery={row['recovery_reason']}; "
+                        f"cleanup={row['cleanup']}; complete impact={row.get('blockers_complete', False)}"
+                    )
+                    for user in row["blockers"]:
+                        body += (
+                            f"\nOwner {user.get('owner_token', 'unknown')} · "
+                            f"workspace {user.get('workspace_id') or 'unknown'} · {user['reason']}"
+                        )
+                    if not row["blockers"]:
+                        body += "\nNo current users in this projection."
+                body += (
+                    "\nCurrent impact is observational. New users remain subject to owner fencing and drain. "
+                    "Wait and review again if impact is incomplete or unknown. "
+                    "After submission, Cancel operation leaves affected work owned; Cancel affected work asks its owners to stop."
+                )
         else:
             body = f"{self.draft.action}: installation {self.installation_id}\nCaptured workspace: {self.workspace_id}\n"
             if self.details:
@@ -587,7 +706,46 @@ class PluginReviewModal(ModalScreen):
         self.query_one("#plugin-review-confirm", Button).disabled = (
             review is None
             or any(job.review is review for job in self.operations.jobs.values())
+            or (
+                hasattr(review, "targets")
+                and (not self._impact_complete() or len(body) > 65536)
+            )
         )
+
+    def _impact_complete(self):
+        if self.draft.action == "create-data":
+            return True
+        allowed = {"live_root_user", "root_user"}
+        if self.draft.action == "reconcile-data":
+            allowed.add("root_boot_identity_changed")
+        return bool(self.draft.root_impact) and all(
+            row.get("blockers_complete") is True
+            and all(user.get("reason") in allowed for user in row["blockers"])
+            for row in self.draft.root_impact
+        )
+
+    async def _root_impact(self, review):
+        from ..Plugins.data_cleanup import root_ref
+
+        refs = tuple(root_ref(row) for row in review.targets)
+        # Exact-ref validation precedes page slicing in the owning facade.
+        rows = []
+        for offset in range(0, len(refs), 50):
+            rows.extend(await self.service.data_status(refs, limit=50, offset=offset))
+        return tuple(rows)
+
+    async def _validate_root_impact(self):
+        review = self.draft.review
+        if not hasattr(review, "targets") or self.draft.action == "create-data":
+            return
+        try:
+            current = await self._root_impact(review)
+            if not self._impact_complete() or current != self.draft.root_impact:
+                raise ValueError("root_impact_changed_review_again")
+        except (OSError, ValueError, RuntimeError):
+            self._discard_pending_review()
+            self.query_one("#plugin-review-confirm", Button).disabled = True
+            raise
 
     async def _prepare(self):
         self._discard_pending_review()
@@ -740,10 +898,7 @@ class PluginReviewModal(ModalScreen):
                 self.installation_id, workspace_id=self.workspace_id
             )
         else:
-            self.details = await self.service.management_details(
-                self.installation_id, workspace_id=self.workspace_id
-            )
-            roots = self.details["roots"]
+            roots = tuple(row["root"] for row in await self._data_rows())
             if configuration.strip():
                 wanted = {value.strip() for value in configuration.split(",")}
                 roots = tuple(root for root in roots if root.root_id in wanted)
@@ -760,9 +915,13 @@ class PluginReviewModal(ModalScreen):
                 self.service.cancel_revision(review)
             raise ValueError("review_inputs_changed")
         self.draft.review, self.draft.action = review, action
+        if hasattr(review, "targets") and action != "create-data":
+            self.draft.root_impact = await self._root_impact(review)
         self._render_review()
         self._status(
-            "Review ready. Confirm applies these exact inputs; Close does not approve."
+            "Impact incomplete or unknown. Wait for owned work to settle, then review again."
+            if self.query_one("#plugin-review-confirm", Button).disabled
+            else "Review ready. Confirm applies these exact inputs; Close does not approve."
         )
 
     async def _save_profile(self, review):
@@ -802,6 +961,14 @@ class PluginReviewModal(ModalScreen):
                 )
 
     async def _refresh(self):
+        if hasattr(self.draft.review, "targets") and not any(
+            job.review is self.draft.review for job in self.operations.jobs.values()
+        ):
+            self._discard_pending_review()
+            self.query_one("#plugin-review-confirm", Button).disabled = True
+            self._status(
+                "Status refreshed. Review current root impact again before confirmation."
+            )
         await self.operations.refresh()
         submitted = self.operations.jobs.get(self._job_id)
         installation_id = self.installation_id or getattr(
@@ -816,11 +983,13 @@ class PluginReviewModal(ModalScreen):
             f"{job.label} · blockers: {job.runtime_status.get('blockers', ())}"
             for job in jobs
         ]
+        # A completed uninstall remains visible even when installation details
+        # no longer exist or a separate retained-root lookup is unavailable.
+        self.query_one("#plugin-review-body", Static).update(
+            display_text("\n".join(lines) or "No retained operations.", limit=65536)
+        )
         if self.installation_id:
-            self.details = await self.service.management_details(
-                self.installation_id, workspace_id=self.workspace_id
-            )
-            rows = await self.service.data_status(self.details["roots"])
+            rows = await self._data_rows()
             for row in rows:
                 if row["root"].installation_id == self.installation_id:
                     lines.append(
@@ -907,6 +1076,7 @@ class PluginReviewModal(ModalScreen):
             if action == "plugin-review-prepare":
                 await self._prepare()
             elif action == "plugin-review-confirm" and self.draft.review is not None:
+                await self._validate_root_impact()
                 await self.service.management_snapshot(self.workspace_id, limit=1)
                 if self.draft.action == "save-profile":
                     self.query_one("#plugin-review-confirm", Button).disabled = True

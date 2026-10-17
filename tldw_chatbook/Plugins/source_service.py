@@ -1036,6 +1036,18 @@ class SourceService:
         states = [authority.verify_current()] + [
             item.snapshot for item in transition_inventory(authority)
         ]
+        from .data_cleanup import RootReview
+        from .review import PluginReview
+
+        reviews = tuple(self._coordinator._reviews.values())
+        for review in reviews:
+            if isinstance(review, RootReview):
+                # Root reviews retain their original authority and physical custody.
+                states.append(json.loads(review.authority_json))
+                roots.update(row["path"] for row in review.targets)
+            elif not isinstance(review, PluginReview):
+                # Domain refusal is shared with other unresolved custody states.
+                raise ValueError("acquisition_dependencies_unknown")  # noqa: TRY004
         for state in states:
             for row in state["revisions"]:
                 if row.get("acquisition_reference"):
@@ -1048,7 +1060,9 @@ class SourceService:
                     binding = CatalogBinding.model_validate(row["catalog_binding"])
                     protect(binding.catalog)
                     protect(binding.package)
-        for review in self._coordinator._reviews.values():
+        for review in reviews:
+            if isinstance(review, RootReview):
+                continue
             inspection = review.inspection
             if inspection.acquisition_reference:
                 protect(inspection.acquisition_reference)
@@ -1245,6 +1259,7 @@ class SourceService:
         return await self.plugins._call(operation)
 
     def _discard_candidate(self, candidate) -> None:
+        from .data_cleanup import RootReview
         from .models import AcquiredSnapshot
         from .review import inspection_identity
 
@@ -1264,9 +1279,13 @@ class SourceService:
             )[0] != inspection_identity(candidate):
                 raise ValueError("candidate_review_required")
             references = self._candidates[reference.operation_id]
+        # Validate the complete mixed registry before invalidating any draft.
+        self._protected()
         self._candidates.pop(reference.operation_id, None)
         self._candidate_inputs.pop(reference.operation_id, None)
         for token, review in tuple(self._coordinator._reviews.items()):
+            if isinstance(review, RootReview):
+                continue
             owned = (
                 review.inspection.catalog_binding.package
                 if review.inspection.catalog_binding

@@ -877,3 +877,147 @@ def test_boot_reconciliation_requires_clean_exact_proof_at_review_and_apply(
     assert len(rebound) == 1 and rebound[0].generation > ref.generation
     with pytest.raises(PermissionError, match="root_review_stale"):
         stack.call(lambda: stack.coordinator.root_usage.validate_ref(ref))
+
+
+@pytest.mark.asyncio
+async def test_root_status_reports_complete_boundary_without_raising_page_cap(
+    native_console,
+):
+    case = native_console
+    installed = await case.install(enable=False)
+    review = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(review, review.operation_id)
+    claims = []
+    usage = case.service._coordinator.root_usage
+    try:
+        for _ in range(50):
+            claim, _, _ = await case.service._call(
+                lambda: usage.begin_grants(
+                    (ref,), installed.installation_id, "workspace-a", "known"
+                )
+            )
+            claims.append(claim)
+        row = (await case.service.data_status((ref,)))[0]
+        assert len(row["blockers"]) == 50
+        assert row["blockers_complete"] is True
+        claim, _, _ = await case.service._call(
+            lambda: usage.begin_grants(
+                (ref,), installed.installation_id, "workspace-b", "known"
+            )
+        )
+        claims.append(claim)
+        row = (await case.service.data_status((ref,)))[0]
+        assert len(row["blockers"]) == 50
+        assert row["blockers_complete"] is False
+        tail = await case.service._call(
+            lambda: usage.blocker_status((ref,), limit=1, offset=50)
+        )
+        assert tail["blockers_complete"] is False
+        assert await case.service._call(
+            lambda: usage.blockers((ref,), limit=1, offset=50)
+        ) == ({"owner_token": claim, "reason": "live_root_user"},)
+        with pytest.raises(ValueError):
+            await case.service._call(lambda: usage.blockers((ref,), limit=51))
+    finally:
+        for claim in claims:
+            await case.service._call(lambda claim=claim: usage.abandon_grants(claim))
+
+
+@pytest.mark.asyncio
+async def test_retained_root_filter_precedes_pagination_and_preserves_attached_refs(
+    native_console,
+):
+    from dataclasses import replace
+
+    case = native_console
+    first = await case.install(enable=False)
+    second = await case.install(enable=False)
+    roots = []
+    for installed in (first, second):
+        review = await case.service.review_data_creation(installed.installation_id)
+        roots.append(await case.service.create_data(review, review.operation_id))
+    page = await case.service.data_status(
+        installation_id=second.installation_id, limit=1
+    )
+    assert tuple(row["root"] for row in page) == (roots[1],)
+    assert not await case.service.data_status(
+        installation_id=second.installation_id, limit=1, offset=1
+    )
+    assert not await case.service.data_status(installation_id="missing-owner", limit=1)
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status(
+            (replace(roots[1], generation=999),), installation_id=second.installation_id
+        )
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status(
+            (roots[0],), installation_id=second.installation_id
+        )
+    attachment = await case.service.review_data_attachment(
+        (roots[0],), second.installation_id
+    )
+    await case.service.delete_data((roots[0],), attachment.operation_id)
+    details = await case.service.management_details(
+        second.installation_id, workspace_id="workspace-a"
+    )
+    rows = await case.service.data_status(details["roots"])
+    assert {row["root"].root_id for row in rows} == {root.root_id for root in roots}
+    assert (await case.service.data_status(installation_id=first.installation_id))[0][
+        "root"
+    ].root_id == roots[0].root_id
+
+
+@pytest.mark.asyncio
+async def test_held_root_status_transaction_does_not_delay_emergency_fence(
+    native_console, monkeypatch
+):
+    import contextlib
+    import inspect
+    import threading
+
+    from tldw_chatbook.Plugins.revocation import RevocationTarget
+
+    case = native_console
+    installed = await case.install()
+    creation = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(creation, creation.operation_id)
+    entries = (
+        await case.service.admit(
+            case.service.capture_maximum("workspace-a"), "held-status-admit"
+        )
+    )["available_skills"]
+    cancelled = threading.Event()
+    await asyncio.to_thread(
+        case.service.bind_run, entries, "held-status-run", cancelled.set
+    )
+    registry = case.service._coordinator.registry
+    original = registry.transaction
+    entered, release = threading.Event(), threading.Event()
+
+    @contextlib.contextmanager
+    def held_transaction(*args, **kwargs):
+        with original(*args, **kwargs) as cursor:
+            if any(frame.function == "blocker_status" for frame in inspect.stack()):
+                entered.set()
+                assert release.wait(5)
+            yield cursor
+
+    monkeypatch.setattr(registry, "transaction", held_transaction)
+    status = asyncio.create_task(case.service.data_status((ref,)))
+    request = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        import time
+
+        started = time.monotonic()
+        request = case.service.begin_disable(
+            RevocationTarget(installed.installation_id, None, True)
+        )
+        assert time.monotonic() - started < 1
+        assert await asyncio.to_thread(cancelled.wait, 1)
+        assert not release.is_set() and not status.done()
+    finally:
+        release.set()
+        await status
+        await asyncio.to_thread(case.service.complete_run, "held-status-run")
+    assert request is not None
+    assert (await case.service.finish_revocation(request)).committed
