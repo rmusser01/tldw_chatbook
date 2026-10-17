@@ -29,6 +29,7 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
     CORE_FIELDS,
     DISCLOSURE_TITLE_CELLS,
+    ENDPOINT_ROW_ID,
     FIELD_ROW_FIELDS,
     INVALID_ENDPOINT_HOST,
     MODEL_CHANGE_ID,
@@ -564,3 +565,28 @@ async def test_a_ready_chat_without_temperature_opens_on_the_next_shown_field(
         assert not modal.query_one(f"#{field_control_id('temperature')}-row").display
         focused = app.focused
         assert focused is not None and focused.id == opens_on, focused
+
+
+@pytest.mark.asyncio
+async def test_the_endpoint_row_syncs_with_an_extra_child() -> None:
+    """TASK-33006.13: the Endpoint row's sync finds the label, the Base URL
+    input and New endpoint… by id or class, so a row that gains a child (a
+    hint, a status) still shows the label only beside its input as a pick
+    moves the chat between a URL provider and a cloud one."""
+    from Tests.UI.test_console_settings_model_change import pick_modal
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        row = modal.query_one(f"#{ENDPOINT_ROW_ID}")
+        await row.mount(Static("a hint", id="endpoint-row-extra"), before=0)
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        label = row.query_one(".console-settings-modal-label", Static)
+
+        for pair, url_shown in ((("openai", "gpt-5"), False), (("llama_cpp", "model-b"), True)):
+            modal._model_picked(pair)
+            await _focus_settled(pilot)
+            assert modal._active_provider == pair[0]
+            assert base_url.display is url_shown and label.display is url_shown
+            assert row.display, "New endpoint… keeps the row while entries exist"

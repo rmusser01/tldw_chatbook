@@ -121,6 +121,7 @@ NAME_DISCLOSURE_ID = "console-settings-identity-advanced"
 NAME_INPUT_ID = "console-settings-user-display-name"
 #: The Endpoint row: label, Base URL input and New endpoint….
 ENDPOINT_ROW_ID = "console-settings-endpoint-row"
+ENDPOINT_NEW_BUTTON_ID = "console-settings-endpoint-new"
 CONNECTION_TITLE = "Connection"
 REQUEST_ESTIMATE_TITLE = "Request estimate"
 NAME_TITLE = "Your name in this chat"
@@ -833,10 +834,13 @@ class ConsoleSettingsFieldRowsMixin:
 
         A provider without a base URL hides the label, and the whole row when
         New endpoint… is hidden too, so no label stands without an input.
+        Its parts are found by id or class, so a row that gains a child (a
+        hint, a status) still syncs (TASK-33006.13).
         """
-        label, base_url, new_endpoint = self.query_one(f"#{ENDPOINT_ROW_ID}").children
-        label.display = base_url.display
-        label.parent.display = base_url.display or new_endpoint.display
+        row = self.query_one(f"#{ENDPOINT_ROW_ID}")
+        shown = row.get_child_by_id("console-settings-base-url").display
+        row.query_one(".console-settings-modal-label").display = shown
+        row.display = shown or row.get_child_by_id(ENDPOINT_NEW_BUTTON_ID).display
 
     def _streaming_select_value(self) -> str:
         """Return the Streaming Select value: the effective On or Off."""

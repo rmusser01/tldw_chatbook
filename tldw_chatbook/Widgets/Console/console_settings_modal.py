@@ -163,6 +163,7 @@ from .console_settings_field_row import (
     CONNECTION_FOCUS_IDS,
     CONNECTION_TITLE,
     CORE_FIELDS,
+    ENDPOINT_NEW_BUTTON_ID,
     ENDPOINT_ROW_ID,
     MODEL_CHANGE_ID,
     REQUEST_ESTIMATE_DISCLOSURE_ID,
@@ -196,7 +197,6 @@ MODAL_BODY_MIN_HEIGHT = 0
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
-ENDPOINT_NEW_BUTTON_ID = "console-settings-endpoint-new"
 ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
 ENDPOINT_NEW_BUTTON_WIDTH = 17
 BASE_URL_ENTRY_HINT_ID = "console-settings-base-url-entry-hint"
