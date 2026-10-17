@@ -297,6 +297,11 @@ _CHAT_DISPATCH_NAME_ALIASES = {
 # aphrodite, mlx_lm/local_mlx_lm, moonshot and zai are covered by the
 # TASK-34895 engine-preset specs below (they had no legacy per-provider
 # function; the chat handler resolves their modern api_settings keys).
+# A summary decides its key under the provider the caller named
+# (TASK-33001.14): Settings keeps MistralAI in [api_settings.mistralai],
+# not the "mistral" spec's table. The local_* aliases keep their target's
+# table, because the summary is sent to the target handler's URL.
+_ALIASES_WITH_OWN_CREDENTIAL = frozenset({"mistralai"})
 
 
 def _dispatch_to_api(
@@ -315,8 +320,8 @@ def _dispatch_to_api(
     # each summarizer then reports its key as missing (mirrors chat_api_call).
     api_key = without_ciphertext(api_key)
     try:
-        api_name_lower = api_name.lower()
-        api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(api_name_lower, api_name_lower)
+        requested = api_name.lower()
+        api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(requested, requested)
         logging.debug(f"Dispatching to API: {api_name_lower}")
 
         # TASK-33641.10: every argument by keyword, so none can land on a
@@ -345,6 +350,9 @@ def _dispatch_to_api(
             temp=temp,
             system_message=system_message,
             streaming=streaming,
+            credential_provider=(
+                requested if requested in _ALIASES_WITH_OWN_CREDENTIAL else None
+            ),
         )
 
     except Exception as e:
@@ -1130,8 +1138,13 @@ def _summarize_via_chat_api(
     temp,
     system_message,
     streaming,
+    credential_provider: str | None = None,
 ):
-    """One summarization call over the unified chat provider dispatch."""
+    """One summarization call over the unified chat provider dispatch.
+
+    ``credential_provider`` names the provider whose ``[api_settings]``
+    table decides the key; the spec's endpoint when None.
+    """
     spec = _SUMMARIZER_CHAT_SPECS[spec_key]
     if isinstance(input_data, dict) and "summary" in input_data:
         return input_data["summary"]
@@ -1180,7 +1193,9 @@ def _summarize_via_chat_api(
     if api_key and api_key.strip():
         resolved_key = api_key
     else:
-        resolved_key, source = _readiness_credential(spec.endpoint)
+        resolved_key, source = _readiness_credential(
+            credential_provider or spec.endpoint
+        )
         if resolved_key is None and source is None:
             raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
             resolved_key = without_ciphertext(raw_config_key)

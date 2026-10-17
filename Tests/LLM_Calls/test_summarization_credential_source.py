@@ -5,7 +5,7 @@ no caller key, its key is the one ``resolve_provider_credential`` returns for
 the provider's ``[api_settings]`` table, so ``credential_source`` decides for
 a summary as it does for Console readiness. Real loader on a scratch config;
 only the HTTP session (KoboldCpp, TabbyAPI), the hosted transport (Moonshot,
-Z.ai) or the chat handler (OpenAI) is replaced.
+Z.ai) or the chat handler (OpenAI, MistralAI) is replaced.
 """
 
 from __future__ import annotations
@@ -299,3 +299,44 @@ def test_a_hosted_summary_sends_only_the_key_readiness_resolves(
     assert hosted_wire == ([] if expected is None else [expected])
     if expected is None:
         assert result == sgl._SUMMARIZER_CHAT_SPECS[provider].missing_key_message
+
+
+@pytest.mark.parametrize(
+    ("table", "exported", "expected"),
+    [
+        ('credential_source = "none"', True, None),
+        ('api_key = "sk-mistralai-table"', False, "sk-mistralai-table"),
+        ('api_key = "sk-mistralai-table"', True, "sk-mistralai-table"),
+    ],
+    ids=["none-variable-exported", "stored-key", "stored-key-variable-exported"],
+)
+def test_a_mistralai_summary_decides_its_key_under_api_settings_mistralai(
+    tmp_path, monkeypatch, table, exported, expected
+):
+    """Settings keeps MistralAI under ``[api_settings.mistralai]``; the
+    summary is dispatched to the "mistral" handler, but its key is the one
+    readiness resolves for "mistralai"."""
+    settings = _load(tmp_path, monkeypatch, f"[api_settings.mistralai]\n{table}\n")
+    if exported:
+        monkeypatch.setenv("MISTRAL_API_KEY", _ENV_KEY)
+    else:
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    handed: list = []
+
+    def handler(**kwargs):
+        handed.append(kwargs.get("api_key"))
+        return {"choices": [{"message": {"content": "SUMMARY"}}]}
+
+    monkeypatch.setitem(Chat_Functions.API_CALL_HANDLERS, "mistral", handler)
+
+    result = sgl.analyze(
+        api_name="mistralai", input_data="body", custom_prompt_arg="Sum.", api_key=None
+    )
+
+    assert get_provider_readiness("mistralai", settings).api_key == expected
+    if expected is None:
+        assert result == sgl._SUMMARIZER_CHAT_SPECS["mistral"].missing_key_message
+        assert handed == []
+    else:
+        assert result == "SUMMARY", result
+        assert handed == [expected]

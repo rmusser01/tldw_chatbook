@@ -301,9 +301,14 @@ Provided" even when Settings held a key. Nothing read `credential_source`.
 `resolve_provider_credential` returns for the provider's `[api_settings]`
 table.** "none" sends nothing, "stored" sends only the table's key, and
 "environment" sends only the variable the table names. Only when that yields no
-key and no source is recorded does the old `<provider>_api` read apply.
+key and no source is recorded does the old `<provider>_api` read apply. A
+provider that needs a key refuses before dispatch when none resolves; Moonshot
+and Z.ai count as such, because their handlers search the environment
+themselves when handed no key. A **Mistral AI** summary (`mistralai`) resolves
+under `[api_settings.mistralai]`, the table Settings writes, though the
+`mistral` handler sends it.
 
-Four differences from readiness remain:
+Five differences from readiness remain:
 
 - **A key the caller passes** outranks the table, "none" included. Library
   ingest passes the key readiness resolved; web search passes none.
@@ -317,6 +322,10 @@ Four differences from readiness remain:
   resolves none.
 - **`[API] kobold_api_key` and `tabby_api_key`** reach neither readiness nor a
   summary: the loader does not copy them into `api_settings`.
+- **The local legacy aliases** `local_llamacpp`, `local_llamafile`,
+  `local_ollama` and `local_vllm` are summarized by their target's handler, at
+  that handler's URL. Their key is the one readiness resolves for the target's
+  table (`llama_cpp`, `ollama`, `vllm`), not for their own.
 
 ## Amendment 2026-10-17: a recorded credential source decides the legacy `[API]` bridge (TASK-33641.11)
 
