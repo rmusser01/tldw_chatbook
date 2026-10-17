@@ -13318,6 +13318,22 @@ then pass strict retirement without warnings. Do not change production activatio
 or add a sleep to satisfy an observer's premature assertion. Receipt:
 `Docs/QA/task-33620.9/README.md`.
 
+## A footer that names the wrong keys may be right about where focus is (TASK-33006.20, 2026-10-17)
+
+**Incident.** Two rounds of `test_console_switch_model_entry_points.py`
+(TASK-33006.5, then TASK-33007's first fix) closed Chat settings without a real
+Esc, because the footer read afterwards led "Esc composer · F6 panes" and lost
+Alt+A at 211 columns, and TASK-33006.20 was filed to add a "missing" footer
+refresh. At fc9f3ec375 nothing was missing: `on_screen_resume` re-registers the
+footer twice and the control-bar sync does again. Recording `app.focused` at the
+read showed focus still on the rail's Model toggle after the rail's Change
+action: the footer was right about the focus, and the test was wrong about it.
+
+**What to do.** Before calling a footer or hint stale, record the focused widget
+at the read and compare the hints to what that focus should show. A test for a
+refresh must fail with the refresh removed: here only removing both resume-time
+re-registrations turned the pin red; removing one left it green.
+
 ## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
 
 **Incident.** The actual Canvas-child test configured a 45-second page timeout,
