@@ -8,6 +8,7 @@ the highlighted model; Esc saves nothing. The mounted tests are
 
 import asyncio
 import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -255,13 +256,22 @@ def _capture_saves(app, monkeypatch) -> list[dict]:
     return saved_sections
 
 
-async def _wait_for_displayed(console, pilot, selector: str) -> None:
-    for _ in range(60):
-        widgets = list(console.query(selector))
-        if widgets and _is_displayed(widgets[0]):
-            return
+async def _until_clock(pilot, predicate, what: str, *, timeout: float = 20.0) -> None:
+    """``_until`` on a clock deadline: a count of pauses ran out early at load
+    average 30-60 (TASK-33008 review round 4; it was 60 x 0.05 s here)."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"timed out waiting for {what}")
         await pilot.pause(0.05)
-    raise AssertionError(f"{selector} never became visible")
+
+
+async def _wait_for_displayed(console, pilot, selector: str) -> None:
+    def shown() -> bool:
+        widgets = list(console.query(selector))
+        return bool(widgets) and _is_displayed(widgets[0])
+
+    await _until_clock(pilot, shown, f"{selector} to be shown")
 
 
 async def _detected_action_focused(host, console, pilot) -> Button:
@@ -829,6 +839,15 @@ async def test_a_card_resumed_with_nothing_detected_runs_discovery_again(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-setup-modal")
         await _until(pilot, lambda: len(app._discovery_calls) == 1, "discovery")
+        # The first look can end before the mount's own resume runs (it waits
+        # on the attach reconciliation). A return in that window is merged
+        # into it and reads as the mount's, so it re-arms nothing; the test
+        # leaves only after it, as a user does (TASK-33008 review round 4).
+        await _until_clock(
+            pilot,
+            lambda: not console._console_mount_visit_refreshed,
+            "the mount's own resume",
+        )
 
         async def server_started(config):
             app._discovery_calls.append(config)
