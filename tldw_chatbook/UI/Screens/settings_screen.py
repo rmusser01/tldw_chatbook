@@ -17627,8 +17627,7 @@ class SettingsScreen(BaseAppScreen):
         return self._provider_test_result
 
     def _run_provider_readiness_test(self) -> str:
-        detail, _summary, _passed = self._provider_readiness_test_report()
-        return detail
+        return self._provider_readiness_test_report()[0]
 
     def _provider_live_probe_base_url(self) -> str:
         """Return the endpoint to live-probe after a passing readiness test.
@@ -33705,9 +33704,10 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if not evidence_preserved:
                     self._mark_provider_test_result_stale()
-                elif self._provider_test_result not in self._PROVIDER_TEST_SENTINELS:
-                    # TASK-33005.8: rows built from the draft drop "(draft)".
-                    self._provider_test_result = self._provider_readiness_test_report()[0]
+                elif setup_mutation is not None and (  # TASK-33005.8: drop "(draft)"
+                    self._provider_test_result not in self._PROVIDER_TEST_SENTINELS
+                ):
+                    self._provider_test_result = self._run_provider_readiness_test()
                     self._update_provider_test_result()
                 if self._navigation_provider:
                     # A deep link's form now holds the model that was saved.

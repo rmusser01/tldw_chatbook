@@ -694,6 +694,42 @@ async def test_a_typed_key_check_reaches_the_console_after_save(request, monkeyp
         assert len(provider.requests) == 1  # Save itself listed nothing.
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_save_that_changes_no_connection_field_keeps_the_key_check_row(
+    request, monkeypatch
+):
+    """TASK-33005.8 (review round 1): Save redrew the Test rows from the bare
+    report on every save that kept the evidence, including a Temperature-only
+    save, which dropped the 'Key check' row 't' had added. Only a save that
+    carries the evidence to a saved connection redraws the rows."""
+    note = "No non-billable key check is available for OpenAI"
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    settings = {
+        "api_key": "sk-saved-test-key",
+        "base_url": "https://gateway.example.test/v1",
+    }
+    host = StyledSettingsDestinationHarness(_cloud_app("openai", settings), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        tested = await _test_and_settle(screen, pilot)
+        assert note in tested["Key check"], tested
+
+        screen.query_one("#settings-model-profile-temperature", Input).value = "0.33"
+        dirty = SettingsCategoryId.PROVIDERS_MODELS
+        await _until(pilot, lambda: screen._category_has_unsaved_changes(dirty))
+        assert _rows(screen) == tested
+        screen.set_focus(None)  # Esc's release: s is the screen's key
+        await pilot.press("s")
+        await _until(pilot, lambda: not screen._category_has_unsaved_changes(dirty))
+        await pilot.pause()
+
+        assert _rows(screen) == tested
+        assert provider.requests == []
+
+
 def _count_cloud_requests(monkeypatch) -> list[str]:
     """Count every request to a non-loopback host; nothing leaves the test."""
     cloud: list[str] = []

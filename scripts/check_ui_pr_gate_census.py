@@ -369,7 +369,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # serial: the State line count file whole (TASK-33002.10, .11), the new
 # fallback search file (TASK-33003.14), and the Test rows after Save
 # (TASK-33005.8): 339 (after Task 6's 336, in the Wave 4 integration).
-MINIMUM_FILES = 343
+# Its review round 1: a Save that changes no connection field keeps the Key
+# check row (TASK-33005.8): 340.
+MINIMUM_FILES = 344
 
 
 def read_census(path: Path) -> list[str]:

@@ -627,3 +627,5 @@ Tests/UI/test_settings_state_line_unsaved_count.py
 Tests/UI/test_settings_fallback_field_search.py
 # TASK-33005.8: after 't' and Save the Test rows show the saved values, without "(draft)", on the same visit (~6 s, private profile).
 Tests/UI/test_settings_provider_test_draft.py::test_save_redraws_the_test_rows_from_the_saved_values
+# TASK-33005.8 (review round 1): a Save that changes no connection field keeps the 'Key check' row 't' added (~7 s, private profile).
+Tests/UI/test_settings_provider_key_check.py::test_a_save_that_changes_no_connection_field_keeps_the_key_check_row
