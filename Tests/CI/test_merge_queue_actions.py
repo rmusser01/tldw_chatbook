@@ -1185,16 +1185,40 @@ def test_after_retry_stands_down_while_the_run_is_going_again(fresh):
     assert gh.calls == []
 
 
-def test_after_retry_stands_down_when_the_re_run_has_not_reported_the_check_yet():
+def _unreported(comments=()):
     """The queue's re-run ran (a higher attempt) and completed, but its required check is not listed
-    yet: the newest failure is the one it retried, from before the re-run started. Not a second
-    failure (review of #3113: this evicted)."""
+    yet: the newest failure is the one it retried, from before the re-run started."""
     rerun = dict(_pr_run(70, 700, conclusion="success"), run_attempt=2, run_started_at="2026-10-03T11:10:00Z")
-    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", completed="2026-10-03T11:00:00Z", suite=700)]},
-                runs={OLD: [rerun]})
-    assert mq._after_retry(gh, mq.read_pr(gh, 1), _pr_run(70, 700), mq.RetryNote(70, 1, None), (), lambda m: None,
-                           lambda: NOW) is False
-    assert gh.calls == []
+    return FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", completed="2026-10-03T11:00:00Z", suite=700)]},
+                  runs={OLD: [rerun]}, comments={1: list(comments)})
+
+
+def _after(gh):
+    return mq._after_retry(gh, mq.read_pr(gh, 1), _pr_run(70, 700), mq.RetryNote(70, 1, None), ("https://run/70",),
+                           lambda m: None, lambda: NOW)
+
+
+def test_a_re_run_whose_check_has_not_reported_yet_is_a_strike_not_an_eviction():
+    """Review of #3113: this evicted (round 1), then waited unbounded with nothing woken (round 2)."""
+    gh = _unreported()
+    assert _after(gh) is False
+    assert not any(c[0] == "disarm" for c in gh.calls)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-unreported:{OLD}" in c[2] for c in gh.calls)
+    assert any(c[0] == "dispatch" for c in gh.calls), "the warning wakes a tick to look again"
+
+
+def test_a_re_run_whose_check_never_reports_evicts_after_the_strike_gap():
+    gap = (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gh = _unreported([(f"<!-- merge-queue:rerun-unreported:{OLD} -->\nwarned", gap)])
+    assert _after(gh) is True
+    assert any(c[0] == "comment" and f"merge-queue:evict-rerun-unreported:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_an_old_unseen_warning_never_turns_an_unreported_check_into_an_eviction():
+    gap = (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gh = _unreported([(f"<!-- merge-queue:rerun-unseen:{OLD} -->\nwarned", gap)])
+    assert _after(gh) is False
+    assert not any(c[0] == "disarm" for c in gh.calls)
 
 
 def test_a_retried_run_that_ran_again_and_failed_again_evicts():
@@ -1269,6 +1293,29 @@ def test_a_re_run_still_unseen_after_the_strike_gap_evicts():
                 comments={1: [RETRIED + "<!-- merge-queue-attempt:70:1 -->", warned]})
     assert _retry_once(gh) is True
     assert any(c[0] == "comment" and f"merge-queue:evict-rerun-unseen:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_a_broken_run_that_fails_again_after_its_re_run_started_evicts():
+    """The production path: a run that never reports the check stands in as a failure stamped with its
+    `updated_at`, which can equal the re-run's `run_started_at` (review of #3113)."""
+    broken = dict(_pr_run(31, 531, conclusion="startup_failure"), run_attempt=2, run_started_at="2026-10-03T11:58:00Z")
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [broken]},
+                comments={1: [RETRIED + "<!-- merge-queue-attempt:31:1 -->"]})
+    _run(gh)
+    assert ("disarm", "PR_1") in gh.calls
+    assert any(c[0] == "comment" and f"merge-queue:evict-failed-twice:{OLD}" in c[2] for c in gh.calls)
+
+
+def test_a_broken_runs_retry_re_runs_the_run_its_link_names():
+    """Review of #3113: the newest run with a broken conclusion can be one whose check passed (its
+    queue-tick failed); the stand-in's link is its own run's URL, so that picks the right one."""
+    tick_failed = dict(_pr_run(30, 530), created_at="2026-10-03T11:30:00Z")
+    broken = _pr_run(31, 531, conclusion="startup_failure")
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("success", suite=530)]},
+                runs={OLD: [tick_failed, broken]}, run_status={31: ["completed", "in_progress"]})
+    action = mq.Action("retry", "x", ("https://run/31",))
+    assert mq._retry(gh, mq.read_pr(gh, 1), action, lambda m: None, lambda s: None, lambda: NOW) is False
+    assert [c[:2] for c in gh.calls if c[0] == "rerun"] == [("rerun", "31")]
 
 
 def test_a_failure_of_another_run_on_a_retried_head_evicts_at_once():

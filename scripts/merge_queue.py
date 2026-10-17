@@ -1028,7 +1028,7 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
         gh: The GitHub client.
         pr: The front PR.
         kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`, `no-run`, `approve-error`,
-            `rerun-unseen`).
+            `rerun-unseen`, `rerun-unreported`).
         warning: The warning's text.
         eviction: The eviction for a strike at least STRIKE_GAP after the warning.
         wake_first: Wake a tick after the warning, to look again soon.
@@ -1227,12 +1227,13 @@ def _after_retry(gh: GhApi, pr: PrState, run: dict, note: RetryNote, links: tupl
 
     The decision being acted on may be older than that re-run: a racing queue run made it, or
     GitHub has not shown it yet. So the run and the checks are read fresh, and the PR is evicted
-    only when the required check failed after the queue's re-run started. Left alone: a run that is
-    live or held, a check that is running, missing or green since the decision, and a re-run whose
-    check has not reported yet. A re-run not visible at all yet (no higher `run_attempt` than the
-    note recorded) is a `rerun-unseen` strike: one warning and a kick, an eviction only if it still
-    has not run 10 minutes later. A failure of another run on the head than the one re-run evicts
-    at once: the head had its one retry.
+    as failed twice only when the required check failed after the queue's re-run started, or the
+    decision names another run on the head than the note's (the head had its one retry). Left
+    alone: a run that is live or held, and a check that is running, missing or green since the
+    decision. A re-run not visible at all yet (no higher `run_attempt` than the note recorded) is a
+    `rerun-unseen` strike: one warning and a kick, an eviction only if it still has not run 10
+    minutes later. A re-run that finished while the newest failure is still the one from before it
+    started is a `rerun-unreported` strike, the same way.
 
     Args:
         gh: The GitHub client.
@@ -1280,8 +1281,16 @@ def _after_retry(gh: GhApi, pr: PrState, run: dict, note: RetryNote, links: tupl
         )
     started = _ts(fresh.get("run_started_at"))
     if started is not None and failed_at is not None and failed_at < started:
-        log(f"  #{pr.number}: run {run['id']}'s re-run has not reported the required check yet; a later event decides")
-        return False
+        # Usually GitHub's lag in listing the re-run's check. Its own kind: a lag warning must never
+        # count toward an unrelated `rerun-unseen` strike, nor the other way round.
+        return _strike(
+            gh, pr, "rerun-unreported",
+            f"Merge queue: the queue's re-run of the required check on `{pr.head_sha[:10]}` finished, but its result has "
+            "not shown up yet. A queue run will look again, and remove it from the line if it still has not shown up "
+            "10 minutes from now.",
+            Action("evict", "the queue's re-run of the required check finished without reporting the check", links,
+                   "rerun-unreported"), True, log, now,
+        )
     return _evict(gh, pr, twice, log)
 
 
@@ -1313,8 +1322,9 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
     """
     runs = _required_runs(gh, pr.head_sha)
     run = next((r for r in runs if action.suite_id is not None and r.get("check_suite_id") == action.suite_id), None)
-    if run is None:  # a broken run's stand-in: its failed run reported no check
-        run = next((r for r in runs if r.get("conclusion") in BROKEN_RUN_CONCLUSIONS), None)
+    if run is None:  # a broken run's stand-in: its failed run reported no check; its link is the run's
+        run = (next((r for r in runs if action.links and r.get("html_url") == action.links[0]), None)
+               or next((r for r in runs if r.get("conclusion") in BROKEN_RUN_CONCLUSIONS), None))
     if run is None:
         return _evict(gh, pr, Action("evict", "required check failed and its run cannot be found to re-run",
                                      action.links, "rerun"), log)
