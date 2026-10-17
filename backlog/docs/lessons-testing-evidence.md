@@ -882,6 +882,8 @@ reaches the unchanged geometry assertions; restoring the actual retired bare
 the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
 not the final qualification of a guard intended to run in CI.
 
+**PR3146 follow-up,2026-10-17.** A later replay case called the same provider-ready factory without the first geometry case's persisted splash override; required UI shard1 again timed out mounting behind the7s splash. Persist splash-off in the factory's existing provider settings transaction, so every caller survives its forced reload. Assert through `get_cli_setting`, the production startup seam: `app.app_config` is a normalized projection and need not expose raw TOML sections. The corrected assertion failed True-is-False before the fix; both unchanged production geometry/replay journeys passed afterward, without changing their10s mount bound.
+
 **TASK-33008.2, 2026-10-11.** A one-line change to `SettingsScreen._stage_provider_value` was
 covered by tests that fail here in their bodies with `RecoveryRequired`
 (`Tests/UI/test_settings_configuration_hub.py`'s provider-navigation tests, which the phase's

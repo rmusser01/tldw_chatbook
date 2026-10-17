@@ -1424,6 +1424,7 @@ def _build_ready_production_console_app():
     )
     assert config_module.save_settings_to_cli_config(
         {
+            "splash_screen": {"enabled": False},
             "first_run": {"setup_completed": True},
             "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
             "api_settings.llama_cpp": {

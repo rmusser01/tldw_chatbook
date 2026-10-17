@@ -154,6 +154,9 @@ async def test_production_geometry_fixture_replay_preserves_controls(
 ) -> None:
     """The synthetic identified round survives the real unchanged state replay."""
     app = _build_ready_production_console_app()
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("splash_screen", "enabled", True) is False
     async with app.run_test(size=(200, 40)) as pilot:
         card = await _show_production_approval_batch(app, pilot, _sample_calls())
         generation = card._batch_generation
