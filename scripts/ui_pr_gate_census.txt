@@ -646,9 +646,9 @@ Tests/UI/test_settings_provider_test_draft.py::test_settings_test_result_reaches
 # Phase 9 Task 14 (2026-10-17) appends the model-config tests no PR lane ran, each 3 of 3 serial in the lane's install set.
 # TASK-33002.17: every model-config surface takes its labels from the one field table (whole file, 16 tests, ~22 s, private profile).
 Tests/UI/test_model_config_field_labels.py
-# TASK-33641.2 (ledger R11): the Lab GGUF "Model source:" label and its Select paint on one row at 211x44 and 235x52 (~12 s, private profile).
+# TASK-33641.2 (ledger R11): the Lab GGUF "Model source:" label and its Select paint on one row at 211x44 and 235x52 (~15 s, private profile).
 Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_on_one_row
-# TASK-33003.22 (ledger R11): the Skills preview's Enabled label hugs its text under the app stylesheet (whole file, 15 tests, ~3 s).
+# TASK-33003.22 (ledger R11): the Skills preview's Enabled label hugs its text under the app stylesheet (whole file, 17 cases, ~2 s).
 Tests/UI/test_library_skills_builtin_rows.py
-# TASK-33001.15 (ledger R18): a Settings model save writes a key copied from legacy [API] into the provider table (private profile).
+# TASK-33001.15 (ledger R18): a Settings model save writes a key copied from legacy [API] into the provider table (~6 s, private profile).
 Tests/UI/test_settings_configuration_hub.py::test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table
