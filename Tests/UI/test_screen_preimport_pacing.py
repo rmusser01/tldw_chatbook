@@ -20,6 +20,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,8 +46,19 @@ def sleep_spy(monkeypatch):
     def fake_sleep(seconds: float) -> None:
         recorded.append(seconds)
 
-    monkeypatch.setattr(app_module.time, "sleep", fake_sleep)
+    clock = SimpleNamespace(**vars(time))
+    clock.sleep = fake_sleep
+    monkeypatch.setattr(app_module, "time", clock)
     return recorded
+
+
+def test_isolated_sleep_spy_observes_actual_preimport_pause(sleep_spy):
+    app = _build_test_app()
+    gap = app_module.SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS
+
+    app._pause_between_preimports(gap)
+
+    assert sleep_spy == [gap]
 
 
 # --- AC #1: yield between routes, proportional to the cost just paid --------

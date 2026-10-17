@@ -843,3 +843,20 @@ callers retain behavior. The manager's256-root review bound counts only the
 exact target installation, with one bounded lookahead; unrelated roots cannot
 strand retained cleanup. No name matching, fabricated install, raised page cap
 or new authority. ADR162 records this additive read-only facade argument.
+
+
+## I7 authenticated cleaned-absence display (R115 / CLI2)
+
+`PluginService.data_status(roots=None, *, installation_id=None, limit=50, offset=0)`
+retains its existing exact-reference validation, original-installation filter and
+bounded pagination. Each result adds only `cleaned_absent: bool`: true when the
+authenticated published root custody is `cleaned_absent`, the existing `open_root`
+validation succeeds, and no recovery reason is present. Unknown/present custody,
+wrong boot/anchors, unexpected recreated leaves and recovery reasons produce false.
+No raw custody, checkpoint or proof body is projected.
+
+This is a point-in-time read-only display fact, not future absence, quiescence,
+root access or permission to bypass reviewed cleanup/drain/recovery. Presentation
+uses recovery reason first, then cleanup state, then known cleaned absence, then
+retained. Existing blockers and cleanup remain authoritative. Public reviewed
+create/delete/status and mounted retained-data Refresh controls cover the seam.

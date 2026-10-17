@@ -9,6 +9,37 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Settle the producer before closing its database handles
+
+**TASK-32695, managed-plugin qualification, 2026-10-16.** A Console fixture
+shut down its controller and closed its ChaCha connections, then a scheduled wake
+callback acquired another connection 37 ms later. Awaiting the supported runtime
+disposal before the fixture's owned DB barrier settled that producer. Separate
+mounted fixtures retained app stores through a responsiveness-monitor thread;
+they needed the app lifecycle drain, their same-thread Evals/Collections closes
+and awaited monitor closure. Five renewed mounted controls finished with no
+named app/rig database or instance-lock descriptors. This does not attribute the
+historical aggregate descriptor growth or prove every resource leak absent.
+
+A public `wait_for_turn` observer also failed when attached after visible Stop
+had already retired its live custody. Attach the observer while the controlled
+turn is blocked, then trigger Stop and await that exact handle. Likewise, an
+idle writer-capable MCP connection intentionally outlives a Console turn: observe
+the turn's actual completion separately, retain the idle custody, and check its
+completion after reviewed uninstall. An empty counter or a returned close call
+cannot substitute for those owner boundaries. See the
+[qualified observations](../../Docs/Plugins/compatibility.md#concrete-acceptance-observations).
+
+## A module alias still shares the standard library's clock
+
+**TASK-32695, preimport pacing, 2026-10-16.** Patching
+`app_module.time.sleep` also replaced `subprocess`'s sleep, because both names
+referenced the same standard-library module. Sixteen captured stacks showed
+helper-process reaping feeding the pacing spy. Give only the app a copied clock
+namespace, leave subprocess reaping real, and prove that the same spy still sees
+the actual app pacing method. The two affected cases and that positive control
+passed; filtering the unexpected samples would have hidden the test defect.
+
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
 **TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test

@@ -1021,3 +1021,65 @@ async def test_held_root_status_transaction_does_not_delay_emergency_fence(
         await asyncio.to_thread(case.service.complete_run, "held-status-run")
     assert request is not None
     assert (await case.service.finish_revocation(request)).committed
+
+
+@pytest.mark.asyncio
+async def test_public_cleaned_absence_requires_current_authenticated_root(
+    native_console, monkeypatch
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Plugins import data_cleanup
+
+    case = native_console
+    installed = await case.install(enable=False)
+    creation = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(creation, creation.operation_id)
+    retained = (await case.service.data_status((ref,)))[0]
+    assert retained["recovery_reason"] is None and ref.path.is_dir()
+    assert retained["cleaned_absent"] is False
+    deletion = await case.service.review_data_deletion((ref,))
+    assert (await case.service.delete_data((ref,), deletion.operation_id)).committed
+    before = ref
+    cleaned = (
+        await case.service.data_status(installation_id=installed.installation_id)
+    )[0]
+    ref = cleaned["root"]
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status((before,))
+    assert not ref.path.exists() and cleaned["recovery_reason"] is None
+    assert cleaned["cleaned_absent"] is True
+    assert "custody" not in cleaned and "checkpoint" not in cleaned
+    assert (await case.service.data_status(installation_id=installed.installation_id))[
+        0
+    ] == cleaned
+    assert not await case.service.data_status((ref,), offset=1)
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status((replace(ref, generation=ref.generation + 1),))
+    ref.path.mkdir()
+    try:
+        recreated = (await case.service.data_status((ref,)))[0]
+        assert recreated["cleaned_absent"] is False
+        assert recreated["recovery_reason"] == "root_unexpected_after_cleanup"
+    finally:
+        ref.path.rmdir()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            data_cleanup,
+            "boot_identity",
+            lambda: "11111111-2222-3333-4444-555555555555",
+        )
+        changed_boot = (await case.service.data_status((ref,)))[0]
+        assert changed_boot["cleaned_absent"] is False
+        assert changed_boot["recovery_reason"] == "root_boot_identity_changed"
+    usage = case.service._coordinator.root_usage
+    await case.service._call(
+        lambda: usage.recovery.update({ref.root_id: "unknown_writer"})
+    )
+    try:
+        unknown = (await case.service.data_status((ref,)))[0]
+        assert unknown["cleaned_absent"] is False
+        assert unknown["recovery_reason"] == "unknown_writer"
+    finally:
+        await case.service._call(lambda: usage.recovery.pop(ref.root_id))
+    assert (await case.service.data_status((ref,)))[0]["cleaned_absent"] is True

@@ -3419,7 +3419,9 @@ class ConsoleSessionController:
                 app_instance,
                 session,
             ),
-            skill_context_maximum=capture_skill_context_maximum(app_instance),
+            skill_context_maximum=capture_skill_context_maximum(
+                app_instance, workspace_id
+            ),
             mcp_tool_maximum=mcp_definition_maximum,
             mcp_definition_maximum=mcp_definition_maximum,
             capabilities={

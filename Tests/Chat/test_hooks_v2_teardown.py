@@ -20,7 +20,7 @@ from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 async def test_interrupt_once_after_seal_and_revocation(
     tmp_path, mounted, revoked, slow
 ):
-    db, app, _, store, session, gateway, _, controller = _controller_rig(tmp_path)
+    db, app, runs_db, store, session, gateway, _, controller = _controller_rig(tmp_path)
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
@@ -105,8 +105,17 @@ async def test_interrupt_once_after_seal_and_revocation(
             assert not engine.processes.records
     finally:
         release.set()
-        await runtime.close_hooks_v2()
-        db.close()
+        try:
+            await runtime.dispose()
+        finally:
+            try:
+                await controller.shutdown()
+            finally:
+                try:
+                    runs_db.close()
+                finally:
+                    with db.quiesce_connections(timeout_seconds=2.0):
+                        pass
 
 
 @pytest.mark.asyncio
@@ -118,7 +127,9 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
     )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    db, rig_app, _, store, session, gateway, _, controller = _controller_rig(tmp_path)
+    db, rig_app, runs_db, store, session, gateway, _, controller = _controller_rig(
+        tmp_path
+    )
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -163,8 +174,10 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
             )
             turn = runtime.accept_turn(request)
             await asyncio.wait_for(entered.wait(), 5)
+            turn_waiter = asyncio.create_task(runtime.wait_for_turn(turn))
+            await asyncio.sleep(0)
             await screen._stop_console_generation_from_visible_action()
-            await runtime.wait_for_turn(turn)
+            await turn_waiter
             for _ in range(200):
                 if marker.exists():
                     break
@@ -177,8 +190,31 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         assert not engine.cleanup_pending
     finally:
         release.set()
-        await runtime.close_hooks_v2()
-        db.close()
+        try:
+            try:
+                await app._shutdown_app_owned_lifecycles()
+            finally:
+                await runtime.dispose()
+        finally:
+            try:
+                await controller.shutdown()
+            finally:
+                try:
+                    runs_db.close()
+                finally:
+                    try:
+                        with db.quiesce_connections(timeout_seconds=2.0):
+                            pass
+                    finally:
+                        try:
+                            app.evaluation_orchestrator.close()
+                        finally:
+                            try:
+                                app.local_library_collections_db.close()
+                            finally:
+                                monitor = app.ui_responsiveness_monitor
+                                if monitor is not None:
+                                    await asyncio.to_thread(monitor.close)
 
 
 @pytest.mark.asyncio
@@ -351,7 +387,29 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
             assert len(notifications.read_text().splitlines()) == 1
     finally:
         release.touch()
-        await runtime.close_hooks_v2()
-        assert not engine.processes.records
-        db.close()
-        runs_db.close()
+        try:
+            try:
+                await app._shutdown_app_owned_lifecycles()
+            finally:
+                await runtime.dispose()
+            assert not engine.processes.records
+        finally:
+            try:
+                await controller.shutdown()
+            finally:
+                try:
+                    runs_db.close()
+                finally:
+                    try:
+                        with db.quiesce_connections(timeout_seconds=2.0):
+                            pass
+                    finally:
+                        try:
+                            app.evaluation_orchestrator.close()
+                        finally:
+                            try:
+                                app.local_library_collections_db.close()
+                            finally:
+                                monitor = app.ui_responsiveness_monitor
+                                if monitor is not None:
+                                    await asyncio.to_thread(monitor.close)

@@ -78,7 +78,9 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
     service = PluginService(
         tmp_path / "profile",
         workspace_lookup=lambda _: SimpleNamespace(archived=False),
-        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        marker_store_factory=lambda _: FilePluginMarkerStore(
+            tmp_path / "shared-marker"
+        ),
         accept_reduced_protection=True,
         mcp_mapping_owner=local,
     )
