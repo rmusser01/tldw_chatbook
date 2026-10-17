@@ -146,6 +146,7 @@ import pytest
 
 from Tests.Agents.test_hooks_v2_execution import event
 from Tests.hooks_v2_process_support import child_argv
+from Tests.Plugins import platform_support
 from tldw_chatbook.Agents.hooks_v2 import parse_handlers
 from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
 from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
@@ -179,7 +180,7 @@ def tool_event(*, name="PreToolUse", provider="mcp", status=None):
         "tool_id": "mcp:fixture:lookup",
         "tool_name": "lookup",
         "provider": provider,
-        "operation": "mcp.call" if provider == "mcp" else "fs.read",
+        "operation": "mcp.call" if provider in {"mcp", "plugin_mcp"} else "file.read",
         "tool_args": {"query": "original"},
         "candidate_arguments": {"query": "candidate"},
     }
@@ -196,6 +197,7 @@ def tool_event(*, name="PreToolUse", provider="mcp", status=None):
     return parse_event(base)
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_native_command_positive_control(tmp_path):
     handler = parse_handlers(
@@ -219,6 +221,7 @@ async def test_native_command_positive_control(tmp_path):
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "dialect, source, response",
@@ -256,8 +259,12 @@ async def test_vendor_denial_and_payload_use_existing_command_owner(
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
-async def test_before_mcp_payload_is_string_and_skips_other_providers(tmp_path):
+@pytest.mark.parametrize("provider", ["mcp", "plugin_mcp"])
+async def test_before_mcp_payload_is_string_and_skips_other_providers(
+    tmp_path, provider
+):
     marker = tmp_path / "observed.json"
     handler = vendor_command(
         tmp_path,
@@ -268,7 +275,7 @@ async def test_before_mcp_payload_is_string_and_skips_other_providers(tmp_path):
     try:
         assert (await engine.fire_async(tool_event(provider="local"))).allowed
         assert not marker.exists()
-        assert (await engine.fire_async(tool_event())).allowed
+        assert (await engine.fire_async(tool_event(provider=provider))).allowed
         payload = json.loads(marker.read_text())
         assert isinstance(payload["tool_input"], str)
         assert json.loads(payload["tool_input"]) == {"query": "candidate"}
@@ -276,6 +283,7 @@ async def test_before_mcp_payload_is_string_and_skips_other_providers(tmp_path):
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 async def test_cursor_post_success_only(tmp_path):
     marker = tmp_path / "observed"
@@ -342,6 +350,7 @@ def test_unqualified_source_behavior_is_refused(fields):
         )
 
 
+@platform_support.vendor_command
 @pytest.mark.parametrize(
     "source, final_guard", [("beforeMCPExecution", True), ("preToolUse", False)]
 )
@@ -372,6 +381,7 @@ def test_source_guards_cannot_be_removed_by_component_selection(
     ) is (not final_guard)
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response, expected",
@@ -401,6 +411,7 @@ async def test_foreign_permission_results_never_create_grants(
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "code, stage, failure",
@@ -448,6 +459,7 @@ async def test_vendor_exit_and_timeout_stay_under_native_acceptance(
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 async def test_vendor_transform_runs_once_then_native_final_guard(tmp_path):
     from dataclasses import replace
@@ -494,6 +506,7 @@ async def test_vendor_transform_runs_once_then_native_final_guard(tmp_path):
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 async def test_admitted_vendor_hook_uses_original_native_process_owner_and_root(
     native_console, native_package, tmp_path
@@ -566,6 +579,7 @@ async def test_admitted_vendor_hook_uses_original_native_process_owner_and_root(
         host_environment=hooks.host_environment,
         dependency_required=hooks.dependency_required,
         event_projector=hooks.project_event,
+        command_launch=hooks.command_launch,
     )
     try:
         result = await engine.fire_async(tool_event())
@@ -585,6 +599,7 @@ async def test_admitted_vendor_hook_uses_original_native_process_owner_and_root(
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "source, selected, admitted",
@@ -634,6 +649,7 @@ async def test_actual_admission_keeps_guard_selection_and_final_phase_constraint
     )
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allowed", [False, True])
 async def test_vendor_allow_still_reaches_normal_permission_review(tmp_path, allowed):
@@ -692,6 +708,7 @@ async def test_vendor_allow_still_reaches_normal_permission_review(tmp_path, all
         await engine.close()
 
 
+@platform_support.vendor_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "dialect, source, host, response, denied",
@@ -783,6 +800,7 @@ def test_protocol_marker_cannot_change_type_event_or_effect_contract(change):
         parse_handlers([{**raw, **change}])
 
 
+@platform_support.vendor_command
 def test_unknown_variable_in_hook_blocks_its_native_dependents(native_package):
     from Tests.Plugins.test_codex_adapter import write_json
     from tldw_chatbook.Plugins.inspection import inspect_package
@@ -810,6 +828,7 @@ def test_unknown_variable_in_hook_blocks_its_native_dependents(native_package):
     )
 
 
+@platform_support.package_capture
 def test_malformed_unqualified_hook_fields_are_blocked_without_parser_crash(
     native_package,
 ):
@@ -855,3 +874,16 @@ def test_fresh_qualified_observer_cannot_hide_unknown_scope(tmp_path, location):
     result = inspect_package(tmp_path, dialect="openai")
     assert result.inventory["skill:example"].activation_blockers
     assert not any(row.kind == "hook" and row.support == "adapted" for row in result.inventory.values())
+
+
+@pytest.mark.skipif(
+    platform_support.VENDOR_COMMAND, reason="native unsupported vendor control"
+)
+def test_native_unsupported_vendor_command_refuses():
+    from tldw_chatbook.Plugins.adapters.vendor_hooks import normalize_vendor_hook
+
+    with pytest.raises(ValueError, match="platform"):
+        normalize_vendor_hook(
+            {"id": "guard", "event": "preToolUse", "command": "python hook.py"},
+            "cursor/1",
+        )

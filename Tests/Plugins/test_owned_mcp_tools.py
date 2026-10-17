@@ -21,7 +21,7 @@ def reply(message):
         return
     if method == "initialize":
         base = Path(os.environ["CALL_LOG"]).parent
-        (base / "launch.json").write_text(json.dumps({"argv": sys.argv, "cwd": os.getcwd(), "root": os.environ.get("PLUGIN_ROOT"), "data": os.environ.get("PLUGIN_DATA"), "portable": os.environ.get("PORTABLE")}))
+        (base / "launch.json").write_text(json.dumps({"argv": sys.argv, "cwd": os.getcwd(), "root": os.environ.get("PLUGIN_ROOT"), "data": os.environ.get("PLUGIN_DATA"), "portable": os.environ.get("PORTABLE"), "path": os.environ.get("PATH"), "custom": os.environ.get("CUSTOM")}))
         if (base / "init-block").exists():
             (base / "init-started").touch()
             while not (base / "init-release").exists():
@@ -54,6 +54,9 @@ for line in sys.stdin:
 
 @pytest.fixture
 async def shared_connection_case(native_package, tmp_path, monkeypatch, request):
+    from Tests.Plugins.platform_support import require_managed_runtime
+
+    require_managed_runtime()
     import os
     from pathlib import Path
 
@@ -106,15 +109,67 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
         definition["cwd"] = "${PLUGIN_DATA}"
         if fixture_mode == "portable-literals":
             definition["args"] += ["${UNRECOGNIZED}"]
+    if fixture_mode in {"path-shadow", "path-explicit"}:
+        import sys
+
+        directory = package / "bin"
+        directory.mkdir()
+        program = directory / Path(argv[0]).name
+        program.write_text(
+            f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\nPath({str(tmp_path / 'package-executable')!r}).touch()\nos.execv({sys.executable!r},[{sys.executable!r},*sys.argv[1:]])\n"
+        )
+        program.chmod(0o700)
+        definition["env"].update(PATH="${PLUGIN_ROOT}/bin", CUSTOM="preserved")
+        if fixture_mode == "path-explicit":
+            definition["command"] = "./bin/" + program.name
+    path_case = None
+    if fixture_mode in {"path-relative", "path-dot", "path-empty"}:
+        import sys
+
+        host_cwd = tmp_path / "host-cwd"
+        other_cwd = tmp_path / "other-host-cwd"
+        relative = (
+            "host-bin/owned-path-probe"
+            if fixture_mode == "path-relative"
+            else "owned-path-probe"
+        )
+        for program, label in (
+            (host_cwd / relative, "host"),
+            (other_cwd / relative, "other-host"),
+            (package / relative, "package"),
+            (package / "bin/owned-path-probe", "package"),
+        ):
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_text(
+                f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\n"
+                f"Path({str(tmp_path / (label + '-executable'))!r}).write_text(__file__)\n"
+                f"os.execv({sys.executable!r},[{sys.executable!r},*sys.argv[1:]])\n"
+            )
+            program.chmod(0o700)
+        lookup = {
+            "path-relative": "host-bin",
+            "path-dot": ".",
+            "path-empty": os.pathsep + str(tmp_path / "missing-bin"),
+        }[fixture_mode]
+        monkeypatch.chdir(host_cwd)
+        monkeypatch.setenv("PATH", lookup)
+        definition["command"] = "owned-path-probe"
+        definition["env"].update(PATH="${PLUGIN_ROOT}/bin", CUSTOM="preserved")
+        path_case = SimpleNamespace(executable=host_cwd / relative, other_cwd=other_cwd)
+    definitions = {"shared": definition}
+    if fixture_mode == "multi_separate":
+        definitions["second"] = dict(
+            definition, env={**definition["env"], "SECOND": "yes"}
+        )
     (package / "mcp.json").write_text(
         json.dumps(
             {
                 "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-                "mcpServers": {"shared": definition},
+                "mcpServers": definitions,
             }
         )
     )
-    selection = ("skill:review", "mcp:shared")
+    selection = ("skill:review", *tuple("mcp:" + name for name in definitions))
     if fixture_mode == "native_hook":
         manifest = json.loads((package / "plugin.json").read_text())
         manifest["extensions"]["io.github.rmusser01.chatbook"].update(
@@ -191,15 +246,28 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
         component_id="mcp:shared",
         data_root=data_root,
         session_isolation=(
-            "separate" if fixture_mode == "separate" else "request_independent"
+            "separate"
+            if fixture_mode in {"separate", "multi_separate"}
+            else "request_independent"
         ),
         protocol_version="2025-03-26",
     )
+    connections = {"mcp:shared": profile["profile_id"]}
+    if fixture_mode == "multi_separate":
+        second = local.save_owned_profile(
+            installation_id=review.installation_id,
+            inspection=inspection,
+            component_id="mcp:second",
+            data_root=data_root,
+            session_isolation="separate",
+            protocol_version="2025-03-26",
+        )
+        connections["mcp:second"] = second["profile_id"]
     profile_id = profile["profile_id"]
     assert not client.sessions, "configuration save must not launch"
     assert not ownership.is_connected(profile_id)
     configured = await service.review_configuration(
-        review.installation_id, connections={"mcp:shared": profile_id}
+        review.installation_id, connections=connections
     )
     assert (await service.commit(configured, configured.operation_id)).committed
     unified = UnifiedMCPControlPlaneService(
@@ -215,7 +283,8 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
         service=unified,
         main_loop=asyncio.get_running_loop(),
     )
-    assert (await discovery.connect("mcp:shared"))["tools"][0]["name"] == "echo"
+    for component_id in connections:
+        assert (await discovery.connect(component_id))["tools"][0]["name"] == "echo"
     await discovery.compose_catalog()
     assert discovery.list_catalog() == [], "discovery alone must not advertise tools"
     for connection in tuple(ownership.connections.values()):
@@ -223,8 +292,8 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
             await ownership.detach(connection.connection_id, owner)
     configured = await service.review_configuration(
         review.installation_id,
-        connections={"mcp:shared": profile_id},
-        tools={"mcp:shared": ("echo",)},
+        connections=connections,
+        tools={key: ("echo",) for key in connections},
     )
     assert (await service.commit(configured, configured.operation_id)).committed
     snapshots, providers, registries = {}, {}, {}
@@ -270,6 +339,10 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
         # Crypto-backed admission is not part of the native deadline under test.
         for session in client.sessions.values():
             session.request_timeout_seconds = 60.0
+        if fixture_mode == "multi_separate":
+            for provider in providers.values():
+                for component_id in connections:
+                    await provider.connect(component_id)
         pending = asyncio.create_task(
             invoke("a", {"hold": str(release), "started": str(started)})
         )
@@ -297,6 +370,7 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
             package=package,
             inspection=inspection,
             unified=unified,
+            path_case=path_case,
         )
     finally:
         release.touch()
@@ -1664,3 +1738,380 @@ async def test_shared_stdio_deadline_retains_a_custody_without_stopping_b(
         release.touch()
         if pending is not None:
             await pending
+
+
+@pytest.mark.asyncio
+async def test_stdio_failed_cleanup_retry_keeps_real_child_and_root_custody(
+    shared_connection_case, monkeypatch
+):
+    case = shared_connection_case
+    connection = next(iter(case.ownership.connections.values()))
+    session = connection.session
+    process = session.process
+    assert process.returncode is None and not case.pending.done()
+
+    def refuse(*_args, **_kwargs):
+        raise OSError("controlled termination failure")
+
+    async def failed_wait():
+        raise OSError("controlled wait failure")
+
+    deletion_review = await case.service.review_data_deletion((case.data_root,))
+    deletion = asyncio.create_task(
+        case.service.delete_data((case.data_root,), deletion_review.operation_id)
+    )
+    await asyncio.sleep(0.05)
+    assert not deletion.done() and case.data_root.path.exists()
+    real_kill, real_wait = process.kill, process.wait
+    try:
+        with monkeypatch.context() as blocked:
+            blocked.setattr(process.stdin, "close", lambda: None)
+            blocked.setattr(process.stdin, "wait_closed", failed_wait)
+            blocked.setattr(process, "terminate", refuse)
+            blocked.setattr(process, "kill", refuse)
+            blocked.setattr(process, "wait", failed_wait)
+            for owner in tuple(connection.owners):
+                await case.ownership.detach(connection.connection_id, owner)
+            for _ in range(2):
+                await case.ownership.detach(connection.connection_id, "retry")
+                assert process.returncode is None
+                assert not connection.leases_settled
+                assert not session._cleanup_complete
+                assert await case.service._call(
+                    lambda: case.service._coordinator.root_usage.blockers(
+                        (case.data_root,)
+                    )
+                )
+                assert case.data_root.path.exists() and not deletion.done()
+    finally:
+        # Cleanup uses the original real child handle, never a synthetic proof.
+        if process.returncode is None:
+            real_kill()
+            await real_wait()
+        await case.ownership.detach(connection.connection_id, "retry")
+        receipt = await asyncio.wait_for(deletion, 5)
+    await case.ownership.detach(connection.connection_id, "retry")
+    assert process.returncode is not None
+    assert connection.leases_settled
+    assert receipt.phase == "complete" and not case.data_root.path.exists()
+    assert not await case.service._call(
+        lambda: case.service._coordinator.root_usage.blockers((case.data_root,))
+    )
+    assert not (await case.pending).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shared_connection_case", ["multi_separate"], indirect=True)
+@pytest.mark.parametrize("action", ["disable", "revision-drain"])
+async def test_two_connections_in_same_run_cancel_each_lease_and_keep_scope_neighbor(
+    shared_connection_case, action
+):
+    case = shared_connection_case
+    applying = None
+    second_pending = None
+    second_release = case.calls.parent / "second-release"
+    try:
+        if action == "disable":
+            case.release.touch()
+            assert (await case.pending).ok
+        a_owner = case.ownership._owner_id(case.snapshots["a"])
+        b_owner = case.ownership._owner_id(case.snapshots["b"])
+        a_connections = [
+            item
+            for item in case.ownership.connections.values()
+            if a_owner in item.owners and item.session is not None
+        ]
+        b_connections = [
+            item
+            for item in case.ownership.connections.values()
+            if b_owner in item.owners and item.session is not None
+        ]
+        assert len(a_connections) == len(b_connections) == 2
+        a_children = [item.session.process for item in a_connections]
+        b_children = [item.session.process for item in b_connections]
+        records = [
+            row
+            for row in case.service.live_runs()
+            if row.run_id == case.snapshots["a"].run_id
+        ]
+        connection_tokens = {
+            token for item in a_connections for token in item.leases.values()
+        }
+        assert len(connection_tokens) == 2
+        assert connection_tokens <= {row.lease_token for row in records}
+        assert all(child.returncode is None for child in a_children + b_children)
+        if action == "disable":
+            await case.disable_a()
+        else:
+            from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+            from tldw_chatbook.Plugins.mcp_provider import PluginMCPProvider
+
+            provider = PluginMCPProvider(
+                plugin_service=case.service,
+                ownership=case.ownership,
+                snapshot=case.snapshots["a"],
+                service=case.unified,
+                main_loop=asyncio.get_running_loop(),
+                approval_callback=lambda calls: {
+                    call.llm_name: "approve_once" for call in calls
+                },
+            )
+            await provider.compose_catalog()
+            registry = ToolCatalogRegistry()
+            registry.register_provider(provider)
+            started = case.calls.parent / "second-started"
+            second_pending = asyncio.create_task(
+                asyncio.to_thread(
+                    registry.invoke_by_name,
+                    provider.list_catalog()[1].name,
+                    {"hold": str(second_release), "started": str(started)},
+                )
+            )
+            for _ in range(500):
+                if started.exists():
+                    break
+                await asyncio.sleep(0.01)
+            assert (
+                started.exists()
+                and not case.pending.done()
+                and not second_pending.done()
+            )
+            skill = case.package / "skills/review/SKILL.md"
+            skill.write_text(skill.read_text() + "\nDrain both same-run connections.\n")
+            review = await case.service.review_revision(case.installation, case.package)
+            applying = asyncio.create_task(
+                case.service.apply_revision(review, review.operation_id)
+            )
+            for _ in range(100):
+                if (
+                    case.service.revision_drain.ticket(review.drain_token).phase
+                    == "waiting"
+                ):
+                    break
+                await asyncio.sleep(0.01)
+            case.service.cancel_revision_work(review)
+        for _ in range(500):
+            if all(child.returncode is not None for child in a_children) and all(
+                item.leases_settled for item in a_connections
+            ):
+                break
+            await asyncio.sleep(0.01)
+        assert all(child.returncode is not None for child in a_children)
+        assert all(item.leases_settled for item in a_connections)
+        if action == "disable":
+            assert all(child.returncode is None for child in b_children)
+            assert (await case.invoke("b")).ok
+        else:
+            for _ in range(500):
+                if all(child.returncode is not None for child in b_children):
+                    break
+                await asyncio.sleep(0.01)
+            assert all(child.returncode is not None for child in b_children)
+            assert (await asyncio.wait_for(applying, 10)).committed
+            case.release.touch()
+            assert not (await case.pending).ok
+            assert not (await second_pending).ok
+    finally:
+        case.release.touch()
+        second_release.touch()
+        if second_pending is not None:
+            await second_pending
+        if applying is not None and not applying.done():
+            try:
+                case.service.cancel_revision(review)
+            except ValueError:
+                pass
+            await asyncio.wait_for(asyncio.shield(applying), 10)
+
+
+@pytest.mark.asyncio
+async def test_installed_cursor_gate_matches_actual_plugin_mcp_before_permission(
+    shared_connection_case, native_package, tmp_path
+):
+    import shlex
+
+    from Tests.Plugins.test_codex_adapter import write_json
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.tool_pipeline import (
+        HookPreparationError,
+        ToolHookRun,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Plugins.hooks import NativeHooks
+
+    case = shared_connection_case
+    case.release.touch()
+    assert (await case.pending).ok
+    observed, allow = tmp_path / "cursor-input", tmp_path / "cursor-allow"
+    package = native_package()
+    (package / "plugin.json").unlink()
+    argv = child_argv(
+        f"import json,sys;from pathlib import Path;value=json.load(sys.stdin);assert isinstance(value['tool_input'],str);Path({str(observed)!r}).write_text(value['tool_input']);print(json.dumps({{'permission':'allow' if Path({str(allow)!r}).exists() else 'deny'}}))"
+    )
+    (package / "guard.py").write_text(argv[-1])
+    argv = [argv[0], "-I", "${CURSOR_PLUGIN_ROOT}/guard.py"]
+    write_json(
+        package,
+        ".cursor-plugin/plugin.json",
+        {
+            "name": "cursor-guard",
+            "hooks": {
+                "version": 1,
+                "hooks": {"beforeMCPExecution": [{"command": shlex.join(argv)}]},
+            },
+        },
+    )
+    key = "hook:cursor-0-0-0-beforeMCPExecution"
+    installed = await case.service.review_install(
+        package, selection=(key,), workspace_id="a"
+    )
+    assert (await case.service.commit(installed, installed.operation_id)).committed
+    trust = await case.service.review_trust(installed.installation_id)
+    assert (await case.service.commit(trust, trust.operation_id)).committed
+    active = await case.service.review_activation(
+        installed.installation_id, workspace_id="a", intent="enabled"
+    )
+    assert (await case.service.commit(active, active.operation_id)).committed
+    snapshot = await case.service.capture_mcp_snapshot(
+        installed.installation_id, "a", "cursor-run"
+    )
+    native = NativeHooks(case.service, (snapshot,))
+    engine = HookEngine(
+        native.definitions,
+        native.authority,
+        HookBudgetOwner(),
+        process_owner_for=native.process_owner,
+        event_projector=native.project_event,
+        host_environment=native.host_environment,
+        command_launch=native.command_launch,
+    )
+    registry = case.registries["a"]
+    provider = case.providers["a"]
+    approvals = []
+    provider._approval_callback = lambda calls: approvals.extend(
+        call.llm_name for call in calls
+    ) or {call.llm_name: "approve_once" for call in calls}
+    name = provider.list_catalog()[0].name
+    definition = registry.snapshot_for_hook(name)
+    assert definition.provider == "plugin_mcp" and definition.operation == "mcp.call"
+    local = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda _: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+        approval_callback=lambda calls: approvals.extend(
+            call.llm_name for call in calls
+        )
+        or {call.llm_name: "approve_once" for call in calls},
+    )
+    registry.register_provider(local)
+    (tmp_path / "read-control").write_text("ordinary read")
+    run = ToolHookRun(
+        engine,
+        run_id="cursor-run",
+        session_id="cursor-session",
+        turn_id="turn",
+        resolve_definition=lambda call: registry.snapshot_for_hook(call.name),
+    )
+
+    def dispatch(name, arguments, identity):
+        prepared = run.prepare_call(ToolCall(name, arguments, identity))
+        run.validate_dispatch(prepared)
+        return registry.invoke_by_name(
+            name, prepared.args, expected_definition=registry.snapshot_for_hook(name)
+        )
+
+    before = case.calls.read_text()
+    try:
+        with pytest.raises(HookPreparationError):
+            await asyncio.to_thread(dispatch, name, {}, "denied")
+        assert json.loads(observed.read_text()) == {}
+        assert case.calls.read_text() == before and not approvals
+        observed.unlink()
+        assert (
+            await asyncio.to_thread(
+                dispatch, "fs_read", {"path": "read-control"}, "local"
+            )
+        ).ok
+        assert not observed.exists() and approvals == ["fs_read"]
+        allow.touch()
+        assert (await asyncio.to_thread(dispatch, name, {}, "allowed")).ok
+        assert (
+            approvals[-1] == name
+            and len(case.calls.read_text().splitlines()) == len(before.splitlines()) + 1
+        )
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shared_connection_case", ["path-shadow", "path-explicit"], indirect=True
+)
+async def test_installed_mcp_path_uses_host_lookup_and_explicit_package_control(
+    shared_connection_case, request
+):
+    case = shared_connection_case
+    case.release.touch()
+    assert (await case.pending).ok
+    explicit = request.node.callspec.params["shared_connection_case"] == "path-explicit"
+    assert (case.calls.parent / "package-executable").exists() is explicit
+    observed = json.loads((case.calls.parent / "launch.json").read_text())
+    assert (
+        observed["path"]
+        == case.snapshots["a"].inspection.materialized_identity + "/bin"
+    )
+    assert observed["custom"] == "preserved"
+    assert (await case.invoke("b")).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shared_connection_case",
+    ["path-relative", "path-dot", "path-empty"],
+    indirect=True,
+)
+async def test_installed_mcp_relative_host_path_is_anchored(
+    shared_connection_case, monkeypatch
+):
+    from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+    case = shared_connection_case
+    case.release.touch()
+    assert (await case.pending).ok
+    saved = case.local.store.get_profile(case.profile_id)
+    assert saved.command == str(case.path_case.executable)
+    assert (case.calls.parent / "host-executable").read_text() == saved.command
+    assert not (case.calls.parent / "package-executable").exists()
+    observed = json.loads((case.calls.parent / "launch.json").read_text())
+    assert observed["path"] == case.inspection.materialized_identity + "/bin"
+    assert observed["custom"] == "preserved"
+    assert (await case.invoke("b")).ok
+    name = case.providers["b"].list_catalog()[0].name
+    before = case.calls.read_text()
+    for change in ("missing", "empty", "cwd"):
+        with monkeypatch.context() as context:
+            if change == "missing":
+                context.delenv("PATH")
+            elif change == "empty":
+                context.setenv("PATH", "")
+            else:
+                context.chdir(case.path_case.other_cwd)
+            with pytest.raises(CredentialError):
+                case.local.capture_connection_mapping(
+                    installation_id=case.installation,
+                    mapping_id="connection:mcp:shared",
+                    inspection=case.inspection,
+                    component_id="mcp:shared",
+                    profile_id=case.profile_id,
+                )
+            result = await asyncio.to_thread(
+                case.registries["b"].invoke_by_name, name, {}
+            )
+            assert not result.ok
+            assert case.calls.read_text() == before
+            assert not (case.calls.parent / "other-host-executable").exists()
+            assert case.local.store.get_profile(case.profile_id) == saved

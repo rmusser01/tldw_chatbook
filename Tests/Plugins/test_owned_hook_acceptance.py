@@ -85,7 +85,7 @@ async def _native_engine(service, installation, run_id, budget=None, *, enabled=
     }
     engine = HookEngine(
         native.definitions,
-        native.current,
+        native.authority,
         budget or HookBudgetOwner(),
         enabled=enabled,
         process_owner=native,
@@ -93,6 +93,7 @@ async def _native_engine(service, installation, run_id, budget=None, *, enabled=
         host_environment=native.host_environment,
         event_projector=native.project_event,
         dependency_required=native.dependency_required,
+        command_launch=native.command_launch,
     )
     native.engine = engine
     engine.native_plugins = native

@@ -2068,3 +2068,50 @@ create/delete/status and mounted retained-data Refresh controls cover the seam.
 The former session capture resides in `UI/Console_Modules/turn_admission.py::capture_authority`; it passes the captured `AuthorityInputs.workspace_id` to the existing skill-context capture. Keep the original session module unchanged. The compaction preflight lives in `Chat/console_context_compaction.py::ConsoleCompactionPreflight` under ADR220 (`backlog/decisions/220-console-human-decision-coordination-ownership.md`). Add one explicitly named live `read_controller__release_compaction_submission` accessor beside the existing hook accessor and wire it at the sole current constructor. Cleanup surrounds the actual compact/finish/wait path without removing retry fences, failure latches, admission/projection rules or same-task placeholder semantics. Standalone hook preparation uses current awaited capture and actual reservation gates before nonawaiting publication; it cannot steal a pending received turn or another operation's state/scope.
 
 Current component summaries distinguish skills, commands and manual rules by exact typed identities. Preserve `execute_skill`'s accepted skill/command/manual-rule routes and `current_definition`'s exact current identity checks; the bridge and R11 selectors use them. Apply the private optional component-kind filter to supporting `read_skill_file`, which is skill-only. No display-name fallback, delimiter-derived authorization or MCP-as-instruction execution is introduced. Adapt original collision witnesses to current typed names, supporting-file wrong-kind refusal, valid manual command/rule use and retired/current-token controls. This integrates the original intent while preserving current host callers; existing ADR162/163/220 apply, with no new owner/schema/runtime or raised cap.
+
+## Final integration repair interfaces (R163 / CLI44, 2026-10-17)
+
+[ADR-162's final integration amendment](../../../backlog/decisions/162-managed-agent-plugins.md)
+records the concrete typed host-variable interfaces and data/custody rules.
+Configured values use distinct schema2 plugin_variable records in the existing
+protected credential owner. Public create/revoke variable-reference services and
+reviewed `variables` name-to-var1-handle configuration provide user-reachable
+typed/masked entry without values in generated authority or handler metadata.
+Unavailable secure storage refuses configuration. Readiness is per consumed
+variable and dependency closure, preserving required constraints and independent
+siblings; revalidate references through the actual owner at use/acceptance.
+
+PLUGIN_DATA stays shared; reserved CHATBOOK_WORKSPACE_DATA uses the exact admitted
+named-workspace root or actual unscoped Console scratch capability. No synthesized
+path, scope fallback or fake persistent scratch root. Retain scratch through
+confirmed terminal settlement. Bare owned command lookup uses the captured host
+PATH before package env; explicit contained package executables stay separate.
+Revocation/drain cancels distinct leases, and stdio cleanup retries retain
+request/root custody until positive direct-child termination evidence.
+
+R164/CLI45 concretizes protected variable revocation as
+`revoke_variable(reference_id, *, installation_id: str)`: the installation check
+and idempotent tombstone occur in one protected transaction (ADR-162).
+
+R166/CLI47 retains selected valid unavailable controlling/explicit-required hooks
+as host-only `unavailable_hooks` requirement metadata, separate from executable
+selection. Internal exact `check_requirement` projection preserves original
+matchers and inherited ceilings; normal execution validation still refuses.
+Matching required/control occurrences fail before owner reservation, nonmatches
+remain nonfailures, and dependency-only siblings stay independent. See the R166
+amendments in ADR-162/163; no new runtime, persisted schema or owner is added.
+
+R168/CLI49 completes actor/resume requirement custody within service.py. A private
+projection gate preserves execution-only validation, while a service-private
+wrapper retains only requirement metadata proven by the original signed
+installation/scope/revision/generation/mapping/root pin and host snapshot. Unknown
+custody refuses; no ready capability, unrelated installation, pin/schema/public
+interface or runtime owner is added. See the R168 amendments in ADR-162/163.
+
+### Current dev integration: required occurrences and capture failures (R18)
+
+Native hook requirement parsing uses authenticated in-memory declarations and the unchanged public parser. Its private non-executable occurrence projection withholds package-relative cwd solely to preserve the declared event, matcher and effects when execution is unavailable. The complete original declaration, including cwd, remains bound to the revision. Execution rejoins and validates the contained existing absolute package cwd, current bytes, mappings and authority before launch. Unavailable occurrence metadata cannot supply a callable snapshot or fallback process owner.
+
+The existing plugin service publishes constraint-verification failures atomically with its catalog. Exact affected installation/workspace scopes refuse; an attempted refresh that cannot authenticate the constraint set refuses as unknown. Verified inactive, unselected, untrusted or revoked scopes retain ordinary empty eligibility, including explicit workspace disable over global inheritance. Successful authoritative refresh clears the failure; failed reads never revive old executable snapshots or imply removal of a requirement. The private failure member stores only scope keys, with no new registry, body, secret or grant.
+
+At the actual Console configuration capture boundary, only `PluginUnavailable("plugin_constraint_verification_failed")` becomes the existing `RecoveryRequired` with that fixed code. The synchronous optional-catalog wrapper propagates this recovery failure; the two existing preparation wrappers already do so. Ordinary optional failures keep their current behavior. Existing admission and final publication recheck the captured installation/workspace so a previously captured requirement cannot survive loss of its proof as an executable grant. Existing ADR162/163 govern this integration; no new storage or permission authority is introduced.

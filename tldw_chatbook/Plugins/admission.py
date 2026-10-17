@@ -46,6 +46,7 @@ class RunPluginSnapshot:
     data_roots_json: str = "[]"
     root_epochs: tuple[tuple[str, int], ...] = ()
     component_ceiling: tuple[str, ...] | None = None
+    unavailable_hooks: tuple[str, ...] = ()
 
 
 class LivePluginFences:
@@ -344,6 +345,14 @@ class PluginAdmission:
                 }
             ):
                 return False
+            from tldw_chatbook.MCP.credential_bindings import CredentialError
+            from .variables import values
+
+            try:
+                values(self.coordinator, installation_id, inspection,
+                       component_id, owned_mappings)
+            except (ValueError, PermissionError, CredentialError):
+                return False
             if component.kind in {"agent", "skill"}:
                 from .host_references import mapped_model, mapped_tools
 
@@ -391,6 +400,25 @@ class PluginAdmission:
             sorted(key for key in selection if ready(key, frozenset()))
         )
         return selection, eligible
+
+    @staticmethod
+    def _unavailable_requirements(selection, eligible, inspection, installation_id):
+        from .hooks import _parse_hook_declaration
+
+        result = []
+        for key in sorted(set(selection) - set(eligible)):
+            component = inspection.inventory[key]
+            if component.kind != "hook" or component.support not in {"supported", "adapted"}:
+                continue
+            try:
+                handler = _parse_hook_declaration(inspection, installation_id, key)
+            except (ValueError, PermissionError) as error:
+                raise PluginUnavailable("plugin_constraint_verification_failed") from error
+            if (handler.required
+                or handler.event == "PreToolUse" and handler.effects & {"deny", "updated_input"}
+                or handler.event == "SubagentStart" and handler.effects & {"deny", "child_limits"}):
+                result.append(key)
+        return tuple(result)
 
     def _scope_generations(self, authority, installation_id, workspace_id, override):
         scopes = {("installation", "")}
@@ -502,6 +530,9 @@ class PluginAdmission:
             selection, eligible = self._eligible_components(
                 authority, installation_id, revision, inspection, alias, workspace_id
             )
+            unavailable_hooks = self._unavailable_requirements(
+                selection, eligible, inspection, installation_id
+            )
             if component_ceiling is not None:
                 if (
                     not isinstance(component_ceiling, (tuple, list, frozenset))
@@ -524,7 +555,7 @@ class PluginAdmission:
                 if not requested <= set(eligible):
                     raise PluginUnavailable("plugin_component_unavailable")
                 eligible = tuple(sorted(requested))
-            if not eligible:
+            if not eligible and not unavailable_hooks:
                 raise PluginUnavailable("plugin_components_unavailable")
             generations = self._scope_generations(
                 authority, installation_id, workspace_id, override
@@ -535,7 +566,7 @@ class PluginAdmission:
                     for row in authority["mappings"]
                     if row["installation_id"] == installation_id
                     and row["revision_digest"] == revision
-                    and row["component_id"] in eligible
+                    and row["component_id"] in (*eligible, *unavailable_hooks)
                 ]
             )
             from .data_cleanup import applicable_roots
@@ -564,6 +595,7 @@ class PluginAdmission:
                 canonical_json(roots),
                 root_epochs,
                 eligible if component_ceiling is not None else None,
+                unavailable_hooks,
             )
         except PluginUnavailable:
             raise
@@ -575,6 +607,16 @@ class PluginAdmission:
         self.fences.check_snapshot(snapshot)
         if component_id not in snapshot.selection:
             raise PluginUnavailable("plugin_component_not_admitted")
+        self._check_current(snapshot)
+
+    def check_requirement(self, snapshot: RunPluginSnapshot, component_id: str) -> None:
+        """Validate retention of a requirement; never authorize its execution."""
+        self.fences.check_snapshot(snapshot)
+        if component_id not in snapshot.unavailable_hooks:
+            raise PluginUnavailable("plugin_requirement_not_retained")
+        self._check_current(snapshot)
+
+    def _check_current(self, snapshot: RunPluginSnapshot) -> None:
         current = self.capture(
             snapshot.installation_id,
             snapshot.workspace_id,
@@ -589,6 +631,7 @@ class PluginAdmission:
             current.dependencies,
             current.alias,
             current.data_roots_json,
+            current.unavailable_hooks,
         ) != (
             snapshot.revision_digest,
             snapshot.generations,
@@ -596,6 +639,7 @@ class PluginAdmission:
             snapshot.dependencies,
             snapshot.alias,
             snapshot.data_roots_json,
+            snapshot.unavailable_hooks,
         ) or not set(snapshot.selection) <= set(current.selection):
             # An archived ceiling may deliberately narrow the current selection.
             # Exact generations still detect every intervening authority edit.

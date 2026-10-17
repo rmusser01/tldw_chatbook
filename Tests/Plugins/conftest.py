@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins.platform_support import require_managed_runtime
+
 
 @pytest.fixture
 def native_package(tmp_path):
@@ -31,6 +33,7 @@ class PluginStack:
     """Exercise the real stack on its one persistent storage-worker event loop."""
 
     def __init__(self, root):
+        require_managed_runtime()
         import asyncio
         import threading
         from concurrent.futures import Future
@@ -109,6 +112,9 @@ def plugin_stack(tmp_path):
 @pytest.fixture
 async def native_console(tmp_path, native_package):
     """Actual services and persisted Console; only provider transport is a double."""
+    from Tests.Plugins.platform_support import require_managed_runtime
+
+    require_managed_runtime()
     from types import SimpleNamespace
 
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway

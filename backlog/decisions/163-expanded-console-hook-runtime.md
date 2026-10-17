@@ -655,3 +655,111 @@ Explicit managed-plugin tests use current asynchronous configuration capture and
 The existing private MCP composer may retain its actual empty owned-provider group only on the explicit discovery path. That flag does not bypass its kill switch, source/currentness, permissions or captured maximums; normal callers still receive no empty catalog. Discovery uses the exact selected owned component and existing ConnectionOwnership, grants no tools, and detaches only leases acquired by the test's original owner. Review makes no connection/model request. The actual lazy app mixin owns management operations. Existing R4/R12 closed reference forms and complete-set configuration remain authoritative; do not import a later prefill helper into this increment. Current route-owned Plugins CSS and boot-loaded standalone modal rules stay under R15, with unchanged caps.
 
 This directly integrates existing ADR162/163 contracts through current private seams. Original validation counts are historical; TASK32695 AC15 qualifies the latest dev source with real Console capture/reservation, empty discovery and normal-run controls, cancellation/cleanup, complete configuration and both modal visit orders.
+
+## Final integration operation and launch contract (R163 / CLI44, 2026-10-17)
+
+This implements the accepted canonical-operation, declared-value and root
+contracts using existing hook/permission/process owners. ADR-162's R163 amendment
+owns typed protected reference/configuration and scratch lifetime details.
+
+`ToolDefinitionSnapshot` adds optional trailing `operation: str | None = None`;
+`from_schema` accepts keyword `operation=None`. The exact resolved provider may
+implement optional `hook_operation(tool_id)`; no required third-party protocol
+method is added. Initial qualified host operations are `file.read`, `file.write`,
+`file.edit`, `directory.list`, `file.search` and `mcp.call`. Local descriptors and
+actual built-in registrations own file classifications. Exact composed MCP
+entries own `mcp.call`, including managed entries and accepted-name wrappers.
+Unclassified providers remain unavailable; never infer file/shell behavior from
+remote annotations or display names. Canonical operation participates in exact
+snapshot/current-definition revalidation and PreToolUse/PostToolUse/
+PostToolUseFailure events. Cursor beforeMCPExecution matches qualified `mcp.call`;
+normal permission review still applies, and non-MCP tools remain nonmatches.
+
+Native env values accept strings or exactly `{"variable":"DECLARED_NAME"}`,
+with the runtime's declared-name, reserved-name and NUL validation. Reserve
+`CHATBOOK_WORKSPACE_DATA` alongside PLUGIN_ROOT/PLUGIN_DATA in native declarations,
+env, scanning and host-environment publication; scrub ambient host-root values.
+Unknown vendor fields do not gain interpolation by analogy.
+
+Keep reviewed handlers unresolved for host user values. An optional
+`command_launch(handler,event,host_environment)` callback in the existing
+HookEngine/CommandExecutor returns ephemeral repr-private
+`CommandLaunchValues(argv,cwd,environment)`. This is a launch value, not a
+persisted record or new owner. Capture the host baseline before package overlays.
+Resolve consumed defaults/references once through existing offloop/worker
+execution after reservation, before final currentness and launch checks;
+preserve cancellation, deadlines and custody. Integer rendering is decimal and
+boolean rendering is `true|false`; no recursive substitution. Keep raw resolved
+values out of Handler/CommandJob/event/result metadata. Explicitly authored
+secret argv remains ordinary privileged command execution; the host does not
+promise to conceal argv from process inspection. Native cwd containment and
+reviewed vendor scratch/selected-binding adaptation remain enforced.
+
+All engine construction/copy/fork/child/compaction/Stop owners that carry native
+handlers retain this callback and exact capability. Unowned/user/legacy handlers
+keep their existing default path. One native-root projection uses immutable
+PLUGIN_ROOT, exact shared PLUGIN_DATA, and exact scoped or live-scratch
+CHATBOOK_WORKSPACE_DATA. The original process owner retains scratch leases and
+persistent root custody until successful confirmed terminal settlement, with
+currentness before use and acceptance.
+
+Platform qualification gates actual success requirements at fixtures/individual
+cases/parameters. Preserve applicable non-command/pure cases and native
+unsupported/refusal controls, split positive tails from refusal tests, and keep
+marker/collection audits distinct from native platform evidence. R47 Windows v2
+command refusal and non-Darwin managed-owner refusal remain in force. No blanket
+platform skip, permission broadening, cap increase or new runtime is authorized.
+
+### Unavailable hook requirements remain occurrence-scoped (R166 / CLI47)
+
+`RunPluginSnapshot` adds host-only defaulted `unavailable_hooks: tuple[str,...]`.
+These selected valid unready explicit-required/controlling hook IDs are retained
+requirements, outside executable selection. The authenticated inspection retains
+their original event, matcher, effects and vendor protocol; no user value enters
+the metadata. A requirement-only snapshot can construct the existing engine.
+
+Internal `PluginAdmission.check_requirement` recaptures exact requirement
+membership/currentness, including unavailable_hooks in snapshot identity.
+Ordinary execution check still rejects these IDs. Internal metadata projection
+may carry host-derived `plugin_constraint_only=True` and
+`availability="needs_configuration"`; caller flags never grant authority, and
+ordinary render/execute/schema/catalog validation does not accept these as
+callable components. Preserve original requirements under retained/child ceilings;
+refuse unsafe loss rather than erase a constraint or widen execution authority.
+
+NativeHooks registers original valid declarations without resolving values.
+The existing matcher skips nonmatches and classifies matching required/control
+failure normally; currentness is false for unavailable IDs and process-owner
+creation hard-refuses instead of falling back to the default owner. No process
+or root custody is minted. Dependency-only readiness remains narrow. This avoids
+both silent constraint loss and blanket capture refusal for unrelated reads.
+There is no new persisted schema, runtime, invalid-admission variant or owner.
+
+### Requirement custody through actors and resumes (R168 / CLI49)
+
+The existing service's private native-projection gate validates requirement-only
+rows at actor bind/check time without treating them as executable components.
+Binding skips only the existing actor-exists precondition; producer identity,
+retirement, fences and exact requirement recapture still apply. An existing
+Console actor/whole-run lease does not grant an unavailable hook process/root
+custody. Ordinary execution/render/schema gates remain execution-only.
+
+A service-private resume wrapper preserves unavailable requirement metadata after
+the existing continuation filter, using only the verified original signed
+installation/revision/workspace/generation/mapping/root identities and pinned
+executable subset. Input host snapshot custody must verify through the existing
+pin/constraint contracts, including cross-session normalization. A fresh producer
+can qualify under that same original identity; an old in-memory actor alone is
+not authority. Restore no ready component or unrelated current installation.
+If necessary original custody cannot be verified, refuse that scoped admission.
+Zero and ordinary ready-only continuations keep existing behavior. No pin field,
+schema/component meaning, continuation module, public signature or owner changes.
+Actual child/checkpoint/archive controls preserve original matcher semantics.
+
+### Current dev integration: required occurrences and capture failures (R18)
+
+Native hook requirement parsing uses authenticated in-memory declarations and the unchanged public parser. Its private non-executable occurrence projection withholds package-relative cwd solely to preserve the declared event, matcher and effects when execution is unavailable. The complete original declaration, including cwd, remains bound to the revision. Execution rejoins and validates the contained existing absolute package cwd, current bytes, mappings and authority before launch. Unavailable occurrence metadata cannot supply a callable snapshot or fallback process owner.
+
+The existing plugin service publishes constraint-verification failures atomically with its catalog. Exact affected installation/workspace scopes refuse; an attempted refresh that cannot authenticate the constraint set refuses as unknown. Verified inactive, unselected, untrusted or revoked scopes retain ordinary empty eligibility, including explicit workspace disable over global inheritance. Successful authoritative refresh clears the failure; failed reads never revive old executable snapshots or imply removal of a requirement. The private failure member stores only scope keys, with no new registry, body, secret or grant.
+
+At the actual Console configuration capture boundary, only `PluginUnavailable("plugin_constraint_verification_failed")` becomes the existing `RecoveryRequired` with that fixed code. The synchronous optional-catalog wrapper propagates this recovery failure; the two existing preparation wrappers already do so. Ordinary optional failures keep their current behavior. Existing admission and final publication recheck the captured installation/workspace so a previously captured requirement cannot survive loss of its proof as an executable grant. Existing ADR162/163 govern this integration; no new storage or permission authority is introduced.

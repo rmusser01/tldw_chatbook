@@ -1536,6 +1536,8 @@ async def test_owned_hook_registration_failure_settles_unlaunched_reservation(
         HookBudgetOwner(),
         process_owner_for=owner.process_owner,
         event_projector=owner.project_event,
+        host_environment=owner.host_environment,
+        command_launch=owner.command_launch,
     )
     usage = rig.service._coordinator.root_usage
 
@@ -1625,6 +1627,8 @@ async def test_combined_hooks_keep_distinct_installation_revision_process_owners
         HookBudgetOwner(),
         process_owner_for=owner.process_owner,
         event_projector=owner.project_event,
+        host_environment=owner.host_environment,
+        command_launch=owner.command_launch,
     )
     entered, release_publish = threading.Event(), threading.Event()
     publish = _NativeHookProcessOwner.publish_process
@@ -1878,3 +1882,358 @@ def test_direct_canonical_tool_constraint_uses_actual_registry_and_parent():
                            (("Calculator display title",), frozenset({"calculator"}))):
         with pytest.raises(PermissionError, match="tool_unavailable"):
             resolve_tool_ceiling(wanted, registry, parent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_native_hook_path_uses_host_lookup_and_explicit_package_control(
+    native_console, native_package, tmp_path, monkeypatch, explicit
+):
+    import json
+    import os
+    import sys
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Plugins.hooks import NativeHooks
+
+    package = native_package(extension={"version": 1, "hooks": "hooks.json"})
+    host = tmp_path / "host-bin"
+    host.mkdir()
+    (package / "bin").mkdir()
+    marker = tmp_path / "which-executable"
+    for directory, label in ((host, "host"), (package / "bin", "package")):
+        program = directory / "owned-probe"
+        program.write_text(
+            f"#!{sys.executable}\nimport os,json\nfrom pathlib import Path\nPath({str(marker)!r}).write_text(json.dumps([{label!r},os.environ['PATH'],os.environ['CUSTOM']]))\nprint('{{\"version\":2,\"decision\":\"pass\"}}')\n"
+        )
+        program.chmod(0o700)
+    monkeypatch.setenv("PATH", str(host) + os.pathsep + os.environ.get("PATH", ""))
+    (package / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": "path",
+                        "event": "PreToolUse",
+                        "type": "command",
+                        "effects": ["deny"],
+                        "argv": ["./bin/owned-probe" if explicit else "owned-probe"],
+                        "env": {"PATH": "${PLUGIN_ROOT}/bin", "CUSTOM": "preserved"},
+                    }
+                ],
+            }
+        )
+    )
+    installed = await install_components(
+        native_console.service, package, ("hook:path",)
+    )
+    snapshot = await native_console.service.capture_mcp_snapshot(
+        installed.installation_id, "workspace-a", "path-run"
+    )
+    native = NativeHooks(native_console.service, (snapshot,))
+    engine = HookEngine(
+        native.definitions,
+        native.authority,
+        HookBudgetOwner(),
+        process_owner_for=native.process_owner,
+        event_projector=native.project_event,
+        host_environment=native.host_environment,
+        command_launch=native.command_launch,
+    )
+    try:
+        assert (await engine.fire_async(event())).succeeded
+        assert json.loads(marker.read_text()) == [
+            "package" if explicit else "host",
+            snapshot.inspection.materialized_identity + "/bin",
+            "preserved",
+        ]
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path_kind", ["relative", "dot", "empty-segment"])
+async def test_native_hook_relative_host_path_is_anchored(
+    native_console, native_package, tmp_path, monkeypatch, path_kind
+):
+    import json
+    import os
+    import sys
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Plugins.hooks import NativeHooks
+
+    package = native_package(extension={"version": 1, "hooks": "hooks.json"})
+    host_cwd = tmp_path / "host-cwd"
+    relative = (
+        "host-bin/owned-path-probe" if path_kind == "relative" else "owned-path-probe"
+    )
+    for program, label in (
+        (host_cwd / relative, "host"),
+        (package / relative, "package"),
+        (package / "bin/owned-path-probe", "package"),
+    ):
+        program.parent.mkdir(parents=True, exist_ok=True)
+        program.write_text(
+            f"#!{sys.executable}\nimport os,json\nfrom pathlib import Path\n"
+            f"with Path({str(tmp_path / (label + '-executions'))!r}).open('a') as marker:\n"
+            " marker.write(json.dumps([__file__,os.environ['PATH'],os.environ['CUSTOM']])+'\\n')\n"
+            'print(\'{"version":2,"decision":"pass"}\')\n'
+        )
+        program.chmod(0o700)
+    monkeypatch.chdir(host_cwd)
+    monkeypatch.setenv(
+        "PATH",
+        {
+            "relative": "host-bin",
+            "dot": ".",
+            "empty-segment": os.pathsep + str(tmp_path / "missing-bin"),
+        }[path_kind],
+    )
+    (package / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": "path",
+                        "event": "PreToolUse",
+                        "type": "command",
+                        "effects": ["deny"],
+                        "argv": ["owned-path-probe"],
+                        "env": {"PATH": "${PLUGIN_ROOT}/bin", "CUSTOM": "preserved"},
+                    }
+                ],
+            }
+        )
+    )
+    installed = await install_components(
+        native_console.service, package, ("hook:path",)
+    )
+    snapshot = await native_console.service.capture_mcp_snapshot(
+        installed.installation_id, "workspace-a", "relative-path-run"
+    )
+    native = NativeHooks(native_console.service, (snapshot,))
+    engine = HookEngine(
+        native.definitions,
+        native.authority,
+        HookBudgetOwner(),
+        process_owner_for=native.process_owner,
+        event_projector=native.project_event,
+        host_environment=native.host_environment,
+        command_launch=native.command_launch,
+    )
+    try:
+        assert (await engine.fire_async(event())).succeeded
+        marker = tmp_path / "host-executions"
+        assert marker.exists() and not (tmp_path / "package-executions").exists()
+        before = marker.read_text()
+        assert json.loads(before) == [
+            str(host_cwd / relative),
+            snapshot.inspection.materialized_identity + "/bin",
+            "preserved",
+        ]
+        for missing in (True, False):
+            with monkeypatch.context() as context:
+                if missing:
+                    context.delenv("PATH")
+                else:
+                    context.setenv("PATH", "")
+                result = await engine.fire_async(event())
+                assert not result.allowed and not result.succeeded
+                assert marker.read_text() == before
+                assert not (tmp_path / "package-executions").exists()
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_unscoped_hook_retains_real_scratch_lease_until_child_terminal(
+    native_console, native_package, tmp_path
+):
+    import asyncio
+    import json
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+    from tldw_chatbook.Plugins.hooks import NativeHooks
+
+    package = native_package(extension={"version": 1, "hooks": "hooks.json"})
+    observed, release = tmp_path / "scratch-observed", tmp_path / "scratch-release"
+    code = f'import os,time;from pathlib import Path;Path({str(observed)!r}).write_text(os.environ[\'CHATBOOK_WORKSPACE_DATA\']);exec("while not Path({str(release)!r}).exists(): time.sleep(.01)");print(\'{{"version":2,"decision":"pass"}}\')'
+    (package / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": "scratch",
+                        "event": "PreToolUse",
+                        "type": "command",
+                        "effects": ["deny"],
+                        "argv": child_argv(code),
+                        "timeout_seconds": 20,
+                    }
+                ],
+            }
+        )
+    )
+    service = native_console.service
+    installed = await install_components(service, package, ("hook:scratch",))
+    activation = await service.review_activation(
+        installed.installation_id, workspace_id=None, intent="enabled"
+    )
+    assert (await service.commit(activation, activation.operation_id)).committed
+    snapshot = await service.capture_mcp_snapshot(
+        installed.installation_id, None, "scratch-run"
+    )
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    scratch = manager.snapshot("actual-session")
+    native = NativeHooks(
+        service, (snapshot,), scratch_manager=manager, scratch_snapshot=scratch
+    )
+    engine = HookEngine(
+        native.definitions,
+        native.authority,
+        HookBudgetOwner(),
+        process_owner_for=native.process_owner,
+        event_projector=native.project_event,
+        host_environment=native.host_environment,
+        command_launch=native.command_launch,
+    )
+    task = asyncio.create_task(engine.fire_async(event()))
+    try:
+        for _ in range(500):
+            if observed.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert observed.read_text() == str(scratch.root)
+        job = next(iter(engine.processes.records.values()))
+        assert job.capture.transport.get_returncode() is None
+        assert not json.loads(snapshot.data_roots_json)
+        manager.close("actual-session")
+        assert not manager.is_live(scratch) and scratch.root.exists()
+        assert not native.current(native.definitions[0], event(), "accept")
+        assert not (await engine.fire_async(event(runtime="other"))).allowed
+        assert len(engine.processes.records) == 1 and not task.done()
+        release.touch()
+        outcome = await asyncio.wait_for(task, 10)
+        assert not outcome.allowed and not outcome.accepted
+        assert job.capture.transport.get_returncode() is not None
+        assert await asyncio.to_thread(manager.wait_for_cleanup, 5)
+        assert not scratch.root.exists() and not service.live_runs()
+    finally:
+        release.touch()
+        await engine.close()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.to_thread(manager.dispose)
+
+
+@pytest.mark.asyncio
+async def test_native_hook_shared_and_workspace_roots_are_exact_and_distinct(
+    native_console, native_package, tmp_path, monkeypatch
+):
+    import json
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Plugins.hooks import NativeHooks
+
+    service = native_console.service
+    package = native_package(extension={"version": 1, "hooks": "hooks.json"})
+    marker = tmp_path / "root-projection"
+    code = f"import json,os,sys;from pathlib import Path;assert sys.argv[-2:]==[os.environ['PLUGIN_DATA'],os.environ['CHATBOOK_WORKSPACE_DATA']];Path({str(marker)!r}).write_text(json.dumps([os.environ['PLUGIN_ROOT'],*sys.argv[-2:]]));print('{{\"version\":2,\"decision\":\"pass\"}}')"
+    (package / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": "roots",
+                        "event": "PreToolUse",
+                        "type": "command",
+                        "effects": ["deny"],
+                        "argv": [
+                            *child_argv(code),
+                            "${PLUGIN_DATA}",
+                            "${CHATBOOK_WORKSPACE_DATA}",
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    installed = await install_components(service, package, ("hook:roots",))
+    enabled = await service.review_activation(
+        installed.installation_id, workspace_id="workspace-b", intent="enabled"
+    )
+    assert (await service.commit(enabled, enabled.operation_id)).committed
+    roots = {}
+    for scope in (None, "workspace-a", "workspace-b"):
+        review = await service.review_data_creation(
+            installed.installation_id, workspace_id=scope
+        )
+        roots[scope] = await service.create_data(review, review.operation_id)
+    monkeypatch.setenv("CHATBOOK_WORKSPACE_DATA", str(tmp_path / "ambient-fake"))
+    for scope in ("workspace-a", "workspace-b"):
+        snapshot = await service.capture_mcp_snapshot(
+            installed.installation_id, scope, "roots-" + scope
+        )
+        assert {row["root_id"] for row in json.loads(snapshot.data_roots_json)} == {
+            roots[None].root_id,
+            roots[scope].root_id,
+        }
+        native = NativeHooks(service, (snapshot,))
+        engine = HookEngine(
+            native.definitions,
+            native.authority,
+            HookBudgetOwner(),
+            process_owner_for=native.process_owner,
+            event_projector=native.project_event,
+            host_environment=native.host_environment,
+            command_launch=native.command_launch,
+        )
+        try:
+            assert (await engine.fire_async(event())).succeeded
+            assert json.loads(marker.read_text()) == [
+                snapshot.inspection.materialized_identity,
+                str(roots[None].path),
+                str(roots[scope].path),
+            ]
+        finally:
+            await engine.close()
+    assert roots["workspace-a"].path != roots["workspace-b"].path
+    # Exact workspace grants cannot be substituted by the shared root.
+    deletion = await service.review_data_deletion((roots["workspace-b"],))
+    assert (
+        await service.delete_data((roots["workspace-b"],), deletion.operation_id)
+    ).committed
+    snapshot = await service.capture_mcp_snapshot(
+        installed.installation_id, "workspace-b", "missing-root"
+    )
+    native = NativeHooks(service, (snapshot,))
+    engine = HookEngine(
+        native.definitions,
+        native.authority,
+        HookBudgetOwner(),
+        process_owner_for=native.process_owner,
+        event_projector=native.project_event,
+        host_environment=native.host_environment,
+        command_launch=native.command_launch,
+    )
+    marker.unlink()
+    try:
+        assert not (await engine.fire_async(event())).allowed
+        assert not marker.exists() and not engine.processes.records
+    finally:
+        await engine.close()

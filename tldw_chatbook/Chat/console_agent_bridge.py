@@ -4312,6 +4312,12 @@ class _CollisionFilteredMCPProvider:
             if entry.name in self._allowed_names
         ]
 
+    def hook_operation(self, tool_id: str) -> str | None:
+        if not any(entry.id == tool_id for entry in self.list_catalog()):
+            return None
+        classify = getattr(self._provider, "hook_operation", None)
+        return classify(tool_id) if callable(classify) else None
+
     def load_schema(self, tool_id: str) -> ToolSchema:
         return self._provider.load_schema(tool_id)
 

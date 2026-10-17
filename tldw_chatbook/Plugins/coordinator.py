@@ -509,6 +509,42 @@ class PluginCoordinator:
         self._reviews[review.token] = review
         return review
 
+    def create_variable_reference(self, installation_id: str, name: str, value):
+        """Create protected value identity from the current retained declaration."""
+        from .recovery import retained_inspections
+        from .variables import arguments, credentials
+
+        self._require_worker()
+        state = self.published_snapshot()
+        installed = next(
+            row
+            for row in state["installations"]
+            if row["installation_id"] == installation_id
+        )
+        inspection = retained_inspections(state, coordinator=self)[
+            (installation_id, installed["revision_digest"])
+        ]
+        declaration = json.loads(inspection.variables_json).get(name)
+        if declaration is None:
+            raise ValueError("plugin_variable_undeclared")
+        return credentials(self).create_variable(
+            **arguments(installation_id, name, declaration), value=value
+        )
+
+    def revoke_variable_reference(self, installation_id: str, reference_id: str):
+        """Revoke an owned reference, including a value not yet configured."""
+        from .variables import credentials
+
+        self._require_worker()
+        if not any(
+            row["installation_id"] == installation_id
+            for row in self.published_snapshot()["installations"]
+        ):
+            raise ValueError("installation_unavailable")
+        return credentials(self).revoke_variable(
+            reference_id, installation_id=installation_id
+        )
+
     def review_configuration(
         self,
         installation_id: str,
@@ -518,6 +554,7 @@ class PluginCoordinator:
         tool_references: dict[str, dict[str, str]] | None = None,
         models: dict[str, str] | None = None,
         component_tools: dict[str, dict[str, str]] | None = None,
+        variables: dict[str, str] | None = None,
     ) -> PluginReview:
         """Review complete current owner references; never accept caller-made grants."""
         from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -526,6 +563,11 @@ class PluginCoordinator:
 
         self._require_worker()
         owner = self.mcp_mapping_owner
+        if variables is not None and (
+            type(variables) is not dict
+            or any(type(name) is not str for name in variables)
+        ):
+            raise ValueError("plugin_variable_mapping_invalid")
         if connections and not isinstance(owner, LocalMCPControlService):
             raise PermissionError("plugin_mapping_owner_unavailable")
         connections = connections or {}
@@ -546,8 +588,8 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not (connections or tool_references or models or component_tools)
-            or len(connections) + len(tool_references or {}) + len(models or {}) + len(component_tools or {}) > 512
+            not (connections or tool_references or models or component_tools or variables)
+            or len(connections) + len(tool_references or {}) + len(models or {}) + len(component_tools or {}) + len(variables or {}) > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -603,12 +645,31 @@ class PluginCoordinator:
                 target = provider + "/" + model
             mappings.append(capture_model_mapping(self.model_mapping_owner,
                 installation_id, inspection, component_id, target))
+        from .variables import capture_mapping, consumed
+
+        for name, target in sorted((variables or {}).items()):
+            consumers = [
+                key for key in selection if name in consumed(inspection.inventory[key])
+            ]
+            if not consumers:
+                raise ValueError("plugin_variable_unused")
+            for key in sorted(consumers):
+                mappings.append(
+                    capture_mapping(
+                        self, installation_id, inspection, key, name, target
+                    )
+                )
         return self._review_existing(
             installation_id, kind="configure", mappings_json=canonical_json(mappings)
         )
 
     def validate_mapping(self, mapping, inspection, mappings) -> None:
         """Revalidate closed protected forms through their actual current owner."""
+        if mapping["mapping_id"].startswith("variable:"):
+            from .variables import validate_mapping
+
+            validate_mapping(self, mapping, inspection)
+            return
         from .host_references import (_reference_form, declared_tools, mapping_id,
                                       tool_constraint_id, validate_reference,
                                       validate_canonical_reference)

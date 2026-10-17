@@ -162,6 +162,7 @@ class HookEngine:
         process_owner_for: Callable | None = None,
         environment: Callable | None = None,
         host_environment: Callable | None = None,
+        command_launch: Callable | None = None,
         invalid_admissions: tuple = (),
         dependency_required: Callable | None = None,
         enabled: bool = True,
@@ -189,6 +190,7 @@ class HookEngine:
         self._host_environment = host_environment
         self._process_owner_for = process_owner_for
         self._event_projector = event_projector
+        self._command_launch = command_launch
         self._dependency_required = dependency_required or (lambda *_: False)
         self._lock = RLock()
         self._scope_issuer = object()
@@ -220,6 +222,7 @@ class HookEngine:
         # Ambient host-owned roots cannot leak into an unrelated hook launch.
         result.pop("PLUGIN_ROOT", None)
         result.pop("PLUGIN_DATA", None)
+        result.pop("CHATBOOK_WORKSPACE_DATA", None)
         references = self._environment(handler, event) if self._environment else {}
         for key, value in (handler.env or {}).items():
             resolved = (
@@ -230,7 +233,11 @@ class HookEngine:
             result[key] = resolved
         if self._host_environment:
             reserved = self._host_environment(handler, event)
-            if set(reserved) - {"PLUGIN_ROOT", "PLUGIN_DATA"}:
+            if set(reserved) - {
+                "PLUGIN_ROOT",
+                "PLUGIN_DATA",
+                "CHATBOOK_WORKSPACE_DATA",
+            }:
                 raise ValueError("invalid host environment")
             result.update(reserved)
         return result
@@ -718,6 +725,7 @@ class HookEngine:
                 self.authority_check,
                 self._env,
                 deadline,
+                command_launch=self._command_launch,
                 process_owner_factory=(
                     lambda cancel: self._process_owner_for(handler, event, cancel)
                 ) if self._process_owner_for is not None else None,
