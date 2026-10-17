@@ -98,7 +98,6 @@ from ..Console_Modules.frame import (
 from ..Console_Modules.status_row import (
     STATUS_CHIPS_POSITION_ABOVE,
     apply_status_chips_position,
-
     resolve_status_chips_position,
 )
 
@@ -299,7 +298,12 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
-from ...Chat.console_token_rate import TokenRateTracker, format_rate_chip_live_fragment, format_rate_chip_settled
+from ...Chat.console_token_rate import (
+    TokenRateReading,
+    TokenRateTracker,
+    format_rate_chip_settled,
+    merge_rate_into_run_copy,
+)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -17407,31 +17411,32 @@ class ChatScreen(BaseAppScreen):
         # into unreadability ("· 30..."). The reading is the previous tick's
         # (the transcript sync stashes it and runs later in the same tick).
         if active_run_copy:
+            # TASK-35160 review round 2: the merge decision is a pure
+            # function (unit-pinned). Agent runs stay STREAMING through
+            # tool rounds and approval parking, so the status alone does
+            # not prove tokens are flowing -- the approval gate and the
+            # tracker's freshness flag are what keep "Waiting for
+            # approval..." visible.
             reading = self._console_rate_reading
-            # TASK-35160 review: merge ONLY while the run is genuinely in
-            # its streaming phase. A live reading survives tool rounds and
-            # approval waits (the EMA decays toward zero but never reaches
-            # it), and overwriting "Waiting for approval..." with
-            # "streaming · 0.0 tok/s" would mask the strip's most important
-            # ambient signal. The status gate is the primary fix; the
-            # sub-floor fragment suppression in format_rate_chip_live_
-            # fragment is the belt to its braces.
-            run_state = (
-                self._console_chat_controller.run_state
-                if self._console_chat_controller is not None
-                else None
+            controller = self._console_chat_controller
+            store = self._console_chat_store
+            session_id = (
+                store.active_session_id if store is not None else None
             )
-            if (
-                run_state is not None
-                and run_state.status == ConsoleRunStatus.STREAMING
-            ):
-                rate_fragment = (
-                    format_rate_chip_live_fragment(reading)
-                    if reading is not None
-                    else ""
-                )
-                if rate_fragment:
-                    active_run_copy = f"streaming · {rate_fragment}"
+            active_run_copy = merge_rate_into_run_copy(
+                active_run_copy,
+                reading,
+                run_streaming=(
+                    controller is not None
+                    and controller.run_state is not None
+                    and controller.run_state.status
+                    == ConsoleRunStatus.STREAMING
+                ),
+                approval_pending=(
+                    controller is not None
+                    and controller.has_pending_approval_round(session_id or "")
+                ),
+            )
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
     def _show_console_rate(self) -> bool:

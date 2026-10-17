@@ -6221,15 +6221,15 @@ PersonalContextReviewModal .personal-context-review-row Input.personal-context-r
 
 
 #console-status-chips {
-    width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
     layout: horizontal;
     border: none;
-    padding: 0 1;
-    margin: 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
 }
 
 

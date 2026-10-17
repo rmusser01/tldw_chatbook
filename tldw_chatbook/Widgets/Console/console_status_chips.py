@@ -546,6 +546,8 @@ class ConsoleStatusChips(Horizontal):
         # TASK-35100: settled-only badge, hidden at mount (nothing has
         # settled yet); the live rate rides the run segment instead.
         self._rate_chip_state: tuple[bool, str, str] = (False, "", "")
+        # ◀ ▶ mount-layout race budget (see _apply_arrow_state).
+        self._arrow_retries = self.ARROW_RETRY_LIMIT
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
         self.set_styles(height=None)
         self.add_class("h-1")
@@ -686,6 +688,9 @@ class ConsoleStatusChips(Horizontal):
         )
         self._update_arrow_state()
 
+    #: Re-apply passes allowed while the mount-layout race settles.
+    ARROW_RETRY_LIMIT = 5
+
     def _update_arrow_state(self) -> None:
         """Request an arrow-state refresh on the next refresh cycle.
 
@@ -712,13 +717,16 @@ class ConsoleStatusChips(Horizontal):
         # Mount ordering race: the line can report scroll range 0 before its
         # first real layout even when it overflows. The line's own width is
         # the ground truth -- if it exceeds the viewport, one more deferred
-        # pass will see the settled range (self-limiting: once laid out the
-        # condition goes false and the loop stops).
+        # pass will see the settled range. Bounded: each pass consumes one
+        # retry, replenished only by a real segment/resize update.
         line = self._status_text()
         if (
             scroller.max_scroll_x <= 0
             and line.region.width > scroller.content_region.width
         ):
+            if self._arrow_retries <= 0:
+                return
+            self._arrow_retries -= 1
             self.call_after_refresh(self._apply_arrow_state)
             return
         position = max(scroller.scroll_x, scroller.scroll_target_x)
@@ -727,6 +735,7 @@ class ConsoleStatusChips(Horizontal):
         right.display = not fits
         left.disabled = fits or position <= 0
         right.disabled = fits or position >= scroller.max_scroll_x
+        self._arrow_retries = self.ARROW_RETRY_LIMIT
 
     @on(Button.Pressed, "#console-status-scroll-left")
     def _scroll_line_left(self, event: Button.Pressed) -> None:

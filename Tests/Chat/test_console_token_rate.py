@@ -19,11 +19,12 @@ import math
 import pytest
 
 from tldw_chatbook.Chat.console_token_rate import (
-    LIVE_FRAGMENT_FLOOR,
+    STALE_AFTER_SECONDS,
     TokenRateReading,
     TokenRateTracker,
     format_rate_chip_live_fragment,
     format_rate_chip_settled,
+    merge_rate_into_run_copy,
 )
 
 APPROX = pytest.approx
@@ -290,6 +291,26 @@ class TestClockEdges:
         assert reading.rate == APPROX(25.0)
         assert math.isfinite(reading.rate)
 
+    def test_tracker_marks_reading_stale_after_growth_gap(self) -> None:
+        """Review round 2: growth stops, and STALE_AFTER_SECONDS later the
+        reading flags itself stale (the fragment suppressor)."""
+        tracker = _tracker()
+        for now, tokens in [(0.0, 0), (1.0, 100), (2.0, 200)]:
+            tracker.observe(
+                "m1", status="streaming", content="x" * (tokens * 4), now=now
+            )
+        assert tracker._last_growth_at == 2.0
+        reading = tracker.observe(
+            "m1",
+            status="streaming",
+            content="x" * 800,
+            now=2.0 + STALE_AFTER_SECONDS + 0.1,
+        )
+        assert reading.stale is True
+        # One gap tick decays the EMA partway (100 -> ~23 at half-life 1);
+        # the exact value is the EMA's business -- the flag is the contract.
+        assert reading.rate is not None and 0.0 <= reading.rate < 100.0
+
     def test_token_count_regression_never_reports_negative_rate(self) -> None:
         tracker = _tracker()
         for now, tokens in [(0.0, 0), (1.0, 100)]:
@@ -312,16 +333,23 @@ class TestLiveFragment:
             == "42.3 tok/s"
         )
 
-    def test_sub_floor_fragment_is_suppressed(self) -> None:
-        """Review follow-up: the EMA decays toward zero (never reaching it)
-        during tool rounds and approval waits; a sub-floor fragment would
-        mislabel the paused phase as crawling streaming."""
-        assert format_rate_chip_live_fragment(
-            TokenRateReading(kind="live", rate=LIVE_FRAGMENT_FLOOR / 2)
-        ) == ""
-        assert format_rate_chip_live_fragment(
-            TokenRateReading(kind="live", rate=LIVE_FRAGMENT_FLOOR)
-        ) == f"{LIVE_FRAGMENT_FLOOR:.1f} tok/s"
+    def test_stale_fragment_is_suppressed(self) -> None:
+        """Review round 2: tool rounds and approval waits stop token growth
+        without ending the run; a stale fragment would mislabel the pause
+        as crawling streaming. A genuinely slow endpoint that keeps
+        trickling stays fresh and visible (no rate floor)."""
+        assert (
+            format_rate_chip_live_fragment(
+                TokenRateReading(kind="live", rate=40.0, stale=True)
+            )
+            == ""
+        )
+        assert (
+            format_rate_chip_live_fragment(
+                TokenRateReading(kind="live", rate=0.3, stale=False)
+            )
+            == "0.3 tok/s"
+        )
 
     def test_non_live_readings_have_no_fragment(self) -> None:
         assert format_rate_chip_live_fragment(TokenRateReading(kind="hidden")) == ""
@@ -332,6 +360,59 @@ class TestLiveFragment:
             == ""
         )
         assert format_rate_chip_live_fragment(TokenRateReading(kind="live")) == ""
+
+
+class TestRunCopyMerge:
+    """The pure merge decision (review round 2): the live fragment joins
+    the run copy ONLY while the run streams, no approval is parked, and
+    the reading is fresh."""
+
+    FRESH = TokenRateReading(kind="live", rate=42.0)
+
+    def test_happy_path_merges(self) -> None:
+        assert (
+            merge_rate_into_run_copy(
+                "Streaming response.", self.FRESH,
+                run_streaming=True, approval_pending=False,
+            )
+            == "Streaming response. · 42.0 tok/s"
+        )
+
+    def test_approval_pending_leaves_copy_untouched(self) -> None:
+        assert (
+            merge_rate_into_run_copy(
+                "Waiting for approval on round 2.", self.FRESH,
+                run_streaming=True, approval_pending=True,
+            )
+            == "Waiting for approval on round 2."
+        )
+
+    def test_not_streaming_leaves_copy_untouched(self) -> None:
+        assert (
+            merge_rate_into_run_copy(
+                "Agent running.", self.FRESH,
+                run_streaming=False, approval_pending=False,
+            )
+            == "Agent running."
+        )
+
+    def test_stale_reading_leaves_copy_untouched(self) -> None:
+        assert (
+            merge_rate_into_run_copy(
+                "Streaming response.",
+                TokenRateReading(kind="live", rate=40.0, stale=True),
+                run_streaming=True, approval_pending=False,
+            )
+            == "Streaming response."
+        )
+
+    def test_no_copy_never_grows_one(self) -> None:
+        assert (
+            merge_rate_into_run_copy(
+                "", self.FRESH, run_streaming=True, approval_pending=False
+            )
+            == ""
+        )
 
 
 class TestSettledBadge:
