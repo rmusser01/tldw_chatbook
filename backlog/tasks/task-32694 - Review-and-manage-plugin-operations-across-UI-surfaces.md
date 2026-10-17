@@ -1,11 +1,11 @@
 ---
 id: TASK-32694
 title: Review and manage plugin operations across UI surfaces
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:33'
-updated_date: '2026-10-17 01:15'
+updated_date: '2026-10-17 01:29'
 labels:
   - plugins
   - implementation
@@ -28,15 +28,15 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Review binds exact immutable inputs and offers Install disabled or explicit workspace enablement; configuration and explicit execution/testing remain distinct.
-- [ ] #2 Updates, rollback, scoped disable, uninstall and data deletion expose affected workspaces, active blockers, stopping, persistence failure, cleanup-pending and recovery outcomes.
-- [ ] #3 Close/Back preserves in-session draft and focus without cancelling or approving; explicit cancellation follows the current durable phase and cannot retarget after navigation.
-- [ ] #4 Library Skills and MCP handoffs preserve installation/component/workspace identity with ownership labels and guarded edits; mounted/live isolated-profile flows verify all lifecycle actions.
-- [ ] #5 Users can review eligible persisted acquisition references for discard while pending, unknown, changed or reboot-bound custody remains protected and no full producer object is fabricated from a compact reference.
-- [ ] #6 First-use plugin authority setup, unlock and specific recovery actions use the existing owner; secrets stay in the owning credential flow and never enter plugin view drafts, logs or stable metadata.
-- [ ] #7 Ambiguous package formats require an explicit reviewed interpretation of authenticated unchanged acquired bytes; selection preserves source identity and format changes require renewed review without weakening native constraints.
-- [ ] #8 Users can review post-install component selection changes against the current immutable revision, with safe drain and generation advancement while existing trust, mappings and activation remain unchanged and ordinary dependency/readiness gates still apply.
-- [ ] #9 Library Skills collision warnings cover all current registered builtin/tool and Console command names while plugin-owned read-only management and standalone editing behavior remain intact.
+- [x] #1 Review binds exact immutable inputs and offers Install disabled or explicit workspace enablement; configuration and explicit execution/testing remain distinct.
+- [x] #2 Updates, rollback, scoped disable, uninstall and data deletion expose affected workspaces, active blockers, stopping, persistence failure, cleanup-pending and recovery outcomes.
+- [x] #3 Close/Back preserves in-session draft and focus without cancelling or approving; explicit cancellation follows the current durable phase and cannot retarget after navigation.
+- [x] #4 Library Skills and MCP handoffs preserve installation/component/workspace identity with ownership labels and guarded edits; mounted/live isolated-profile flows verify all lifecycle actions.
+- [x] #5 Users can review eligible persisted acquisition references for discard while pending, unknown, changed or reboot-bound custody remains protected and no full producer object is fabricated from a compact reference.
+- [x] #6 First-use plugin authority setup, unlock and specific recovery actions use the existing owner; secrets stay in the owning credential flow and never enter plugin view drafts, logs or stable metadata.
+- [x] #7 Ambiguous package formats require an explicit reviewed interpretation of authenticated unchanged acquired bytes; selection preserves source identity and format changes require renewed review without weakening native constraints.
+- [x] #8 Users can review post-install component selection changes against the current immutable revision, with safe drain and generation advancement while existing trust, mappings and activation remain unchanged and ordinary dependency/readiness gates still apply.
+- [x] #9 Library Skills collision warnings cover all current registered builtin/tool and Console command names while plugin-owned read-only management and standalone editing behavior remain intact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -113,10 +113,30 @@ Move only actual side-chat and generation imports to existing first-use consumer
 
 Current dev rebase (TASK32695 AC15): foundation and both immediate saved-root fixes are integrated together through actual current Console/plugin/app/navigation owners under R3–R15. Original counts, task review rounds and host exceptions are historical; no new-source runtime qualification or context exception is implied. Preserve current admission, consent, response rules and terminal custody; exact closed reference forms and builtin/mixed mappings must round-trip without authority broadening. Current scope/proposal is recorded separately before edits; final targeted checks and one fresh integration review govern this rebase.
 
-23. Current-dev integration R16: accepted future-I6-proposal01.md (ac4ce0d8), future-I6-scope01.json (6212c98c), all40 source dispositions including current console_automatic_submission.py, app_skill_wiring.py and generated screen_feature_plugins.tcss. Reuse private nonawaiting reservation publication after original/current admission gates; explicit tests refuse pending received turn, use async capture/current owners and scope-only cleanup. Private composer retains actual empty owned MCP group only for explicit discovery, with ordinary callers/kill-switch/permission/ceilings unchanged. No future prefill helper; reached closed JSON adds existing tool_references, complete-set current validation/R4/R12 intact. Same9AC; no new schema/owner/cap. Current startup cap1031 preserved; pure source builder only under root handoff/R15 custody, runtime tests deferred until full replay/latestdev fold. Existing ADR162/163 amended before code; new-base gate32695AC15.
+23. Root closeout after fresh scoped Fix2 review9925f92449 accepts remainingfinding2/N1 with no newbreakage; allthreeinitialImportant resolved. Root-owned additional closeout path backlog/docs/lessons-testing-evidence.md captured before edit for actual mixed-review/postuninstall/before-vs-proposed UI incident. No product/test scope change. Check9AC/add concise evidence/ADR/qualification notes, preserve CLI11/indexed snapshots, verify exact CLI readback/sourcefreeze unchanged/static and document links/diffcheck, then Done via CLI and normal closeout commit. O1/minor4/5/resource/platform/fullConsole final qualifications remain assigned I7; no wholebranch/fullsuite claim.
 
-24. Same-path profile-save reconciliation under AC1/3 and R4/R12: one-connection JSON prefill is safe only when a fresh complete public management_details result proves no current mappings. Nonempty builtin/MCP/mixed sets, unknown or failed refresh preserve the exact configuration draft and expose the saved profile ID with a complete-configuration instruction. A newer draft/request cannot be overwritten after awaits; a successful profile save remains honestly reported if refresh fails. No later prefill helper, protected-row identity reconstruction, new API/path/owner/ADR or partial replacement. Add actual same-entry empty-success/nonempty-mixed/newer-draft/failed-refresh controls within the accepted modal test file.
+Current-dev integration R16: accepted future-I6-proposal01.md (ac4ce0d8), future-I6-scope01.json (6212c98c), all40 source dispositions including current console_automatic_submission.py, app_skill_wiring.py and generated screen_feature_plugins.tcss. Reuse private nonawaiting reservation publication after original/current admission gates; explicit tests refuse pending received turn, use async capture/current owners and scope-only cleanup. Private composer retains actual empty owned MCP group only for explicit discovery, with ordinary callers/kill-switch/permission/ceilings unchanged. No future prefill helper; reached closed JSON adds existing tool_references, complete-set current validation/R4/R12 intact. Same9AC; no new schema/owner/cap. Current startup cap1031 preserved; pure source builder only under root handoff/R15 custody, runtime tests deferred until full replay/latestdev fold. Existing ADR162/163 amended before code; new-base gate32695AC15.
+
+Current-dev profile-save reconciliation under AC1/3 and R4/R12: one-connection JSON prefill is safe only when a fresh complete public management_details result proves no current mappings. Nonempty builtin/MCP/mixed sets, unknown or failed refresh preserve the exact configuration draft and expose the saved profile ID with a complete-configuration instruction. A newer draft/request cannot be overwritten after awaits; a successful profile save remains honestly reported if refresh fails. No later prefill helper, protected-row identity reconstruction, new API/path/owner/ADR or partial replacement. Add actual same-entry empty-success/nonempty-mixed/newer-draft/failed-refresh controls within the accepted modal test file.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Historical delivery closeout below: counts/reviews describe the original branch. Current-owner I6 source is integrated under R16; new-base verification remains TASK32695 AC15.
+
+Implemented native Plugins review and retained operation management using the existing SourceService/PluginService, coordinator, Console, credential and permission owners. Exact issued reviews bind install/workspace intent, interpretation, component selection and removal; Close preserves drafts/focus. Configuration save and explicit execution remain separate. Candidate discard retains complete acquisition/root custody. Typed Library/MCP handoffs preserve ownership and standalone editing; the Library warning set matches the registered command/tool union.
+
+Saved-data review discloses exact roots, generations and complete current affected users before confirmation, revalidates impact, retains final uninstall status and exposes exact-owner later cleanup through History. Reconciliation retains actual current refs separately from unchanged proposed targets and submits the original owner review. Qualified clean-checkpoint/native proof remains mandatory; dirty/unknown/legacy/remote uncertainty stays protected. Added bounded blocker completeness and exact-owner pagination without raising caps or changing emergency-stop lock ordering.
+
+Validation: original required partition77 nodes, Fix1 required113, and Fix2 seven renewed reconciliation controls plus35 unchanged neighbors by exact source/test carry; these phases overlap and are not a summed total. Actual isolated terminal journeys at80x24/120x35 cover the patched workflows, including installed and post-uninstall reconciliation; mounted coverage is broader than live coverage. Final independent Fix2 review accepts the last Important finding with no new breakage. Full normative Console/live integration remains TASK32695.
+
+Seven new Python files are Ruff/Black clean; original broader static evidence is1038current/1038exactBASE diagnostics and359 inherited formatter hunks with no changed-hunk overlap. Fix1 eight and Fix2 three changed Python files pass Ruff/Black. Syntax, whitespace, scope and frozen evidence hashes verified. Startup repair defers canonical side-chat/image imports to first use and fixes actual private splash configuration; unchanged guards pass with973/973 ready modules and preimport499/500modules,378583/378740LOC. Headroom warnings remain.
+
+Qualifications: broader neighbor run241pass/30fail; only six representative failures reproduced on exact Task24 BASE, not all30 or original branchStart. Isolated marker doubles/null keyring and simulated reboot do not qualify actual reboot/OS keychain/Linux/Windows/remote containment. O1 cleaned-absent status label, irrelevant install inputs and capacity debt remain explicitly assigned TASK32695/final triage. No full suite, dependency install, push or merge.
+
+ADR required: existing ADR162 (amended before public seams), ADR163, ADR150 and ADR097 govern; Fix2 is a routine binding correction. Specs/subplan updated with delivered contracts. Root added an evidence lesson documenting the actual cross-flow UI failures. Main implementation files: UI/Plugins_Modules/{review,operations}.py, Widgets/plugin_review_modal.py, Plugins/{service,source_service,coordinator,review,data_cleanup}.py, Chat/console_plugin_tests.py and affected Console/Library/MCP/navigation/styles/tests. Implementation commits2481647894,108e320f16,9925f92449; exact reports/indices and review records retained in this plan's SDD workspace.
+<!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
 
