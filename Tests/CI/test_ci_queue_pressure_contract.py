@@ -140,7 +140,7 @@ FAST_LANE_TARGETS = (
     # Capture round 2 finding 1: Make default checks the default it writes.
     # TASK-33641.5 gates that file whole in place of its two nodes: the Save
     # as model default and Ctrl+N writer, the ADR-095 D3 quick-mask cases
-    # included (89 tests, ~28 s serial, 3 of 3).
+    # included (89 tests, ~22 s serial, 3 of 3).
     "Tests/Chat/test_console_settings_defaults.py",
     # Capture finding 11: Temperature's range is the provider's own.
     "Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own",
