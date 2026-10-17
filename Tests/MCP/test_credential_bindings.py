@@ -743,3 +743,124 @@ def test_migration_preserves_explicit_reserved_id_quarantine(
     stored = path.read_bytes()
     assert LocalMCPStore(path).load() == state
     assert path.read_bytes() == stored
+
+
+@pytest.mark.parametrize(
+    "value_type,value",
+    [("string", "private-value-sentinel"), ("integer", 42), ("boolean", True)],
+)
+def test_typed_variable_reference_is_bound_private_and_distinct_from_http(
+    binding_case, value_type, value
+):
+    from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+    case = binding_case
+    before = case.binding()
+    arguments = {
+        "installation_id": "installed",
+        "name": "TOKEN",
+        "value_type": value_type,
+        "secret": True,
+    }
+    metadata = case.service.create_variable(**arguments, value=value)
+    assert "value" not in metadata and "private-value-sentinel" not in repr(metadata)
+    ref, generation = metadata["reference_id"], metadata["authority_generation"]
+    assert case.service.validate_variable(ref, generation, **arguments) == metadata
+    assert case.service.resolve_variable(ref, generation, **arguments) == value
+    assert case.binding() == before
+    with pytest.raises(CredentialError):
+        case.service.binding(ref)
+    with pytest.raises(CredentialError):
+        case.service.validate_variable(
+            ref, generation, **{**arguments, "installation_id": "other"}
+        )
+    with pytest.raises(CredentialError):
+        case.service.validate_variable(ref, generation + 1, **arguments)
+    with pytest.raises(CredentialError):
+        case.service.validate_variable(before.reference_id, generation, **arguments)
+    case.backend.records.pop(ref)
+    with pytest.raises(CredentialError):
+        case.service.resolve_variable(ref, generation, **arguments)
+
+
+@pytest.mark.parametrize(
+    "value_type,value", [("integer", True), ("string", "bad\0value"), ("boolean", 1)]
+)
+def test_typed_variable_rejects_wrong_values_without_disclosure(
+    binding_case, value_type, value
+):
+    from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+    with pytest.raises(CredentialError, match="^plugin_variable_invalid$"):
+        binding_case.service.create_variable(
+            installation_id="installed",
+            name="TOKEN",
+            value_type=value_type,
+            secret=True,
+            value=value,
+        )
+
+
+def test_variable_revoke_is_atomic_owned_idempotent_and_preserves_replacement(
+    binding_case,
+):
+    from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+    service = binding_case.service
+    arguments = {
+        "installation_id": "installed",
+        "name": "TOKEN",
+        "value_type": "string",
+        "secret": True,
+    }
+    first = service.create_variable(**arguments, value="first-private")
+    second = service.create_variable(**arguments, value="second-private")
+    ref = first["reference_id"]
+    with pytest.raises(CredentialError):
+        service.revoke_variable(ref, installation_id="wrong-owner")
+    assert service.resolve_variable(ref, 1, **arguments) == "first-private"
+    revoked = service.revoke_variable(ref, installation_id="installed")
+    assert revoked["authority_generation"] == 2 and revoked["revoked"]
+    assert service.revoke_variable(ref, installation_id="installed") == revoked
+    assert "first-private" not in binding_case.backend.records[ref]
+    with pytest.raises(CredentialError):
+        service.resolve_variable(ref, 1, **arguments)
+    assert (
+        service.resolve_variable(second["reference_id"], 1, **arguments)
+        == "second-private"
+    )
+
+
+def test_variable_boundary_refuses_untyped_and_oversized_records():
+    from tldw_chatbook.MCP.credential_bindings import (
+        CredentialBindingService,
+        CredentialError,
+    )
+
+    backend = MemoryCredentialBackend()
+    service = CredentialBindingService(backend)
+    with pytest.raises(CredentialError, match="^plugin_variable_invalid$"):
+        service.create_variable(
+            installation_id="installed",
+            name="VALUE",
+            value_type=[],
+            secret=True,
+            value="private",
+        )
+    metadata = service.create_variable(
+        installation_id="installed",
+        name="VALUE",
+        value_type="string",
+        secret=True,
+        value="private",
+    )
+    backend.records[metadata["reference_id"]] = " " * 131073
+    with pytest.raises(CredentialError, match="^plugin_variable_invalid$"):
+        service.validate_variable(
+            metadata["reference_id"],
+            1,
+            installation_id="installed",
+            name="VALUE",
+            value_type="string",
+            secret=True,
+        )

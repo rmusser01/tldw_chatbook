@@ -62,6 +62,38 @@ reviewed independent dependency. Missing connections and initialization/guard cy
 refuse dependent use. Successful initialization never reuses another run's stamp.
 Legacy six-event configuration keeps its existing version-1 behavior.
 
+## Declared values and command locations
+
+Declare `variables` in the Chatbook extension with `type` (`string`, `integer`
+or `boolean`), `required` and `secret`. Optional nonsecret declarations may have
+a typed `default`. A command hook consumes `${NAME}` in argv, cwd or environment,
+or an exact `{"variable": "NAME"}` environment value. Substitution happens once;
+a value containing another placeholder remains data. Strings are bounded to
+16 KiB UTF-8; integers are signed 64-bit and booleans are not integers.
+
+Users save typed values in the host's protected credential backend, then review
+reference mappings. Packages contain declarations, never protected values or
+reference authority. Unused declarations do not block unrelated components.
+An unavailable selected required or controlling hook retains its original event
+and matcher: a write guard still blocks writes but does not block reads. A
+required initializer blocks its initialization event; dependency-only requirements
+narrow their dependents. Child and archived continuation ceilings retain those
+constraints without advertising the unavailable hook as executable.
+
+Three reserved names come only from current host capabilities:
+
+- `PLUGIN_ROOT`: the immutable captured package.
+- `PLUGIN_DATA`: the single current shared saved-data grant.
+- `CHATBOOK_WORKSPACE_DATA`: the single current grant for the captured named
+  workspace, or the actual Console scratch capability in an unscoped chat.
+
+Missing or ambiguous grants refuse the consuming launch. Workspace names never
+construct paths. Scratch remains leased until the real hook process has settled;
+closing the chat revokes new use without deleting a live process's directory.
+A package may use an explicit absolute or `./` executable. Bare commands resolve
+against the trusted host PATH before applying the child's reviewed environment;
+a child PATH override cannot select another executable.
+
 ## Limits and portability
 
 Manifest/hooks JSON: 256 KiB each, depth 32. Package: 100 MiB expanded,

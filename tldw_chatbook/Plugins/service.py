@@ -950,6 +950,26 @@ class PluginService:
             raise ValueError("plugin_drain_review_changed")
         self.revision_drain.cancel_work(review.drain_token)
 
+    async def create_variable_reference(self, installation_id: str, name: str, value):
+        """Save a typed value on the owning worker; return reference metadata only."""
+        return await self._call(
+            lambda: self._coordinator.create_variable_reference(
+                installation_id, name, value
+            )
+        )
+
+    async def revoke_variable_reference(self, installation_id: str, reference_id: str):
+        """Revoke exactly one installation's reference and refresh readiness."""
+
+        def operation():
+            result = self._coordinator.revoke_variable_reference(
+                installation_id, reference_id
+            )
+            self._refresh()
+            return result
+
+        return await self._call(operation)
+
     async def review_configuration(
         self,
         installation_id: str,
@@ -958,6 +978,7 @@ class PluginService:
         tools=None,
         models=None,
         component_tools=None,
+        variables: dict[str, str] | None = None,
     ) -> PluginReview:
         """Capture current MCP references on the existing plugin storage worker."""
         return await self._call(
@@ -967,6 +988,7 @@ class PluginService:
                 tools=tools,
                 models=models,
                 component_tools=component_tools,
+                variables=variables,
             )
         )
 
@@ -1060,7 +1082,10 @@ class PluginService:
                         )
                         token = uuid4().hex
                         self._snapshots[token] = snapshot
-                        for component_id in snapshot.selection:
+                        for component_id in (
+                            *snapshot.selection,
+                            *snapshot.unavailable_hooks,
+                        ):
                             row = skill_summary(
                                 identity, inspection, component_id, snapshot.alias
                             )
@@ -1069,6 +1094,11 @@ class PluginService:
                                 plugin_workspace_id=workspace,
                                 trust_blocked=False,
                             )
+                            if component_id in snapshot.unavailable_hooks:
+                                row.update(
+                                    plugin_constraint_only=True,
+                                    availability="needs_configuration",
+                                )
                             rows.append(row)
                     except PluginUnavailable:
                         pass
@@ -1143,7 +1173,10 @@ class PluginService:
                 if (snapshot := self._admitted.get(row.get("plugin_admission")))
                 is not None
                 and row.get("plugin_component_id")
-                in ceiling.get(snapshot.installation_id, ())
+                in (
+                    *ceiling.get(snapshot.installation_id, ()),
+                    *snapshot.unavailable_hooks,
+                )
             )
 
     def capture_resume_pin(
@@ -1166,27 +1199,115 @@ class PluginService:
             lambda: seal_checkpoint(self, pin, checkpoint, conversation_id, message_id)
         )
 
+    def _constrain_resume_maximum(self, maximum, constraint):
+        """Preserve verified requirement metadata alongside an archive's execution ceiling."""
+        from .components import component_summary
+        from .continuation import (
+            ResumeConstraint,
+            constrain_maximum,
+            installation_pin,
+            verify_constraint,
+        )
+
+        narrowed = constrain_maximum(self, maximum, constraint)
+        if not isinstance(constraint, ResumeConstraint):
+            return narrowed
+        envelope = verify_constraint(self, constraint)
+        authority = self._coordinator.published_snapshot()
+        original_rows = (
+            *maximum.get("available_skills", ()),
+            *maximum.get("native_components", ()),
+        )
+        retained = list(narrowed.get("native_components", ()))
+        for pinned in envelope["installations"]:
+            current = self._admission.capture(
+                pinned["installation_id"], pinned["workspace_id"], "resume-requirements"
+            )
+            if not current.unavailable_hooks:
+                continue
+            producers = {
+                row.get("plugin_ceiling"): self._snapshots.get(
+                    row.get("plugin_ceiling")
+                )
+                for row in original_rows
+                if row.get("plugin_owned")
+                and row.get("plugin_workspace_id") == pinned["workspace_id"]
+                and (prior := self._snapshots.get(row.get("plugin_ceiling")))
+                is not None
+                and prior.installation_id == pinned["installation_id"]
+            }
+            if len(producers) != 1:
+                raise PluginUnavailable("plugin_resume_requirement_custody_unavailable")
+            token, prior = next(iter(producers.items()))
+            if prior.workspace_id is None and pinned["workspace_id"] is not None:
+                scope = ("workspace", pinned["workspace_id"], 0)
+                prior = replace(
+                    prior,
+                    workspace_id=pinned["workspace_id"],
+                    generations=tuple(sorted((*prior.generations, scope))),
+                    live_generations=tuple(sorted((*prior.live_generations, scope))),
+                )
+            for key in prior.unavailable_hooks:
+                self._admission.check_requirement(prior, key)
+            if prior.unavailable_hooks != current.unavailable_hooks:
+                raise PluginUnavailable("plugin_resume_requirement_custody_unavailable")
+            selected = {row["component_id"] for row in pinned["components"]}
+            if not selected <= set(prior.selection):
+                raise PluginUnavailable("plugin_resume_requirement_custody_unavailable")
+            observed = installation_pin(
+                self, replace(prior, selection=tuple(sorted(selected))), authority
+            )
+            old = dict(pinned)
+            # Exactly the existing pin owner's cross-session normalization;
+            # verify_constraint above authenticates and revalidates the envelope.
+            if envelope["session_id"] != self.fences.session_nonce:
+                old.pop("live_generations")
+                observed.pop("live_generations")
+                old["data_roots"] = [
+                    {key: value for key, value in root.items() if key != "live_epoch"}
+                    for root in old["data_roots"]
+                ]
+                observed["data_roots"] = [
+                    {key: value for key, value in root.items() if key != "live_epoch"}
+                    for root in observed["data_roots"]
+                ]
+            if old != observed:
+                raise PluginUnavailable("plugin_resume_requirement_custody_unavailable")
+            for key in prior.unavailable_hooks:
+                retained.append(
+                    dict(
+                        component_summary(
+                            prior.installation_id, prior.inspection, key, prior.alias
+                        ),
+                        plugin_ceiling=token,
+                        plugin_workspace_id=prior.workspace_id,
+                        plugin_constraint_only=True,
+                        availability="needs_configuration",
+                    )
+                )
+        return dict(narrowed, native_components=retained)
+
     async def resume_maximum(
         self, maximum, checkpoint, conversation_id: str, message_id: str
     ) -> dict:
         """Verify an archived owner before assembling a new run's context."""
-        from .continuation import ResumeConstraint, constrain_maximum
+        from .continuation import ResumeConstraint
 
         constraint = (
             ResumeConstraint(checkpoint, conversation_id, message_id)
             if checkpoint.schema_version == 2
             else "zero"
         )
-        return await self._call(lambda: constrain_maximum(self, maximum, constraint))
+        return await self._call(
+            lambda: self._constrain_resume_maximum(maximum, constraint)
+        )
 
     async def admit(self, maximum: Mapping[str, Any], run_id: str) -> dict:
         def operation():
-            from .continuation import constrain_maximum
-
             # Files, SQLite and package bytes are verified on the worker without
             # holding the lock needed by immediate live revocation.
-            narrowed = constrain_maximum(
-                self, maximum, maximum.get("plugin_resume_constraint")
+            narrowed = self._constrain_resume_maximum(
+                maximum, maximum.get("plugin_resume_constraint")
             )
             return admit_narrowed(narrowed)
 
@@ -1198,6 +1319,38 @@ class PluginService:
                     *maximum.get("native_components", ()),
                 ],
             )
+            # Restore host-owned requirements from every retained producer's
+            # original snapshot. Caller omission is never executable authority.
+            from .components import component_summary
+
+            originals = {}
+            for row in maximum["available_skills"]:
+                if row.get("plugin_owned"):
+                    token = row.get("plugin_ceiling")
+                    prior = self._snapshots.get(token)
+                    if prior is None:
+                        raise PluginUnavailable("plugin_ceiling_unavailable")
+                    originals[(token, row.get("plugin_workspace_id"))] = prior
+            for (token, workspace), prior in originals.items():
+                present = {
+                    row.get("plugin_component_id")
+                    for row in maximum["available_skills"]
+                    if row.get("plugin_ceiling") == token
+                    and row.get("plugin_workspace_id") == workspace
+                }
+                for key in set(prior.unavailable_hooks) - present:
+                    maximum["available_skills"].append(
+                        dict(
+                            component_summary(
+                                prior.installation_id,
+                                prior.inspection,
+                                key,
+                                prior.alias,
+                            ),
+                            plugin_ceiling=token,
+                            plugin_workspace_id=workspace,
+                        )
+                    )
             if run_id in self._retired:
                 raise PluginUnavailable("plugin_turn_retired")
             turn_id = maximum.get("plugin_turn_id")
@@ -1264,7 +1417,15 @@ class PluginService:
                     self.fences.require_admission(
                         snapshot.installation_id, snapshot.revision_digest
                     )
-                    self._admission.check(snapshot, row["plugin_component_id"])
+                    constraint = (
+                        row["plugin_component_id"] in snapshot.unavailable_hooks
+                    )
+                    validator = (
+                        self._admission.check_requirement
+                        if constraint
+                        else self._admission.check
+                    )
+                    validator(snapshot, row["plugin_component_id"])
                     key = (run_id, row["plugin_ceiling"], workspace)
                     token = self._admission_keys.get(key)
                     with self._lock:
@@ -1293,6 +1454,11 @@ class PluginService:
                         plugin_run_id=run_id,
                         trust_blocked=False,
                     )
+                    if constraint:
+                        row.update(
+                            plugin_constraint_only=True,
+                            availability="needs_configuration",
+                        )
                 rows.append(row)
             with self._lock:
                 if run_id in self._retired:
@@ -1455,13 +1621,43 @@ class PluginService:
 
         return await self._call(operation)
 
+    def _checked_native_projection(self, name, token, *, binding=False):
+        """Internal requirement metadata gate; ordinary _checked stays executable-only."""
+        snapshot = self._admitted.get(token)
+        if snapshot is None:
+            raise PluginUnavailable("plugin_run_admission_required")
+        from tldw_chatbook.Agents.run_context import current_run_id
+
+        from .components import component_summary
+
+        for key in snapshot.unavailable_hooks:
+            row = component_summary(
+                snapshot.installation_id, snapshot.inspection, key, snapshot.alias
+            )
+            if name not in {row["name"], row["record_id"], row["tool_name"]}:
+                continue
+            actor = current_run_id()
+            with self._lock:
+                if snapshot.run_id in self._retired and not any(
+                    record.pending_id == snapshot.run_id and record.run_id == actor
+                    for record in self._live_runs.values()
+                ):
+                    raise PluginUnavailable("plugin_turn_retired")
+            if actor and not binding:
+                record = self._live_runs.get((snapshot.installation_id, actor))
+                if record is None or record.pending_id != snapshot.run_id:
+                    raise PluginUnavailable("plugin_actor_ceiling_unavailable")
+            self._admission.check_requirement(snapshot, key)
+            return snapshot, key, row
+        return self._checked(name, token, binding=binding)
+
     def native_snapshots(self, entries):
         """Return host-issued snapshots only after ordinary current entry validation."""
 
         def operation():
             snapshots = {}
             for entry in entries:
-                snapshot, _key, _row = self._checked(
+                snapshot, _key, _row = self._checked_native_projection(
                     entry.get("record_id", entry["name"]), entry["plugin_admission"]
                 )
                 snapshots[snapshot.installation_id] = snapshot
@@ -1518,7 +1714,7 @@ class PluginService:
         self.check_entries_live(entries)
         await self._call(
             lambda: [
-                self._checked(
+                self._checked_native_projection(
                     row.get("record_id", row["name"]), row["plugin_admission"]
                 )
                 for row in entries
@@ -1531,7 +1727,7 @@ class PluginService:
         self.check_entries_live(entries)
         self._call_from_agent(
             lambda: [
-                self._checked(
+                self._checked_native_projection(
                     row.get("record_id", row["name"]), row["plugin_admission"]
                 )
                 for row in entries
@@ -1708,7 +1904,7 @@ class PluginService:
             for row in entries:
                 if not row.get("plugin_owned"):
                     continue
-                snapshot, _, _ = self._checked(
+                snapshot, _, _ = self._checked_native_projection(
                     row.get("record_id", row["name"]),
                     row["plugin_admission"],
                     binding=True,

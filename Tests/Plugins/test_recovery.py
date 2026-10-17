@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins import platform_support
 from Tests.Plugins.test_coordinator import reviewed
 
 
@@ -260,6 +261,7 @@ def run_child(root, *arguments, barrier=None):
             child.stdout.close()
 
 
+@platform_support.managed_runtime
 @pytest.mark.parametrize(
     "barrier,want,committed",
     [
@@ -296,6 +298,7 @@ def test_killed_owner_recovers_in_fresh_process(
         assert len(again["installations"]) == 1
 
 
+@platform_support.managed_runtime
 @pytest.mark.parametrize("barrier", ["certified", "marker_advanced"])
 @pytest.mark.parametrize("loss", ["missing", "rollback"])
 def test_fresh_process_recovers_registry_loss_with_runtime_gate(

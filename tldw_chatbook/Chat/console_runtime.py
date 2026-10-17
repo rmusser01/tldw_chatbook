@@ -2940,7 +2940,12 @@ class ConsoleRuntime:
             snapshots = await asyncio.to_thread(
                 service.native_snapshots, admitted["native_components"]
             )
-            native = NativeHookSet(service, snapshots)
+            native = NativeHookSet(
+                service,
+                snapshots,
+                scratch_manager=self._scratch_spaces,
+                scratch_snapshot=self._scratch_spaces.snapshot(session_id),
+            )
         native_identity = (
             tuple(
                 (
@@ -2949,6 +2954,7 @@ class ConsoleRuntime:
                     row.generations,
                     row.selection,
                     row.mappings_json,
+                    row.unavailable_hooks,
                 )
                 for row in native.snapshots
             )
@@ -2995,6 +3001,11 @@ class ConsoleRuntime:
                     engine.authority_check,
                     enabled=engine.enabled,
                     invalid_admissions=engine.invalid_admissions,
+                    process_owner_for=engine._process_owner_for,
+                    environment=engine._environment,
+                    host_environment=engine._host_environment,
+                    command_launch=engine._command_launch,
+                    dependency_required=engine._dependency_required,
                 )
             else:
                 engine = None
@@ -3027,6 +3038,7 @@ class ConsoleRuntime:
                     else None
                 ),
                 host_environment=native.host_environment if native else None,
+                command_launch=native.command_launch if native else None,
             )
             engine.native_hooks = native
             engine.native_identity = native_identity

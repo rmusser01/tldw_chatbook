@@ -509,6 +509,42 @@ class PluginCoordinator:
         self._reviews[review.token] = review
         return review
 
+    def create_variable_reference(self, installation_id: str, name: str, value):
+        """Create protected value identity from the current retained declaration."""
+        from .recovery import retained_inspections
+        from .variables import arguments, credentials
+
+        self._require_worker()
+        state = self.published_snapshot()
+        installed = next(
+            row
+            for row in state["installations"]
+            if row["installation_id"] == installation_id
+        )
+        inspection = retained_inspections(state, coordinator=self)[
+            (installation_id, installed["revision_digest"])
+        ]
+        declaration = json.loads(inspection.variables_json).get(name)
+        if declaration is None:
+            raise ValueError("plugin_variable_undeclared")
+        return credentials(self).create_variable(
+            **arguments(installation_id, name, declaration), value=value
+        )
+
+    def revoke_variable_reference(self, installation_id: str, reference_id: str):
+        """Revoke an owned reference, including a value not yet configured."""
+        from .variables import credentials
+
+        self._require_worker()
+        if not any(
+            row["installation_id"] == installation_id
+            for row in self.published_snapshot()["installations"]
+        ):
+            raise ValueError("installation_unavailable")
+        return credentials(self).revoke_variable(
+            reference_id, installation_id=installation_id
+        )
+
     def review_configuration(
         self,
         installation_id: str,
@@ -517,6 +553,7 @@ class PluginCoordinator:
         tools: dict[str, tuple[str, ...]] | None = None,
         models: dict[str, str] | None = None,
         component_tools: dict[str, dict[str, str]] | None = None,
+        variables: dict[str, str] | None = None,
     ) -> PluginReview:
         """Review complete current owner references; never accept caller-made grants."""
         from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -525,6 +562,11 @@ class PluginCoordinator:
 
         self._require_worker()
         owner = self.mcp_mapping_owner
+        if variables is not None and (
+            type(variables) is not dict
+            or any(type(name) is not str for name in variables)
+        ):
+            raise ValueError("plugin_variable_mapping_invalid")
         connections = connections or {}
         if connections and not isinstance(owner, LocalMCPControlService):
             raise PermissionError("plugin_mapping_owner_unavailable")
@@ -545,8 +587,8 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not (connections or models)
-            or len(connections) + len(models or {}) > 512
+            not (connections or models or variables)
+            or len(connections) + len(models or {}) + len(variables or {}) > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -606,6 +648,20 @@ class PluginCoordinator:
                         component_id,
                         declared,
                         targets[0],
+                    )
+                )
+        from .variables import capture_mapping, consumed
+
+        for name, target in sorted((variables or {}).items()):
+            consumers = [
+                key for key in selection if name in consumed(inspection.inventory[key])
+            ]
+            if not consumers:
+                raise ValueError("plugin_variable_unused")
+            for key in sorted(consumers):
+                mappings.append(
+                    capture_mapping(
+                        self, installation_id, inspection, key, name, target
                     )
                 )
         return self._review_existing(

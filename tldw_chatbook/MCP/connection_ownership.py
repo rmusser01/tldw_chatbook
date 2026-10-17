@@ -561,14 +561,22 @@ class ConnectionOwnership:
     async def _close_locked(self, connection):
         if connection.leases_settled:
             return
+        process = getattr(connection.session, "process", None)
+        stdio = connection.profile.transport == "stdio"
+        terminal = process is not None and process.returncode is not None
         closed = not connection.entered_client or bool(
             connection.session is not None
             and getattr(connection.session, "_cleanup_complete", False)
+            and (not stdio or terminal)
         )
         if not closed:
             closed = await self.local._get_client().disconnect_from_server(
                 connection.connection_id
             )
+        # Retained direct-child evidence survives removal from the client's map.
+        # A close attempt, missing handle or dead reader cannot settle stdio.
+        if stdio and connection.entered_client:
+            closed = closed and process is not None and process.returncode is not None
         if not closed:
             return
         connection.owners.clear()

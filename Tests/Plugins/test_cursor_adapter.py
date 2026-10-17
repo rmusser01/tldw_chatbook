@@ -4,10 +4,12 @@ import json
 
 import pytest
 
+from Tests.Plugins import platform_support
 from Tests.Plugins.test_codex_adapter import UPSTREAM, write_json, write_skill
 from tldw_chatbook.Plugins.inspection import inspect_package
 
 
+@platform_support.package_capture
 def test_selected_cursor_fixture_independent_inventory():
     result = inspect_package(UPSTREAM / "cursor-teaching-f5bdd682", dialect="cursor")
     assert not result.rejected
@@ -19,6 +21,7 @@ def test_selected_cursor_fixture_independent_inventory():
     assert result.adapter_version == "chatbook-cursor/1"
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize(
     "paths, expected", [([], set()), (["./other"], {"skill:other"})]
 )
@@ -33,6 +36,7 @@ def test_explicit_paths_replace_default_discovery(tmp_path, paths, expected):
     assert not result.activation_blockers
 
 
+@platform_support.package_capture
 def test_manifest_replaces_catalog_paths_and_overlay_changes_review_identity(tmp_path):
     from tldw_chatbook.Plugins.adapters.cursor import inspect_cursor
     from tldw_chatbook.Plugins.review import inspection_identity
@@ -51,6 +55,7 @@ def test_manifest_replaces_catalog_paths_and_overlay_changes_review_identity(tmp
     assert inspection_identity(included) != inspection_identity(excluded)
 
 
+@platform_support.package_capture
 def test_foreign_manual_only_and_fork_metadata_use_native_summary(tmp_path):
     from tldw_chatbook.Plugins.skill_provider import skill_summary
 
@@ -63,6 +68,7 @@ def test_foreign_manual_only_and_fork_metadata_use_native_summary(tmp_path):
     assert summary["user_invocable"] is True
 
 
+@platform_support.package_capture
 def test_conflicting_manual_only_declarations_remain_blocked(tmp_path):
     write_json(tmp_path, ".cursor-plugin/plugin.json", {"name": "test"})
     write_skill(
@@ -76,6 +82,7 @@ def test_conflicting_manual_only_declarations_remain_blocked(tmp_path):
     assert result.inventory["skill:example"].activation_blockers
 
 
+@platform_support.package_capture
 def test_catalog_review_commit_and_authenticated_recovery(plugin_stack, tmp_path):
     from dataclasses import replace
 
@@ -117,6 +124,7 @@ def test_catalog_review_commit_and_authenticated_recovery(plugin_stack, tmp_path
     )
 
 
+@platform_support.package_capture
 def test_catalog_review_rejects_changed_source(plugin_stack, tmp_path):
     from tldw_chatbook.Plugins.adapters.cursor import inspect_cursor
 
@@ -157,6 +165,7 @@ def test_catalog_carrier_refuses_ambiguous_or_unsupported_input(identities):
     assert catalog_overlay_from(('catalog-v1:{"skills":[]}',)) == {"skills": []}
 
 
+@platform_support.package_capture
 def test_rules_are_manual_and_agent_constraints_are_preserved(tmp_path):
     import yaml
 
@@ -195,6 +204,7 @@ def test_rules_are_manual_and_agent_constraints_are_preserved(tmp_path):
     )
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize(
     "variable, blocked",
     [
@@ -222,6 +232,7 @@ def test_variable_schema_constraints_never_disappear(tmp_path, variable, blocked
         assert json.loads(result.variables_json)["EXAMPLE"]["default"] == "safe"
 
 
+@platform_support.package_capture
 def test_explicit_null_paths_do_not_enable_default_components(tmp_path):
     write_skill(tmp_path)
     write_json(tmp_path, ".cursor-plugin/plugin.json", {"name": "test", "skills": None})
@@ -230,6 +241,7 @@ def test_explicit_null_paths_do_not_enable_default_components(tmp_path):
     assert result.activation_blockers
 
 
+@platform_support.package_capture
 def test_cursor_mcp_variables_use_native_one_pass_forms(tmp_path):
     (tmp_path / "peer.py").write_text("# inert parser fixture\n")
     write_json(
@@ -261,6 +273,7 @@ def test_cursor_mcp_variables_use_native_one_pass_forms(tmp_path):
     }
 
 
+@platform_support.package_capture
 def test_unsupported_guard_blocks_native_extension_siblings(native_package):
 
     root = native_package(extension={"version": 1, "commands": ["command.md"]})
@@ -292,6 +305,7 @@ def test_unsupported_guard_blocks_native_extension_siblings(native_package):
         )
 
 
+@platform_support.package_capture
 def test_public_catalog_variable_and_literal_authorization_are_not_credentials(
     tmp_path,
 ):
@@ -327,6 +341,7 @@ def test_public_catalog_variable_and_literal_authorization_are_not_credentials(
         inspect_cursor(tmp_path, {"credential_reference": "private-host-reference"})
 
 
+@platform_support.package_capture
 def test_unknown_vendor_constraints_remain_visible(tmp_path):
     write_skill(tmp_path)
     write_json(
@@ -341,6 +356,7 @@ def test_unknown_vendor_constraints_remain_visible(tmp_path):
     )
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("dialect", ["cursor", "openai"])
 @pytest.mark.parametrize(
     "name, raw",
@@ -395,6 +411,7 @@ def test_malformed_mcp_entry_preserves_valid_inspection_sibling(
     assert json.loads(good.definition_json) == {"type": "stdio", "command": "python"}
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("dialect", ["cursor", "openai"])
 def test_valid_mcp_entries_share_public_inspection_control(tmp_path, dialect):
     manifest = (
@@ -424,6 +441,7 @@ def test_valid_mcp_entries_share_public_inspection_control(tmp_path, dialect):
     )
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize(
     "name, raw",
     [
@@ -482,6 +500,7 @@ def test_valid_mcp_sibling_can_commit_and_recover_with_invalid_name(
     assert recovered["components"] == snapshot["components"]
 
 
+@platform_support.package_capture
 def test_invalid_mcp_names_have_distinct_stable_diagnostic_ids(tmp_path):
     write_json(tmp_path, ".cursor-plugin/plugin.json", {"name": "test"})
     servers = {
@@ -521,6 +540,7 @@ def test_invalid_mcp_names_have_distinct_stable_diagnostic_ids(tmp_path):
     } == {row.component_id for row in bad}
 
 
+@platform_support.package_capture
 def test_invalid_mcp_placeholder_cannot_be_admitted_when_selected(
     plugin_stack, tmp_path
 ):

@@ -76,6 +76,7 @@ def _prepare_steps(event, engine, definition, *, defer_context=False):
     if (
         event.data["tool_id"] != definition.tool_id
         or event.data["provider"] != definition.provider
+        or event.data.get("operation") != definition.operation
     ):
         raise ValueError("tool event definition identity mismatch")
     original = dict(event.model_dump()["data"].get("tool_args", {}))
@@ -370,6 +371,7 @@ class ToolHookRun:
             "data": {
                 "tool_id": definition.tool_id,
                 "provider": definition.provider,
+                **({"operation": definition.operation} if definition.operation else {}),
                 "tool_name": definition.name,
                 "definition_hash": hashlib.sha256(
                     definition.parameters_json.encode()

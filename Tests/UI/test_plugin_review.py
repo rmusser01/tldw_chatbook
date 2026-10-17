@@ -1196,3 +1196,278 @@ async def test_console_ui_capture_uses_owning_plugin_workspace(native_console):
         context = builder._build_console_turn_execution_context(session.id)
         assert not context.skill_context_maximum["available_skills"]
         assert not context.skill_context_maximum["native_components"]
+
+
+from Tests.Plugins.test_declared_variables import variable_case as _variable_case
+
+variable_case = _variable_case
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_declared_value_keyboard_mask_review_and_revoke(variable_case, size):
+    import asyncio
+    import json
+
+    from textual.widgets import Input, Select
+
+    from Tests.Plugins.test_native_components import install_components
+    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+    from Tests.UI.test_plugins_browse import paint
+    from tldw_chatbook.Plugins.source_service import SourceService
+    from tldw_chatbook.Widgets.plugin_review_modal import (
+        PluginReviewModal,
+        PluginVariableDialog,
+    )
+
+    case = variable_case
+    installed = await install_components(
+        case.service, case.package, ("skill:review", "hook:guard")
+    )
+
+    class App(ConsolidatedCSSApp):
+        CSS_PATH = BUNDLED_STYLESHEET
+
+        async def on_mount(self):
+            await self.push_screen(
+                PluginReviewModal(
+                    SourceService(case.service),
+                    installation_id=installed.installation_id,
+                    workspace_id="workspace-a",
+                )
+            )
+
+    app = App()
+    async with app.run_test(size=size) as pilot:
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+
+        async def press(selector):
+            button = app.screen.query_one(selector, Button)
+            button.focus()
+            await pilot.pause()
+            assert button in app.screen._compositor.visible_widgets
+            await pilot.press("enter")
+            await pilot.pause()
+
+        modal.query_one("#plugin-review-action", Select).value = "save-variable"
+        await pilot.pause()
+        await press("#plugin-review-prepare")
+        dialog = app.screen
+        assert isinstance(dialog, PluginVariableDialog)
+        dialog.query_one("#plugin-variable-name", Select).focus()
+        await pilot.press("enter", "down", "enter", "tab")
+        await pilot.pause()
+        field = dialog.query_one("#plugin-variable-value", Input)
+        assert app.focused is field and field.password
+        await pilot.press(*"secret-value")
+        assert field.value == "secret-value" and "secret-value" not in paint(dialog)
+        await press("#plugin-variable-save")
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if app.screen is modal:
+                break
+        assert app.screen is modal and field.value == ""
+        reference = modal.query_one("#plugin-review-reference", Input)
+        assert app.focused is reference
+        configuration = json.loads(reference.value)
+        assert configuration["variables"]["TOKEN"].startswith("var1.")
+        assert "secret-value" not in repr(modal.draft) + paint(modal) + repr(
+            modal.operations.variable_results
+        )
+        assert (
+            await case.service.capture_mcp_snapshot(
+                installed.installation_id, "workspace-a", "before"
+            )
+        ).selection != ("hook:guard", "skill:review")
+        await press("#plugin-review-prepare")
+        assert modal.draft.review is not None
+        await press("#plugin-review-confirm")
+        await asyncio.wait_for(modal.operations.jobs[modal._job_id].task, 10)
+        snapshot = await case.service.capture_mcp_snapshot(
+            installed.installation_id, "workspace-a", "after"
+        )
+        assert "hook:guard" in snapshot.selection and not snapshot.unavailable_hooks
+        modal.query_one("#plugin-review-action", Select).value = "save-variable"
+        await pilot.pause()
+        await press("#plugin-review-prepare")
+        dialog = app.screen
+        dialog.query_one("#plugin-variable-name", Select).focus()
+        await pilot.press("enter", "down", "enter")
+        await pilot.pause()
+        await press("#plugin-variable-revoke")
+        assert app.focused.id == "plugin-variable-confirm"
+        await press("#plugin-variable-confirm")
+        await pilot.pause()
+        assert app.screen is modal and modal.draft.review is None
+        assert modal.query_one("#plugin-review-confirm", Button).disabled
+        assert (
+            await case.service.capture_mcp_snapshot(
+                installed.installation_id, "workspace-a", "revoked"
+            )
+        ).unavailable_hooks == ("hook:guard",)
+        modal.query_one("#plugin-review-action", Select).value = "save-variable"
+        await pilot.pause()
+        await press("#plugin-review-prepare")
+        dialog = app.screen
+        field = dialog.query_one("#plugin-variable-value", Input)
+        field.value = "discard-this-secret"
+        await pilot.press("escape")
+        assert app.screen is modal and field.value == ""
+
+
+@pytest.mark.asyncio
+async def test_declared_value_invalid_type_and_navigation_clear_transient_input(
+    variable_case, monkeypatch
+):
+    import asyncio
+
+    from textual.widgets import Input, Select
+
+    from Tests.Plugins.test_native_components import install_components
+    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+    from Tests.UI.test_plugins_browse import paint
+    from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginVariableDialog
+
+    case = variable_case
+    installed = await install_components(
+        case.service, case.package, ("skill:review", "hook:guard")
+    )
+    details = await case.service.management_details(
+        installed.installation_id, workspace_id="workspace-a"
+    )
+    operations = PluginOperations(case.service)
+
+    class App(ConsolidatedCSSApp):
+        CSS_PATH = BUNDLED_STYLESHEET
+
+    app = App()
+    entered, release = asyncio.Event(), asyncio.Event()
+    real_save = case.service.create_variable_reference
+
+    async def paused_save(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await real_save(*args, **kwargs)
+
+    monkeypatch.setattr(case.service, "create_variable_reference", paused_save)
+    async with app.run_test(size=(80, 24)) as pilot:
+        dialog = PluginVariableDialog(operations, installed.installation_id, details)
+        await app.push_screen(dialog)
+        await pilot.pause()
+        field = dialog.query_one("#plugin-variable-value", Input)
+        assert not field.password  # COUNT is integer, not a secret.
+        await pilot.press(*"invalid-integer")
+        dialog.query_one("#plugin-variable-save", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert field.value == "" and "invalid-integer" not in paint(dialog)
+        assert not operations.variable_tasks and not entered.is_set()
+        dialog.query_one("#plugin-variable-name", Select).focus()
+        await pilot.press("enter", "down", "enter", "tab")
+        await pilot.press(*"navigation-secret")
+        dialog.query_one("#plugin-variable-save", Button).focus()
+        pressing = asyncio.create_task(pilot.press("enter"))
+        navigation = None
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            assert field.value == "" and "navigation-secret" not in paint(dialog)
+            navigation = app.pop_screen()  # Removal may await the message handler.
+        finally:
+            release.set()
+            await asyncio.wait_for(pressing, 5)
+            if navigation is not None:
+                await navigation
+            await asyncio.gather(*operations.variable_tasks.values())
+        assert field.value == ""
+        assert "navigation-secret" not in repr(operations.variable_results)
+        reopened = PluginVariableDialog(operations, installed.installation_id, details)
+        await app.push_screen(reopened)
+        await pilot.pause()
+        assert reopened.references["TOKEN"].startswith("var1.")
+        assert reopened.query_one("#plugin-variable-value", Input).value == ""
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_value_configuration_preserves_existing_connection_and_model(
+    variable_case,
+):
+    import json
+
+    from Tests.Plugins.test_native_components import install_components
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile
+    from tldw_chatbook.Plugins.variables import handle
+    from tldw_chatbook.Widgets.plugin_review_modal import _configuration_references
+
+    case = variable_case
+    owner = case.service._coordinator.mcp_mapping_owner
+    owner.store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="existing",
+            transport="streamable_http",
+            url="https://example.invalid/mcp",
+        )
+    )
+    mcp = {"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"}
+    mcp["mcpServers"] = {
+        "remote": {"type": "streamable-http", "url": "https://example.invalid/mcp"}
+    }
+    (case.package / "mcp.json").write_text(json.dumps(mcp))
+    manifest = json.loads((case.package / "plugin.json").read_text())
+    manifest["extensions"]["io.github.rmusser01.chatbook"]["agents"] = ["agent.md"]
+    (case.package / "plugin.json").write_text(json.dumps(manifest))
+    (case.package / "agent.md").write_text(
+        "---\nname: reviewer\ndescription: Review\ntools: inherit\nmodel: preferred\n---\nReview."
+    )
+    models = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"llama_cpp": ["m"]},
+        settings_loader=lambda: {
+            "api_settings": {
+                "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1/chat/completions"}
+            }
+        },
+        environ={},
+    )
+    await case.service._call(
+        lambda: setattr(case.service._coordinator, "model_mapping_owner", models)
+    )
+    installed = await install_components(
+        case.service, case.package, ("hook:guard", "mcp:remote", "agent:reviewer")
+    )
+    secret = await case.service.create_variable_reference(
+        installed.installation_id, "TOKEN", "protected"
+    )
+    initial = {
+        "connections": {"mcp:remote": "existing"},
+        "models": {"agent:reviewer": "llama_cpp/m"},
+        "variables": {"TOKEN": handle(secret)},
+    }
+    review = await case.service.review_configuration(
+        installed.installation_id, **initial
+    )
+    assert (await case.service.commit(review, review.operation_id)).committed
+    details = await case.service.management_details(
+        installed.installation_id, workspace_id="workspace-a"
+    )
+    reconstructed = _configuration_references(details)
+    for key, value in initial.items():
+        assert reconstructed[key] == value
+    count = await case.service.create_variable_reference(
+        installed.installation_id, "COUNT", 8
+    )
+    reconstructed["variables"]["COUNT"] = handle(count)
+    updated = await case.service.review_configuration(
+        installed.installation_id, **reconstructed
+    )
+    assert (await case.service.commit(updated, updated.operation_id)).committed
+    current = await case.service.management_details(
+        installed.installation_id, workspace_id="workspace-a"
+    )
+    assert _configuration_references(current) == reconstructed
+    assert owner.client is None  # Configuration is metadata, never a connection.

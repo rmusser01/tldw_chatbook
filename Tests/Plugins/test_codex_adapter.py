@@ -1,5 +1,7 @@
 """Codex package adaptation through immutable package inspection."""
 
+from Tests.Plugins import platform_support
+
 
 def test_inline_overlay_replaces_compatibility_wholesale():
     from tldw_chatbook.Plugins.adapters.codex import overlay_for_openai
@@ -10,6 +12,7 @@ def test_inline_overlay_replaces_compatibility_wholesale():
     assert overlay_for_openai(None, {"skills": ["old"]}) == {"skills": ["old"]}
 
 
+@platform_support.package_capture
 def test_portable_inventory_positive_control(native_package):
     from tldw_chatbook.Plugins.inspection import inspect_package
 
@@ -50,6 +53,7 @@ def write_skill(root, path="skills/example/SKILL.md", **metadata):
     )
 
 
+@platform_support.package_capture
 def test_openai_root_locations_identity_and_wholesale_overlay(tmp_path):
     write_json(
         tmp_path,
@@ -87,6 +91,7 @@ def test_openai_root_locations_identity_and_wholesale_overlay(tmp_path):
     assert fallback.effective_digest != result.effective_digest
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("extension", [{"version": 999}, []])
 def test_vendor_view_preserves_malformed_native_constraints(native_package, extension):
     root = native_package(extension=extension)
@@ -96,6 +101,7 @@ def test_vendor_view_preserves_malformed_native_constraints(native_package, exte
     assert "constraints_unknown" in result.inventory["skill:review"].activation_blockers
 
 
+@platform_support.package_capture
 def test_invalid_root_schema_does_not_fall_back_to_vendor(tmp_path):
     write_json(tmp_path, "plugin.json", {"$schema": "invalid", "name": "root"})
     write_json(tmp_path, ".codex-plugin/plugin.json", {"name": "legacy"})
@@ -103,6 +109,7 @@ def test_invalid_root_schema_does_not_fall_back_to_vendor(tmp_path):
     assert result.rejected
 
 
+@platform_support.package_capture
 def test_selected_codex_metadata_inventory_has_no_oauth_or_app_grant():
     from tldw_chatbook.Plugins.adapters.codex import inspect_codex
 
@@ -121,6 +128,7 @@ def test_selected_codex_metadata_inventory_has_no_oauth_or_app_grant():
     }
 
 
+@platform_support.package_capture
 def test_selected_portable_fixture_does_not_follow_missing_extension():
     result = inspect_package(UPSTREAM / "portable-arch-7568a482")
     assert not result.rejected

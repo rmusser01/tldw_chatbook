@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Plugins import platform_support
 from tldw_chatbook.Agents.hooks_v2 import parse_event, parse_handlers
 
 
@@ -64,6 +65,7 @@ async def command_hook_case():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_command_success_and_disposal_use_same_entry(command_hook_case):
     case = command_hook_case
@@ -78,6 +80,7 @@ def test_normalized_command_control():
     assert event().event == "PreToolUse"
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_sync_worker_and_same_loop_refusal(command_hook_case):
     case = command_hook_case
@@ -86,6 +89,7 @@ async def test_sync_worker_and_same_loop_refusal(command_hook_case):
     assert (await asyncio.to_thread(case.engine.fire, case.event)).succeeded
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("code", "failure"),
@@ -113,6 +117,7 @@ async def test_complete_stdout_gate(code, failure):
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_exact_stdout_limit_and_both_streams_are_drained():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -128,6 +133,7 @@ async def test_exact_stdout_limit_and_both_streams_are_drained():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_timeout_and_cancellation_reap_real_child(command_hook_case):
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
@@ -148,6 +154,7 @@ async def test_timeout_and_cancellation_reap_real_child(command_hook_case):
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_cancelled_launch_keeps_process_and_ticket_until_publication(monkeypatch):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -191,6 +198,7 @@ async def test_cancelled_launch_keeps_process_and_ticket_until_publication(monke
     assert owner.snapshot()["tickets"] == 0
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_scoped_handler_chain_identity_and_deadline():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -231,6 +239,7 @@ async def test_scoped_handler_chain_identity_and_deadline():
     await other.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_sealed_engine_authorized_teardown_and_other_runtime():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -293,6 +302,7 @@ async def test_configuration_refusal_is_scoped_and_never_activates_batch():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_seal_kills_child_while_owner_publication_is_pending():
     import threading
@@ -330,6 +340,7 @@ async def test_seal_kills_child_while_owner_publication_is_pending():
         await caller
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_failed_terminal_settlement_retains_exact_resources():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -360,6 +371,7 @@ async def test_failed_terminal_settlement_retains_exact_resources():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_refused_kill_retains_live_child_until_later_terminal_proof(monkeypatch):
     import signal
@@ -398,6 +410,7 @@ async def test_refused_kill_retains_live_child_until_later_terminal_proof(monkey
     assert not engine.cleanup_pending and budget.snapshot()["tickets"] == 0
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_environment_refs_reserved_roots_and_authority_acceptance(tmp_path):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -463,6 +476,7 @@ async def test_disabled_config_keeps_required_constraint():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_notification_queue_overflow_is_synchronous_and_controlling_stays_available():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -485,6 +499,7 @@ async def test_notification_queue_overflow_is_synchronous_and_controlling_stays_
     assert all(value == 0 for value in owner.snapshot().values())
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_interrupt_wall_deadline_includes_queue_and_is_not_reset():
     import time
@@ -510,6 +525,7 @@ async def test_interrupt_wall_deadline_includes_queue_and_is_not_reset():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_exact_stdin_limit_is_delivered_and_oversize_refuses_whole():
     import json
@@ -546,6 +562,7 @@ async def test_exact_stdin_limit_is_delivered_and_oversize_refuses_whole():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_spawn_failure_and_required_context_have_no_empty_success():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -578,6 +595,7 @@ async def test_spawn_failure_and_required_context_have_no_empty_success():
     await context.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize("leader_exits", [False, True])
 async def test_posix_owned_group_descendants_are_reaped(tmp_path, leader_exits):
@@ -608,6 +626,7 @@ async def test_posix_owned_group_descendants_are_reaped(tmp_path, leader_exits):
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_notification_errors_remain_metadata_only():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -625,7 +644,14 @@ async def test_notification_errors_remain_metadata_only():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("boundary", ["admission", "final_acceptance", "dependency"])
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "admission",
+        pytest.param("final_acceptance", marks=platform_support.v2_command),
+        "dependency",
+    ],
+)
 async def test_callback_failure_is_fixed_metadata_with_requiredness(boundary):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
@@ -734,7 +760,14 @@ async def test_dependency_admission_preserves_obtained_status(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("boundary", ["admission", "final_acceptance", "dependency"])
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "admission",
+        pytest.param("final_acceptance", marks=platform_support.v2_command),
+        "dependency",
+    ],
+)
 async def test_callback_cancellation_preserves_cancel_and_custody(boundary):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
@@ -790,6 +823,7 @@ async def test_dependency_failure_cannot_escape_failure_construction_or_notify()
         await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_scope_state_is_read_only_and_close_cannot_be_reversed():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -820,6 +854,7 @@ async def test_scope_state_is_read_only_and_close_cannot_be_reversed():
     await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_forged_and_concurrent_scopes_cannot_enter_executor():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -866,15 +901,31 @@ async def test_windows_command_refuses_before_root_access_or_launch(monkeypatch)
         environment=lambda *_: accesses.append("env") or {},
     )
     with monkeypatch.context() as m:
-        m.setattr(sys, "platform", "win32")
+        if sys.platform != "win32":
+            m.setattr(
+                sys, "platform", "win32"
+            )  # Simulation on non-Windows; native on Windows.
         result = await engine.fire_async(event())
     assert not result.allowed and result.failures[0].code == "unsupported_platform"
     assert accesses == [] and not engine.processes.records
     assert not any(budget.snapshot().values())
-    assert (await engine.fire_async(event())).succeeded
     await engine.close()
 
 
+@platform_support.v2_command
+@pytest.mark.asyncio
+async def test_supported_command_after_platform_refusal_control():
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    engine = HookEngine((command(),), lambda *_: True, HookBudgetOwner())
+    try:
+        assert (await engine.fire_async(event())).succeeded
+    finally:
+        await engine.close()
+
+
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_scope_deadline_and_active_allowance_remain_engine_owned(monkeypatch):
     from tldw_chatbook.Agents.hooks_v2 import engine as engine_module

@@ -818,3 +818,157 @@ root access or permission to bypass reviewed cleanup/drain/recovery. Presentatio
 uses recovery reason first, then cleanup state, then known cleaned absence, then
 retained. Existing blockers and cleanup remain authoritative. Public reviewed
 create/delete/status and mounted retained-data Refresh controls cover the seam.
+
+## Final integration repair contract (R163 / CLI44, 2026-10-17)
+
+This amendment concretizes the already accepted typed-variable, data-root and
+executable-selection requirements. It adds no store, runtime, permission owner,
+platform-support claim or plugin registry migration.
+
+### Typed host values and reviewed configuration
+
+The existing `CredentialBindingService`/`KeyringCredentialBackend` additionally
+owns a distinct closed schema-2 `plugin_variable` record. Existing HTTP schema-1
+records and authentication behavior remain compatible. A variable record binds a
+fresh owner-minted reference, generation, installation ID, declared name, exact
+string/integer/boolean type, secret flag, typed value and revoked state. Strict
+bounds and types reject bool-as-integer, NUL, malformed identity and overflow.
+Replacement mints a fresh reference; revocation retains a tombstone, increments
+generation and removes the value. A lost reference is never recreated. This
+uses the same protected backend for configured nonsecret and secret values;
+unavailable secure storage yields Needs configuration, with no plaintext fallback.
+
+The credential owner exposes `create_variable`, `validate_variable`,
+`resolve_variable` and `revoke_variable`, separately from HTTP record parsing.
+Creation binds installation/name/type/secret/value; validation/resolution require
+the expected generation and exact installation/name/type/secret binding. Only
+resolution returns a value, for actual command launch. Backend I/O keeps the
+existing worker/offloop serialization and fixed private errors.
+
+`PluginService` and its coordinator expose
+`create_variable_reference(installation_id, name, value)` and
+`revoke_variable_reference(installation_id, reference_id)`. Current authenticated
+retained declarations determine type and secret status; caller-supplied trusted
+metadata is never accepted. Results contain only reference metadata.
+`review_configuration(..., variables: dict[str, str] | None = None)` accepts
+name-to-`var1.<uuid>.<generation>` handles, including a variables-only review.
+Handles are re-read from the actual owner at review and commit. Existing
+complete-set replacement semantics remain explicit; adding a value through the
+UI preserves the current complete mapping selection before Review/Confirm.
+Reference creation alone grants no selection, activation or execution authority.
+
+Use existing authenticated `configuration` rows per consuming component/name:
+`mapping_id = "variable:" + sha256(component_id + NUL + name)`, owner-issued
+handle as target reference, component/declaration definition digest and
+value-free reference-metadata configuration digest, with `credential_bindings=[]`.
+Variable mappings are not HTTP credentials. Existing capture/recovery/currentness
+validation checks these rows through the same owning service. No new SQLite or
+authority schema is required for that existing row shape.
+
+Readiness follows actual consumed references and dependency closure. Unused
+required declarations do not globally block independent siblings. Unset,
+wrong-type, stale, revoked or lost selected references refuse affected use; an
+invalid selected reference never silently falls back to a default. Nonsecret
+package defaults remain usable without a saved reference. This narrowing never
+erases an explicit required hook, dependency guard or unknown constraint for a
+selected dependent/event. Revalidate at capture, launch and final acceptance,
+including the actual protected reference owner after awaits.
+
+Configured values and their hashes stay out of generated snapshots, mappings,
+review text, handlers, job/event metadata, diagnostics and logs. Authored
+nonsecret package defaults retain their content semantics. The existing Plugins
+manager provides typed value entry and masked secret entry, returning handle-only
+configuration. Clear value input on success/failure/close; retain started
+operations and metadata-only results across navigation, never secret drafts.
+Explicit owner-bound revocation invalidates pending configuration review.
+
+### Shared data, workspace data and live scratch
+
+`PLUGIN_DATA` always names the installation's exact authenticated shared root.
+Reserved `CHATBOOK_WORKSPACE_DATA` names the exact admitted named-workspace root,
+or the actual live Console scratch capability for unscoped work. Never synthesize
+a path from a workspace/display name or fall back to another scope when a needed
+root is unavailable. Exported roots and expansion use one projection and host
+values are set last. Portable MCP interpolation remains PLUGIN_ROOT/PLUGIN_DATA.
+
+`NativeHookSet(service, snapshots, *, scratch_manager=None, scratch_snapshot=None)`
+accepts the capability pair together or neither. ConsoleRuntime supplies its
+actual session manager/snapshot. Scratch does not enter durable plugin snapshots
+or saved-root records. `NativeHookProcessOwner` retains the exact existing
+scratch lease through confirmed terminal settlement; unknown/failed cleanup or
+failed persistent settlement cannot release it. Tombstoned/replaced scratch
+refuses new use and late effects. Persistent shared/workspace grants stay exact
+and fenced through their existing root owner.
+
+### Executable selection and MCP custody
+
+Resolve bare owned MCP/hook executable tokens from the captured host-approved
+PATH before package child-environment overlays; an absent host PATH has an
+explicit empty lookup. Pass the resolved absolute executable to spawn. Explicit
+contained package executables retain their distinct immutable identity check.
+Package PATH may remain a child value but cannot select the executable.
+
+Revocation/drain cancels every distinct retained lease callback, not merely one
+callback per Console run. Callback failure cannot abandon the remaining owners.
+Stdio cleanup retries require positive retained direct-child terminal evidence;
+a read-loop/attempted-close flag or missing process handle is not termination
+proof. Preserve original request/root custody while termination is unresolved.
+HTTP remote uncertainty keeps its separate existing settlement policy.
+
+### Atomic variable revocation correction (R164 / CLI45)
+
+The protected-owner signature is
+`revoke_variable(reference_id, *, installation_id: str)`. Validate the closed
+schema2 record and exact installation atomically in the same protected transaction
+that tombstones it, increments generation and removes its value. Already-revoked
+records return idempotently. Replacement values have fresh identities, so an old
+reference cannot revoke a replacement. The public installation-scoped facade
+must pass its actual owner identity, including for fresh unsaved references;
+HTTP binding metadata is not schema2 ownership evidence. Other variable APIs
+and storage/authority boundaries remain unchanged.
+
+### Unavailable hook requirements remain occurrence-scoped (R166 / CLI47)
+
+`RunPluginSnapshot` adds host-only defaulted `unavailable_hooks: tuple[str,...]`.
+These selected valid unready explicit-required/controlling hook IDs are retained
+requirements, outside executable selection. The authenticated inspection retains
+their original event, matcher, effects and vendor protocol; no user value enters
+the metadata. A requirement-only snapshot can construct the existing engine.
+
+Internal `PluginAdmission.check_requirement` recaptures exact requirement
+membership/currentness, including unavailable_hooks in snapshot identity.
+Ordinary execution check still rejects these IDs. Internal metadata projection
+may carry host-derived `plugin_constraint_only=True` and
+`availability="needs_configuration"`; caller flags never grant authority, and
+ordinary render/execute/schema/catalog validation does not accept these as
+callable components. Preserve original requirements under retained/child ceilings;
+refuse unsafe loss rather than erase a constraint or widen execution authority.
+
+NativeHookSet registers original valid declarations without resolving values.
+The existing matcher skips nonmatches and classifies matching required/control
+failure normally; currentness is false for unavailable IDs and process-owner
+creation hard-refuses instead of falling back to the default owner. No process
+or root custody is minted. Dependency-only readiness remains narrow. This avoids
+both silent constraint loss and blanket capture refusal for unrelated reads.
+There is no new persisted schema, runtime, invalid-admission variant or owner.
+
+### Requirement custody through actors and resumes (R168 / CLI49)
+
+The existing service's private native-projection gate validates requirement-only
+rows at actor bind/check time without treating them as executable components.
+Binding skips only the existing actor-exists precondition; producer identity,
+retirement, fences and exact requirement recapture still apply. An existing
+Console actor/whole-run lease does not grant an unavailable hook process/root
+custody. Ordinary execution/render/schema gates remain execution-only.
+
+A service-private resume wrapper preserves unavailable requirement metadata after
+the existing continuation filter, using only the verified original signed
+installation/revision/workspace/generation/mapping/root identities and pinned
+executable subset. Input host snapshot custody must verify through the existing
+pin/constraint contracts, including cross-session normalization. A fresh producer
+can qualify under that same original identity; an old in-memory actor alone is
+not authority. Restore no ready component or unrelated current installation.
+If necessary original custody cannot be verified, refuse that scoped admission.
+Zero and ordinary ready-only continuations keep existing behavior. No pin field,
+schema/component meaning, continuation module, public signature or owner changes.
+Actual child/checkpoint/archive controls preserve original matcher semantics.

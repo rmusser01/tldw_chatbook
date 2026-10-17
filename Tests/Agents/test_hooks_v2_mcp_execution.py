@@ -12,6 +12,7 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
+from Tests.Plugins import platform_support
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -932,6 +933,7 @@ async def test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_con
             db.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_mcp_executor_installs_both_required_post_events_before_either_settles(
     tmp_path,
@@ -1051,6 +1053,7 @@ async def test_mcp_executor_installs_both_required_post_events_before_either_set
             await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "approval,change,phase",

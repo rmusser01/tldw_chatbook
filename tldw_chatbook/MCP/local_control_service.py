@@ -279,7 +279,7 @@ class LocalMCPControlService:
         command = (
             str(Path(root) / token)
             if token.startswith("./")
-            else shutil.which(token, path=environment.get("PATH"))
+            else shutil.which(token, path=baseline.get("PATH", ""))
         )
         if not command:
             raise ValueError("plugin_executable_unavailable")
@@ -352,11 +352,17 @@ class LocalMCPControlService:
                     and data_root["installation_id"] != installation_id
                 ):
                     raise CredentialError("credential_mapping_invalid")
+                lookup_baseline = dict(owner["environment"])
+                if "PATH" in definition.get("env", {}):
+                    # A saved child overlay is not executable lookup authority.
+                    # Compare the captured absolute executable with trusted host
+                    # lookup; a changed host selection requires a fresh review.
+                    lookup_baseline["PATH"] = os.environ.get("PATH", "")
                 expected = self._owned_launch_values(
                     definition,
                     inspection.materialized_identity,
                     data_root["path"] if data_root else None,
-                    owner["environment"],
+                    lookup_baseline,
                 )
                 if (
                     expected

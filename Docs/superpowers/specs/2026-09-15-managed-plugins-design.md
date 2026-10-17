@@ -1888,3 +1888,42 @@ root access or permission to bypass reviewed cleanup/drain/recovery. Presentatio
 uses recovery reason first, then cleanup state, then known cleaned absence, then
 retained. Existing blockers and cleanup remain authoritative. Public reviewed
 create/delete/status and mounted retained-data Refresh controls cover the seam.
+
+## Final integration repair interfaces (R163 / CLI44, 2026-10-17)
+
+[ADR-162's final integration amendment](../../../backlog/decisions/162-managed-agent-plugins.md)
+records the concrete typed host-variable interfaces and data/custody rules.
+Configured values use distinct schema2 plugin_variable records in the existing
+protected credential owner. Public create/revoke variable-reference services and
+reviewed `variables` name-to-var1-handle configuration provide user-reachable
+typed/masked entry without values in generated authority or handler metadata.
+Unavailable secure storage refuses configuration. Readiness is per consumed
+variable and dependency closure, preserving required constraints and independent
+siblings; revalidate references through the actual owner at use/acceptance.
+
+PLUGIN_DATA stays shared; reserved CHATBOOK_WORKSPACE_DATA uses the exact admitted
+named-workspace root or actual unscoped Console scratch capability. No synthesized
+path, scope fallback or fake persistent scratch root. Retain scratch through
+confirmed terminal settlement. Bare owned command lookup uses the captured host
+PATH before package env; explicit contained package executables stay separate.
+Revocation/drain cancels distinct leases, and stdio cleanup retries retain
+request/root custody until positive direct-child termination evidence.
+
+R164/CLI45 concretizes protected variable revocation as
+`revoke_variable(reference_id, *, installation_id: str)`: the installation check
+and idempotent tombstone occur in one protected transaction (ADR-162).
+
+R166/CLI47 retains selected valid unavailable controlling/explicit-required hooks
+as host-only `unavailable_hooks` requirement metadata, separate from executable
+selection. Internal exact `check_requirement` projection preserves original
+matchers and inherited ceilings; normal execution validation still refuses.
+Matching required/control occurrences fail before owner reservation, nonmatches
+remain nonfailures, and dependency-only siblings stay independent. See the R166
+amendments in ADR-162/163; no new runtime, persisted schema or owner is added.
+
+R168/CLI49 completes actor/resume requirement custody within service.py. A private
+projection gate preserves execution-only validation, while a service-private
+wrapper retains only requirement metadata proven by the original signed
+installation/scope/revision/generation/mapping/root pin and host snapshot. Unknown
+custody refuses; no ready capability, unrelated installation, pin/schema/public
+interface or runtime owner is added. See the R168 amendments in ADR-162/163.

@@ -98,7 +98,7 @@ def matches_vendor(handler, event):
     """Preserve source MCP-only and success-only timing at native match points."""
     protocol = handler.vendor_protocol
     if protocol == "cursor/1:beforeMCPExecution":
-        return event.data.get("provider") == "mcp"
+        return event.data.get("operation") == "mcp.call"
     if protocol == "cursor/1:postToolUse":
         return (
             event.data.get("status") == "success"

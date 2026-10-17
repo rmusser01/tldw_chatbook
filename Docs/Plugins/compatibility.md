@@ -124,3 +124,54 @@ The new refusal case uses actual installed/trusted/selected NativeHookSet owners
 Pre-edit collection found 59 cases with all 30 required Windows marks missing. Post-edit collection found exactly 60, with original IDs retained and all original function bodies AST-identical. Evaluating only the recorded marker strings in isolated namespaces gives Windows30skip/30retain and Darwin/Linux0skip; shared `sys.platform` and product ownership are never simulated during collection. Five targeted ordinary checks passed in 15.86s: new installed refusal, required master-off/invalid constraints and compaction authority disabled/selection-change (raw SHA `ef69d3b6851539b73e7d7777d523b6c794a94adb0cf684d06aa55fd63e192f47`). The other local behavior results carry their unchanged bodies and explicit source applicability; no 60-case, resource, live or ratchet sweep was repeated.
 
 No workflow edit or Windows execution is claimed. Pre-existing selected Windows issues remain for whole-branch triage: `Tests/Agents/test_hooks_v2_execution.py::test_windows_command_refuses_before_root_access_or_launch` restores the real platform and then requires successful command execution, which cannot succeed on Windows. That earlier selection was not changed by this correction. The full workflow is therefore **not claimed Windows-green**; remaining earlier platform selections require their own disposition.
+
+
+## Final combined repair: operation identity, custody and declared values
+
+This section records the single combined I1–I8 repair after the whole-branch
+review. Earlier failed and partial phases above remain historical evidence.
+All selected executions used private pre-import profiles, null test keyring and
+external-network refusal, with immutable whole-source/test before and after
+copies. Native host exceptions were limited to named Darwin boot-identity cases;
+no new loopback exception or platform-support claim follows.
+
+| Boundary | Actual final-wave evidence |
+|---|---|
+| Cursor managed MCP guard (I1) | Installed Cursor `beforeMCPExecution` guard sees the actual owned `mcp.call`; denial precedes normal permission/dispatch, with independent non-MCP control. Host phase11 passed. |
+| Same-run cancellation (I2) | Two actual owned connections in one run each settle after disable or revision drain; another workspace remains usable. Both phase11 cases passed. |
+| Retained direct child (I3) | Phase04 reproduced false settlement; phase05 passed with the original live child, failed cleanup/retry, pending public data deletion, then actual termination/settlement and unlink. |
+| Common tool operation (I4) | Actual LocalToolProvider read/write classification reaches PreToolUse and both post outcomes; missing operation refuses controlling match. Phase13 passed. Classification is part of exact definition identity. |
+| Protected declared values (I5) | Installed unset write guard denies writes while normal read approval/dispatch succeeds; typed configured value permits the write, revoked/missing/wrong-type refs refuse, and an unused declaration leaves siblings usable. Required initialization and dependency-only sibling controls passed. Child and sealed-resume controls preserve nonmatch behavior without advertising an executable guard. Phase30 additionally passed the optional-by-flag guard and actual declaration/reference/scope/selection currentness transitions. |
+| Exact command roots (I6) | Shared and two named-workspace roots are distinct actual grants; missing root refuses. Real unscoped scratch remains leased while its hook child lives after chat closure, rejects new use and disappears only after terminal cleanup. Phases08/10 passed these controls. |
+| Executable lookup (I7) | Native-hook and owned-MCP bare executable lookup uses trusted host PATH despite a child PATH shadow. Explicit package executable controls also passed. Phases08/10/11. |
+| Platform selection (I8) | The workflow's exact 21-file selection collected 687 actual nodes on Darwin: 235 use managed-runtime fixture gates, 219 have skip declarations, and three native unsupported-platform controls skip here. Refusal and supported-command positive branches are separate. This is collection evidence, not 687 executed successes. |
+
+The new value flow passed mounted keyboard checks at 80×24 and 120×35. A separate
+real 80×24 TldwCli PTY journey typed a masked value, saved its protected reference,
+reviewed and confirmed the mapping, then used that same installed hook with actual
+LocalToolProvider permission/dispatch. It was not a fresh Console model turn and
+used an isolated protected-backend double, not the OS keychain. Raw phase18 SHA
+`cd339c36c010c18e21a5779dcf1fbbd394ad30d903e64961f47ef026469de57e`. Invalid-input/navigation cleanup passed phase17; completion updates
+retained metadata without dismissing another screen. Phase22 passed an actual
+configuration round-trip preserving existing connection and model references
+while adding a value; metadata capture never connected to its HTTPS fixture URL.
+
+The two unchanged startup ratchets passed in phase29: preimport 499/500 modules,
+378,583/378,740 LOC (157 spare), and UI-ready 973/973 modules with +17/-17 drift.
+Their two headroom warnings remain. Raw SHA `ca071bf16b75482b9bd5068822a922caf53867a3c2ecbc4591a01908ac64bc51`. No caps, pinned snapshots
+or dependencies changed. Static checks cover the 47 changed Python files with
+whole-file checks for new/clean files and exact FIX_BASE diagnostic/source-line
+parity plus changed-range formatting for eight inherited files (233 diagnostics).
+
+Phase15 was interrupted and has no reconstructed result/after snapshot; its
+separately labeled manual-after evidence and exact-child-absence inspection remain.
+Phase26 failed before launching a child while freezing duplicate path arguments;
+its partial before tree remains. Other failed phases retain their real outcomes,
+including harness failures and the navigation/mapping defects found and corrected.
+Later passing nodes qualify their named boundary only. Formatting and local
+source applicability are recorded separately from original byte identity.
+
+Native Linux/Windows runtime execution, real OS keychain and reboot behavior remain
+unqualified locally. The updated workflow retains actual collected-node capability
+metadata and JUnit outcomes for future platform runs; it was not dispatched here.
+No full-suite or whole-workflow execution was requested or run in this final wave.

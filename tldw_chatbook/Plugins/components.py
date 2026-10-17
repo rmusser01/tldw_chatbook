@@ -224,6 +224,13 @@ def validate_mapping(
         ):
             raise PluginUnavailable("plugin_model_mapping_changed")
         return
+    if mapping["kind"] == "configuration" and mapping["mapping_id"].startswith(
+        "variable:"
+    ):
+        from .variables import validate_mapping as validate_variable_mapping
+
+        validate_variable_mapping(coordinator, mapping, inspection)
+        return
     if mapping["kind"] == "configuration":
         from .agent_presets import tool_constraint_id
 
@@ -273,7 +280,8 @@ def register_hook_definitions(snapshot: RunPluginSnapshot) -> tuple[HookHandler,
     from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
 
     handlers = []
-    for component in PluginComponents.project(snapshot):
+    for key in (*snapshot.selection, *snapshot.unavailable_hooks):
+        component = snapshot.inspection.inventory[key]
         if component.kind != "hook":
             continue
         definition = json.loads(component.definition_json)
@@ -284,50 +292,11 @@ def register_hook_definitions(snapshot: RunPluginSnapshot) -> tuple[HookHandler,
         )[0]
         updates = {"id": qualified_id(snapshot, component.component_id)}
         if handler.type == "command":
-            root = snapshot.inspection.materialized_identity
-            variables = {
-                key: str(value["default"])
-                for key, value in json.loads(snapshot.inspection.variables_json).items()
-                if "default" in value
-            }
-            roots = json.loads(snapshot.data_roots_json)
-            if roots:
-                scoped = [
-                    row for row in roots if row["workspace_id"] == snapshot.workspace_id
-                ]
-                selected = scoped or [
-                    row for row in roots if row["workspace_id"] is None
-                ]
-                if len(selected) != 1:
-                    raise PluginUnavailable("plugin_data_root_ambiguous")
-                variables["PLUGIN_DATA"] = selected[0]["path"]
-            variables["PLUGIN_ROOT"] = root
-            import re
-
-            def expand(value, variables=variables):
-                def substitute(match):
-                    if match[1] not in variables:
-                        raise PluginUnavailable("plugin_variable_unavailable")
-                    return variables[match[1]]
-
-                return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", substitute, value)
-
-            argv = tuple(expand(value) for value in handler.argv)
-            if argv[0].startswith("./"):
-                argv = (str(Path(root) / argv[0]), *argv[1:])
-            updates.update(
-                argv=argv,
-                cwd=str(Path(root) / expand(handler.cwd or ".")),
-                env={
-                    key: (
-                        variables[value["variable"]]
-                        if not isinstance(value, str)
-                        else expand(value)
-                    )
-                    for key, value in (handler.env or {}).items()
-                },
-            )
-        else:
+            # Keep declared/user values unresolved in reviewed handler metadata.
+            # Vendor cwd adaptation is always the authenticated retained package.
+            if handler.vendor_protocol:
+                updates["cwd"] = snapshot.inspection.materialized_identity
+        elif component.component_id not in snapshot.unavailable_hooks:
             server = (
                 handler.server
                 if handler.server.startswith("mcp:")
@@ -354,7 +323,12 @@ class NativeHookProcessOwner:
         snapshot: RunPluginSnapshot,
         component_id: str,
         cancel: Callable[[], None],
+        *,
+        scratch_manager=None,
+        scratch_snapshot=None,
     ) -> None:
+        self.scratch_manager, self.scratch_snapshot = scratch_manager, scratch_snapshot
+        self.scratch_leases = {}
         self.service, self.snapshot, self.component_id = service, snapshot, component_id
         import asyncio
 
@@ -370,14 +344,28 @@ class NativeHookProcessOwner:
             self.service._admission.check(snapshot, self.component_id)
             roots = tuple(root_ref(row) for row in json.loads(snapshot.data_roots_json))
             owner = self.service._coordinator.owner
-            token = owner.reserve_launch(
-                event.event_id,
-                snapshot.installation_id,
-                snapshot.workspace_id,
-                snapshot.revision_digest,
-                roots=roots,
-                root_coverage="known" if roots else "qualified_none",
+            scratch = (
+                self.scratch_manager.lease(self.scratch_snapshot)
+                if self.scratch_manager is not None
+                else None
             )
+            if scratch is not None:
+                scratch.__enter__()
+            try:
+                token = owner.reserve_launch(
+                    event.event_id,
+                    snapshot.installation_id,
+                    snapshot.workspace_id,
+                    snapshot.revision_digest,
+                    roots=roots,
+                    root_coverage="known" if roots else "qualified_none",
+                )
+            except BaseException:
+                if scratch is not None:
+                    scratch.__exit__(None, None, None)
+                raise
+            if scratch is not None:
+                self.scratch_leases[token] = scratch
             try:
                 import threading
 
@@ -408,6 +396,9 @@ class NativeHookProcessOwner:
                     self.records[token] = record
             except BaseException:
                 owner.settle_process(token, True)
+                lease = self.scratch_leases.pop(token, None)
+                if lease is not None:
+                    lease.__exit__(None, None, None)
                 raise
             return token
 
@@ -424,6 +415,9 @@ class NativeHookProcessOwner:
         def settle():
             self.service._coordinator.owner.settle_process(token, confirmed)
             if confirmed:
+                lease = self.scratch_leases.pop(token, None)
+                if lease is not None:
+                    lease.__exit__(None, None, None)
                 with self.service._lock:
                     record = self.records.pop(token, None)
                     if record is not None:
@@ -439,8 +433,16 @@ class NativeHookSet:
     """Host wiring for the existing hook engine, graph and context owners."""
 
     def __init__(
-        self, service: PluginService, snapshots: Sequence[RunPluginSnapshot]
+        self,
+        service: PluginService,
+        snapshots: Sequence[RunPluginSnapshot],
+        *,
+        scratch_manager=None,
+        scratch_snapshot=None,
     ) -> None:
+        if (scratch_manager is None) != (scratch_snapshot is None):
+            raise ValueError("plugin_scratch_capability_pair_required")
+        self.scratch_manager, self.scratch_snapshot = scratch_manager, scratch_snapshot
         self.service = service
         self.snapshots = tuple(snapshots)
         self.definitions = tuple(
@@ -451,9 +453,14 @@ class NativeHookSet:
         self.owners = {
             qualified_id(snapshot, key): (snapshot, key)
             for snapshot in snapshots
-            for key in snapshot.selection
+            for key in (*snapshot.selection, *snapshot.unavailable_hooks)
             if snapshot.inspection.inventory[key].kind == "hook"
         }
+        self.unavailable = frozenset(
+            qualified_id(snapshot, key)
+            for snapshot in snapshots
+            for key in snapshot.unavailable_hooks
+        )
         self.requirements = frozenset(
             handler_id
             for snapshot in snapshots
@@ -481,10 +488,18 @@ class NativeHookSet:
         return tuple(sorted(requirements))
 
     def current(self, handler: HookHandler, event: HookEvent, stage: str) -> bool:
+        if handler.id in self.unavailable:
+            return False
         owner = self.owners.get(handler.id)
         if owner is None:
             return True
         snapshot, key = owner
+        if (
+            snapshot.workspace_id is None
+            and self.scratch_manager is not None
+            and not self.scratch_manager.is_live(self.scratch_snapshot)
+        ):
+            return False
         try:
             import threading
 
@@ -502,10 +517,22 @@ class NativeHookSet:
     def process_owner(
         self, handler: HookHandler, event: HookEvent, cancel: Callable[[], None]
     ) -> NativeHookProcessOwner | None:
+        if handler.id in self.unavailable:
+            raise PluginUnavailable("plugin_requirement_not_executable")
         owner = self.owners.get(handler.id)
         if owner is None:
             return None
-        return NativeHookProcessOwner(self.service, *owner, cancel)
+        return NativeHookProcessOwner(
+            self.service,
+            *owner,
+            cancel,
+            scratch_manager=(
+                self.scratch_manager if owner[0].workspace_id is None else None
+            ),
+            scratch_snapshot=(
+                self.scratch_snapshot if owner[0].workspace_id is None else None
+            ),
+        )
 
     def host_environment(
         self, handler: HookHandler, event: HookEvent
@@ -514,14 +541,104 @@ class NativeHookSet:
         if owner is None:
             return {}
         snapshot, _key = owner
+        return self._roots(snapshot)
+
+    def _roots(self, snapshot) -> dict[str, str]:
         result = {"PLUGIN_ROOT": snapshot.inspection.materialized_identity}
         roots = json.loads(snapshot.data_roots_json)
-        selected = [
-            row for row in roots if row["workspace_id"] == snapshot.workspace_id
-        ] or [row for row in roots if row["workspace_id"] is None]
-        if len(selected) == 1:
-            result["PLUGIN_DATA"] = selected[0]["path"]
+        shared = [row for row in roots if row["workspace_id"] is None]
+        scoped = [
+            row
+            for row in roots
+            if snapshot.workspace_id is not None
+            and row["workspace_id"] == snapshot.workspace_id
+        ]
+        if len(shared) > 1 or len(scoped) > 1:
+            raise PluginUnavailable("plugin_data_root_ambiguous")
+        if shared:
+            result["PLUGIN_DATA"] = shared[0]["path"]
+        if snapshot.workspace_id is not None:
+            if scoped:
+                result["CHATBOOK_WORKSPACE_DATA"] = scoped[0]["path"]
+        elif self.scratch_manager is not None:
+            if not self.scratch_manager.is_live(self.scratch_snapshot):
+                raise PluginUnavailable("plugin_scratch_unavailable")
+            result["CHATBOOK_WORKSPACE_DATA"] = str(self.scratch_snapshot.root)
         return result
+
+    def command_launch(self, handler, event, host_environment):
+        """Resolve protected values once after reservation, only into launch locals."""
+        import shutil
+
+        from tldw_chatbook.Agents.hooks_v2.command_executor import CommandLaunchValues
+
+        from .variables import REFERENCE, ROOT_NAMES, text, values
+
+        owner = self.owners.get(handler.id)
+        if owner is None:
+            return None
+        snapshot, key = owner
+
+        def resolve():
+            self.service._admission.check(snapshot, key)
+            return values(
+                self.service._coordinator,
+                snapshot.installation_id,
+                snapshot.inspection,
+                key,
+                json.loads(snapshot.mappings_json),
+                resolve=True,
+            )
+
+        variables = {
+            name: text(value)
+            for name, value in self.service._call_from_agent(resolve).items()
+        }
+        roots = self._roots(snapshot)
+        variables.update(roots)
+
+        def expand(value):
+            def substitute(match):
+                if match[1] not in variables:
+                    raise PluginUnavailable("plugin_variable_unavailable")
+                return variables[match[1]]
+
+            result = REFERENCE.sub(substitute, value)
+            if "\0" in result:
+                raise PluginUnavailable("plugin_variable_invalid")
+            return result
+
+        argv = tuple(expand(value) for value in handler.argv)
+        root = Path(roots["PLUGIN_ROOT"])
+        token = argv[0]
+        if token.startswith("./"):
+            executable = str(root / token)
+        elif Path(token).is_absolute():
+            executable = token
+        else:
+            executable = shutil.which(token, path=host_environment.get("PATH", ""))
+        if not executable:
+            raise PluginUnavailable("plugin_executable_unavailable")
+        cwd = (root / expand(handler.cwd or ".")).resolve()
+        if not cwd.is_relative_to(root.resolve()):
+            raise PluginUnavailable("plugin_hook_cwd_invalid")
+        environment = {
+            name: value
+            for name, value in host_environment.items()
+            if name not in ROOT_NAMES
+        }
+        environment.update(
+            {
+                name: (
+                    expand(value)
+                    if isinstance(value, str)
+                    else variables[value["variable"]]
+                )
+                for name, value in (handler.env or {}).items()
+            }
+        )
+        environment.update(roots)
+        return CommandLaunchValues((executable, *argv[1:]), str(cwd), environment)
 
     def render_context(self, event: HookEvent, handler_id: str, block: Any) -> str:
         from tldw_chatbook.Agents.agent_models import (

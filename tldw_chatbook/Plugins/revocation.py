@@ -160,9 +160,9 @@ class RevocationOperation:
         """Invoke exact host callbacks now; retain awaitable cleanup separately."""
         seen = set()
         for record in self.records:
-            if record.run_id in seen or record.completed.is_set():
+            if record.lease_token in seen or record.completed.is_set():
                 continue
-            seen.add(record.run_id)
+            seen.add(record.lease_token)
             try:
                 result = record.cancel()
                 if isinstance(result, Future):

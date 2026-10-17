@@ -87,6 +87,7 @@ async def _native_engine(service, installation, run_id, budget=None, *, enabled=
         enabled=enabled,
         process_owner_for=native.process_owner,
         host_environment=native.host_environment,
+        command_launch=native.command_launch,
         dependency_required=lambda handler, event: handler.id in native.requirements,
     )
     engine.native_hooks = native

@@ -388,7 +388,11 @@ def parse_handlers(
             )
             clean_env = {}
             for key, item in env.items():
-                if not ENV_RE.fullmatch(key) or key in {"PLUGIN_ROOT", "PLUGIN_DATA"}:
+                if not ENV_RE.fullmatch(key) or key in {
+                    "PLUGIN_ROOT",
+                    "PLUGIN_DATA",
+                    "CHATBOOK_WORKSPACE_DATA",
+                }:
                     _fail("invalid or reserved environment name")
                 if type(item) is str and "\x00" not in item:
                     clean_env[key] = item

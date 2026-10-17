@@ -273,9 +273,6 @@ def inventory_package(
         if record.kind != "hook" and source_guards:
             edges[key] = tuple(dict.fromkeys((*edges.get(key, ()), *source_guards)))
 
-    for name, declaration in variables.items():
-        if declaration["required"] and "default" not in declaration:
-            global_blockers.append(f"variable_unset:{name}")
     if edges.keys() - inventory.keys():
         global_blockers.append("dependency_scope_unknown")
     for key, component in list(inventory.items()):
@@ -285,15 +282,27 @@ def inventory_package(
             if isinstance(definition, dict):
                 values = [
                     *definition.get("argv", []),
+                    definition.get("cwd", ""),
                     *definition.get("env", {}).values(),
                 ]
                 for value in values:
+                    if (
+                        isinstance(value, dict)
+                        and set(value) == {"variable"}
+                        and value["variable"] not in variables
+                    ):
+                        blockers.add(f"variable_undeclared:{value['variable']}")
                     if isinstance(value, str):
                         for variable in re.findall(
                             r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value
                         ):
                             if (
-                                variable not in {"PLUGIN_ROOT", "PLUGIN_DATA"}
+                                variable
+                                not in {
+                                    "PLUGIN_ROOT",
+                                    "PLUGIN_DATA",
+                                    "CHATBOOK_WORKSPACE_DATA",
+                                }
                                 and variable not in variables
                             ):
                                 blockers.add(f"variable_undeclared:{variable}")

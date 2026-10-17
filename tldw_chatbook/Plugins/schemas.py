@@ -21,7 +21,7 @@ PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,128}\Z")
 COMPONENT_PATTERN = re.compile(r"(?:skill|mcp|command|rule|agent|hook):[^:\s]{1,128}\Z")
-RESERVED_VARIABLES = {"PLUGIN_ROOT", "PLUGIN_DATA"}
+RESERVED_VARIABLES = {"PLUGIN_ROOT", "PLUGIN_DATA", "CHATBOOK_WORKSPACE_DATA"}
 EFFECTS = {
     "SessionStart": {"context", "deny"},
     "UserPromptSubmit": {"deny", "context"},
@@ -400,7 +400,18 @@ def validate_hook(value: object, capture) -> dict:
             isinstance(env, dict)
             and not (env.keys() & RESERVED_VARIABLES)
             and all(
-                validate_env_var_reference(k) and isinstance(v, str)
+                validate_env_var_reference(k)
+                and (
+                    (isinstance(v, str) and "\0" not in v)
+                    or (
+                        isinstance(v, dict)
+                        and set(v) == {"variable"}
+                        and isinstance(v["variable"], str)
+                        and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", v["variable"])
+                        is not None
+                        and v["variable"] not in RESERVED_VARIABLES
+                    )
+                )
                 for k, v in env.items()
             )
         )
