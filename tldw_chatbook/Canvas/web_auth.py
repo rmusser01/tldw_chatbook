@@ -676,7 +676,11 @@ class WebAuthManager:
         device_label: str = "",
         persist: bool = True,
     ) -> SessionGrant:
-        self._prune_sessions(now)
+        # Prune and eviction revocations skip their own persistence (the
+        # loops would write once per dead session); the single write below
+        # covers them together with the new session's grant (#3127 minor).
+        pruned = self._prune_sessions(now, persist=False)
+        evicted = False
         while len(self._sessions) >= self._max_sessions:
             eviction_candidate = next(
                 (
@@ -688,7 +692,8 @@ class WebAuthManager:
             )
             if eviction_candidate is None:
                 raise AuthenticationError("session capacity unavailable")
-            self._revoke_session(eviction_candidate)
+            self._revoke_session(eviction_candidate, persist=False)
+            evicted = True
         cookie = self._token_factory(32)
         csrf = self._token_factory(24)
         if persist:
@@ -715,11 +720,17 @@ class WebAuthManager:
             idle_timeout_seconds=idle_timeout,
             absolute_timeout_seconds=absolute_timeout,
         )
-        if persist:
+        if persist or pruned or evicted:
             self._persist_all()
         return SessionGrant(cookie, csrf, absolute_expiry)
 
-    def _prune_sessions(self, now: float) -> None:
+    def _prune_sessions(self, now: float, *, persist: bool = True) -> bool:
+        """Revoke expired sessions, persisting once after the whole pass.
+
+        Returns whether any session was revoked. With ``persist=False`` the
+        caller owns the write (``_new_session`` batches it with its grant).
+        """
+
         expired = [
             session
             for session in self._sessions.values()
@@ -730,7 +741,10 @@ class WebAuthManager:
             )
         ]
         for session in expired:
-            self._revoke_session(session)
+            self._revoke_session(session, persist=False)
+        if expired and persist:
+            self._persist_all()
+        return bool(expired)
 
     def _effective_request(self, facts: RequestFacts) -> tuple[str, str, str]:
         client_ip = facts.peer_ip
@@ -906,13 +920,22 @@ class WebAuthManager:
         if now - previous_last_seen >= _TOUCH_PERSIST_INTERVAL_SECONDS:
             self._persist_all()
 
-    def _revoke_session(self, session: BrowserSession) -> None:
+    def _revoke_session(self, session: BrowserSession, *, persist: bool = True) -> None:
+        """Revoke one session now; write the store unless the caller batches.
+
+        ``persist=False`` serves the prune/eviction loops, which persist once
+        after the loop instead of once per revoked session (#3127 minor).
+        Every other caller (explicit revoke, expiry-on-touch, revoke-by-id)
+        keeps the immediate write.
+        """
+
         self._sessions.pop(session.cookie_digest, None)
         session.revoked = True
         callbacks = self._revocation_callbacks.pop(session.session_id, set())
         for callback in callbacks:
             callback()
-        self._persist_all()
+        if persist:
+            self._persist_all()
 
     def revoke_all(self) -> None:
         for session in self._sessions.values():

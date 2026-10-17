@@ -175,7 +175,10 @@
       showError(code);
       return;
     }
-    state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    // The conversations route answers the paginated envelope
+    // {"items", "page", "has_more"} like the reading routes; the session
+    // list takes items and ignores the pagination fields.
+    state.sessions = Array.isArray(data.items) ? data.items : [];
     renderSessionList();
   }
 
@@ -253,7 +256,10 @@
   }
 
   function appendMessage(msg) {
-    if (state.messageIds.has(msg.id)) return;
+    if (state.messageIds.has(msg.id)) {
+      resyncTruncatedRow(msg);
+      return;
+    }
     // Reconcile an optimistic user bubble with its real wire row (the
     // non-blocking send persists the row a tick after its 202).
     if (msg.role === "user" && state.pendingUserTexts[0] === msg.content) {
@@ -265,6 +271,28 @@
     state.messages.push(msg);
     els.transcript.append(renderMessage(msg));
     els.chatEmpty.hidden = true;
+    scrollTranscript();
+  }
+
+  // Mid-stream reconnect resync (#3128 minor 5): a dropped stream can
+  // leave the last bubble rendered from deltas that stopped early, and
+  // the resync then re-delivers that KNOWN id with the full persisted
+  // content. When the incoming content is LONGER than what is rendered,
+  // update the stored message and the row's text in place — textContent
+  // only, exactly like the live-delta path; a shorter or equal
+  // re-delivery (an edit elsewhere) changes nothing here.
+  function resyncTruncatedRow(msg) {
+    const known = state.messages.find((message) => message.id === msg.id);
+    if (!known) return;
+    const content = typeof msg.content === "string" ? msg.content : "";
+    const knownContent =
+      typeof known.content === "string" ? known.content : "";
+    if (content.length <= knownContent.length) return;
+    known.content = msg.content;
+    const row = state.rowsById.get(msg.id);
+    if (!row) return;
+    const toolName = toolNameOf(msg);
+    row.textContent = toolName ? "tool: " + toolName : content;
     scrollTranscript();
   }
 
@@ -628,10 +656,16 @@
     const card = document.createElement("li");
     // ADR-236: tag which surface owns the round — desktop-relayed (from a
     // served terminal session) or phone-initiated. The wire's surface
-    // value only picks between two fixed labels; it never becomes markup.
+    // value only picks between fixed labels; anything else renders the RAW
+    // value (explicit, never guessed), and it never becomes markup.
     const surface = document.createElement("span");
     surface.className = "approval-surface";
-    surface.textContent = round.surface === "desktop" ? "desktop" : "phone";
+    surface.textContent =
+      round.surface === "mobile"
+        ? "phone"
+        : round.surface === "desktop"
+          ? "desktop"
+          : String(round.surface);
     card.append(surface);
     const calls = Array.isArray(round.calls) ? round.calls : [];
     for (const call of calls) {

@@ -410,6 +410,49 @@ def test_create_server_degrades_to_token_only_login_when_fido2_missing(
     assert server._webauthn_service is None
 
 
+def test_create_server_names_the_offending_session_day_key(monkeypatch, tmp_path) -> None:
+    """#3127 review minor: a bad day-key config value raises a ValueError
+    naming the offending key, mirroring the absolute<idle message family —
+    not a bare ``invalid literal for int()`` that hides which setting to fix.
+    """
+
+    class _Base:
+        def __init__(self, **kwargs):
+            pass  # never reached: both bad values raise before construction
+
+    monkeypatch.setattr(serve, "_load_textual_serve_server_class", lambda: _Base)
+    monkeypatch.setattr(serve, "_load_textual_serve_app_service_class", lambda: None)
+    values = {
+        "access_token": "web-secret",
+        "public_url": "http://chatbook.example",
+        "allow_insecure_remote_http": True,
+        "trusted_proxy_addresses": [],
+        "tls_certificate": "",
+        "tls_private_key": "",
+    }
+    monkeypatch.setattr(
+        serve,
+        "get_cli_setting",
+        lambda section, key=None, default=None: values.get(key, default),
+    )
+    monkeypatch.setattr(
+        serve,
+        "get_canvas_config_policy",
+        lambda **_: build_canvas_config_policy({}, web_auth_policy=None),
+    )
+    monkeypatch.setattr(serve, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.delenv("TLDW_CHATBOOK_WEB_ACCESS_TOKEN", raising=False)
+
+    values["session_idle_timeout_days"] = "soon"
+    with pytest.raises(ValueError, match="web_server.session_idle_timeout_days"):
+        serve.create_server(host="0.0.0.0", port=8000)
+
+    values["session_idle_timeout_days"] = 30
+    values["session_absolute_timeout_days"] = "soon"
+    with pytest.raises(ValueError, match="web_server.session_absolute_timeout_days"):
+        serve.create_server(host="0.0.0.0", port=8000)
+
+
 # --- Device manager pages (task 4, ADR-233) -------------------------------
 #
 # These tests deliberately construct the server without touching the shared
@@ -634,6 +677,47 @@ async def test_revoking_another_device_ends_only_that_session(tmp_path) -> None:
 
             assert (await client.get("/auth/devices")).status == 200
             assert (await other.get("/auth/devices")).status == 401
+
+
+@pytest.mark.asyncio
+async def test_revoke_without_the_csrf_header_is_denied_and_revokes_nothing(
+    tmp_path,
+) -> None:
+    """CSRF-denial pin (#3127 review minor).
+
+    A valid session POSTing the revoke route WITHOUT the per-request CSRF
+    header must be refused with 401 before the service is touched: no
+    session is revoked, both devices keep working. A pin, not a change —
+    the middleware already enforces the header on every state-changing
+    route; this locks the contract at the route boundary.
+    """
+
+    async with _logged_in_client(tmp_path) as client:
+        other = await _fresh_client(client.chatbook_test_server)
+        async with other:
+            login = await other.post(
+                "/auth/login",
+                data={"access_token": _DEVICES_ACCESS_TOKEN, "remember": "1"},
+                allow_redirects=False,
+            )
+            assert login.status == 303
+            entries = await _device_entries(client)
+            assert len(entries) == 2
+            other_session_id = next(
+                session_id for session_id, is_current in entries if not is_current
+            )
+
+            # Same request as the revoke test above, minus the CSRF header.
+            denied = await client.post(
+                "/auth/devices/revoke",
+                json={"session_id": other_session_id},
+            )
+
+            assert denied.status == 401
+            # Service untouched: both sessions survive and stay usable.
+            assert len(await _device_entries(client)) == 2
+            assert (await other.get("/auth/devices")).status == 200
+            assert (await client.get("/auth/devices")).status == 200
 
 
 @pytest.mark.asyncio
@@ -888,9 +972,18 @@ def _passkey_client_data(kind: str, challenge, origin: str = _PASSKEY_ORIGIN) ->
 
 
 async def _register_passkey_via_routes(
-    client, *, label: str = "YubiKey 5", credential_id: bytes = b"\x02" * 32
+    client,
+    *,
+    label: str = "YubiKey 5",
+    credential_id: bytes = b"\x02" * 32,
+    extensions_padding: int = 0,
 ):
-    """Drive register begin -> complete against the live authed routes."""
+    """Drive register begin -> complete against the live authed routes.
+
+    ``extensions_padding`` grows the attestation with a well-shaped
+    authenticator-data extensions blob (ED flag set), standing in for the
+    packed x5c chains that make real registration bodies large.
+    """
 
     csrf = await _csrf(client)
     begin = await client.post(
@@ -902,9 +995,12 @@ async def _register_passkey_via_routes(
     payload = await begin.json()
     private_key = ec.generate_private_key(ec.SECP256R1())
     cose_key = cbor.encode(_passkey_cose_key(private_key.public_key()))
-    auth_data = _passkey_auth_data(
-        _PASSKEY_FLAG_UP_UV_AT, 0, credential_id, cose_key
-    )
+    flags = _PASSKEY_FLAG_UP_UV_AT | (0x80 if extensions_padding else 0)
+    auth_data = _passkey_auth_data(flags, 0, credential_id, cose_key)
+    if extensions_padding:
+        auth_data += cbor.encode(
+            {"org.example.padding": b"\x00" * extensions_padding}
+        )
     attestation_object = cbor.encode(
         {"fmt": "none", "attStmt": {}, "authData": auth_data}
     )
@@ -1106,6 +1202,55 @@ async def test_passkey_register_and_login_round_trip_via_server_routes(
     assert len(records) == 1
     [record] = records.values()
     assert record.device_label.endswith(" (passkey)")
+
+
+@pytest.mark.asyncio
+async def test_passkey_register_complete_accepts_attestation_up_to_32_kib(
+    tmp_path,
+) -> None:
+    """Registration bodies may carry packed x5c chains past the 4 KiB default.
+
+    The register/complete route alone admits bodies up to 32 KiB (#3130) —
+    here a >4 KiB, well-shaped attestation (authenticator-data extensions
+    blob) completes — while anything beyond the cap still answers 413.
+    """
+    async with _logged_in_client(
+        tmp_path, webauthn_service=_passkey_service(tmp_path)
+    ) as client:
+        _private_key, _credential_id, result = await _register_passkey_via_routes(
+            client, extensions_padding=8192
+        )
+        assert result["ok"] is True
+
+        csrf = await _csrf(client)
+        begin = await client.post(
+            "/auth/passkeys/register/begin",
+            json={"label": "too big"},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert begin.status == 200
+        payload = await begin.json()
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        cose_key = cbor.encode(_passkey_cose_key(private_key.public_key()))
+        credential_id = b"\x03" * 32
+        auth_data = _passkey_auth_data(
+            _PASSKEY_FLAG_UP_UV_AT | 0x80, 0, credential_id, cose_key
+        ) + cbor.encode({"org.example.padding": b"\x00" * (48 * 1024)})
+        attestation_object = cbor.encode(
+            {"fmt": "none", "attStmt": {}, "authData": auth_data}
+        )
+        oversized = await client.post(
+            "/auth/passkeys/register/complete",
+            json={
+                "challenge_id": payload["challenge_id"],
+                "client_data_json": _passkey_client_data(
+                    "webauthn.create", payload["publicKey"]["challenge"]
+                ),
+                "attestation_object_b64": base64.b64encode(attestation_object).decode(),
+            },
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert oversized.status == 413
 
 
 @pytest.mark.asyncio

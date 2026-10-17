@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fido2 import cbor
 
 from tldw_chatbook.Canvas.web_auth import AuthenticationError
+from tldw_chatbook.Web_Server import serve
 from tldw_chatbook.Web_Server.webauthn_store import (
     StoredCredential,
     WebAuthnCredentialStore,
@@ -32,6 +33,13 @@ from tldw_chatbook.Web_Server.webauthn_service import (
     PasskeysUnavailable,
     WebAuthnService,
 )
+
+pytestmark = [
+    pytest.mark.skipif(
+        not serve.check_web_server_available(),
+        reason="web server optional dependencies are unavailable",
+    ),
+]
 
 RP_ID = "chatbook.example"
 ORIGIN = "https://chatbook.example"
@@ -275,6 +283,128 @@ def test_challenge_one_use_and_ttl(tmp_path: Path) -> None:
         )
 
 
+def test_login_rejects_wrong_origin_or_challenge_before_credential_iteration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wrong-origin/wrong-challenge assertions die before the credential loop.
+
+    ``login_complete`` parses the client data once and checks challenge
+    membership + origin + type against the issued state BEFORE iterating
+    stored credentials (#3130): a spy on the fido2 verification proves zero
+    signature verifications for both rejections, while an unknown credential
+    (pre-check passes, loop runs, signature mismatches) is still denied.
+    """
+    service = _service(tmp_path, _FakeClock())
+    private_key, credential_id, _ = _register(service)
+
+    real = service._server.authenticate_complete
+    calls: list[object] = []
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service._server, "authenticate_complete", spy)
+
+    def _attempt(
+        client_data_json: str,
+        key: ec.EllipticCurvePrivateKey,
+        begin: dict | None = None,
+    ) -> None:
+        begin = begin or service.login_begin()
+        auth_data = _auth_data_bytes(_FLAG_UP_UV, 1, None, None)
+        signature = key.sign(
+            auth_data + hashlib.sha256(client_data_json.encode()).digest(),
+            ec.ECDSA(hashes.SHA256()),
+        )
+        with pytest.raises(AuthenticationError):
+            service.login_complete(
+                begin["challenge_id"],
+                client_data_json,
+                base64.b64encode(auth_data).decode(),
+                base64.b64encode(signature).decode(),
+            )
+
+    calls.clear()
+    _attempt(
+        _client_data_json(
+            "webauthn.get", "challenge-9999-0123456789abcdef", "https://evil.example"
+        ),
+        private_key,
+    )
+    assert calls == []  # wrong origin: no credential iteration at all
+
+    calls.clear()
+    _attempt(
+        _client_data_json("webauthn.get", "not-the-issued-challenge", ORIGIN),
+        private_key,
+    )
+    assert calls == []  # wrong challenge: no credential iteration at all
+
+    calls.clear()
+    _attempt(
+        _client_data_json(
+            "webauthn.create", "challenge-9998-0123456789abcdef", ORIGIN
+        ),
+        private_key,
+    )
+    assert calls == []  # wrong type (webauthn.create): no credential iteration
+
+    calls.clear()
+    stranger = ec.generate_private_key(ec.SECP256R1())
+    stranger_begin = service.login_begin()
+    _attempt(
+        _client_data_json(
+            "webauthn.get", stranger_begin["publicKey"]["challenge"], ORIGIN
+        ),
+        stranger,
+        begin=stranger_begin,
+    )
+    assert len(calls) == 1  # pre-check passed; the loop ran and denied
+
+
+def test_wrong_typed_sign_count_records_are_skipped(tmp_path: Path) -> None:
+    """A tampered ``sign_count`` must be skipped, not detonate on comparison.
+
+    ``load()`` mirrors ``session_store``'s type validation (review #3130):
+    a non-int (or bool) sign_count skips the record like a malformed one,
+    so a clean sibling credential keeps logging in and the tampered
+    credential itself is denied as unknown.
+    """
+    clock = _FakeClock()
+    service = _service(tmp_path, clock)
+    key_a, credential_a, _ = _register(service, label="A", credential_id=b"\x0a" * 32)
+    key_b, credential_b, _ = _register(service, label="B", credential_id=b"\x0b" * 32)
+
+    path = tmp_path / "webauthn_credentials.json"
+    payload = json.loads(path.read_text())
+    payload[credential_a.hex()]["sign_count"] = "soon"
+    bool_record = dict(payload[credential_b.hex()], sign_count=True)
+    bool_record["credential_id_hex"] = "cafe"
+    payload["cafe"] = bool_record
+    path.write_text(json.dumps(payload))
+
+    store = WebAuthnCredentialStore(path)
+    assert set(store.load()) == {credential_b.hex()}
+
+    # The clean credential logs in unaffected; the tampered one is denied.
+    credential = _assertion(service, key_b, credential_b, counter=1)
+    assert credential.credential_id_hex == credential_b.hex()
+    with pytest.raises(AuthenticationError):
+        _assertion(service, key_a, credential_a, counter=1)
+
+
+def test_challenge_cap_evicts_oldest_first(tmp_path: Path) -> None:
+    """The 64-entry challenge book evicts oldest-first beyond the cap."""
+    service = _service(tmp_path, _FakeClock())
+    issued = [service.login_begin()["challenge_id"] for _ in range(65)]
+
+    assert len(service._states) == 64
+    assert issued[0] not in service._states  # oldest evicted
+    assert issued[1] in service._states  # oldest-first, not arbitrary
+    assert issued[-1] in service._states  # newest retained
+
+
 def test_sign_count_regression_rejects(tmp_path: Path) -> None:
     service = _service(tmp_path, _FakeClock())
     private_key, credential_id, _ = _register(service)
@@ -301,6 +431,24 @@ def test_ip_or_missing_public_url_refuses(tmp_path: Path) -> None:
         WebAuthnService(public_url="https://[2001:db8::1]:8443", store=store)
     with pytest.raises(PasskeysUnavailable):
         WebAuthnService(public_url="", store=store)
+
+
+def test_non_https_public_url_refuses(tmp_path: Path) -> None:
+    """Only an https public URL can back a passkey RP (2a final F3).
+
+    Browsers never sign client data for plain-http origins, so admitting
+    http:// (or any other scheme) at construction would only defer the
+    failure to every ceremony; refuse it up front instead.
+    """
+    store = WebAuthnCredentialStore(tmp_path / "webauthn_credentials.json")
+    with pytest.raises(PasskeysUnavailable):
+        WebAuthnService(public_url="http://chatbook.example", store=store)
+    with pytest.raises(PasskeysUnavailable):
+        WebAuthnService(public_url="ftp://chatbook.example", store=store)
+    service = WebAuthnService(
+        public_url="https://chatbook.example:8443", store=store
+    )
+    assert service.rp_id == RP_ID
 
 
 def test_remove_credential(tmp_path: Path) -> None:

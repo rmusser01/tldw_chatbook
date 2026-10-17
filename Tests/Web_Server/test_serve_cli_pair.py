@@ -23,6 +23,13 @@ def test_pair_prints_qr_and_url(capsys) -> None:
     out = capsys.readouterr().out
     assert "https://chatbook.example/auth/bootstrap?nonce=abc123" in out
     assert "█" in out or "▀" in out  # ascii qr block output
+    # Bind-order hint (#3127 minor 8): --pair prints BEFORE the server
+    # binds, so the QR is dead until startup finishes — the hint says so
+    # and appears before the QR blocks, where a scanning user reads it.
+    assert "Server starting — scan once it is up." in out
+    assert out.index("Server starting — scan once it is up.") < out.index(
+        "Scan with your phone"
+    )
 
 
 def test_pair_skips_without_public_url(capsys) -> None:

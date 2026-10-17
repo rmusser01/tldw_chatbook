@@ -639,6 +639,11 @@ _DEVICE_BROWSER_MARKERS = (
 )
 _DEVICE_LABEL_MAX_LENGTH = 64
 
+#: Attestation bodies can pack x5c certificate chains well beyond the 4 KiB
+#: device-JSON default, so the passkey register/complete route alone admits
+#: bodies up to 32 KiB (#3130); every other device-JSON route stays at 4 KiB.
+_ATTESTATION_BODY_MAX_BYTES = 32 * 1024
+
 
 def _device_label_from_user_agent(ua: str) -> str:
     """Derive a short, non-identifying device label from a User-Agent string.
@@ -659,14 +664,20 @@ def _device_label_from_user_agent(ua: str) -> str:
     return (label or "Unknown device")[:_DEVICE_LABEL_MAX_LENGTH]
 
 
-async def _read_device_json(request) -> dict:
-    """Read one bounded JSON object body for the device-manager endpoints."""
+async def _read_device_json(request, max_bytes: int = 4096) -> dict:
+    """Read one bounded JSON object body for the device-manager endpoints.
+
+    ``max_bytes`` lets a single route widen the bound (the passkey
+    register/complete route admits attestation bodies up to
+    ``_ATTESTATION_BODY_MAX_BYTES``); the 4 KiB default covers every other
+    device-JSON route.
+    """
 
     from aiohttp import web
 
-    if request.content_length is not None and request.content_length > 4096:
+    if request.content_length is not None and request.content_length > max_bytes:
         raise web.HTTPRequestEntityTooLarge(
-            max_size=4096, actual_size=request.content_length
+            max_size=max_bytes, actual_size=request.content_length
         )
     try:
         payload = await request.json()
@@ -1462,7 +1473,11 @@ class ChatbookWebServerMixin:
 
         if self._webauthn_service is None:
             return self._passkeys_unavailable()
-        payload = await _read_device_json(request)
+        # Attestation objects may carry packed x5c chains, so this route alone
+        # widens the device-JSON body bound to 32 KiB (#3130).
+        payload = await _read_device_json(
+            request, max_bytes=_ATTESTATION_BODY_MAX_BYTES
+        )
         try:
             result = self._webauthn_service.register_complete(
                 _required_str(payload, "challenge_id"),
@@ -2348,18 +2363,30 @@ def create_server(
     except PasskeysUnavailable:
         webauthn_service = None
 
-    session_idle_timeout_days = max(
-        1,
-        int(get_cli_setting("web_server", "session_idle_timeout_days", default=30)),
-    )
-    session_absolute_timeout_days = max(
-        1,
-        int(
-            get_cli_setting(
-                "web_server", "session_absolute_timeout_days", default=180
-            )
-        ),
-    )
+    # A bad day value must name its key (mirroring the absolute<idle message
+    # below), not surface as a bare int() parse error (#3127 review minor).
+    try:
+        session_idle_timeout_days = max(
+            1,
+            int(get_cli_setting("web_server", "session_idle_timeout_days", default=30)),
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "web_server.session_idle_timeout_days must be an integer number of days"
+        ) from error
+    try:
+        session_absolute_timeout_days = max(
+            1,
+            int(
+                get_cli_setting(
+                    "web_server", "session_absolute_timeout_days", default=180
+                )
+            ),
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "web_server.session_absolute_timeout_days must be an integer number of days"
+        ) from error
     if session_absolute_timeout_days < session_idle_timeout_days:
         raise ValueError(
             "web_server.session_absolute_timeout_days must be greater than or "
@@ -2392,7 +2419,12 @@ _PAIR_QR_UNREACHABLE_HOSTS = frozenset({"0.0.0.0", "::", ""})
 
 
 def _print_pair_qr(server, *, echo=print) -> bool:
-    """Print a one-use pairing QR for a server about to start (ADR-233 §3.3)."""
+    """Print a one-use pairing QR for a server about to start (ADR-233 §3.3).
+
+    A one-line "server starting" hint precedes the QR: it prints before the
+    server binds, and a phone scanning during startup gets a dead link until
+    the listener is up (#3127 minor 8).
+    """
     public_url = getattr(server, "public_url", None)
     if not public_url:
         echo("--pair skipped: [web_server] public_url is not configured.")
@@ -2409,6 +2441,10 @@ def _print_pair_qr(server, *, echo=print) -> bool:
         )
         return False
     url = server.issue_browser_bootstrap_url()
+    # --pair prints BEFORE the server binds (run_web_server calls this
+    # ahead of serve()), so a phone scanning immediately hits a dead link
+    # until startup finishes — say so before the QR (#3127 minor 8).
+    echo("Server starting — scan once it is up.")
     try:
         import qrcode
     except ImportError:

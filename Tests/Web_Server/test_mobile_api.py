@@ -133,6 +133,23 @@ class FakeMobileService:
         # Task-3 contract: the sessions list is newest-first.
         return [dict(session) for session in reversed(list(self._sessions.values()))]
 
+    def sessions_page(
+        self, *, page: int = 1, per_page: int = 50
+    ) -> dict[str, Any]:
+        """Task-2 efficiency follow-up: window the merged listing (real
+        service windows its in-memory + persisted merge; the stub windows
+        its in-memory sessions) into the reading routes' page envelope."""
+        self.calls.append(
+            ("sessions_page", {"page": page, "per_page": per_page})
+        )
+        listing = [dict(session) for session in reversed(list(self._sessions.values()))]
+        start = (page - 1) * per_page
+        return {
+            "items": listing[start : start + per_page],
+            "page": page,
+            "has_more": start + per_page < len(listing),
+        }
+
     async def create_session(
         self, *, title: str, workspace_id: str | None = None
     ) -> dict[str, Any]:
@@ -150,7 +167,7 @@ class FakeMobileService:
         self._messages[session_id] = []
         return dict(session)
 
-    def session_messages(
+    async def session_messages(
         self, session_id: str, *, after_message_id: str | None = None
     ) -> dict[str, Any]:
         self.calls.append(
@@ -635,16 +652,77 @@ async def test_conversations_list_shape(tmp_path, mobile_surface_gate) -> None:
         assert response.headers["Cache-Control"] == "no-store"
         body = await response.json()
         assert body == {
-            "sessions": [
+            "items": [
                 {
                     "id": "s-known",
                     "title": "phone chat",
                     "workspace_id": "global",
                     "has_folder_tools": False,
                 }
-            ]
+            ],
+            "page": 1,
+            "has_more": False,
         }
-        assert ("sessions", {}) in service.calls
+        assert ("sessions_page", {"page": 1, "per_page": 50}) in service.calls
+
+
+@pytest.mark.asyncio
+async def test_conversations_pagination_contract(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """Task-2 (#3128 minor 7): ``?page=``/``?per_page`` with the reading
+    routes' validation — ``400 invalid_page`` via the shared parser, plus
+    the per_page bounds (default 50, max 100).
+    """
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        # Explicit page/per_page pass through to the service.
+        paged = await client.get(
+            "/api/v1/mobile/conversations?page=2&per_page=100"
+        )
+        assert paged.status == 200
+        assert paged.headers["Cache-Control"] == "no-store"
+        body = await paged.json()
+        assert set(body) == {"items", "page", "has_more"}
+        assert body["page"] == 2
+        assert ("sessions_page", {"page": 2, "per_page": 100}) in service.calls
+
+        boundary = await client.get(
+            "/api/v1/mobile/conversations?page=1&per_page=1"
+        )
+        assert boundary.status == 200
+        boundary_body = await boundary.json()
+        assert [session["id"] for session in boundary_body["items"]] == ["s-known"]
+        assert boundary_body["has_more"] is False
+        assert ("sessions_page", {"page": 1, "per_page": 1}) in service.calls
+
+        for query in (
+            "page=0",
+            "page=-1",
+            "page=abc",
+            "page=1.5",
+            "page=10001",  # route-layer page ceiling (rider)
+        ):
+            response = await client.get(f"/api/v1/mobile/conversations?{query}")
+            assert response.status == 400, query
+            assert response.headers["Cache-Control"] == "no-store"
+            assert (await response.json()) == {"error": "invalid_page"}, query
+
+        for query in (
+            "per_page=0",
+            "per_page=-1",
+            "per_page=abc",
+            "per_page=1.5",
+            "per_page=101",  # route-layer per_page ceiling
+        ):
+            response = await client.get(f"/api/v1/mobile/conversations?{query}")
+            assert response.status == 400, query
+            assert (await response.json()) == {"error": "invalid_per_page"}, query
+
+        # An empty value reads as the default, like the page parameter.
+        empty = await client.get("/api/v1/mobile/conversations?per_page=")
+        assert empty.status == 200
+        assert ("sessions_page", {"page": 1, "per_page": 50}) in service.calls
 
 
 @pytest.mark.asyncio
@@ -682,7 +760,7 @@ async def test_new_conversation_creates_201_and_lists(
         assert default_session["workspace_id"] == "global"
 
         listing = await (await client.get("/api/v1/mobile/conversations")).json()
-        assert [session["id"] for session in listing["sessions"]] == [
+        assert [session["id"] for session in listing["items"]] == [
             "s-new-2",
             "s-new-1",
             "s-known",
@@ -824,6 +902,52 @@ async def test_oversized_body_answers_uniform_413_shape(
         )
         assert oversized_send.status == 413
         assert (await oversized_send.json()) == {"error": "body_too_large"}
+
+
+@pytest.mark.asyncio
+async def test_chunked_body_over_the_app_cap_answers_uniform_413_shape(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """#3127 review minor: the over-app-cap path during read answers JSON 413.
+
+    The test above covers the declared-length route (the Content-Length
+    pre-check). A CHUNKED upload has no length up front, so the rejection
+    comes from aiohttp's ``HTTPRequestEntityTooLarge`` raised by
+    ``client_max_size`` enforcement while ``_read_mobile_json`` reads — the
+    route boundary must still answer the surface's uniform
+    ``{"error": "body_too_large"}``, never aiohttp's plain-text 413, and the
+    service is never touched.
+    """
+
+    async def oversized_chunks():
+        yield b'{"text": "'
+        yield b"x" * (mobile_api.MOBILE_MAX_BODY_BYTES + 8192)
+        yield b'"}'
+
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+
+        send = await client.post(
+            "/api/v1/mobile/conversations/s-known/messages",
+            data=oversized_chunks(),
+            headers={CSRF_HEADER_NAME: csrf, "Content-Type": "application/json"},
+        )
+        assert send.status == 413
+        assert (await send.json()) == {"error": "body_too_large"}
+
+        # Same app-cap answer on a small-cap route: the route's tighter
+        # bound cannot be pre-checked on a chunked body, but the app cap
+        # still stops the read and the shape stays uniform.
+        new_conversation = await client.post(
+            "/api/v1/mobile/conversations",
+            data=oversized_chunks(),
+            headers={CSRF_HEADER_NAME: csrf, "Content-Type": "application/json"},
+        )
+        assert new_conversation.status == 413
+        assert (await new_conversation.json()) == {"error": "body_too_large"}
+
+        assert service.calls == []
 
 
 @pytest.mark.asyncio
@@ -1360,6 +1484,97 @@ async def test_stream_closes_1011_when_the_engine_stream_fails(
             "/api/v1/mobile/stream",
             protocols=["chatbook-v1", f"csrf.{csrf}"],
         ) as ws:
+            message = await asyncio.wait_for(ws.receive(), timeout=5)
+            assert message.type == WSMsgType.CLOSE
+            assert message.data == 1011
+
+    await _assert_subscribers_drained(service)
+
+
+def _stream_handler_task() -> asyncio.Task | None:
+    """Find the running ``handle_mobile_stream`` task on this loop.
+
+    Test introspection only: aiohttp runs each request handler inside its
+    connection task, so the route coroutine sits somewhere down the
+    ``cr_await`` chain — walk it (bounded) looking for the handler's
+    qualname. ``None`` means no mobile stream is being served right now.
+    """
+
+    for task in asyncio.all_tasks():
+        coro: Any = task.get_coro()
+        for _ in range(30):
+            if coro is None:
+                break
+            if "handle_mobile_stream" in (getattr(coro, "__qualname__", "") or ""):
+                return task
+            coro = getattr(coro, "cr_await", None)
+    return None
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_1011_when_engine_start_fails(
+    tmp_path, mobile_surface_gate, monkeypatch
+) -> None:
+    """Task 3 (#3128 minor 7): engine-start failure closes 1011.
+
+    ``handle_mobile_stream`` acquires the service's event subscription via
+    ``server._get_mobile_service()``; when THAT raises (service
+    construction / relay attach — engine-side, never a caller mistake) the
+    socket must close with ``CLOSE_ENGINE_ERROR`` (1011), not the generic
+    transport-failure normal close, so the phone reconnects with backoff.
+    """
+
+    def _engine_start_failed() -> Any:
+        raise RuntimeError("engine start failed")
+
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+        monkeypatch.setattr(
+            client.chatbook_test_server, "_get_mobile_service", _engine_start_failed
+        )
+        async with client.ws_connect(
+            "/api/v1/mobile/stream",
+            protocols=["chatbook-v1", f"csrf.{csrf}"],
+        ) as ws:
+            message = await asyncio.wait_for(ws.receive(), timeout=5)
+            assert message.type == WSMsgType.CLOSE
+            assert message.data == 1011
+
+    await _assert_subscribers_drained(service)
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_1011_when_server_shutdown_cancels_the_handler(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """Task 3 (#3128 minor 7): shutdown cancellation closes 1011, not 1000.
+
+    Server shutdown ends ``handle_mobile_stream`` by cancelling it (the
+    handler's ``except asyncio.CancelledError`` path — its own comment
+    reads "server shutdown"). That close used to be a NORMAL close, which
+    the phone could not distinguish from a stream that ended politely; it
+    must carry ``CLOSE_ENGINE_ERROR`` (1011) so the client treats it as a
+    transport failure and reconnects with backoff. The handler task is
+    cancelled exactly the way aiohttp's teardown cancels it.
+    """
+
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+        async with client.ws_connect(
+            "/api/v1/mobile/stream",
+            protocols=["chatbook-v1", f"csrf.{csrf}"],
+        ) as ws:
+            for _ in range(100):
+                if service._event_queues:
+                    break
+                await asyncio.sleep(0.02)
+            assert service._event_queues
+            handler = _stream_handler_task()
+            assert handler is not None, "no handle_mobile_stream task is running"
+            handler.cancel()
+
             message = await asyncio.wait_for(ws.receive(), timeout=5)
             assert message.type == WSMsgType.CLOSE
             assert message.data == 1011

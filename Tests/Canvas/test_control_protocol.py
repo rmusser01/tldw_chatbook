@@ -775,6 +775,37 @@ def test_relay_send_requires_an_authenticated_connection() -> None:
     asyncio.run(scenario())
 
 
+def test_broker_aclose_completes_while_the_client_is_still_connected() -> None:
+    """Regression (2c review, real bug): ``aclose`` must revoke children —
+    closing their server-side writers — BEFORE awaiting the server's
+    ``wait_closed``.
+
+    Every accepted connection's read loop parks in ``_read_message`` until
+    its socket reaches EOF, and ``Server.wait_closed`` does not complete
+    while any connection handler is still running, so awaiting the server
+    first deadlocked whenever a client had not closed on its own (the E2E
+    relay test's forced client-close-first ordering was the workaround).
+    This test deliberately leaves the client's socket open and bounds
+    ``aclose`` with a deadline instead: pre-fix it times out, post-fix the
+    revocation unblocks the parked read loop and the close completes.
+    """
+
+    async def scenario() -> None:
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
+        await client.start()
+        await broker.wait_connected("child-a", timeout=1)
+        try:
+            # NO client close first: aclose must complete on its own.
+            await asyncio.wait_for(broker.aclose(), timeout=5)
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_served_handler_answers_relay_decide_via_the_console_resolver() -> None:
     """ADR-236: the served child's REAL control handler resolves
     ``relay.decide.request`` through its wired console resolver.

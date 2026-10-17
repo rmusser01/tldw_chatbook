@@ -312,7 +312,8 @@ async def test_wrapper_clear_payload_publishes_cleared_for_mounted_round() -> No
     client = FakeRelayClient()
 
     def original(payload):
-        return None
+        # Truthy = the card mounted (the relay's gating requirement).
+        return True
 
     publisher = ServedRelayPublisher(client)
     publisher.attach()
@@ -330,6 +331,35 @@ async def test_wrapper_clear_payload_publishes_cleared_for_mounted_round() -> No
         "round_id": "round-42",
         "resolution": "cleared",
     }
+    await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_wrapper_skips_publish_when_the_original_did_not_mount() -> None:
+    """T2 minor edge: an unmounted raise (the original returns falsy —
+    e.g. a round for a parked background session) must NOT be published:
+    the relay mirrors the mounted card, and a later ``None`` clear finds
+    no mounted round and publishes nothing either."""
+
+    client = FakeRelayClient()
+
+    def original(payload):
+        return False
+
+    publisher = ServedRelayPublisher(client)
+    publisher.attach()
+    wrapped = wrap_pending_approval_hook(publisher, original)
+
+    assert wrapped(CONSOLE_APPROVAL_PAYLOAD) is False
+    # Give the (incorrectly) enqueued event every chance to drain before
+    # asserting its absence — the failure mode is a publish that should
+    # not have happened, not a missing one.
+    await asyncio.sleep(0.05)
+    assert client.frames == []
+
+    wrapped(None)
+    await asyncio.sleep(0.05)
+    assert client.frames == []
     await publisher.aclose()
 
 
