@@ -306,9 +306,22 @@ class FakeMobileService:
             },
         ]
 
-    async def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
+    async def decide_approval(
+        self,
+        round_id: str,
+        decisions: dict[str, str],
+        *,
+        child_id: str | None = None,
+    ) -> bool:
         self.calls.append(
-            ("decide_approval", {"round_id": round_id, "decisions": dict(decisions)})
+            (
+                "decide_approval",
+                {
+                    "round_id": round_id,
+                    "decisions": dict(decisions),
+                    "child_id": child_id,
+                },
+            )
         )
         return round_id == "r1"
 
@@ -1017,9 +1030,15 @@ async def test_approvals_list_and_decide(tmp_path, mobile_surface_gate) -> None:
         )
         assert decided.status == 200
         assert (await decided.json()) == {"ok": True}
+        # Absent child_id forwards as None — the service keeps its
+        # deterministic oldest-entry fallback for ambiguous rounds.
         assert (
             "decide_approval",
-            {"round_id": "r1", "decisions": {"c1": "approve_once"}},
+            {
+                "round_id": "r1",
+                "decisions": {"c1": "approve_once"},
+                "child_id": None,
+            },
         ) in service.calls
 
         unknown = await client.post(
@@ -1045,6 +1064,60 @@ async def test_approvals_list_and_decide(tmp_path, mobile_surface_gate) -> None:
         )
         assert missing.status == 400
         assert (await missing.json()) == {"error": "invalid_decisions"}
+
+
+@pytest.mark.asyncio
+async def test_decide_forwards_child_id_and_rejects_malformed_ones(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """PR-#3142 minor: an optional ``child_id`` rides the decide body through
+    to ``decide_approval`` — exact addressing for desktop rounds whose
+    child-local round_id collides across children. The surface's family
+    rules: absent stays absent (the service's deterministic oldest-entry
+    fallback), and a present-but-malformed id (non-string, or beyond the
+    control protocol's 200-char identifier ceiling) is the uniform
+    ``400 invalid_child_id`` before the service is touched."""
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+
+        addressed = await client.post(
+            "/api/v1/mobile/approvals/r1",
+            json={
+                "decisions": {"c1": "approve_once"},
+                "child_id": "child-a",
+            },
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert addressed.status == 200
+        assert (await addressed.json()) == {"ok": True}
+        assert (
+            "decide_approval",
+            {
+                "round_id": "r1",
+                "decisions": {"c1": "approve_once"},
+                "child_id": "child-a",
+            },
+        ) in service.calls
+
+        calls_before = len(service.calls)
+        for malformed in (
+            123,  # non-string
+            ["child-a"],  # non-string (list)
+            "c" * 201,  # beyond the control protocol's identifier ceiling
+        ):
+            rejected = await client.post(
+                "/api/v1/mobile/approvals/r1",
+                json={
+                    "decisions": {"c1": "deny"},
+                    "child_id": malformed,
+                },
+                headers={CSRF_HEADER_NAME: csrf},
+            )
+            assert rejected.status == 400
+            assert (await rejected.json()) == {"error": "invalid_child_id"}
+        # Every malformed id was refused before the service was touched.
+        assert len(service.calls) == calls_before
 
 
 @pytest.mark.asyncio

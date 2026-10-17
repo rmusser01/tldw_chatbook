@@ -105,6 +105,13 @@ _APPROVAL_DECISIONS = frozenset(
     {"approve_once", "approve_session", "always_allow", "deny"}
 )
 
+#: Decide-route ``child_id`` bound (chars): the control protocol's
+#: identifier ceiling (``Canvas/control_protocol.py`` mints child ids as
+#: 1-200 printable-ASCII strings). A longer id can never address a child
+#: and is rejected as the uniform ``400 invalid_child_id`` before the
+#: service is touched.
+_MAX_CHILD_ID_CHARS = 200
+
 
 def mobile_surface_enabled() -> bool:
     """Read the ``[web_server] mobile_surface`` feature gate (default on).
@@ -358,6 +365,14 @@ async def handle_decide(server: Any, request) -> Any:
     the decision was in flight. Desktop-relayed rounds (ADR-236) route
     through the canvas control broker inside this await — the 2 s routing
     budget bounds the response.
+
+    The body may carry the owning desktop ``child_id`` (the wire card
+    does): it forwards to ``decide_approval`` for exact addressing when
+    two children collide on the same child-local round id. Absent stays
+    absent (the service's deterministic oldest-entry fallback governs);
+    a present-but-malformed id (non-string, or beyond the control
+    protocol's identifier ceiling) is the uniform ``400
+    invalid_child_id`` before the service is touched.
     """
     from aiohttp import web
 
@@ -372,9 +387,14 @@ async def handle_decide(server: Any, request) -> Any:
         for key, value in decisions.items()
     ):
         return _error(400, "invalid_decisions")
+    child_id = payload.get("child_id")
+    if child_id is not None and (
+        not isinstance(child_id, str) or len(child_id) > _MAX_CHILD_ID_CHARS
+    ):
+        return _error(400, "invalid_child_id")
     try:
         delivered = await service.decide_approval(
-            request.match_info["round_id"], dict(decisions)
+            request.match_info["round_id"], dict(decisions), child_id=child_id
         )
     except KeyError:
         delivered = False

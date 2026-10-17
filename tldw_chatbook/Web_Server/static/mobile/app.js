@@ -704,12 +704,20 @@
 
   async function decide(round, call, option, card) {
     const callId = typeof call.call_id === "string" ? call.call_id : "";
+    const body = { decisions: { [callId]: option } };
+    // ADR-236: desktop rounds carry the owning child's id; sending it
+    // addresses exactly that child even when two children collide on the
+    // same child-local round_id. Phone rounds (no child_id) stay
+    // unaddressed and keep the server's deterministic fallback routing.
+    if (typeof round.child_id === "string" && round.child_id) {
+      body.child_id = round.child_id;
+    }
     let result;
     try {
       result = await api(
         "POST",
         API_BASE + "/approvals/" + encodeURIComponent(String(round.round_id)),
-        { decisions: { [callId]: option } }
+        body
       );
     } catch (code) {
       showError(code);

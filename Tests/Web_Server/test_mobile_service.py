@@ -30,6 +30,9 @@ from tldw_chatbook.Canvas.control_protocol import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Chat.console_chat_store import (
+    GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER,
+)
 from tldw_chatbook.Web_Server.mobile_service import MobileChatService, MobileSendRefused
 
 # The real engine's submit path reads the guarded config loader (turn
@@ -853,6 +856,79 @@ async def test_session_messages_reuses_cached_wire_until_fingerprint_changes(
             m["role"] == "user" and m["content"] == "turn two"
             for m in third["messages"]
         )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_session_messages_rebuilds_when_cached_wire_disagrees_with_the_seam(
+    tmp_path: Path,
+) -> None:
+    """Projection-equality second line (PR-#3142 minor — the store seam's
+    documented caveat): the fingerprint cache never serves a wire whose
+    shape disagrees with the seam's values.
+
+    ``ConsoleChatStore.session_fingerprint`` records the invisible class —
+    mutations preserving BOTH the transcript count and the last message's
+    visible length — and directs callers to keep an equality gate on the
+    rendered projection as the second line of defense. Constructed here
+    directly against the store, bypassing ``append_stream_chunk``: a
+    same-length content edit on the settled last message, then a
+    quarantine flag flip (both fingerprint-invisible — pinned below),
+    leave the fingerprint unchanged while the wire projection replaces
+    the last body with the fixed quarantine placeholder. The cached
+    wire's last length then permanently disagrees with the seam's raw
+    length; a key-only gate would serve that wire forever, the projection
+    gate rebuilds on every read while the disagreement stands.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="projection gate")
+        await service.send(session["id"], "one turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        store = engine.store
+        sid = session["id"]
+        live_last = store._messages_by_session[sid][-1]
+        # Keep the raw length off the placeholder's: the gate needs a
+        # real disagreement between the two shapes to observe.
+        if len(live_last.content or "") == len(
+            GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
+        ):
+            live_last.content = (live_last.content or "") + "  "
+        before = store.session_fingerprint(sid)
+
+        # The fingerprint-invisible caveat path, constructed directly
+        # against the store (never through append_stream_chunk): a
+        # same-length edit of the settled last message's content…
+        live_last.content = "x" * len(live_last.content or "")
+        # …and the quarantine flag flip, whose snapshot projection
+        # answers with a fixed placeholder while the raw content — what
+        # the seam measures — stays as edited.
+        live_last.generation_projection_quarantined = True
+        assert store.session_fingerprint(sid) == before
+
+        counter, _original = _counting_materializations(engine)
+        first = await service.session_messages(sid)
+        assert counter["calls"] >= 1
+        assert first["messages"][-1]["content"] == (
+            GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
+        )
+        after_first = counter["calls"]
+
+        # Same fingerprint → a key-only gate serves the cache here; the
+        # wire's placeholder length disagrees with the seam's raw-length
+        # value, so the projection gate rebuilds instead.
+        second = await service.session_messages(sid)
+        assert counter["calls"] > after_first
+        assert second == first
     finally:
         await _shutdown(service, subscriber)
 
@@ -2102,6 +2178,106 @@ async def test_relay_same_round_id_across_children_never_shadows(
             ],
             timeout=5,
             what="child-a's colliding round cleared by its own event",
+        )
+    finally:
+        await child_a.aclose()
+        await child_b.aclose()
+        await broker.aclose()
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+def _mobile_api_module():
+    """Import the mobile route module under the web-server optional-dep guard."""
+    if not _serve_module().check_web_server_available():
+        pytest.skip("web server optional dependencies are unavailable")
+    from tldw_chatbook.Web_Server import mobile_api
+
+    return mobile_api
+
+
+class _DecideRequest:
+    """The request surface ``handle_decide`` reads: match_info + one JSON body."""
+
+    def __init__(self, round_id: str, body: dict[str, Any]) -> None:
+        self.match_info = {"round_id": round_id}
+        self.content_length = None
+        self._body = body
+
+    async def json(self) -> dict[str, Any]:
+        return self._body
+
+
+@pytest.mark.loopback_network
+async def test_decide_route_child_id_addresses_the_exact_colliding_child(
+    tmp_path: Path,
+) -> None:
+    """PR-#3142 minor: the decide ROUTE forwards the body's ``child_id``
+    and, under a cross-child round_id collision, the phone's card
+    addresses exactly its child.
+
+    One layer above the service-seam collision test above: the full wire
+    path — JSON body → route validation → ``decide_approval`` →
+    ``relay.decide.request`` — over the real relay. Child-b owns the
+    decided round; child-a's colliding round is untouched.
+    """
+    mobile_api = _mobile_api_module()
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child_a = _ScriptedChild(broker, "child-a")
+    child_b = _ScriptedChild(broker, "child-b")
+    await child_a.start()
+    await child_b.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a", "child-b"])
+    shared = "round-shared"
+    host = types.SimpleNamespace(_get_mobile_service=lambda: service)
+    try:
+        await child_a.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await child_b.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await _wait_for(
+            lambda: sorted(
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            )
+            == ["child-a", "child-b"],
+            timeout=5,
+            what="both children's colliding rounds listed",
+        )
+
+        response = await mobile_api.handle_decide(
+            host,
+            _DecideRequest(
+                shared,
+                {
+                    "decisions": {"call-1": "approve_once"},
+                    "child_id": "child-b",
+                },
+            ),
+        )
+        assert response.status == 200
+        assert json.loads(response.text) == {"ok": True}
+        assert [
+            m for m in child_a.seen if m.message_type == "relay.decide.request"
+        ] == []
+        decide_b = [
+            m for m in child_b.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_b) == 1
+        assert decide_b[0].payload["round_id"] == shared
+        await _wait_for(
+            lambda: [
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            ]
+            == ["child-a"],
+            timeout=5,
+            what="only child-b's colliding round cleared by the routed decide",
         )
     finally:
         await child_a.aclose()

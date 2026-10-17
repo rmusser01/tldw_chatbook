@@ -591,8 +591,13 @@ class MobileChatService:
             "workspace_id"
         ):
             return str(row["workspace_id"])
-        # Global-scope rows restore into the Console default workspace —
-        # the same value ``_session_dict`` reports for those sessions.
+        # Global-scope rows are LABELED the Console default workspace by
+        # assumption: this mobile store's engine never switches workspaces
+        # at runtime (every session here is created under the default),
+        # and the listing must stay a cheap row read. The label is proven
+        # right — or corrected — when the row is actually opened: the lazy
+        # hydrate (``_restore_persisted_session``) resolves the restored
+        # session's true workspace via the store's own resume machinery.
         return CONSOLE_GLOBAL_WORKSPACE_ID
 
     def _session_dict(self, session: Any) -> dict[str, Any]:
@@ -637,7 +642,13 @@ class MobileChatService:
         the pump's last observed stream-track status changed — a terminal
         status flip can land with no content change); an unchanged session
         — the phone's 12 s resync over a settled chat — answers from the
-        cached projection without materializing the transcript.
+        cached projection without materializing the transcript. A key
+        match is necessary, not sufficient: the cached wire is served only
+        when its own shape (row count + last row's content length) equals
+        the seam's values — the projection-equality second line the seam's
+        limitations docstring directs (e.g. a quarantined last message
+        projects a fixed placeholder while the seam measures the raw
+        content; such a wire is rebuilt, never served stale).
 
         Args:
             session_id: Console session id (a persisted conversation id is
@@ -667,9 +678,21 @@ class MobileChatService:
         track = self._state.stream_track.get(session_id)
         cache_key = (fingerprint, track.status if track is not None else None)
         cached = self._state.history_cache.get(session_id)
+        messages: list[dict[str, Any]] | None = None
         if cached is not None and cached[0] == cache_key:
-            messages = cached[1]
-        else:
+            # Projection-equality second line (PR-#3142 minor, per the
+            # seam's documented caveat): serve the cached wire only when
+            # its shape still equals the seam's values — a wire cached
+            # under this very fingerprint can still disagree with it (the
+            # snapshot projection, e.g. the quarantine placeholder, is
+            # not what the seam measures).
+            candidate = cached[1]
+            last_length = (
+                len(candidate[-1]["content"] or "") if candidate else 0
+            )
+            if len(candidate) == fingerprint[0] and last_length == fingerprint[1]:
+                messages = candidate
+        if messages is None:
             materialized = engine.store.messages_for_session(session_id)
             messages = [
                 {
