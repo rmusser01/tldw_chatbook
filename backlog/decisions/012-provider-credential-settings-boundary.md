@@ -346,13 +346,17 @@ which ends it.
 The ruling covers the bridge and the dicts and tables it fills, not readers
 that go to the raw `[API]` section themselves. `config.get_api_key` (Console
 realtime, the OpenAI and ElevenLabs TTS backends, the MCP server's chat
-tools) never reads `credential_source`: it reads the table's named variable
-even under "none", then `[API] <provider>_api_key`.
-`RAG_Search/simplified/active_config.py` and `TTS/TTS_Backends.py` read
-`[API] openai_api_key` directly, and `Model_Artifacts/acquisition.py` (the
-Hugging Face resolver that Parakeet, OmniVoice and remote GGUF downloads use)
-reads `[API] huggingface_api_key`. So after a Clear those still spend the key
-the user removed (TASK-35227).
+tools, and the vLLM connection probe and credential flag in
+`UI/LLM_Management/vllm_connection.py` and `UI/Screens/llm_screen.py`) never
+reads `credential_source`: it reads the table's named variable even under
+"none", then `[API] <provider>_api_key`. So the vLLM probe sends an exported
+`VLLM_API_KEY` that readiness ignores under "none".
+`RAG_Search/simplified/active_config.py` and text to speech's projection
+(`TTS/legacy_bridge.py`, whose `openai_api` dict `TTS/TTS_Backends.py` hands
+to the backend) read `[API] openai_api_key` directly, and
+`Model_Artifacts/acquisition.py` (the Hugging Face resolver that Parakeet,
+OmniVoice and remote GGUF downloads use) reads `[API] huggingface_api_key`.
+So after a Clear those still spend the key the user removed (TASK-35227).
 
 ## Links
 
