@@ -13327,7 +13327,10 @@ async def test_connection_probe_renders_only_bounded_terminal_outcomes(
     [
         ({}, True),
         # A named source that finds no key sends none either (review round 1).
-        ({"credential_source": "environment", "api_key_env_var": "TLDW_P8D_UNSET"}, True),
+        (
+            {"credential_source": "environment", "api_key_env_var": "TLDW_P8D_UNSET"},
+            True,
+        ),
         ({"credential_source": "stored"}, True),
         ({"api_key": "sk-local-0123456789"}, False),
     ],
