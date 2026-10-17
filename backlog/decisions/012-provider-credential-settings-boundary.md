@@ -343,6 +343,15 @@ the variable the table names. A table that names another variable can resolve
 differently. A Settings save that writes the credential records a source,
 which ends it.
 
+The ruling covers the bridge and the dicts and tables it fills, not readers
+that go to the raw `[API]` section themselves. `config.get_api_key` (Console
+realtime, the OpenAI and ElevenLabs TTS backends, the MCP server's chat
+tools) never reads `credential_source`: it reads the table's named variable
+even under "none", then `[API] <provider>_api_key`.
+`RAG_Search/simplified/active_config.py` and `TTS/TTS_Backends.py` read
+`[API] openai_api_key` directly. So after a Clear those still spend the key
+the user removed (TASK-35227).
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-06-30-provider-credentials-console-setup-polish-design.md)
