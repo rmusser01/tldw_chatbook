@@ -1231,6 +1231,10 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         )
         readiness["word"] = readiness_words(readiness["value"])
         console._sync_console_settings_summary()
+        # The seam's own request, before any await: the wait above ended
+        # idle, so no poll or timer has run since. The later asserts alone
+        # could pass on a reconcile the environment poll requested.
+        assert rail._allocation_reconcile_scheduled
         await _wait_for_context_condition(
             pilot,
             lambda: recovery.has_class("conversation-attention-error")
