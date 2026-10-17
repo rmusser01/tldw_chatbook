@@ -101,18 +101,20 @@ After this phase, task-1379 re-runs the Settings critique.
 
 **Review fixes (2026-10-16).** The review of `1c1730f4b0`: the wizard's Test 401, Claude subscription and cleared-key cases and the status picker's Tab stop (see TASK-33008.5), the setup card's focus guard under a dialog, the return line's key-accepted copy for another provider, docs and docstrings, ratchet rows re-pinned to measured sizes, polling waits in the wizard's compose-crash tests, and the phase's new tests gated in the PR lanes.
 
-**Review fixes, rounds 2 and 3 (2026-10-16).** Round 2 (`9b76adb752`..`f54e5fa863`, `06d` retaken in `2489f65118`): the subscription check reads Anthropic's table as readiness does; a key a check saw refused reads as checked, and Authentication drops "(optional)"; the Provider step names an unavailable listing as Model does; the rest of the phase's tests joined a PR lane (the wizard's bootstrap nodes in the admission step); polling waits replaced fixed pauses. Round 3 (review of `465eb63bf5..f54e5fa863`) fixed the Provider step's copy:
+**Review fixes, rounds 2 to 4 (2026-10-16).** Round 2 (`9b76adb752`..`f54e5fa863`, `06d` retaken in `2489f65118`): the subscription check reads Anthropic's table as readiness does; a key a check saw refused reads as checked, and Authentication drops "(optional)"; the Provider step names an unavailable listing as Model does; the rest of the phase's tests joined a PR lane (the wizard's bootstrap nodes in the admission step); polling waits replaced fixed pauses. Round 3 (review of `465eb63bf5..f54e5fa863`) fixed the Provider step's copy:
 - A listing that cannot list reads "Model listing unavailable; you can enter the model ID on the next step." The step has no model ID field; Model keeps its own line.
 - A Test's 401 to a key that was sent reads like the listing's: "<Provider> rejected this API key. Update it, or continue anyway." It keeps its ✗ and no longer uses the shared verdict's words.
 - `failed_listing` returns the line and changes nothing; the listing handler marks the key.
 - A new test pins the listing-path 401 title (admission lane). First_Run_Setup.md covers the staged key line's no-usable-list case. The Provider step's ratchet row is now 2,454. `06d` was retaken in `5c75fe49c8`; only its Test line changed.
 - A 403 to the wizard's model listing no longer rejects the key (only a 401 does, owner ruling 2026-10-02): both steps read it as an unavailable listing, the key is not marked and its line reads as after a 403 to Test (unit case in the gated listing test, one admission-lane wizard node).
+- Round 4 (review of `2489f65118..8c8f54773e`; `03cdc69dcc`..`95ab4ed876`): every failed check redraws the key line, so a 403 or a timeout after a 401 to the same key and address no longer leaves "the server rejected it"; a Test that got no usable list (a 403, a 404) reads "Model listing unavailable; you can enter the model ID on the next step." as the listing does (no capture shows one: `06b` and `06d` are 401s, so none was retaken); a keyless 403 listing is pinned as unavailable; the two discovery-on-return tests wait for the mount's own resume, which their return raced.
 
-Verified 2026-10-16 on `feat/model-config-p8-first-run` at `00b8b2d756` (the code; later commits change only the capture and this note), against base `2489f65118`:
-- Tests/Wizards (xdist): base 1 failed, 1207 passed, 31 `RecoveryRequired` errors. Head shows the same failure and errors, plus 2-3 load flakes that differed between two runs at load average 50-126; all 5 pass serially at head and base.
-- Tests/CI: 959 passed at both.
-- Module-size ratchet: only dev's 8 known rows fail.
-- `./scripts/preflight.sh` passes; ruff reports no new findings.
+Verified 2026-10-16 on `feat/model-config-p8-first-run` at `95ab4ed876` (the code; the next commit changes only this note), against base `33391b94f7` in a detached worktree:
+- Tests/Wizards (xdist, run at `0431f38f30`; `95ab4ed876` changes only a Tests/UI file): base 1 failed, 1209 passed, 31 `RecoveryRequired` errors. Head shows the same failure and errors, plus one load flake (`test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_retry`, load average 25-30) that passes serially, 3 of 3 at head and 1 of 1 at base.
+- `Tests/UI/test_console_local_server_discovery_card.py` (xdist, per test): 18 passed in 6 of 6 runs at head at load average 40-70; at base one of its two return tests failed in 2 of 4 runs. Both return tests pass 3 of 3 serial runs at head.
+- Tests/CI: 959 passed, 1 skipped at both.
+- Module-size ratchet (serial): only dev's 8 known rows fail at both; no wizard row changed.
+- `./scripts/preflight.sh` passes under a scratch HOME; ruff reports no new findings on the touched files.
 - Each changed test fails without its fix.
 
 **Acceptance check (2026-10-16, head `8c8f54773e`).** Measured against origin/dev `edbf951ba7` and the merge base `14e13bb82c`. The key counts and the captures were taken before the branch's restack onto dev. `4f2bffa20f`..`7c260226ec` sat on base `5e661c1565`; `7c260226ec` is `6396f4896d` after the rebase, 988 dev commits later, among them the rest of Phase 7's Settings work. What later changed on each captured surface is named below, and the copy each capture shows is in head's code.
