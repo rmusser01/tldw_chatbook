@@ -125,7 +125,8 @@ Image Gen and Video Gen keep "Draft — save/revert below"; Advanced Config
 reads "State: Validate, then Save · 1 unsaved | Draft kept when you leave; use
 raw editor controls.". Switching categories keeps the draft: no dialog warns
 you when you leave a category or the screen with unsaved edits — the **\*** in
-the rail is how you find it again. The count is of fields, not stored keys: on Image Gen, **Clear** on
+the rail is how you find it again, and **F1** help on these categories says
+so. The count is of fields, not stored keys: on Image Gen, **Clear** on
 SwarmUI's token also removes its older `api_key` spelling and counts once. (Exceptions: switching the
 active RAG profile prompts — see [RAG defaults](settings/rag.md); leaving
 Speech & TTS with edits raises its own save/discard dialog instead of keeping

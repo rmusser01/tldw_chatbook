@@ -5046,7 +5046,11 @@ class SettingsScreen(BaseAppScreen):
             Non-empty tuple of plain-text help lines.
         """
         ownership = self._ownership_record(category)
-        badge_note = f"Save contract: {self._persistence_badge(category)}."
+        badge = self._persistence_badge(category)
+        badge_note = f"Save contract: {badge}."
+        if badge.startswith("Draft") and category is not SettingsCategoryId.SPEECH_TTS:
+            # TASK-33002.10: the State line has no room left to say it.
+            badge_note += " Switching categories keeps the draft; the rail marks it with *."
         if category is SettingsCategoryId.OVERVIEW:
             notes = [
                 badge_note,

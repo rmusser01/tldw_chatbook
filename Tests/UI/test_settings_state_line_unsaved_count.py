@@ -308,3 +308,21 @@ async def test_video_gen_counts_an_edit_and_a_clear_of_one_field_once(request) -
     draft.set_value("max_store_mb", "500", "500")  # set back by hand
     assert screen._category_unsaved_count(video) == 1
 
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_f1_help_says_switching_categories_keeps_the_draft(request) -> None:
+    """TASK-33002.10: the State line dropped "switching categories keeps this
+    draft" to fit the count (TASK-33002.4), and no in-app surface said it.
+    F1 help says it on every category whose draft a switch keeps; Speech &
+    TTS asks on leave instead, and Advanced Config's State line says it."""
+    screen = SettingsScreen(_build_test_app())
+    keeps = {
+        *GUIDED_SETTINGS_MUTATION_CATEGORIES,
+        SettingsCategoryId.IMAGE_GENERATION,
+        SettingsCategoryId.VIDEO_GENERATION,
+    } - {SettingsCategoryId.SPEECH_TTS}
+    note = "Switching categories keeps the draft; the rail marks it with *."
+    for category in SettingsCategoryId:
+        body = screen._workbench_help_state(category).render_text()
+        assert (note in body) is (category in keeps), category
