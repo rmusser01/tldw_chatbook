@@ -760,12 +760,22 @@ class CanvasControlBroker:
                 self._connection_tasks.discard(task)
 
     async def aclose(self) -> None:
+        # Children are revoked BEFORE the server's ``wait_closed`` is
+        # awaited: every accepted connection's read loop parks in
+        # ``_read_message`` until its socket reaches EOF, and
+        # ``Server.wait_closed`` does not complete while any connection
+        # handler is still running — awaiting it first deadlocked whenever
+        # a client had not closed on its own. Closing the listener only
+        # stops NEW connections; the revocation below is what closes the
+        # authenticated children's server-side writers and unblocks the
+        # parked read loops (2c review, real bug).
         if self._server is not None:
             self._server.close()
-            await self._server.wait_closed()
-            self._server = None
         for child_id in tuple(self._children):
             await self.revoke_child(child_id)
+        if self._server is not None:
+            await self._server.wait_closed()
+            self._server = None
         tasks = tuple(self._connection_tasks)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)

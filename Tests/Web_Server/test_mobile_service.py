@@ -1467,16 +1467,185 @@ async def test_relay_end_to_end_real_child_handler_resolves_round(
                 for e in got
             )
         finally:
-            # Child client FIRST: broker.aclose() revokes the child and
-            # gathers the accept task, which blocks in _read_message until
-            # the client's socket is gone (same order as _ScriptedChild's
-            # teardown).
+            # Client close first is the conservative order (and no longer
+            # load-bearing: broker.aclose() revokes children — closing
+            # their server-side writers — before awaiting the server, so
+            # the parked accept-task read loops unblock either way; see
+            # test_broker_aclose_completes_while_the_client_is_still_connected).
             subscriber.cancel()
             await child.aclose()
             await broker.aclose()
             await asyncio.wait_for(service.shutdown(), timeout=15)
 
     await scenario()
+
+
+# The resolver-mirror probe runs in a child interpreter: importing
+# ``tldw_chatbook.app`` inside the pytest process would leave the module
+# cached and accidentally satisfy the dependency-gate suite's import-time
+# admission (its four recorded environmental failures flip green in
+# full-suite order once any bootstrap-profile test has imported the app),
+# so the REAL method is exercised out-of-process under the same env the
+# conftest publishes for subprocess children.
+_RESOLVER_MIRROR_PROBE = r'''
+import asyncio
+import sys
+import types
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[2])
+
+FINAL_ANSWER = "MOBILE_AGENT_ROUND_TRIP_COMPLETE"
+
+
+async def main() -> None:
+    from Tests.console_provider_doubles import AgentModeGateway
+    from tldw_chatbook import app as app_module
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+
+    data_dir = Path(sys.argv[1])
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=data_dir, provider_gateway=gateway)
+    got: list = []
+
+    async def subscribe() -> None:
+        async for event in service.events():
+            got.append(event)
+
+    subscriber = asyncio.create_task(subscribe())
+    try:
+        engine = service._require_engine()
+        # The shape ``_served_relay_decide`` reads off the App: the same
+        # lazy ``chat_controller`` handle ``ConsoleRuntime`` exposes.
+        app = types.SimpleNamespace(
+            console_runtime=types.SimpleNamespace(
+                chat_controller=engine.controller
+            )
+        )
+        decide = app_module.TldwCli._served_relay_decide
+        # No controller -> reported undelivered, never raised.
+        assert decide(types.SimpleNamespace(console_runtime=None), "x", {}) is False
+        print("probe:undelivered-without-controller")
+
+        folder = data_dir.parent / "code"
+        (folder / "src").mkdir(parents=True, exist_ok=True)
+        (folder / "README.md").write_text("# probe\n", encoding="utf-8")
+        registry = service.workspace_registry
+        registry.create_workspace(workspace_id="ws-mirror", name="Mirror")
+        registry.add_folder_binding("ws-mirror", folder, allow_write=True)
+        session = await service.create_session(
+            title="resolver mirror", workspace_id="ws-mirror"
+        )
+        send_task = asyncio.create_task(
+            service.send(session["id"], "list the folder")
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 30
+        payload = None
+        while loop.time() < deadline:
+            approvals = [e for e in got if e.type == "approval_requested"]
+            if approvals:
+                payload = approvals[0].payload
+                break
+            await asyncio.sleep(0.1)
+        assert payload is not None, "no approval_requested event"
+        round_id = payload["round_id"]
+        call = payload["calls"][0]
+
+        # An unknown round id fails closed through the real registry.
+        assert decide(app, "no-such-round", {"x": "deny"}) is False
+        print("probe:unknown-round-false")
+
+        assert decide(app, round_id, {call["call_id"]: "approve_once"}) is True
+        print("probe:delivered-true")
+
+        await asyncio.wait_for(send_task, timeout=60)
+        deadline = loop.time() + 15
+        while loop.time() < deadline:
+            if any(
+                e.type == "run_completed" and e.session_id == session["id"]
+                for e in got
+            ):
+                break
+            await asyncio.sleep(0.1)
+        assert any(
+            e.type == "run_completed" and e.session_id == session["id"]
+            for e in got
+        ), "no run_completed event"
+        print("probe:run-completed")
+
+        messages = (await service.session_messages(session["id"]))["messages"]
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in messages
+        ), "final answer missing"
+        print("probe:final-answer-present")
+        # The resolved decision really released the tool run.
+        assert gateway.tool_result_messages, "approval never released the tool"
+        print("probe:tool-released")
+        # The resolved-and-popped round no longer matches a later decide.
+        assert decide(app, round_id, {"x": "deny"}) is False
+        print("probe:resolved-round-false")
+    finally:
+        subscriber.cancel()
+        try:
+            await subscriber
+        except asyncio.CancelledError:
+            pass
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+asyncio.run(main())
+'''
+
+
+def test_served_relay_decide_resolves_a_real_controller_armed_round(
+    tmp_path: Path,
+) -> None:
+    """Direct resolver-mirror proof (2c review gap): app.py's REAL
+    ``_served_relay_decide`` — the exact callable a served child binds
+    into ``ServedCanvasControlHandler`` — resolves a round armed by a REAL
+    ``ConsoleChatController`` through the real approval-round registry.
+
+    The E2E test above mirrors that binding with a stub controller: if
+    the production resolve seam drifted (a ``resolve_pending_approval``
+    signature change, a renamed ``_pending_approval_rounds`` registry),
+    the stub would keep passing while production degraded silently. Here
+    the round is armed by the real engine (the mobile service's
+    construction idiom), the app double exposes it exactly as
+    ``ConsoleRuntime`` does (``console_runtime.chat_controller``), and the
+    decision must release the parked agent run to completion (probe
+    verified sensitive: a renamed resolve kwarg fails the probe loudly
+    while the stub-mirror E2E stays green).
+    """
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script = tmp_path / "resolver_mirror_probe.py"
+    script.write_text(_RESOLVER_MIRROR_PROBE, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(script), str(tmp_path), str(repo_root)],
+        capture_output=True,
+        text=True,
+        timeout=240,
+        cwd=str(repo_root),
+    )
+    assert result.returncode == 0, (
+        f"resolver-mirror probe failed:\n{result.stdout}\n{result.stderr}"
+    )
+    for marker in (
+        "probe:undelivered-without-controller",
+        "probe:unknown-round-false",
+        "probe:delivered-true",
+        "probe:run-completed",
+        "probe:final-answer-present",
+        "probe:tool-released",
+        "probe:resolved-round-false",
+    ):
+        assert marker in result.stdout, (
+            f"missing {marker}:\n{result.stdout}\n{result.stderr}"
+        )
 
 
 @pytest.mark.loopback_network
@@ -1663,6 +1832,91 @@ async def test_relay_cleared_event_removes_round(tmp_path: Path) -> None:
         )
     finally:
         await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_same_round_id_across_children_never_shadows(
+    tmp_path: Path,
+) -> None:
+    """Two children arming the SAME child-local round_id both list — each
+    entry tagged with its own ``child_id`` — and a decision addressed to
+    one child routes exactly there (2c final-review hardening: the
+    ``(child_id, round_id)`` keying keeps cross-child collisions from
+    shadowing or stealing each other's rounds)."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child_a = _ScriptedChild(broker, "child-a")
+    child_b = _ScriptedChild(broker, "child-b")
+    await child_a.start()
+    await child_b.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a", "child-b"])
+    shared = "round-shared"
+    try:
+        await child_a.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await child_b.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        # No shadowing: BOTH colliding rounds list, each under its own
+        # child_id (pre-fix the second raise overwrote the first).
+        await _wait_for(
+            lambda: sorted(
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            )
+            == ["child-a", "child-b"],
+            timeout=5,
+            what="both children's colliding rounds listed",
+        )
+
+        # A decide addressed to child-b routes exactly there; child-a's
+        # round is untouched (pre-fix a cleared/decide by round_id alone
+        # popped whichever single entry survived).
+        assert (
+            await service.decide_approval(
+                shared, {"call-1": "approve_once"}, child_id="child-b"
+            )
+            is True
+        )
+        assert [
+            m for m in child_a.seen if m.message_type == "relay.decide.request"
+        ] == []
+        decide_b = [
+            m for m in child_b.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_b) == 1
+        assert decide_b[0].payload["round_id"] == shared
+        await _wait_for(
+            lambda: [
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            ]
+            == ["child-a"],
+            timeout=5,
+            what="only child-b's colliding round cleared by its decide",
+        )
+
+        # A cleared event from child-a removes exactly child-a's round.
+        await child_a.client.send_relay_event(
+            "relay.approval.cleared",
+            {"round_id": shared, "resolution": "approved"},
+        )
+        await _wait_for(
+            lambda: not [
+                a for a in service.list_approvals() if a["round_id"] == shared
+            ],
+            timeout=5,
+            what="child-a's colliding round cleared by its own event",
+        )
+    finally:
+        await child_a.aclose()
+        await child_b.aclose()
+        await broker.aclose()
+        await asyncio.wait_for(service.shutdown(), timeout=15)
 
 
 @pytest.mark.loopback_network

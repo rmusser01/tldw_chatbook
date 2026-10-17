@@ -241,16 +241,15 @@ completions also push to the phone as live cross-surface events (the
 `run_status` event over the existing stream), which resync an open chat and
 refresh the approvals inbox; this is update-level sync, not token-level
 transcript streaming. The relay covers rounds raised for the ACTIVE session
-while its Console view is mounted — the same lifecycle as the desktop
-approval card. Rounds raised while the Console screen is unmounted, and
-rounds for parked background sessions, are not relayed. Fail-closed is the
-rule on every failure: a disconnecting or unresponsive child (2 s routing
-budget) drops its rounds from the phone and the desktop child's own
-timeout/deny semantics govern, and with Canvas disabled the relay is
-entirely inert — no broker exists, and desktop approvals stay invisible on
-the phone (a documented limitation, not an error). The phone's decision
-authority equals the desktop user's: same single operator, riding the
-authenticated mobile API and the child-secret loopback hop.
+while its Console view is mounted. Rounds raised while the Console screen
+is unmounted, and rounds for parked background sessions, are not relayed.
+Fail-closed is the rule on every failure: a disconnecting or unresponsive
+child (2 s routing budget) drops its rounds from the phone and the desktop
+child's own timeout/deny semantics govern, and with Canvas disabled the
+relay is entirely inert — no broker exists, and desktop approvals stay
+invisible on the phone (a documented limitation, not an error). The phone's
+decision authority equals the desktop user's: same single operator, riding
+the authenticated mobile API and the child-secret loopback hop.
 
 v1 limits:
 

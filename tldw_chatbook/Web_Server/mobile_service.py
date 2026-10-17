@@ -386,9 +386,11 @@ class MobileChatService:
         self._relay_broker: Any | None = None
         self._relay_child_ids: Callable[[], Iterable[str]] | None = None
         self._relay_task: asyncio.Task[None] | None = None
-        # round_id -> {**relay.approval.raised payload, child_id,
-        # surface: "desktop"}; loop-thread only.
-        self._desktop_approvals: dict[str, dict[str, Any]] = {}
+        # (child_id, round_id) -> {**relay.approval.raised payload,
+        # child_id, surface: "desktop"}; loop-thread only. Round ids are
+        # child-local, so the composite key keeps two children colliding
+        # on one round id from shadowing or stealing each other's rounds.
+        self._desktop_approvals: dict[tuple[str, str], dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ #
     # Construction                                                        #
@@ -1207,7 +1209,13 @@ class MobileChatService:
         desktop = [dict(entry) for entry in self._desktop_approvals.values()]
         return mobile + desktop
 
-    async def decide_approval(self, round_id: str, decisions: dict[str, str]) -> bool:
+    async def decide_approval(
+        self,
+        round_id: str,
+        decisions: dict[str, str],
+        *,
+        child_id: str | None = None,
+    ) -> bool:
         """Resolve one pending round on whichever surface owns it.
 
         Args:
@@ -1215,6 +1223,13 @@ class MobileChatService:
             decisions: Verdict-key (``call_id`` or ``llm_name``) to
                 decision string (``approve_once`` / ``approve_session`` /
                 ``always_allow`` / ``deny``).
+            child_id: Owning desktop child, for cross-child round_id
+                collisions (round ids are child-local). An explicit id
+                addresses exactly that child's round; without one, a
+                round_id owned by exactly one child routes there, and a
+                collision routes to the oldest-listed entry
+                (deterministic; the wire card carries the ``child_id``
+                for exact addressing).
 
         Returns:
             True when the round was known and the decision was delivered;
@@ -1224,8 +1239,9 @@ class MobileChatService:
             then dropped from the list; the child's own timeout/deny
             semantics govern, ADR-236).
         """
-        if round_id in self._desktop_approvals:
-            return await self._decide_desktop_round(round_id, decisions)
+        key = self._desktop_round_key(round_id, child_id)
+        if key is not None:
+            return await self._decide_desktop_round(key, decisions)
         if round_id not in self._state.pending_approvals:
             logger.info(
                 "mobile approval decision for unknown round_id=%s", round_id
@@ -1241,6 +1257,27 @@ class MobileChatService:
             len(decisions),
         )
         return True
+
+    def _desktop_round_key(
+        self, round_id: str, child_id: str | None
+    ) -> tuple[str, str] | None:
+        """Locate the desktop entry one decision addresses (loop thread).
+
+        ``None`` means no desktop round matches — the caller falls through
+        to the mobile-round surface.
+        """
+        if child_id is not None:
+            key = (child_id, round_id)
+            return key if key in self._desktop_approvals else None
+        matches = [key for key in self._desktop_approvals if key[1] == round_id]
+        if len(matches) > 1:
+            logger.info(
+                "mobile desktop decision round_id=%s ambiguous across %d "
+                "children; routing to the oldest-listed entry",
+                round_id,
+                len(matches),
+            )
+        return matches[0] if matches else None
 
     # ------------------------------------------------------------------ #
     # Desktop approval relay (ADR-236, Phase 2c)                          #
@@ -1366,7 +1403,8 @@ class MobileChatService:
             round_id = str(payload.get("round_id") or "")
             if not round_id:
                 return
-            self._desktop_approvals[round_id] = {
+            key = (child_id, round_id)
+            self._desktop_approvals[key] = {
                 **payload,
                 "child_id": child_id,
                 "surface": "desktop",
@@ -1374,7 +1412,7 @@ class MobileChatService:
             self._emit(
                 "approval_requested",
                 str(payload.get("session_id") or ""),
-                dict(self._desktop_approvals[round_id]),
+                dict(self._desktop_approvals[key]),
             )
             logger.info(
                 "mobile desktop approval mounted round_id=%s child_id=%s",
@@ -1383,7 +1421,10 @@ class MobileChatService:
             )
         elif message_type == "relay.approval.cleared":
             round_id = str(payload.get("round_id") or "")
-            if self._desktop_approvals.pop(round_id, None) is not None:
+            if (
+                self._desktop_approvals.pop((child_id, round_id), None)
+                is not None
+            ):
                 logger.info(
                     "mobile desktop approval cleared round_id=%s child_id=%s",
                     round_id,
@@ -1416,12 +1457,12 @@ class MobileChatService:
     def _drop_child_rounds(self, child_id: str, reason: str) -> None:
         """Fail every desktop round of one child closed (loop thread)."""
         stale = [
-            round_id
-            for round_id, entry in self._desktop_approvals.items()
+            key
+            for key, entry in self._desktop_approvals.items()
             if entry.get("child_id") == child_id
         ]
-        for round_id in stale:
-            del self._desktop_approvals[round_id]
+        for key in stale:
+            del self._desktop_approvals[key]
         if stale:
             logger.info(
                 "mobile desktop rounds dropped child_id=%s reason=%s count=%d",
@@ -1431,7 +1472,7 @@ class MobileChatService:
             )
 
     async def _decide_desktop_round(
-        self, round_id: str, decisions: dict[str, str]
+        self, key: tuple[str, str], decisions: dict[str, str]
     ) -> bool:
         """Route one phone decision to the owning child (ADR-236).
 
@@ -1443,10 +1484,11 @@ class MobileChatService:
         timeout/deny semantics own the round from that point.
         """
         broker = self._relay_broker
-        entry = self._desktop_approvals.get(round_id)
+        entry = self._desktop_approvals.get(key)
         if broker is None or entry is None:
             return False
-        child_id = str(entry.get("child_id") or "")
+        child_id = key[0]
+        round_id = key[1]
         try:
             response = await broker.request(
                 child_id,
@@ -1465,7 +1507,7 @@ class MobileChatService:
                 round_id,
                 getattr(error, "code", type(error).__name__),
             )
-        self._desktop_approvals.pop(round_id, None)
+        self._desktop_approvals.pop(key, None)
         return delivered
 
     # ------------------------------------------------------------------ #

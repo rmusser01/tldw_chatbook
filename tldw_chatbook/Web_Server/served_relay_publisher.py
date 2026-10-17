@@ -313,9 +313,12 @@ def wrap_pending_approval_hook(
     the original untouched otherwise, so native runs never wrap). It always
     runs the original binding first — TUI card behavior stays
     byte-identical, return value included — then mirrors the card
-    transition onto the relay (a payload raises the round; ``None`` clears
-    the newest mount). Relay failures cannot reach the caller: the
-    publisher never raises.
+    transition onto the relay: a payload whose original returned TRUTHY
+    (the round mounted a card) raises the round; a falsy return (the
+    round parked on a background session, or nothing mounted) publishes
+    nothing — the relay mirrors the mounted card, not the card request; a
+    ``None`` payload clears the newest mount. Relay failures cannot reach
+    the caller: the publisher never raises.
     """
 
     if publisher is None:
@@ -325,7 +328,7 @@ def wrap_pending_approval_hook(
         result = original(payload)
         if payload is None:
             publisher.approval_cleared(None, resolution="cleared")
-        else:
+        elif result:
             publisher.approval_raised(payload)
         return result
 
