@@ -3,7 +3,8 @@
 Begin order is allocated under a lock (a free-threaded build gives
 ``next()`` on a shared ``count`` no atomicity), a warm readiness build with
 shared evidence present does no endpoint parsing the evidence-free build
-does not, and Settings and the snapshot derive the model facet one way.
+does not, and Settings' Test rows and the snapshot derive the model facet one
+way.
 """
 
 from __future__ import annotations
@@ -134,8 +135,15 @@ def test_endpoint_parsing_memo_skips_values_that_can_carry_a_secret():
 def test_settings_and_the_snapshot_derive_the_model_facet_one_way():
     """AC#3: Settings' Readiness row and ``ProviderReadiness.snapshot`` read
     one model facet: missing, confirmed only for a listed model of a reached
-    listing, else unconfirmed."""
+    listing, else unconfirmed. For a key its listing accepted, the facet is
+    the difference between "verified" and "reachable", so Settings' word is
+    checked against the snapshot's for a listed, an unlisted and no model."""
+    from dataclasses import replace
+    from datetime import datetime
+
+    from tldw_chatbook.Chat.console_session_settings import verdict_readiness_words
     from tldw_chatbook.Chat.provider_test_evidence import model_facet
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
     assert model_facet("", "reachable", ("model-a",)) == "missing"
     assert model_facet("  ", "reachable", ("model-a",)) == "missing"
@@ -163,3 +171,34 @@ def test_settings_and_the_snapshot_derive_the_model_facet_one_way():
             selected_model=model, evidence=evidence, current_identity=identity
         )
         assert snapshot.model == model_facet(model, "reachable", ids)
+
+    cloud = get_provider_readiness(
+        "openai", {"api_settings": {"openai": {"api_key": "fake-test-key"}}}, environ={}
+    )
+    keyed = replace(_IDENTITY, credential_source="stored", credential_revision=7)
+    listing = ProviderTestEvidence(
+        keyed,
+        "reachable",
+        ("gpt-a",),
+        credential="listing_accepted",
+        observed_at=datetime(2026, 10, 1, 14, 4).astimezone(),
+    )
+    words = {}
+    for model in ("gpt-a", "gpt-b", ""):
+        rows = SettingsScreen._provider_test_rows(
+            cloud,
+            display_name="OpenAI",
+            model=model,
+            endpoint="https://api.openai.com/v1",
+            evidence=listing,
+        )
+        snapshot = cloud.snapshot(
+            selected_model=model, evidence=listing, current_identity=keyed
+        )
+        words[model] = dict(rows)["Readiness"]
+        assert words[model] == verdict_readiness_words(snapshot, listing)
+    assert words == {
+        "gpt-a": "Ready · verified 14:04",
+        "gpt-b": "Ready · reachable 14:04",
+        "": "Not ready · no model",
+    }
