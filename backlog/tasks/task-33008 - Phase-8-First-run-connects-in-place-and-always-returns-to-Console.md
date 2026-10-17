@@ -79,7 +79,7 @@ After this phase, task-1379 re-runs the Settings critique.
 <!-- AC:BEGIN -->
 - [x] #1 First run with a detected local server takes 2 key presses (Enter, Enter) from the Get started card to a ready composer, measured live at 211x44.
 - [x] #2 First run with a cloud key takes no more than 12 key actions from the Get started card to a ready composer in the same chat, counting a paste as one. The count includes the key check and the return, and the user never navigates back to Console by hand. Measured live at 211x44.
-- [ ] #3 Every Console provider-recovery path that leaves for Settings offers a one-key return to the chat it came from. This closes C1's recovery dead end.
+- [x] #3 Every Console provider-recovery path that leaves for Settings for a provider a return can name (every built-in provider) offers a one-key return to the chat it came from. This closes C1's recovery dead end for those providers. A named custom endpoint (`custom-ep:<slug>`) is out of scope: no return can name one (controller ruling R37). Rescoped by the owner's decision of 2026-10-17 on PR #3144 (D1); TASK-35301 gives custom-endpoint recoveries their return.
 - [x] #4 No Console surface accepts or displays an API key; keys are entered only in Settings ▸ Providers & Models (D4, ADR-012).
 - [x] #5 chat_screen.py stays within its line and method budget, and FirstRunSetupWizard.py does not grow.
 - [x] #6 No ADR-097 ratchet rises; boot CSS bytes go down with the backdrop's removal.
@@ -91,6 +91,8 @@ After this phase, task-1379 re-runs the Settings critique.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+**Owner decisions of 2026-10-17 on PR #3144's five questions** (branch `feat/model-config-p8-decisions`, base origin/dev `111f8e48fc`):
+- D1, AC#3: both, as recommended. (a) AC#3 is rescoped to the providers a return can name, and ticked: the acceptance check below found every built-in provider's recovery with its return. The card's Set up provider, the transcript's action and the prompts hook share `_open_console_provider_recovery`, and with a cloud Retry and the NEEDS SETUP rows they all go through `open_provider_setup`. Pinned in the UI Fast Lane by `Tests/UI/test_console_provider_return.py::test_recovery_round_trip_returns_to_the_chat_on_one_enter` (the card, 211x44, one Enter back to the same chat) and `::test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider` (both cases). Outside a PR lane: `::test_a_route_that_names_no_field_arrives_on_the_return` (a Retry-style route) and `Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_targets_provider_settings_category`. (b) Filed TASK-35301 for custom-endpoint returns, with the tests and copy that pin today's one-way route.
 **Capture fixes (after `a57bc97f87`, Phase 8 full-screen captures).** Five capture-fix waves and their rounds (70 commits to `1c1730f4b0`, about 680 production lines) fixed what the live captures showed; `qa/model-config-33008-captures/README.md` records each retake. By area:
 - Console status row: the cost chip fits the room left by the chips before it, drops whole figures, keeps a focused chip in view and refits after a model switch or a layout change. No subtask's acceptance criteria cover this work; it is recorded here, not in a subtask.
 - Footer: under the Get started card it names only the keys that act there (no F6), and under a dialog over the Console only Ctrl+P and Ctrl+Q (`CONSOLE_WORKBENCH_SHORTCUTS_COVERED`).
@@ -130,6 +132,7 @@ Verified 2026-10-16 on `feat/model-config-p8-first-run` at `63b763816c` (the cod
   - The controller's R37 ruling (2026-10-10) accepted this, and the copy says so: the card's line reads "except for custom endpoints", and settings.md reads "Settings remembers no way back for a custom endpoint". The AC's "Every" was not amended.
   - Every other provider recovery that leaves the Console has its return. The card, the transcript's action, the prompts hook, a cloud Retry and the NEEDS SETUP rows go through `open_provider_setup`. Chat settings' credential detour returns to the modal. The Console's other two exits to Settings (Terminal's Privacy & Security, Hooks review) are not provider recoveries.
   - To close it, either the owner scopes the AC to the providers a return can name, or a custom endpoint's route gets a return.
+  - Ruled 2026-10-17 (D1): both. The AC is rescoped and ticked, and TASK-35301 is filed for the custom endpoint's return.
 - AC#4: at head no Console input takes a key. Every `Input` built under `Widgets/Console/`, `UI/Console_Modules/` and `chat_screen.py` was listed, and none is a password field or a key field. They are search, filter, name, path, prompt, base URL and sampling fields; Chat settings' rows edit only `MODEL_CONFIG_FIELDS`.
   - The Console's credential controls are buttons that open Settings: the card's Set up provider and Chat settings' Configure credential.
   - Switch model's only inputs are Find, Temperature and Max tokens, none a password. `Tests/UI/test_console_model_switcher.py::test_enter_on_needs_setup_opens_that_providers_settings_fix` pins that and passes at head.
