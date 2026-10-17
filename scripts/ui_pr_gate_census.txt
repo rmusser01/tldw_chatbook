@@ -652,3 +652,5 @@ Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_
 Tests/UI/test_library_skills_builtin_rows.py
 # TASK-33001.15 (ledger R18): a Settings model save writes a key copied from legacy [API] into the provider table (~6 s, private profile).
 Tests/UI/test_settings_configuration_hub.py::test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table
+# TASK-33641.3 (ledger R11, review round 1): the backend rows' controls stay inside their rows and clickable under the app stylesheet at 235x52 and 120x45 (2 cases, ~30 s, private profile).
+Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and_clickable_under_real_css

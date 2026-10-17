@@ -19,6 +19,7 @@ import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -1261,17 +1262,35 @@ enabled_backends = ["swarmui"]
 
 @pytest.mark.parametrize("size", [(235, 52), (120, 45)])
 @pytest.mark.asyncio
-async def test_backend_row_controls_visible_and_clickable_under_real_css(
-    scratch_config, size
-):
-    scratch_config(
-        """
-[image_generation]
-default_backend = "openrouter"
-enabled_backends = ["openrouter", "swarmui"]
-"""
-    )
+@private_profile_test
+async def test_backend_row_controls_visible_and_clickable_under_real_css(request, size):
+    """The backend rows' controls stay inside their rows under the app CSS.
+
+    TASK-33002.17 (ledger R11): ``scratch_config`` re-pointed
+    ``TLDW_CONFIG_PATH`` after the config module had bound its source, which
+    the ADR-126 admission refuses at setup (``raw_source_selection_changed``),
+    so this guard never ran. The real writer now stores the backends in this
+    case's private profile.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this case in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        size: Terminal size of the app.
+    """
+    from tldw_chatbook import config
+
+    assert config.apply_settings_mutation_to_cli_config(
+        {
+            "image_generation": {
+                "default_backend": "openrouter",
+                "enabled_backends": ["openrouter", "swarmui"],
+            }
+        }
+    ).file_replaced
     app = _build_test_app()
+    # The private profile's config enables the splash, which outlasts the
+    # wait for the initial screen; compose() runs after the factory patches.
+    app._cli_no_splash = True
     async with app.run_test(size=size) as pilot:
         screen = await _open_real_settings_destination(app, pilot)
 
