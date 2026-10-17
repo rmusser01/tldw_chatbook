@@ -154,6 +154,10 @@ def _install_stream_fakes(monkeypatch: pytest.MonkeyPatch, chunk_count: int):
         return args[0] if args else kwargs.get("default")
 
     monkeypatch.setattr(general_summarization, "get_cli_setting", fake_get_cli_setting)
+    # TASK-33001.14: no [api_settings] key, no source -- no profile read.
+    monkeypatch.setattr(
+        general_summarization, "_readiness_credential", lambda _endpoint: (None, None)
+    )
 
 
 def test_openrouter_stream_emits_no_per_chunk_log(
