@@ -121,8 +121,10 @@ readiness: …", "Server events: …", and "Work: N active, N approvals" (plus
 "Model:" is driven by the same send-path check Console enforces. It reads
 "Not set up" until a usable credential+model resolves, and "Not ready" when
 the default connection's last connection check could not reach the server
-or had its key rejected (or a local server answered it with an error),
-wherever it ran (Settings, Chat settings, Switch model or setup). "ACP:"
+or had its key rejected (or a local server answered it with a server error or
+an unreadable model list; a 403 or 404 only means the model list is
+unavailable and leaves Model at Ready), wherever it ran (Settings, Chat
+settings, Switch model or setup). "ACP:"
 comes from the ACP runtime manager. The former "RAG:"/"MCP:" segments —
 hard-coded constants nothing ever updated — were removed rather than shown
 as lies (task-2761).
