@@ -65,6 +65,8 @@ Four separately-owned concepts: the model context window (server/model data with
 
 Interrupted turns persist a `ProviderContinuationCheckpoint`; the resume path validates the target/settings and stamps visible warnings, offering retry or discard. `ConsoleDispatchRecoveryState` plus the recovery region present retry/discard from the durable `ConsoleDispatchCheckpoint`. The 0.2 s transcript sync timer plus a 1 s "survivor tick" keep sub-agent activity visible after the primary turn settles.
 
+The recovery subtree in `UI/Console_Modules/provider_continuation_recovery.py` defers `ProviderContinuationTranscriptRegion.sync_recovery()` until mounted. Its `on_mount` queues a fresh builder read after Textual sets `is_mounted`, so a partial-mount poll cannot query pending action buttons or leave an old recovery state behind.
+
 ## Config keys (`[console]`, parsed in `config.py`)
 
 Notable keys: `workspace_root` (compatibility-only for Console file authority — see [console-file-authority.md](./console-file-authority.md)), `compaction_mode`, `compaction_trigger_ratio`, `compaction_target_ratio`, `compaction_summary_max_tokens`, `compaction_auxiliary_timeout_seconds`, `micro_compaction_every_turns`, `compaction_failure_behavior`, `agent_max_model_turns` (2000), `agent_max_steps` (25000), `agent_max_wall_seconds` (86400), `agent_max_tool_call_seconds`, `raw_cli_permitted`, `status_chips_position`, `conversation_budget_mode`, paste-collapse keys.

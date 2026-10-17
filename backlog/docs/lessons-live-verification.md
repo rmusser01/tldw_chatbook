@@ -392,6 +392,16 @@ mounting and replay retained results from the existing mount-ready callback,
 including when the user has already left that pane; queryability alone is not
 readiness. Exact-reference handoffs need the same boundary.
 
+**TASK-34406.7 / PR #3141, 2026-10-16.** Required Console CI crashed a
+workbench Send worker with `NoMatches('#console-trace-save-send')`: the recovery
+card's title existed while its nested action container had not mounted. A real
+child-mount barrier reproduced the same failure on exact merged production
+(3 failed, 1 passed). A pre-mount return alone left all four changed/cleared
+recovery states stale. Queuing one fresh builder read from the owning region's
+Mount handler, after Textual sets `is_mounted`, passed the four controls and
+original failing hook-review journey; mounted missing controls still raise.
+Queryability and a guard alone do not replace a current-state mount replay.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
