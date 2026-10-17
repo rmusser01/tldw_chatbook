@@ -85,7 +85,10 @@ match a "| Next: \<second match with its scope\>" segment disambiguates, so
 and clears the filter — landing focus **on the matched setting** when your text
 named one (typing a category's own name just opens the category); **Esc** just
 clears it. The filter knows every rendered setting's visible label, on every
-category. Some pages also
+category. Console Behavior's **Global fallback defaults** rows share their
+labels with Providers & Models' **Model defaults**, which a bare label such as
+"temperature" lands on; add "fallback", as in "fallback temperature", to land
+on the Console Behavior row. Some pages also
 carry jump buttons: **Open Providers & Models** and **Open Advanced Config** on
 Privacy & Security, five guided-path chips on Advanced Config, **Open Theme
 editor** on Overview, and **Open Theme** (which lands on the Theme picker) on
