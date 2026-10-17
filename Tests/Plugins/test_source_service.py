@@ -160,6 +160,9 @@ def private_host_auth(monkeypatch, tmp_path):
 
 @pytest.fixture
 async def source_stack(tmp_path):
+    from Tests.Plugins.platform_support import require_managed_runtime
+
+    require_managed_runtime()
     from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
     from tldw_chatbook.Plugins.service import PluginService
 

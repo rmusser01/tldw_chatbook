@@ -32,13 +32,35 @@ selection. Unsupported optional components do not disable unrelated ready ones;
 required dependencies block affected behavior. Selection changes and newly
 supported adapters do not silently opt in components.
 
+### Configure declared values
+
+In the installed plugin's actions, choose **Save or revoke declared value**. Select the
+name, enter its declared type (whole number, `true`/`false`, or text), and choose
+**Save value**. Secret input is masked. Saving creates a protected reference;
+**Review action**, then **Confirm** applies the complete mapping separately.
+The filled Configure JSON retains current connections, discovered tools, model
+choices, component tool constraints and other variable references. When editing
+that JSON manually, supply the complete desired mapping, using reference handles
+only. Omitting a mapping removes it from the proposed configuration.
+
+Input clears after saving, invalid input, closing and navigation. An in-flight
+save retains only its reference metadata when complete; reopening can select that
+reference. **Review revoke**, then **Confirm revoke** invalidates the protected
+reference and clears any pending configuration review. Consuming components need
+a replacement; a revoked or wrong-type reference never falls back to a default.
+The host checks identity and generation again at actual launch and does not put
+resolved values in packages, snapshots, handler definitions or result logs.
+
 ## Disable, uninstall and saved data
 
 Disable here fences the captured scope immediately; Disable everywhere and
 uninstall affect every scope. A persistence failure may leave a session-only
 stop: it is not a durable disable. Independent authorized workspace work may
 continue on a shared connection. A cancelled waiter does not establish that the
-server stopped or that an uncertain request can be retried.
+server stopped or that an uncertain request can be retried. Cancellation visits
+every owned lease, including several connections belonging to one run. A failed
+stdio cleanup and its retry keep root custody until the original direct child
+is observed terminated and retained cleanup has settled.
 
 A completed Console turn may leave an owned idle MCP connection. That connection
 continues to count as a possible data writer until reviewed disconnect/drain
@@ -74,3 +96,21 @@ binding reference requires reviewed current authority.
 
 See [compatibility](compatibility.md) for unqualified environments and
 [authoring](authoring.md) for component and resource contracts.
+
+
+### Unavailable requirements and configuration drafts
+
+A selected required or restrictive hook remains a refusal constraint when its
+protected value, retained body or working directory is unavailable. Its recorded
+event and matcher can explain the refusal; they never authorize a process. If the
+current constraint set cannot be authenticated, Console configuration capture
+requires recovery instead of treating the catalog as empty. Disabled, unselected
+and revoked installations keep their ordinary inactive behavior. Repair the
+retained material or review current activation/configuration before retrying.
+
+Saving a protected value does not confirm its configuration mapping. The review
+surface projects the complete current connection, tool, alias, model and value
+reference set. Unknown or conflicting rows stop prefill; a failed refresh or a
+newer user draft preserves that draft and reports the saved reference honestly.
+Review the complete mapping separately. Existing protected rows are not converted
+by display or prefill, and their secret values are never read there.

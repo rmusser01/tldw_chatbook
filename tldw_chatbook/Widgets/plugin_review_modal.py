@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 
 from textual import on
 from textual.binding import Binding
@@ -27,6 +28,276 @@ from ..UI.Plugins_Modules.review import (
     review_text,
 )
 from .password_dialog import PasswordDialog
+
+
+def _configuration_references(details):
+    """Project every closed reviewed row, or refuse the whole prefill."""
+    import hashlib
+
+    from ..Plugins.host_references import (
+        _reference_form, declared_tools, mapping_id as tool_mapping_id,
+        tool_constraint_id,
+    )
+    from ..Plugins.variables import consumed, mapping_id, reference
+
+    inspection = details["inspection"]
+    installation_id = details["installation"]["installation_id"]
+    rows = details["mappings"]
+    if not isinstance(rows, (tuple, list)):
+        raise ValueError("plugin_configuration_unavailable")
+    result = {key: {} for key in (
+        "connections", "tools", "models", "component_tools", "tool_references", "variables"
+    )}
+    declarations = json.loads(inspection.variables_json)
+    by_id, forms, labels = {}, {}, set()
+    fields = {"installation_id", "revision_digest", "component_id", "mapping_id",
+              "kind", "target_reference", "definition_digest", "configuration_digest",
+              "credential_bindings"}
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != fields
+            or row["installation_id"] != installation_id
+            or row["revision_digest"] != inspection.effective_digest
+            or row["component_id"] not in inspection.inventory
+            or not isinstance(row["mapping_id"], str)
+            or not isinstance(row["target_reference"], str)
+            or row["mapping_id"] in by_id):
+            raise ValueError("plugin_configuration_identity_invalid")
+        identity = row["mapping_id"]
+        by_id[identity] = row
+        forms[identity] = "variable" if identity.startswith("variable:") else _reference_form(row, inspection)
+
+    # A tool spelling is reconstructed only after joining its actual connection.
+    connections = {}
+    for identity, row in by_id.items():
+        if forms[identity] != "mcp" or row["kind"] != "connection":
+            continue
+        component = row["component_id"]
+        target = row["target_reference"]
+        if identity != component or component in connections or not target.startswith("local:") or not target[6:]:
+            raise ValueError("plugin_configuration_connection_invalid")
+        connections[component] = row
+        result["connections"][component] = target[6:]
+
+    def tool_target(row):
+        if forms.get(row["mapping_id"]) != "mcp" or row["kind"] != "tool":
+            raise ValueError("plugin_configuration_tool_invalid")
+        connection = connections.get(row["component_id"])
+        if connection is None:
+            raise ValueError("plugin_configuration_connection_required")
+        prefix = connection["target_reference"] + "::"
+        target = row["target_reference"]
+        if not target.startswith(prefix) or not target[len(prefix):]:
+            raise ValueError("plugin_configuration_tool_invalid")
+        name = target[len(prefix):]
+        expected = "tool-" + hashlib.sha256(
+            (connection["mapping_id"] + "\0" + name).encode()
+        ).hexdigest()
+        if row["mapping_id"] != expected:
+            raise ValueError("plugin_configuration_tool_invalid")
+        return row["component_id"] + "::" + name, name
+
+    for identity, row in by_id.items():
+        form = forms[identity]
+        component_id, target = row["component_id"], row["target_reference"]
+        component = inspection.inventory[component_id]
+        if form == "variable":
+            names = [name for name in consumed(component) if name in declarations
+                     and mapping_id(component_id, name) == identity]
+            if row["kind"] != "configuration" or len(names) != 1:
+                raise ValueError("plugin_configuration_variable_invalid")
+            reference(target)
+            name = names[0]
+            previous = result["variables"].get(name)
+            if previous is not None and previous != target:
+                raise ValueError("plugin_configuration_variable_ambiguous")
+            result["variables"][name] = target
+        elif form == "mcp":
+            if row["kind"] == "tool":
+                _target, name = tool_target(row)
+                result["tools"].setdefault(component_id, []).append(name)
+        elif form in {"canonical_model", "dev_model"}:
+            if component_id in result["models"]:
+                raise ValueError("plugin_configuration_model_ambiguous")
+            result["models"][component_id] = target
+        elif form in {"canonical_tool", "dev_tool"}:
+            names = [name for name in declared_tools(component) or ()
+                     if identity == (tool_constraint_id(component_id, name)
+                                     if form == "canonical_tool"
+                                     else tool_mapping_id(component_id, name))]
+            if len(names) != 1 or (component_id, names[0]) in labels:
+                raise ValueError("plugin_configuration_alias_ambiguous")
+            labels.add((component_id, names[0]))
+            if form == "dev_tool" and target.startswith("builtin:"):
+                if not target[len("builtin:"):]:
+                    raise ValueError("plugin_configuration_alias_invalid")
+                projected = target
+            else:
+                sources = ([by_id[target]] if target in by_id else []) if form == "canonical_tool" else [
+                    source for source in rows
+                    if forms[source["mapping_id"]] == "mcp"
+                    and source["kind"] == "tool" and source["target_reference"] == target
+                ]
+                if len(sources) != 1:
+                    raise ValueError("plugin_configuration_alias_ambiguous")
+                projected, _name = tool_target(sources[0])
+            field = "component_tools" if form == "canonical_tool" else "tool_references"
+            result[field].setdefault(component_id, {})[names[0]] = projected
+        else:
+            raise ValueError("plugin_configuration_identity_invalid")
+    return result
+
+
+class PluginVariableDialog(ModalScreen):
+    """Typed entry is transient; only protected reference metadata leaves this dialog."""
+
+    BINDINGS = (Binding("escape", "close", "Close", show=False),)
+
+    def __init__(self, operations, installation_id, details):
+        super().__init__()
+        self.operations, self.installation_id = operations, installation_id
+        self.declarations = json.loads(details["inspection"].variables_json)
+        self.references = _configuration_references(details)["variables"]
+        from ..Plugins.variables import handle
+
+        for metadata in operations.variable_results.values():
+            if (
+                metadata
+                and metadata["installation_id"] == installation_id
+                and metadata["name"] in self.declarations
+            ):
+                self.references[metadata["name"]] = handle(metadata)
+        self._busy = False
+        self._revoke_reference = None
+
+    def compose(self):
+        with VerticalScroll(id="plugin-review-shell"):
+            yield Static("Declared plugin value", classes="dialog-title")
+            yield Select(
+                [(name, name) for name in self.declarations],
+                allow_blank=False,
+                id="plugin-variable-name",
+            )
+            yield Static("", id="plugin-variable-type", markup=False)
+            self._value_input = Input(
+                id="plugin-variable-value",
+                password=True,
+                max_length=16384,
+                classes="form-input",
+            )
+            yield self._value_input
+            yield Static("", id="plugin-variable-reference", markup=False)
+            yield Static(
+                "Save creates a protected reference. Review and confirm its mapping afterward.",
+                id="plugin-variable-status",
+                markup=False,
+            )
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Save value", id="plugin-variable-save")
+                yield Button("Review revoke", id="plugin-variable-revoke")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button(
+                    "Confirm revoke", id="plugin-variable-confirm", disabled=True
+                )
+                yield Button("Close", id="plugin-variable-close")
+
+    def on_mount(self):
+        self._declaration()
+        self.call_after_refresh(self.query_one("#plugin-variable-value", Input).focus)
+
+    def _clear(self):
+        self._value_input.value = ""
+
+    @on(Select.Changed, "#plugin-variable-name")
+    def _declaration(self):
+        self._clear()
+        name = str(self.query_one("#plugin-variable-name", Select).value)
+        declaration = self.declarations[name]
+        field = self.query_one("#plugin-variable-value", Input)
+        field.password = declaration["secret"]
+        field.placeholder = {
+            "string": "Enter text",
+            "integer": "Enter a whole number",
+            "boolean": "Enter true or false",
+        }[declaration["type"]]
+        self.query_one("#plugin-variable-type", Static).update(
+            f"{name} · {declaration['type']} · {'secret (masked)' if declaration['secret'] else 'nonsecret'}"
+        )
+        self.query_one("#plugin-variable-reference", Static).update(
+            "Selected reference: " + self.references.get(name, "none")
+        )
+        self.query_one("#plugin-variable-revoke", Button).disabled = (
+            name not in self.references
+        )
+        self.query_one("#plugin-variable-confirm", Button).disabled = True
+        self._revoke_reference = None
+
+    def action_close(self):
+        self._clear()
+        self.dismiss(None)
+
+    def on_unmount(self):
+        self._clear()
+
+    @on(Button.Pressed)
+    async def _button(self, event):
+        event.stop()
+        identity = event.button.id
+        if identity == "plugin-variable-close":
+            self.action_close()
+            return
+        if self._busy:
+            return
+        name = str(self.query_one("#plugin-variable-name", Select).value)
+        if identity == "plugin-variable-revoke":
+            self._revoke_reference = self.references[name]
+            self.query_one("#plugin-variable-status", Static).update(
+                "Revoke this reference? Consuming components will need configuration."
+            )
+            self.query_one("#plugin-variable-confirm", Button).disabled = False
+            self.query_one("#plugin-variable-confirm", Button).focus()
+            return
+        self._busy = True
+        value = None
+        try:
+            if identity == "plugin-variable-save":
+                from uuid import uuid4
+
+                value = self.query_one("#plugin-variable-value", Input).value
+                kind = self.declarations[name]["type"]
+                if kind == "integer":
+                    value = int(value)
+                elif kind == "boolean":
+                    if value not in {"true", "false"}:
+                        raise ValueError("boolean_required")
+                    value = value == "true"
+                self._clear()
+                metadata = await self.operations.save_variable(
+                    uuid4().hex, self.installation_id, name, value
+                )
+                if self.is_mounted and self.app.screen is self:
+                    self.dismiss(("saved", name, metadata))
+            elif (
+                identity == "plugin-variable-confirm"
+                and self._revoke_reference == self.references.get(name)
+            ):
+                from ..Plugins.variables import reference
+
+                await self.operations.revoke_variable(
+                    self.installation_id, reference(self._revoke_reference)[0]
+                )
+                if self.is_mounted and self.app.screen is self:
+                    self.dismiss(("revoked", name, None))
+        except (ValueError, OSError, RuntimeError):
+            if self.is_mounted:
+                self.query_one("#plugin-variable-status", Static).update(
+                    "Value unavailable or invalid for its declared type. Check the protected backend and enter it again."
+                )
+                self.query_one("#plugin-variable-value", Input).focus()
+        finally:
+            value = None
+            if self.is_mounted:
+                self._clear()
+            self._busy = False
 
 
 class PluginAuthorityDialog(PasswordDialog):
@@ -365,6 +636,7 @@ class PluginReviewModal(ModalScreen):
                     ("Check for update", "update"),
                     ("Rollback selected revision", "rollback"),
                     ("Save MCP configuration (does not connect)", "save-profile"),
+                    ("Save or revoke declared value", "save-variable"),
                     ("Save reviewed mapping references", "configure"),
                     ("Review explicit hook test", "test-hook"),
                     ("Review connection and discovery", "test-connection"),
@@ -600,7 +872,7 @@ class PluginReviewModal(ModalScreen):
         action = self.query_one("#plugin-review-action", Select).value
         references = {
             "rollback": "Exact retained revision digest",
-            "configure": "Mapping JSON: connections, tools, tool_references, models or component_tools",
+            "configure": "Complete mapping JSON: connections, tools, tool_references, models, component_tools, variables (reference handles only)",
             "save-profile": "MCP profile JSON with component_id and reviewed references",
             "delete-data": "Comma-separated exact root IDs; blank selects listed roots",
             "resume-data": "Comma-separated exact root IDs; blank selects listed roots",
@@ -927,6 +1199,7 @@ class PluginReviewModal(ModalScreen):
                 "tool_references",
                 "models",
                 "component_tools",
+                "variables",
             }:
                 raise ValueError("configuration_requires_mapping_references")
             review = await self.service.review_configuration(
@@ -1053,6 +1326,50 @@ class PluginReviewModal(ModalScreen):
             {"connections": {review.component_id: result["profile_id"]}}
         )
         self._status(saved + "Review the filled mapping separately; then connect/discover and review tool mappings.")
+
+    async def _variable_result(self, result, *, request=None):
+        if result is None or not self.is_mounted:
+            return
+        action, name, metadata = result
+        saved = "Reference saved. " if action == "saved" else "Reference revoked. "
+        if request is None:
+            request = (self.draft, self._input_generation,
+                       self.query_one("#plugin-review-reference", Input).value)
+        draft, generation, original = request
+        try:
+            details = await self.service.management_details(
+                self.installation_id, workspace_id=self.workspace_id
+            )
+            configuration = _configuration_references(details)
+            if action == "saved":
+                from ..Plugins.variables import handle
+
+                declaration = json.loads(details["inspection"].variables_json).get(name)
+                if (declaration is None or metadata["installation_id"] != self.installation_id
+                    or metadata["name"] != name or metadata["value_type"] != declaration["type"]
+                    or metadata["secret"] != declaration["secret"]):
+                    raise ValueError("plugin_variable_identity_changed")
+                configuration["variables"][name] = handle(metadata)
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+            if self.is_mounted:
+                self._status(saved + "Complete mapping refresh unavailable. Draft preserved; refresh and review configuration.")
+            return
+        if not self.is_mounted:
+            return
+        if (self.draft is not draft or self._input_generation != generation
+            or self.query_one("#plugin-review-reference", Input).value != original):
+            self._status(saved + "Newer draft preserved. Review the complete configuration before confirming.")
+            return
+        self._discard_pending_review()
+        self.query_one("#plugin-review-confirm", Button).disabled = True
+        self.query_one("#plugin-review-action", Select).value = "configure"
+        self.query_one("#plugin-review-reference", Input).value = json.dumps(configuration)
+        self.query_one("#plugin-review-reference", Input).focus()
+        self._status(saved + (
+            "Review the complete mapping before confirming."
+            if action == "saved" else
+            "Its current mapping is unavailable; replace it before reviewing configuration."
+        ))
 
     async def _execute_test(self, review):
         try:
@@ -1185,6 +1502,26 @@ class PluginReviewModal(ModalScreen):
         self._busy = True
         try:
             if action == "plugin-review-prepare":
+                if (
+                    self.query_one("#plugin-review-action", Select).value
+                    == "save-variable"
+                ):
+                    self._discard_pending_review()
+                    self.query_one("#plugin-review-confirm", Button).disabled = True
+                    request = (self.draft, self._input_generation,
+                               self.query_one("#plugin-review-reference", Input).value)
+                    details = await self.service.management_details(
+                        self.installation_id, workspace_id=self.workspace_id
+                    )
+                    if not json.loads(details["inspection"].variables_json):
+                        raise ValueError("plugin_has_no_declared_variables")
+                    await self.app.push_screen(
+                        PluginVariableDialog(
+                            self.operations, self.installation_id, details
+                        ),
+                        partial(self._variable_result, request=request),
+                    )
+                    return
                 await self._prepare()
             elif action == "plugin-review-confirm" and self.draft.review is not None:
                 await self._validate_root_impact()

@@ -1218,3 +1218,114 @@ def test_preparation_refusal_preserves_recovery_without_review_or_dispatch(
     assert "private exception detail" not in results[0].result
     assert outcome.denial_count == 0
     assert results[0].tool_outcome == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_actual_local_operations_reach_pre_and_both_post_events(tmp_path):
+    import json
+
+    from Tests.Agents.test_post_tool_dispatch_hook import _Provider
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.tool_pipeline import (
+        HookPreparationError,
+        ToolHookRun,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    observed = tmp_path / "operations.jsonl"
+    code = (
+        "import json,sys;from pathlib import Path;event=json.load(sys.stdin);"
+        f"Path({str(observed)!r}).open('a').write(json.dumps([event['event'],event['data']['operation']])+'\\n');"
+        "print(json.dumps({'version':2,'decision':'deny' if event['event']=='PreToolUse' and event['data']['tool_args'].get('content')=='blocked' else 'pass'}))"
+    )
+    handlers = [
+        hook_command(
+            name,
+            event=name,
+            code=code,
+            effects=("deny",) if name == "PreToolUse" else (),
+            required=True,
+            match={"operation": ["file.read", "file.write"]},
+        )
+        for name in ("PreToolUse", "PostToolUse", "PostToolUseFailure")
+    ]
+    engine = HookEngine(handlers, lambda *_: True, HookBudgetOwner())
+    registry = ToolCatalogRegistry()
+    reviews, unclassified = [], []
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+            approval_callback=lambda calls: reviews.extend(
+                call.llm_name for call in calls
+            )
+            or {call.llm_name: "approve_once" for call in calls},
+        )
+    )
+    registry.register_provider(
+        _Provider(
+            lambda: unclassified.append(True)
+            or ToolResult(ok=True, content="unclassified")
+        )
+    )
+    owner = ToolHookRun(
+        engine,
+        run_id="operations",
+        session_id="session",
+        turn_id="turn",
+        resolve_definition=lambda call: registry.snapshot_for_hook(call.name),
+    )
+
+    def dispatch(name, args, identity):
+        call = owner.prepare_call(ToolCall(name, args, identity))
+        owner.validate_dispatch(call)
+        result = registry.invoke_by_name(
+            name, call.args, expected_definition=registry.snapshot_for_hook(name)
+        )
+        owner.install_result(call, result)
+        owner.admit_input()
+        return result
+
+    try:
+        assert (
+            await asyncio.to_thread(
+                dispatch, "fs_write", {"path": "written", "content": "allowed"}, "write"
+            )
+        ).ok
+        assert (tmp_path / "written").read_text() == "allowed"
+        assert (
+            await asyncio.to_thread(dispatch, "fs_read", {"path": "written"}, "read")
+        ).ok
+        assert not (
+            await asyncio.to_thread(dispatch, "fs_read", {"path": "missing"}, "missing")
+        ).ok
+        pairs = [json.loads(line) for line in observed.read_text().splitlines()]
+        assert pairs == [
+            ["PreToolUse", "file.write"],
+            ["PostToolUse", "file.write"],
+            ["PreToolUse", "file.read"],
+            ["PostToolUse", "file.read"],
+            ["PreToolUse", "file.read"],
+            ["PostToolUse", "file.read"],
+            ["PostToolUseFailure", "file.read"],
+        ]
+        before = list(reviews)
+        with pytest.raises(HookPreparationError):
+            await asyncio.to_thread(
+                dispatch,
+                "fs_write",
+                {"path": "refused", "content": "blocked"},
+                "denied",
+            )
+        assert not (tmp_path / "refused").exists() and reviews == before
+        with pytest.raises(HookPreparationError):
+            await asyncio.to_thread(dispatch, "probe", {}, "unknown")
+        assert not unclassified and reviews == before
+        assert registry.snapshot_for_hook("probe").operation is None
+    finally:
+        await engine.close()

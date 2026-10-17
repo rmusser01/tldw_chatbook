@@ -995,6 +995,9 @@ class MCPToolProvider:
         """
         return list(self._catalog)
 
+    def hook_operation(self, tool_id: str) -> str | None:
+        return "mcp.call" if tool_id in self._entry_by_llm_name else None
+
     def load_schema(self, tool_id: str) -> ToolSchema:
         """Resolve one catalog entry's invocation schema.
 

@@ -27,6 +27,7 @@ jobs:
       TLDW_TEST_MODE: "1"
       HF_HUB_OFFLINE: "1"
       TLDW_TEST_GC_EVERY: "1"
+      PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -80,7 +81,7 @@ jobs:
           allowed = ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
                      "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                      "XDG_CACHE_HOME", "TLDW_CONFIG_PATH", "QUALIFICATION_DATA_ROOT", "PYTHON_KEYRING_BACKEND",
-                     "TLDW_TEST_MODE", "TLDW_TEST_GC_EVERY", "HF_HUB_OFFLINE")
+                     "TLDW_TEST_MODE", "TLDW_TEST_GC_EVERY", "HF_HUB_OFFLINE", "PLUGIN_COLLECTION_ARTIFACT")
           environment = {key: os.environ[key] for key in allowed if key in os.environ}
           os.environ.clear()
           os.environ.update(environment)
@@ -106,6 +107,8 @@ jobs:
               'Tests/Agents/test_hooks_v2_budgets.py',
               'Tests/Agents/test_hooks_v2_post_checkpoints.py',
               'Tests/Agents/test_run_hooks.py',
+              "Tests/Plugins/test_platform_selection.py",
+              "-p", "Tests.Plugins.platform_support",
               "-q", "-ra", "--junitxml=plugin-qualification.xml"]
           runpy.run_module("pytest", run_name="__main__")
       - uses: actions/upload-artifact@v4
@@ -115,4 +118,5 @@ jobs:
           path: |
             qualification-identity.json
             plugin-qualification.xml
+            plugin-collected-nodes.json
           if-no-files-found: warn

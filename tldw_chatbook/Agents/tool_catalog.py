@@ -1347,6 +1347,18 @@ class BuiltinToolProvider:
 
     SOURCE = "builtin"
 
+    def hook_operation(self, tool_id: str) -> str | None:
+        name = tool_id.removeprefix("builtin:")
+        if name not in self._tools:
+            return None
+        return {
+            "read_file": "file.read",
+            "write_file": "file.write",
+            "list_directory": "directory.list",
+            "glob_files": "file.search",
+            "grep_files": "file.search",
+        }.get(name)
+
     def __init__(
         self,
         gate: Any | None = None,
@@ -1862,9 +1874,12 @@ class ToolDefinitionSnapshot:
     parameters_json: str
     generation: int
     owner_generation: int
+    operation: str | None = None
 
     @classmethod
-    def from_schema(cls, schema, provider, generation, owner_generation):
+    def from_schema(
+        cls, schema, provider, generation, owner_generation, *, operation=None
+    ):
         return cls(
             schema.id,
             schema.name,
@@ -1877,6 +1892,7 @@ class ToolDefinitionSnapshot:
             ),
             generation,
             owner_generation,
+            operation,
         )
 
 
@@ -2265,8 +2281,24 @@ class ToolCatalogRegistry:
             schema = record.provider.load_schema(record.tool_id)
             if schema.id != record.tool_id or schema.name != name:
                 raise ValueError("tool schema identity changed")
+            classify = getattr(record.provider, "hook_operation", None)
+            operation = classify(record.tool_id) if callable(classify) else None
+            if operation not in {
+                None,
+                "file.read",
+                "file.write",
+                "file.edit",
+                "directory.list",
+                "file.search",
+                "mcp.call",
+            }:
+                raise ValueError("tool operation unavailable")
             return ToolDefinitionSnapshot.from_schema(
-                schema, record.source, self._catalog_generation, id(record.provider)
+                schema,
+                record.source,
+                self._catalog_generation,
+                id(record.provider),
+                operation=operation,
             )
 
     def load_schema(self, tool_id: str) -> ToolSchema:

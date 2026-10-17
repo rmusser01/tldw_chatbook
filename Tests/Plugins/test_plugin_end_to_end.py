@@ -13,6 +13,8 @@ import pytest
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
+from Tests.Plugins.platform_support import package_capture
+
 
 @pytest.fixture(
     params=(
@@ -226,6 +228,7 @@ async def test_install_use_disable_uses_production_paths(end_to_end_case):
     assert not await case.rig.service.management_snapshot("workspace-a")
 
 
+@package_capture
 def test_authored_example_has_independent_inventory_and_tool_ceiling():
     from tldw_chatbook.Plugins.inspection import inspect_package
 

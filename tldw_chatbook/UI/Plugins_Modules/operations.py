@@ -54,6 +54,52 @@ class PluginOperations:
         self.drafts = {}
         self.profile_tasks = {}
         self.profile_results = {}
+        self.variable_tasks = {}
+        self.variable_results = {}
+
+    async def save_variable(self, token, installation_id, name, value):
+        """Retain an already-started save; results contain reference metadata only."""
+        task = self.variable_tasks.get(token)
+        if task is None:
+
+            async def save(submitted_value):
+                try:
+                    result = await self.service.create_variable_reference(
+                        installation_id, name, submitted_value
+                    )
+                # Discard protected backend exception bodies.
+                except Exception:  # noqa: BLE001
+                    result = None
+                finally:
+                    submitted_value = None
+                self.variable_results[token] = result
+                return result
+
+            task = self.variable_tasks[token] = asyncio.create_task(
+                save(value),
+                name="plugin-variable-save",
+            )
+        value = None
+        result = await asyncio.shield(task)
+        if result is None:
+            raise ValueError("plugin_variable_save_unavailable")
+        return result
+
+    async def revoke_variable(self, installation_id, reference_id):
+        """Navigation cannot cancel an explicitly confirmed protected revocation."""
+        token = (installation_id, reference_id)
+        task = self.variable_tasks.get(token)
+        if task is None:
+            task = self.variable_tasks[token] = asyncio.create_task(
+                self.service.revoke_variable_reference(installation_id, reference_id),
+                name="plugin-variable-revoke",
+            )
+            task.add_done_callback(
+                lambda finished: (
+                    finished.exception() if not finished.cancelled() else None
+                )
+            )
+        return await asyncio.shield(task)
 
     def submit(self, action, review, *, installation_id=None, workspace_id=None):
         from ...Plugins.revocation import RevocationFailure

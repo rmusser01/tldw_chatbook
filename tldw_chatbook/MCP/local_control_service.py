@@ -310,11 +310,18 @@ class LocalMCPControlService:
         if definition["type"] != "stdio":
             return "", (), None, {}
         token = definition["command"]
-        command = (
-            str(Path(root) / token)
-            if token.startswith("./")
-            else shutil.which(token, path=environment.get("PATH"))
-        )
+        if token.startswith("./"):
+            command = str(Path(root) / token)
+        else:
+            host_cwd = Path.cwd()
+            lookup_path = baseline.get("PATH", "")
+            # Anchor empty and relative host entries before child cwd/PATH.
+            lookup_path = os.pathsep.join(
+                str(host_cwd / entry) for entry in lookup_path.split(os.pathsep)
+            )
+            command = shutil.which(token, path=lookup_path)
+            if command:
+                command = str(host_cwd / command)
         if not command:
             raise ValueError("plugin_executable_unavailable")
         args = tuple(expand(value) for value in definition.get("args", []))
@@ -386,11 +393,17 @@ class LocalMCPControlService:
                     and data_root["installation_id"] != installation_id
                 ):
                     raise CredentialError("credential_mapping_invalid")
+                lookup_baseline = dict(owner["environment"])
+                if "PATH" in definition.get("env", {}):
+                    # A saved child overlay is not executable lookup authority.
+                    # Compare the captured absolute executable with trusted host
+                    # lookup; a changed host selection requires a fresh review.
+                    lookup_baseline["PATH"] = os.environ.get("PATH", "")
                 expected = self._owned_launch_values(
                     definition,
                     inspection.materialized_identity,
                     data_root["path"] if data_root else None,
-                    owner["environment"],
+                    lookup_baseline,
                 )
                 if (
                     expected

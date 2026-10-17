@@ -144,8 +144,97 @@ All function names below are in `Tests/Plugins/test_owned_hook_acceptance.py`; e
 
 **30 cases remain selected:** required `master_off`/`invalid_required` (2); all typed owned-MCP modes over stdio/HTTP (16); all provisional MCP modes including cycle exclusion (5); compaction authority `disabled`/`selection_changed` (2); no-hook cleanup/standalone/automatic (3); owned-MCP PostCompact (1); and new `test_installed_windows_command_refuses_before_root_access_or_launch` (1). Markdown command rendering in the cyclic control is not a command-hook process. Authority disabled/selection-change cases stop before commit and assert no command marker. Owned-MCP and no-hook cases do not depend on command-hook support.
 
-The new refusal case uses actual installed/trusted/selected NativeHookSet ownership and the real executor. It changes only that executor module's local `sys` reference to a namespace with `platform="win32"`, observes/delegates the original process-owner reservation, and asserts exact required `unsupported_platform`, no reservation/launch marker/process, zero budget slots and no live plugin custody. It closes the engine through the existing fixture ownership contract. This is local platform-branch evidence, not Windows host execution.
+The new refusal case uses actual installed/trusted/selected NativeHooks ownership and the real executor. It changes only that executor module's local `sys` reference to a namespace with `platform="win32"`, observes/delegates the original process-owner reservation, and asserts exact required `unsupported_platform`, no reservation/launch marker/process, zero budget slots and no live plugin custody. It closes the engine through the existing fixture ownership contract. This is local platform-branch evidence, not Windows host execution.
 
 Pre-edit collection found 59 cases with all 30 required Windows marks missing. Post-edit collection found exactly 60, with original IDs retained and all original function bodies AST-identical. Evaluating only the recorded marker strings in isolated namespaces gives Windows30skip/30retain and Darwin/Linux0skip; shared `sys.platform` and product ownership are never simulated during collection. Five targeted ordinary checks passed in 15.86s: new installed refusal, required master-off/invalid constraints and compaction authority disabled/selection-change (raw SHA `ef69d3b6851539b73e7d7777d523b6c794a94adb0cf684d06aa55fd63e192f47`). The other local behavior results carry their unchanged bodies and explicit source applicability; no 60-case, resource, live or ratchet sweep was repeated.
 
 No workflow edit or Windows execution is claimed. Pre-existing selected Windows issues remain for whole-branch triage: `Tests/Agents/test_hooks_v2_execution.py::test_windows_command_refuses_before_root_access_or_launch` restores the real platform and then requires successful command execution, which cannot succeed on Windows. That earlier selection was not changed by this correction. The full workflow is therefore **not claimed Windows-green**; remaining earlier platform selections require their own disposition.
+
+
+## Final combined repair: operation identity, custody and declared values
+
+This section records the single combined I1–I8 repair after the whole-branch
+review. Earlier failed and partial phases above remain historical evidence.
+All selected executions used private pre-import profiles, null test keyring and
+external-network refusal, with immutable whole-source/test before and after
+copies. Native host exceptions were limited to named Darwin boot-identity cases;
+no new loopback exception or platform-support claim follows.
+
+| Boundary | Actual final-wave evidence |
+|---|---|
+| Cursor managed MCP guard (I1) | Installed Cursor `beforeMCPExecution` guard sees the actual owned `mcp.call`; denial precedes normal permission/dispatch, with independent non-MCP control. Host phase11 passed. |
+| Same-run cancellation (I2) | Two actual owned connections in one run each settle after disable or revision drain; another workspace remains usable. Both phase11 cases passed. |
+| Retained direct child (I3) | Phase04 reproduced false settlement; phase05 passed with the original live child, failed cleanup/retry, pending public data deletion, then actual termination/settlement and unlink. |
+| Common tool operation (I4) | Actual LocalToolProvider read/write classification reaches PreToolUse and both post outcomes; missing operation refuses controlling match. Phase13 passed. Classification is part of exact definition identity. |
+| Protected declared values (I5) | Installed unset write guard denies writes while normal read approval/dispatch succeeds; typed configured value permits the write, revoked/missing/wrong-type refs refuse, and an unused declaration leaves siblings usable. Required initialization and dependency-only sibling controls passed. Child and sealed-resume controls preserve nonmatch behavior without advertising an executable guard. Phase30 additionally passed the optional-by-flag guard and actual declaration/reference/scope/selection currentness transitions. |
+| Exact command roots (I6) | Shared and two named-workspace roots are distinct actual grants; missing root refuses. Real unscoped scratch remains leased while its hook child lives after chat closure, rejects new use and disappears only after terminal cleanup. Phases08/10 passed these controls. |
+| Executable lookup (I7) | Native-hook and owned-MCP bare executable lookup uses trusted host PATH despite a child PATH shadow. Explicit package executable controls also passed. Phases08/10/11. |
+| Platform selection (I8) | The workflow's exact 21-file selection collected 687 actual nodes on Darwin: 235 use managed-runtime fixture gates, 219 have skip declarations, and three native unsupported-platform controls skip here. Refusal and supported-command positive branches are separate. This is collection evidence, not 687 executed successes. |
+
+The new value flow passed mounted keyboard checks at 80×24 and 120×35. A separate
+real 80×24 TldwCli PTY journey typed a masked value, saved its protected reference,
+reviewed and confirmed the mapping, then used that same installed hook with actual
+LocalToolProvider permission/dispatch. It was not a fresh Console model turn and
+used an isolated protected-backend double, not the OS keychain. Raw phase18 SHA
+`cd339c36c010c18e21a5779dcf1fbbd394ad30d903e64961f47ef026469de57e`. Invalid-input/navigation cleanup passed phase17; completion updates
+retained metadata without dismissing another screen. Phase22 passed an actual
+configuration round-trip preserving existing connection and model references
+while adding a value; metadata capture never connected to its HTTPS fixture URL.
+
+The two unchanged startup ratchets passed in phase29: preimport 499/500 modules,
+378,583/378,740 LOC (157 spare), and UI-ready 973/973 modules with +17/-17 drift.
+Their two headroom warnings remain. Raw SHA `ca071bf16b75482b9bd5068822a922caf53867a3c2ecbc4591a01908ac64bc51`. No caps, pinned snapshots
+or dependencies changed. Static checks cover the 47 changed Python files with
+whole-file checks for new/clean files and exact FIX_BASE diagnostic/source-line
+parity plus changed-range formatting for eight inherited files (233 diagnostics).
+
+Phase15 was interrupted and has no reconstructed result/after snapshot; its
+separately labeled manual-after evidence and exact-child-absence inspection remain.
+Phase26 failed before launching a child while freezing duplicate path arguments;
+its partial before tree remains. Other failed phases retain their real outcomes,
+including harness failures and the navigation/mapping defects found and corrected.
+Later passing nodes qualify their named boundary only. Formatting and local
+source applicability are recorded separately from original byte identity.
+
+Native Linux/Windows runtime execution, real OS keychain and reboot behavior remain
+unqualified locally. The updated workflow retains actual collected-node capability
+metadata and JUnit outcomes for future platform runs; it was not dispatched here.
+No full-suite or whole-workflow execution was requested or run in this final wave.
+
+## Focused residual repair: absolute host lookup and pure planning
+
+The final scoped review found that the earlier I7 controls covered absolute host
+PATH entries only. Relative entries could still select a different executable
+after the child changed cwd. Owned MCP and native hook builders now anchor each
+host PATH entry, and the successful result, to one captured host cwd. Empty
+segments inside a nonempty PATH mean that captured directory; absent or exactly
+empty PATH still refuses. Child PATH and other reviewed environment values stay
+unchanged. Explicit package commands and native absolute commands retain their
+existing branches. MCP recapture rejects a different host selection without
+rewriting the retained profile.
+
+| New focused evidence | Executed result |
+|---|---|
+| `test_native_hook_relative_host_path_is_anchored[relative, dot, empty-segment]` | Three installed hooks run the host script despite competing package scripts, preserve child PATH/CUSTOM, and refuse missing/exact-empty PATH without another execution. Phase01 reproduced all three wrong-executable failures; phase03 passed. |
+| `test_installed_mcp_relative_host_path_is_anchored[path-relative, path-dot, path-empty]` | Three installed MCP controls select absolute host commands and complete normal approved RPCs. Missing/exact-empty PATH and changed host cwd refuse public mapping recapture and retained mapped dispatch, with no new RPC or competing-host launch. Phase02 reproduced all three relative commands/package executions; phase04 passed in 5.36s. |
+| Dependency planning and command execution | The original two planning/foreign-scope/closed-scope cases remain ungated and launch no process. Two separate command-success cases use the existing v2 capability mark. Those four cases and the genuine Windows-refusal control passed in phase03, alongside the three native controls: 8 passed in 4.03s. The refusal branch is simulated on this Darwin host. |
+
+MCP phase01 first failed at the sandbox-denied Darwin boot-identity prerequisite.
+R173 authorized only the three named MCP RED/GREEN cases with that real host read;
+private profiles, null keyring and external-network refusal remained active.
+Raw GREEN hashes: phase03 `b572d38b22bfe6143a3317452584662f652c9861b22b23efb2467abd30173531`;
+phase04 `41965fa11a57c307e9e718e3937345e05400d5b235c21f86d2f75a39ffc2309d`.
+
+The unchanged workflow's exact 21-file selection now collects **689 nodes** on
+Darwin, including both ungated planning cases and both conditional command cases;
+235 nodes use managed-runtime fixture gates and 221 carry skip declarations.
+Phase07 is collection only, with raw SHA
+`94539e9dee603b2f9bdd4db7d8d5ccdbf888e27677451719aaad2b51a43eb3e8`.
+It does not qualify native Linux/Windows execution. No full suite or workflow
+was run. Five changed Python files compile with no new Ruff diagnostics; the MCP
+service retains six exact baseline diagnostics and passes changed-hunk Black.
+The other four files pass whole-file Ruff/Black. Two test formatting corrections
+were checked for whole-module AST equality after GREEN; only their static checks
+were renewed. Earlier I1–I6, UI and startup evidence remains historical and scoped
+to its preserved sources; this extension adds no new qualification for those
+boundaries, OS keychain/reboot behavior or executable replacement races.

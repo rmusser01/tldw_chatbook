@@ -3867,7 +3867,10 @@ class ConsoleRuntime:
                 service = getattr(local, "plugin_service", None)
                 if service is None:
                     raise PermissionError("plugin_hook_authority_unavailable")
-                native = await service.hook_configuration(maximum)
+                native = await service.hook_configuration(
+                    maximum, scratch_manager=self._scratch_spaces,
+                    scratch_snapshot=self._scratch_spaces.snapshot(session_id),
+                )
                 self._require_hook_preparation_source(source)
         signature = (
             configured,
@@ -3926,6 +3929,15 @@ class ConsoleRuntime:
                     engine.authority_check,
                     enabled=engine.enabled,
                     invalid_admissions=engine.invalid_admissions,
+                    process_owner=engine.processes.owner,
+                    process_owner_for=engine._process_owner_for,
+                    environment=engine._environment,
+                    host_environment=engine._host_environment,
+                    command_launch=engine._command_launch,
+                    dependency_required=engine._dependency_required,
+                    event_projector=engine._event_projector,
+                    launch_guard=engine.processes._launch_guard,
+                    effect_authority_check=engine._effect_authority_check,
                 )
             else:
                 engine = None
@@ -4024,6 +4036,7 @@ class ConsoleRuntime:
                 if native is not None
                 else None,
                 event_projector=native.project_event if native is not None else None,
+                command_launch=native.command_launch if native is not None else None,
                 dependency_required=native.dependency_required
                 if native is not None
                 else None,

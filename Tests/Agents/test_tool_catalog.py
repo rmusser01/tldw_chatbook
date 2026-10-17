@@ -668,3 +668,17 @@ def test_deferred_disclosure_plan_lists_available_tools():
     # is visibly present (AC#2).
     assert "fs_*" in find_schema.description
     assert "pad_* (300)" in find_schema.description
+
+
+def test_operation_is_exact_optional_owner_identity(monkeypatch):
+    reg = registry()
+    assert reg.snapshot_for_hook("calculator").operation is None
+    owner = reg.resolve_owner_for_name("calculator")[1]
+    monkeypatch.setattr(owner, "hook_operation", lambda _: "file.read", raising=False)
+    first = reg.snapshot_for_hook("calculator")
+    assert first.operation == "file.read"
+    monkeypatch.setattr(owner, "hook_operation", lambda _: "file.write")
+    assert reg.snapshot_for_hook("calculator") != first
+    monkeypatch.setattr(owner, "hook_operation", lambda _: "shell.execute")
+    with pytest.raises(ValueError, match="operation"):
+        reg.snapshot_for_hook("calculator")

@@ -522,6 +522,7 @@ class LocalToolSpec:
     #: question is two interruptions for one. Anything that touches data,
     #: disk, or network must leave this False.
     gate_exempt: bool = False
+    operation: str | None = None
 
     def __post_init__(self) -> None:
         """Fail closed when descriptor policy is missing or not code-owned."""
@@ -1436,6 +1437,10 @@ class LocalToolProvider:
             )
             for s in self._specs.values()
         ]
+
+    def hook_operation(self, tool_id: str) -> str | None:
+        spec = self._specs.get(tool_id.removeprefix("local:"))
+        return spec.operation if spec is not None else None
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         """Load one tool's full schema by catalog id or bare name.
@@ -4279,6 +4284,7 @@ def _default_specs(
     specs = [
         LocalToolSpec(
             name="fs_list",
+            operation="directory.list",
             description="List a directory's entries (dirs first, then files), relative to the workspace root.",
             parameters={
                 "type": "object",
@@ -4299,6 +4305,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_read",
+            operation="file.read",
             description="Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.",
             parameters={
                 "type": "object",
@@ -4328,6 +4335,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_write",
+            operation="file.write",
             description=(
                 "Create or overwrite a file with full content, relative to the "
                 "workspace root. dry_run previews exact state and a bounded diff. "
@@ -4449,6 +4457,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_edit",
+            operation="file.edit",
             description="Replace an exact string in a file. Fails unless the match is unique, unless replace_all is true.",
             parameters={
                 "type": "object",
@@ -4482,6 +4491,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_patch",
+            operation="file.edit",
             description=(
                 "Apply a unified diff to one or more workspace files. The diff "
                 "argument must be standard unified-diff text (---/+++ headers, "
@@ -4518,6 +4528,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_glob",
+            operation="file.search",
             description="Match files under the workspace with a glob pattern, newest-mtime first, workspace-relative paths.",
             parameters={
                 "type": "object",
@@ -4543,6 +4554,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_grep",
+            operation="file.search",
             description="Regex search under the workspace: matching lines (default), file names, or per-file match counts.",
             parameters={
                 "type": "object",

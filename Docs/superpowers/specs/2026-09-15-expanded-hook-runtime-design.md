@@ -1485,3 +1485,47 @@ ADR197/230/232. Do not restore removed facades, move work back to views, introdu
 new schedulers or treat history as renewed authority. This is direct integration
 of the accepted hook/ownership contracts; behavioral and native lifetime checks
 must run on the rebased source before qualification.
+
+## Final integration operation and private launch interfaces (R163 / CLI44, 2026-10-17)
+
+[ADR-163's final integration amendment](../../../backlog/decisions/163-expanded-console-hook-runtime.md)
+concretizes canonical provider operations, exact env references and launch-only
+values; [ADR-162](../../../backlog/decisions/162-managed-agent-plugins.md) owns
+reviewed typed references and actual scratch/root lifetime. Optional provider
+hook_operation classification is captured in exact definition snapshots and all
+three tool events; Cursor MCP guards use qualified mcp.call. Genuinely unavailable
+classification still refuses operation-dependent guards.
+
+Native reference objects retain the exact runtime grammar. The third host-reserved
+name CHATBOOK_WORKSPACE_DATA is distinct from shared PLUGIN_DATA. The existing
+engine/executor accepts optional command_launch returning ephemeral repr-private
+CommandLaunchValues; actual values resolve once on existing workers after
+reservation and before currentness/launch checks, never into reviewed handlers.
+Explicit secret argv has ordinary privileged process visibility. Native cwd
+containment, unowned/user/legacy defaults, all native-handler copy/child owners,
+required constraints and final acceptance authority remain enforced. Qualification
+uses narrow actual-capability gates and genuine refusal controls; a marker audit
+is not native Windows/Linux success or broader production platform support.
+
+R166/CLI47 retains selected valid unavailable controlling/explicit-required hooks
+as host-only `unavailable_hooks` requirement metadata, separate from executable
+selection. Internal exact `check_requirement` projection preserves original
+matchers and inherited ceilings; normal execution validation still refuses.
+Matching required/control occurrences fail before owner reservation, nonmatches
+remain nonfailures, and dependency-only siblings stay independent. See the R166
+amendments in ADR-162/163; no new runtime, persisted schema or owner is added.
+
+R168/CLI49 completes actor/resume requirement custody within service.py. A private
+projection gate preserves execution-only validation, while a service-private
+wrapper retains only requirement metadata proven by the original signed
+installation/scope/revision/generation/mapping/root pin and host snapshot. Unknown
+custody refuses; no ready capability, unrelated installation, pin/schema/public
+interface or runtime owner is added. See the R168 amendments in ADR-162/163.
+
+### Current dev integration: required occurrences and capture failures (R18)
+
+Native hook requirement parsing uses authenticated in-memory declarations and the unchanged public parser. Its private non-executable occurrence projection withholds package-relative cwd solely to preserve the declared event, matcher and effects when execution is unavailable. The complete original declaration, including cwd, remains bound to the revision. Execution rejoins and validates the contained existing absolute package cwd, current bytes, mappings and authority before launch. Unavailable occurrence metadata cannot supply a callable snapshot or fallback process owner.
+
+The existing plugin service publishes constraint-verification failures atomically with its catalog. Exact affected installation/workspace scopes refuse; an attempted refresh that cannot authenticate the constraint set refuses as unknown. Verified inactive, unselected, untrusted or revoked scopes retain ordinary empty eligibility, including explicit workspace disable over global inheritance. Successful authoritative refresh clears the failure; failed reads never revive old executable snapshots or imply removal of a requirement. The private failure member stores only scope keys, with no new registry, body, secret or grant.
+
+At the actual Console configuration capture boundary, only `PluginUnavailable("plugin_constraint_verification_failed")` becomes the existing `RecoveryRequired` with that fixed code. The synchronous optional-catalog wrapper propagates this recovery failure; the two existing preparation wrappers already do so. Ordinary optional failures keep their current behavior. Existing admission and final publication recheck the captured installation/workspace so a previously captured requirement cannot survive loss of its proof as an executable grant. Existing ADR162/163 govern this integration; no new storage or permission authority is introduced.
