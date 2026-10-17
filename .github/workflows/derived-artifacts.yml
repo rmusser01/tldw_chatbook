@@ -205,6 +205,8 @@ jobs:
             Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_provider_tells_a_listing_that_cannot_list_as_model_does \
             Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it \
             Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_model_step_hints_at_a_key_only_after_a_keyless_403 \
+            Tests/Provider/test_provider_model_resolution.py \
+            Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another \
             --timeout=180 \
             --tb=short
 

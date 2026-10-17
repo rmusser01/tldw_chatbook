@@ -923,7 +923,9 @@ or, for a custom endpoint, the first model listed in that endpoint's entry.
 Your default model (`[chat_defaults] model`) only comes along when you switch
 to your default provider. A provider with no configured model gets no model,
 and Console asks you to choose one. It never borrows another provider's
-model. The same holds when a **NEEDS SETUP** row opens Settings: the page
+model. A new tab (**Ctrl+T**) opened while the Console holds a provider
+with no model chosen follows the same rule. The same holds when a
+**NEEDS SETUP** row opens Settings: the page
 shows the row's model, or, for a row that names none, that provider's own
 saved model or none. In Switch model a chat with no model has no
 **● CURRENT** row, and

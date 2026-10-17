@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from loguru import logger
 
+from ...Chat.console_session_settings import owns_chat_defaults_model
 from ...Chat.provider_readiness import provider_config_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
@@ -354,6 +355,8 @@ def resolve_effective_provider_model(
 
     Settings drafts win because they are what the user is evaluating before save.
     Console controls win next because they are the active run surface.
+    ``chat_defaults.model`` is the fallback only for ``chat_defaults.provider``
+    itself (ADR-006, TASK-33001.8): another provider gets no model here.
     """
     if not isinstance(persisted_defaults, Mapping):
         raise TypeError("persisted_defaults must be a mapping")
@@ -377,9 +380,11 @@ def resolve_effective_provider_model(
     elif _selected_text(console_model):
         model = console_model
         model_source = "console_session"
-    else:
+    elif owns_chat_defaults_model(provider, persisted_defaults):
         model = configured_model
         model_source = "chat_defaults"
+    else:
+        model, model_source = None, "none"
 
     return EffectiveProviderModel(
         provider=provider,

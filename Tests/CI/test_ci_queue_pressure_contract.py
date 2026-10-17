@@ -169,6 +169,11 @@ FAST_LANE_TARGETS = (
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it",
     # Owner decision D2 (2026-10-17): Model's keyless-403 hint, 3 of 3 serial.
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_model_step_hints_at_a_key_only_after_a_keyless_403",
+    # TASK-33001.8 (Phase 9): chat_defaults.model belongs only to its own
+    # provider -- the resolver (whole file, pure, under a second) and the real
+    # Ctrl+T session-default path fed by both surviving mirror producers.
+    "Tests/Provider/test_provider_model_resolution.py",
+    "Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

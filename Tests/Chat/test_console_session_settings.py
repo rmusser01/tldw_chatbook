@@ -416,6 +416,61 @@ def test_new_chats_resolve_the_chat_defaults_pair() -> None:
     assert ctrl_t("anthropic", "claude-opus-5") == ("anthropic", "claude-opus-5")
 
 
+@pytest.mark.parametrize("producer", ["first-chat", "compact-provider-select"])
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [("anthropic", "claude-sonnet-5"), ("llama_cpp", None), ("OpenAI", "gpt-5.6-terra")],
+    ids=["own-model", "no-model", "defaults-provider"],
+)
+def test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another(
+    producer, provider, model
+) -> None:
+    """TASK-33001.8 AC#2: a control provider set with no model opens Ctrl+T on
+    that provider's own configured model, or none -- never chat_defaults.model
+    of another provider. The mirrors are set by producers that still exist:
+    the first-chat control selection (it restores a model-less prior) and the
+    compact bar's provider Select handler (it leaves the model unset)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        _apply_first_chat_control_selection,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {"anthropic": {"model": "claude-sonnet-5"}},
+    }
+    screen = SimpleNamespace(
+        _persisted_chat_defaults=lambda: config["chat_defaults"],
+        _console_control_provider=None,
+        _console_control_model=None,
+        _request_console_control_bar_sync=lambda: None,
+    )
+    if producer == "first-chat":
+        _apply_first_chat_control_selection(screen, provider, None)
+    else:
+        ChatScreen.on_console_compact_provider_changed(
+            screen, SimpleNamespace(value=provider)
+        )
+    assert (screen._console_control_provider, screen._console_control_model) == (
+        provider,
+        None,
+    )
+    session = SimpleNamespace(
+        _effective_console_provider_model=lambda: (
+            ChatScreen._effective_console_provider_model(screen)
+        ),
+        _provider_readiness_app_config=lambda: config,
+        _console_default_settings_memo=None,
+    )
+
+    settings = ConsoleSessionController._default_console_session_settings(session)
+
+    assert settings.model == model
+
+
 def test_effective_chat_configuration_is_frozen_and_slotted() -> None:
     effective = session_settings.resolve_effective_chat_configuration(
         {"chat_defaults": {"provider": "openai", "model": "gpt-test"}}

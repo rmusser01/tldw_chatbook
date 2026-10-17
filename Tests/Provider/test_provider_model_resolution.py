@@ -92,6 +92,29 @@ def test_effective_resolver_rejects_non_mapping_defaults() -> None:
         resolve_effective_provider_model(object())
 
 
+@pytest.mark.parametrize(
+    ("selection", "model"),
+    [
+        ({"console_provider": "llama_cpp"}, None),
+        ({"settings_provider": "Anthropic"}, None),
+        # The same identity rule as resolve_effective_chat_configuration.
+        ({"console_provider": "openai"}, "gpt-5.6-terra"),
+        ({"settings_provider": "OpenAI-Compatible"}, "gpt-5.6-terra"),
+        ({}, "gpt-5.6-terra"),
+    ],
+    ids=["console-other", "settings-other", "console-same", "legacy-alias", "none"],
+)
+def test_chat_defaults_model_belongs_only_to_its_own_provider(selection, model):
+    """TASK-33001.8 AC#1 (ADR-006): a provider chosen without a model never
+    borrows ``chat_defaults.model`` from another provider."""
+    resolved = resolve_effective_provider_model(
+        {"provider": "OpenAI", "model": "gpt-5.6-terra"}, **selection
+    )
+
+    assert resolved.model == model
+    assert resolved.model_source == ("chat_defaults" if model else "none")
+
+
 @pytest.mark.asyncio
 async def test_model_options_merge_explicit_saved_models_and_catalog_scope() -> None:
     scope = CatalogScopeFixture(

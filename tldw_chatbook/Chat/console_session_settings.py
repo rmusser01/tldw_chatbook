@@ -1583,24 +1583,14 @@ def resolve_effective_chat_configuration(
         model (``None`` when nothing is configured), the provider's base URL,
         and ``model_source`` naming which layer supplied the model.
     """
-    # Lazy import: custom_endpoint_registry imports this module (see
-    # _canonical_chat_provider_id).
-    from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
-
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
-    )
-    defaults_provider_id = _canonical_chat_provider_id(
-        _string_setting(chat_defaults, "provider"), app_config
     )
     provider_id = _canonical_chat_provider_id(
         _string_value(provider) or _string_setting(chat_defaults, "provider"),
         app_config,
     )
-    # Identity spelling: a registry id may arrive as ``custom_ep:<slug>``.
-    owns_defaults_model = provider_identity_key(provider_id) == provider_identity_key(
-        defaults_provider_id
-    )
+    owns_defaults_model = owns_chat_defaults_model(provider_id, chat_defaults, app_config)
     provider_settings = console_provider_settings(app_config, provider_id)
     candidates = (
         ("session", model),
@@ -1621,6 +1611,36 @@ def resolve_effective_chat_configuration(
         base_url=_default_base_url(provider_id, provider_settings),
         model_source=model_source,
     )
+
+
+def owns_chat_defaults_model(
+    provider: object,
+    chat_defaults: Mapping[str, object],
+    app_config: Mapping[str, object] | None = None,
+) -> bool:
+    """Whether ``chat_defaults.model`` belongs to ``provider`` (ADR-006).
+
+    It belongs only to ``chat_defaults.provider``, compared as canonical
+    provider identities (case, legacy aliases, registry-id spelling).
+
+    Args:
+        provider: The provider a model is being resolved for.
+        chat_defaults: The persisted ``chat_defaults`` mapping.
+        app_config: The app config, so a registry id resolves as itself.
+
+    Returns:
+        True when ``provider`` canonically is ``chat_defaults.provider``.
+    """
+    # Lazy import: custom_endpoint_registry imports this module (see
+    # _canonical_chat_provider_id).
+    from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+
+    def identity(value: object) -> str:
+        # Identity spelling: a registry id may arrive as ``custom_ep:<slug>``.
+        canonical = _canonical_chat_provider_id(_string_value(value) or "", app_config)
+        return provider_identity_key(canonical)
+
+    return identity(provider) == identity(chat_defaults.get("provider"))
 
 
 def build_canonical_chat_defaults_mutation(
