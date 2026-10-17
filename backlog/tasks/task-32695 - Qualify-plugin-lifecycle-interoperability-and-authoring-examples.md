@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-17 16:02'
+updated_date: '2026-10-17 18:02'
 labels:
   - plugins
   - implementation
@@ -41,6 +41,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #12 I6: PLUGIN_DATA remains the installation shared root, and reserved CHATBOOK_WORKSPACE_DATA resolves to the exact admitted workspace root or actual private scratch with current root grants and fences.
 - [x] #13 I7: Package PATH cannot change bare executable lookup for owned MCP or hooks; explicit contained package executables and unrelated permitted child environment values still work.
 - [x] #14 I8: Every explicit three-platform workflow selection respects production ownership, command and package-capture boundaries, retains applicable and genuine unsupported/refusal controls, and makes no unexecuted native-platform success claim.
+- [ ] #15 PR3148 is rebased onto the recorded current dev revision with conflicts resolved while preserving approved plugin/hook behavior and current host fixes; relevant targeted checks and independent code review cover the rebased source, and the verified update is published with an exact force-with-lease while original history/evidence remain recoverable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -169,6 +170,10 @@ Current I7 reconciliation R17: add only actual moved turn_admission.py and conso
 
 Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and reviews/counts are historical delivery intent, not new-source verification or an inherited process/host exemption. Integrate typed variables/launch values/current hook requirements through actual current owners under R3–R17; latest-dev fold precedes frozen private targeted checks and one fresh integration review. Preserve existing NativeHooks, current consent/received/preparation/native commit/response rules/compaction and actual terminal custody, exact retained recipes and R12 builtin/mixed complete mappings. Main DB remains81/receipt75; registry5 remains. No new schema/store/owner/cap/dependency/platform grant. Current active-integration-task-32695.md keeps the new15th integration criterion open; later protectedrootplan replay reconciles the task.
 62. Close final qualification after the user-approved additional I7/I8 scoped gate passes on285f803541; retain prior bounded AC1–4 evidence and I1–I6 verdicts, check remaining AC1–4/13/14 through CLI53 and preserve exact notes/plan/readback. ADR required: yes; existing ADR162/163 govern, no new architectural decision. Keep branch/worktree/evidence local; no full suite or integration is authorized.
+63. Rebase integration under Docs/superpowers/plans/2026-10-17-managed-plugins-dev-rebase.md: StageA read-only compare of original7b4d5c501b/pinnedDev1fac8f8329/current owners, root acceptance and pre-rebase backup before product conflict edits; root controls normal rebase/Git and worker owns scoped resolution/tests. Obtain current-source targeted/static evidence and one independent requesting-code-review gate, resolve significant findings, then exact force-with-lease update PR3148. ADR required: yes; existing ADR162/163 and newer applicable host ADRs govern; no new ADR unless a real contract change is proposed before code. No full suite, new runtime/dependency/platform scope, merge or auto-merge.
+<!-- SECTION:PLAN:END -->
+<!-- SECTION:PLAN:END -->
+63. Rebase integration under Docs/superpowers/plans/2026-10-17-managed-plugins-dev-rebase.md: StageA read-only compare of original7b4d5c501b/pinnedDev1fac8f8329/current owners, root acceptance and pre-rebase backup before product conflict edits; root controls normal rebase/Git and worker owns scoped resolution/tests. Obtain current-source targeted/static evidence and one independent requesting-code-review gate, resolve significant findings, then exact force-with-lease update PR3148. ADR required: yes; existing ADR162/163 and newer applicable host ADRs govern; no new ADR unless a real contract change is proposed before code. No full suite, new runtime/dependency/platform scope, merge or auto-merge.
 <!-- SECTION:PLAN:END -->
 <!-- SECTION:PLAN:END -->
 
@@ -188,6 +193,7 @@ New validation:11 exact focused cases pass in two preserved GREEN phases, includ
 Earlier Task25 Console80/120, controlled Git/TLS, installed hooks and resource proof remain bounded historical evidence. The original final wave's47-file static partition retains233 baseline diagnostics in eight files; two unchanged startup ratchets passed499/500 preimport and973/973 UI modules with warnings. This extension changed only bare lookup branches and tests, with no new module-load import or cap adjustment; it does not claim fresh I1–I6/UI/startup runs. Earlier failed/interrupted/prelaunch phases, missing records, unclassified timing/native failures, incomplete aggregate descriptor attribution and inherited cold optional-pydub failure remain explicitly documented rather than converted into passes.
 
 ADR required: yes; existing backlog/decisions/162-managed-agent-plugins.md and163-expanded-console-hook-runtime.md govern the accepted contracts. No new ADR/API/schema/owner/dependency/platform support was introduced by the focused correction. All26 planned tasks are complete after CLI53. Native Linux/Windows runtime, real OS keychain/reboot, original vendor hosts, executable replacement races and arbitrary remote containment remain unqualified. No full suite, remote workflow, dependency installation, push, merge or PR was performed. The local branch, worktree and complete decision/evidence workspace remain preserved for the human integration choice.
+Reopened for the explicit2026-10-17 request to rebase PR3148 onto current dev, resolve conflicts, run relevant targeted checks and obtain independent requesting-code-review. Original published head7b4d5c501b and all prior14 completed criteria/evidence remain historical. New integration AC15 is open; no new-base qualification or readiness is claimed. The integration plan is Docs/superpowers/plans/2026-10-17-managed-plugins-dev-rebase.md.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
