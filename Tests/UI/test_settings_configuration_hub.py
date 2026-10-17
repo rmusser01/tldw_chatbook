@@ -14400,6 +14400,69 @@ async def test_settings_overview_status_follows_evidence_settled_elsewhere(reque
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick(
+    request,
+):
+    """TASK-33005.7 AC#1 with TASK-33005.15's poll: evidence settled elsewhere
+    repainted the Key check row on the next readiness poll tick, but the
+    "Provider readiness: P / M — <word>" row beside it kept the old word
+    ("Ready · not tested" beside "Not ready · refused :9199"). One tick now
+    writes both rows from one verdict."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_target_default_console_session_settings,
+        console_send_connection,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+    )
+
+    app = _build_test_app()
+    config = app.app_config
+    config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    config.setdefault("api_settings", {})["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9199",
+        "model": "model-a",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        def rows() -> tuple[str, str]:
+            return tuple(
+                str(screen.query_one(selector, Static).renderable)
+                for selector in (
+                    "#settings-provider-readiness",
+                    "#settings-provider-inspector-readiness",
+                )
+            )
+
+        screen._subscription_readiness_timer.stop()
+        live = screen._provider_readiness_app_config()
+        store = ProviderTestEvidenceStore(lambda: host)
+        store.settle(
+            store.begin(
+                console_send_connection(
+                    build_target_default_console_session_settings(
+                        live, "llama_cpp", "model-a"
+                    ),
+                    app_config=live,
+                )
+            ),
+            ProviderProbeResult("unreachable", (), "connection_refused"),
+        )
+        screen._poll_subscription_readiness()  # the existing poll's next tick
+        await pilot.pause()
+        key_check, identity = rows()
+
+    assert key_check == "Not ready · refused :9199", key_check
+    assert identity == f"Provider readiness: llama.cpp / model-a — {key_check}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_settings_overview_names_an_unsaved_draft_apart_from_the_saved_pair(
     request, monkeypatch
 ):

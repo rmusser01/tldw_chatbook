@@ -17994,9 +17994,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._set_static_text(
-            "#settings-provider-inspector-readiness", self._provider_readiness_label()
-        )
-        self._set_static_text(
             "#settings-provider-endpoint-key",
             # Folded at its dots, as _detail_row composed it.
             _fold_long_tokens(self._provider_endpoint_row(provider)),

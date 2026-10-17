@@ -354,7 +354,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33005.7's Inspector Setup row and send hint, and Settings' identity row: 325.
 # TASK-33005.15's three Overview tests, its rewritten no-model pin and the
 # NOT RUNNING filter: 330.
-MINIMUM_FILES = 334
+# Its review round 1: the identity row follows the Key check row on a poll
+# tick (TASK-33005.7): 331.
+MINIMUM_FILES = 335
 
 
 def read_census(path: Path) -> list[str]:

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen
 
 
-def readiness_label(screen: SettingsScreen) -> str:
+def readiness_label(screen: SettingsScreen, word: str | None = None) -> str:
     """The Key block's identity row: the form's pair, then its readiness word.
 
     TASK-33005.7 AC#1: "Provider readiness: <provider> / <model>" named the
@@ -24,6 +24,8 @@ def readiness_label(screen: SettingsScreen) -> str:
 
     Args:
         screen: The Settings screen holding the Providers & Models form.
+        word: The Key check row's verdict when the caller has built it, so the
+            two rows say one verdict; built here when omitted.
 
     Returns:
         "Provider readiness: <provider> / <model> — <word>".
@@ -35,7 +37,8 @@ def readiness_label(screen: SettingsScreen) -> str:
         return "Provider readiness: needs provider and model"
     name = screen._provider_display_label(provider)
     model = _shown_model(screen) or "not selected"
-    return f"Provider readiness: {name} / {model} — {key_check_verdict(screen)}"
+    word = word or key_check_verdict(screen)
+    return f"Provider readiness: {name} / {model} — {word}"
 
 
 def overview_configuration(screen: SettingsScreen) -> str:
