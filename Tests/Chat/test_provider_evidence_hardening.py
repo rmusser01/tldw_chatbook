@@ -137,7 +137,9 @@ def test_settings_and_the_snapshot_derive_the_model_facet_one_way():
     one model facet: missing, confirmed only for a listed model of a reached
     listing, else unconfirmed. For a key its listing accepted, the facet is
     the difference between "verified" and "reachable", so Settings' word is
-    checked against the snapshot's for a listed, an unlisted and no model."""
+    checked against the snapshot's for a listed, an unlisted and no model, and
+    for a blank one: no caller sends a blank, but Settings' old inline copy
+    read it unconfirmed, so it is what tells one derivation from two."""
     from dataclasses import replace
     from datetime import datetime
 
@@ -184,7 +186,7 @@ def test_settings_and_the_snapshot_derive_the_model_facet_one_way():
         observed_at=datetime(2026, 10, 1, 14, 4).astimezone(),
     )
     words = {}
-    for model in ("gpt-a", "gpt-b", ""):
+    for model in ("gpt-a", "gpt-b", "", "  "):
         rows = SettingsScreen._provider_test_rows(
             cloud,
             display_name="OpenAI",
@@ -201,4 +203,5 @@ def test_settings_and_the_snapshot_derive_the_model_facet_one_way():
         "gpt-a": "Ready · verified 14:04",
         "gpt-b": "Ready · reachable 14:04",
         "": "Not ready · no model",
+        "  ": "Not ready · no model",
     }
