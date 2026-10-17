@@ -381,9 +381,14 @@ key is saved. With no source recorded:
   them, while synthesis and the Voice step use the `[API]` key. So a stale
   `[API]` key fails synthesis even with a valid key exported, and the defect
   is in the projection, not the panel.
-- **ElevenLabs.** No table names its variable. The loader's `elevenlabs_api`
-  dict and the panel take `ELEVENLABS_API_KEY` before `[API]`, while the
-  projection and `get_api_key("elevenlabs")` take `[API]` first.
+- **ElevenLabs.** No shipped table names its variable or records a source
+  for it. The projection and `get_api_key("elevenlabs")` take `[API]` before
+  `ELEVENLABS_API_KEY`, the order the 2026-09-19 amendment records for the
+  legacy fallbacks, so the loader's `elevenlabs_api` dict and the panel, which
+  take the variable first, are out of line. Moving them leaves a stale `[API]`
+  key failing synthesis with a valid variable exported, but the panel then
+  says "Saved local config" for it. Ranking the variable first instead amends
+  the 2026-09-19 amendment's fallback order.
 
 A recorded source moves chat and readiness, so the reader out of line can
 flip. Under "stored" they send the table's key, or the `[API]` key the bridge
