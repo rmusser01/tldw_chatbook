@@ -803,6 +803,7 @@ Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in t
 - Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10). After the restack, TASK-33006.17 (a) is fixed by the base (dev's 8c033d006b). TASK-33003.19's inventory was brought current again on four modals dev added.
 - Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11). After the restack, TASK-33001.14 is reopened: the restack dropped its fix, and the base does not fix it (see Task 9). It still needs a wave.
 - Rebase this branch onto Phase 8's final head.
+- The rebase onto Phase 8's final head is done (Phase 8 merged as #3144 at 111f8e48fc, 2026-10-17); Wave 3 starts.
 - Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together).
 - Wave 4: Tasks 6, 7, 8.
 - Wave 5: Tasks 12, 14, 17.
