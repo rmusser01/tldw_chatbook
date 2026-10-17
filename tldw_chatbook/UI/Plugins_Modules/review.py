@@ -19,6 +19,7 @@ class PluginReviewDraft:
     test_data: str = "{}"
     job_id: str | None = None
     root_impact: tuple[dict, ...] = ()
+    root_before_refs: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True, eq=False)

@@ -765,3 +765,159 @@ async def test_installed_manager_collects_all_51_exact_root_refs(
     rows = await modal._data_rows()
     assert {row["root"] for row in rows} == set(refs)
     assert calls == [(51, 50, 0), (51, 50, 50)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size,retained,change",
+    [
+        ((80, 24), False, "none"),
+        ((80, 24), True, "none"),
+        ((120, 35), False, "none"),
+        ((120, 35), True, "none"),
+        ((80, 24), False, "authority"),
+        ((80, 24), True, "dirty"),
+        ((80, 24), True, "unknown"),
+    ],
+)
+async def test_reboot_reconciliation_uses_current_refs_before_proposed_targets(
+    native_console, monkeypatch, retained, size, change
+):
+    """Actual qualified-owner proof simulation, not an OS reboot/keychain claim."""
+    import asyncio
+
+    from textual.widgets import Select
+
+    from tldw_chatbook.Plugins import data_cleanup
+    from tldw_chatbook.Widgets.plugin_review_modal import (
+        PluginReviewModal,
+        PluginStatusModal,
+    )
+
+    rig = native_console
+    installed = await rig.install(enable=False)
+    creation = await rig.service.review_data_creation(installed.installation_id)
+    before = await rig.service.create_data(creation, creation.operation_id)
+    if retained:
+        assert (await rig.service.uninstall(installed.installation_id)).committed
+    coordinator = rig.service._coordinator
+    monkeypatch.setattr(coordinator.authority.marker_store, "reduced_protection", False)
+    await rig.service._call(
+        lambda: coordinator.authority.save_runtime_checkpoint("a" * 32, "clean")
+    )
+    await rig.service._call(lambda: setattr(coordinator.root_usage, "dirty", False))
+    monkeypatch.setattr(
+        data_cleanup, "boot_identity", lambda: "11111111-2222-3333-4444-555555555555"
+    )
+    app = BrowseApp(rig)
+    async with app.run_test(size=size) as pilot:
+        await settled(pilot, app.screen)
+
+        async def press(identity):
+            button = app.screen.query_one(identity, Button)
+            for _ in range(100):
+                await pilot.pause(0.02)
+                if not button.disabled and not button.has_class("-active"):
+                    break
+            assert not button.disabled
+            button.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+        if retained:
+            await app.push_screen(PluginStatusModal(app.plugin_source_service))
+            await app.screen.workers.wait_for_complete()
+            await pilot.pause()
+            history = app.screen
+            history.query_one(OptionList).highlighted = next(
+                i for i, item in enumerate(history.rows) if item.action == "uninstall"
+            )
+            await press("#plugin-status-data")
+        else:
+            await app.push_screen(
+                PluginReviewModal(
+                    app.plugin_source_service,
+                    installation_id=installed.installation_id,
+                    workspace_id="workspace-a",
+                )
+            )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        modal.query_one("#plugin-review-action", Select).value = "reconcile-data"
+        await pilot.pause()
+        prior_jobs = set(modal.operations.jobs)
+        if change == "unknown":
+            await rig.service._call(
+                lambda: coordinator.root_usage.recovery.update(
+                    {before.root_id: "root_owner_coverage_incomplete"}
+                )
+            )
+        await press("#plugin-review-prepare")
+        if change == "unknown":
+            assert modal.draft.review is None
+            assert "root_owner_coverage_incomplete" in str(
+                modal.query_one("#plugin-review-status").render()
+            )
+            assert set(modal.operations.jobs) == prior_jobs
+            await rig.service._call(
+                lambda: coordinator.root_usage.recovery.pop(before.root_id)
+            )
+            return
+        assert "Review ready" in str(modal.query_one("#plugin-review-status").render())
+        review = modal.draft.review
+        assert review.action == "reconcile"
+        assert review.targets[0]["generation"] > before.generation
+        assert modal.draft.root_impact[0]["root"] == before
+        body = str(modal.query_one("#plugin-review-body").render())
+        assert f"Current generation {before.generation}" in body
+        assert f"proposed generation {review.targets[0]['generation']}" in body
+        before_refs = modal.draft.root_before_refs
+        captured_workspace = modal.workspace_id
+        await pilot.press("escape")
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id=captured_workspace,
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        await pilot.pause()
+        assert modal.draft.review is review
+        assert modal.draft.root_before_refs is before_refs
+        if change == "authority":
+            activation = await rig.service.review_activation(
+                installed.installation_id, workspace_id="workspace-a", intent="enabled"
+            )
+            await rig.service.commit(activation, activation.operation_id)
+        elif change == "dirty":
+            await rig.service._call(
+                lambda: coordinator.authority.save_runtime_checkpoint("b" * 32, "dirty")
+            )
+        await press("#plugin-review-confirm")
+        job = modal.operations.jobs[modal._job_id]
+        assert job.review is review
+        await asyncio.wait_for(asyncio.shield(job.task), 10)
+        if change != "none":
+            assert not job.receipt.committed
+            assert job.receipt.persistence_error == "PermissionError"
+            current = (
+                await rig.service.data_status(installation_id=installed.installation_id)
+            )[0]["root"]
+            assert current == before and before.path.exists()
+            return
+        assert job.receipt.committed, job.receipt
+        await press("#plugin-review-refresh")
+        assert "reconcile-data: Saved" in str(
+            modal.query_one("#plugin-review-body").render()
+        )
+        current = (
+            await rig.service.data_status(installation_id=installed.installation_id)
+        )[0]["root"]
+        assert current.root_id == before.root_id
+        assert current.generation == review.targets[0]["generation"]
+        assert before.path.exists()
+        with pytest.raises(ValueError, match="root_review_stale"):
+            await rig.service.data_status((before,))

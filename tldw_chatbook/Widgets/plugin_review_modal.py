@@ -626,6 +626,7 @@ class PluginReviewModal(ModalScreen):
             self.service.cancel_revision(review)
         self.draft.review = None
         self.draft.root_impact = ()
+        self.draft.root_before_refs = ()
 
     def _capture(self):
         self.draft.selection = tuple(
@@ -665,14 +666,33 @@ class PluginReviewModal(ModalScreen):
         elif hasattr(review, "inspection"):
             body = review_text(review)
         elif hasattr(review, "targets"):
-            body = "Exact saved roots:\n" + "\n".join(
-                f"{row['root_id']} · generation {row['generation']} · {row['path']}"
-                for row in review.targets
+            heading = (
+                "Proposed saved-root bindings:"
+                if self.draft.action == "reconcile-data"
+                else "Exact saved roots:"
+            )
+            body = (
+                heading
+                + "\n"
+                + "\n".join(
+                    f"{row['root_id']} · generation {row['generation']} · {row['path']}"
+                    for row in review.targets
+                )
             )
             if self.draft.action == "create-data":
                 body += "\nProposed new roots; no existing root users."
             else:
                 for row in self.draft.root_impact:
+                    if self.draft.action == "reconcile-data":
+                        proposed = next(
+                            target
+                            for target in review.targets
+                            if target["root_id"] == row["root"].root_id
+                        )
+                        body += (
+                            f"\nCurrent generation {row['root'].generation} → "
+                            f"proposed generation {proposed['generation']}"
+                        )
                     body += (
                         f"\nRoot {row['root'].root_id}: recovery={row['recovery_reason']}; "
                         f"cleanup={row['cleanup']}; complete impact={row.get('blockers_complete', False)}"
@@ -725,10 +745,16 @@ class PluginReviewModal(ModalScreen):
         )
 
     async def _root_impact(self, review):
-        from ..Plugins.data_cleanup import root_ref
-
-        refs = tuple(root_ref(row) for row in review.targets)
-        # Exact-ref validation precedes page slicing in the owning facade.
+        refs = self.draft.root_before_refs
+        if (
+            review is not self.draft.review
+            or not refs
+            or {ref.root_id for ref in refs}
+            != {row["root_id"] for row in review.targets}
+        ):
+            raise ValueError("root_impact_review_required")
+        # Use the owner-returned inputs of this exact review, not its proposed
+        # bindings/generations. Exact-ref validation precedes page slicing in the owning facade.
         rows = []
         for offset in range(0, len(refs), 50):
             rows.extend(await self.service.data_status(refs, limit=50, offset=offset))
@@ -751,6 +777,7 @@ class PluginReviewModal(ModalScreen):
         self._discard_pending_review()
         self._capture()
         action = str(self.query_one("#plugin-review-action", Select).value)
+        root_before_refs = ()
         generation = self._input_generation
         selection, configuration = self.draft.selection, self.draft.configuration
         await self.service.management_snapshot(self.workspace_id, limit=1)
@@ -910,11 +937,13 @@ class PluginReviewModal(ModalScreen):
                 "reconcile-data": self.service.review_data_boot_reconciliation,
             }[action]
             review = await method(roots)
+            root_before_refs = roots
         if generation != self._input_generation:
             if getattr(review, "kind", None) in {"select", "update"}:
                 self.service.cancel_revision(review)
             raise ValueError("review_inputs_changed")
         self.draft.review, self.draft.action = review, action
+        self.draft.root_before_refs = root_before_refs
         if hasattr(review, "targets") and action != "create-data":
             self.draft.root_impact = await self._root_impact(review)
         self._render_review()
