@@ -265,10 +265,18 @@ def hosted_wire(monkeypatch):
     ("source", "named_exported", "expected"),
     [
         ("none", True, None),
+        ("stored", False, None),
         ("environment", False, None),
         ("environment", True, _NAMED_KEY),
+        (None, False, _ENV_KEY),
     ],
-    ids=["none", "environment-named-unset", "environment-named-exported"],
+    ids=[
+        "none",
+        "stored-no-key",
+        "environment-named-unset",
+        "environment-named-exported",
+        "no-source-no-variable",
+    ],
 )
 @pytest.mark.parametrize("provider", sorted(_HOSTED))
 def test_a_hosted_summary_sends_only_the_key_readiness_resolves(
@@ -276,15 +284,14 @@ def test_a_hosted_summary_sends_only_the_key_readiness_resolves(
 ):
     """Moonshot and Z.ai handlers search the environment themselves when
     handed no key, so a summary refuses where readiness resolves none: under
-    "none", and under "environment" with the named variable unset, the
-    conventional variable stays unsent."""
+    "none", under "stored" with no key saved, and under "environment" with
+    the named variable unset, the conventional variable stays unsent. With
+    no source and no variable named, the conventional variable is sent."""
     named = f"{provider.upper()}_SUMMARY_KEY"
-    settings = _load(
-        tmp_path,
-        monkeypatch,
-        f'[api_settings.{provider}]\napi_key_env_var = "{named}"\n'
-        f'credential_source = "{source}"\n',
-    )
+    table = f"[api_settings.{provider}]\n"
+    if source:
+        table += f'api_key_env_var = "{named}"\ncredential_source = "{source}"\n'
+    settings = _load(tmp_path, monkeypatch, table)
     monkeypatch.setenv(_HOSTED[provider], _ENV_KEY)
     if named_exported:
         monkeypatch.setenv(named, _NAMED_KEY)
