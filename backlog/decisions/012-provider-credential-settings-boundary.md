@@ -356,13 +356,26 @@ reads `credential_source`: it reads the table's named variable even under
 to the backend) read `[API] openai_api_key` directly, and so do the
 Settings ▸ Speech & TTS credential state
 (`UI/Screens/settings_speech_tts.py::_credential_states`, shown as "Saved
-local config") and the first-run Voice step's key lookup
-(`UI/Wizards/first_run_voice_credentials.py::find_openai_credential`). Those
-two agree with what synthesis sends only while the projection sends that key
-too, so they must change with it. `Model_Artifacts/acquisition.py` (the
-Hugging Face resolver that Parakeet, OmniVoice and remote GGUF downloads use)
-reads `[API] huggingface_api_key`. So after a Clear those still show or spend
-the key the user removed (TASK-35227).
+local config" when `OPENAI_API_KEY` is not exported) and the first-run Voice
+step's key lookup
+(`UI/Wizards/first_run_voice_credentials.py::find_openai_credential`). With no
+`OPENAI_API_KEY` exported, those two agree with what synthesis sends only while
+the projection sends that key too, so they must change with it.
+`Model_Artifacts/acquisition.py` (the Hugging Face resolver that Parakeet,
+OmniVoice and remote GGUF downloads use) reads `[API] huggingface_api_key`. So
+after a Clear those still show or spend the key the user removed (TASK-35227).
+
+A second older difference holds whatever `credential_source` says: the TTS
+projection and the Voice step take stored config before the environment (the
+2026-09-19 order), but `_credential_states` ranks an exported `OPENAI_API_KEY`
+or `ELEVENLABS_API_KEY` first. So the panel says the key comes from outside
+Chatbook and the saved one is shadowed, while synthesis sends the saved key.
+
+The two surfaces that save the OpenAI TTS key, Settings ▸ Speech & TTS
+Set/Replace (`Event_Handlers/STTS_Events/stts_events.py`) and the Voice step's
+Next (`UI/Wizards/first_run_voice_step.py`), write `api_settings.openai.api_key`
+and record no source. Once these readers honour "none" or "environment", a key
+saved there after a Clear would go unused. TASK-35227 covers both.
 
 ## Links
 
