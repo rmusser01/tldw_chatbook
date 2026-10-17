@@ -650,10 +650,13 @@ exclude = [
 # asyncio mode, NO timeout, root conftest not loaded); every invocation now
 # resolves here.
 testpaths = ["Tests"]
-# Exclude server tests that don't belong in the TUI.
+# Exclude server tests that don't belong in the TUI, and Docs/ (TASK-33641.8):
+# an empty argument or `.` collects from the root, and Docs/ holds test-named
+# files no conftest covers (one calls a paid provider). An explicit path under
+# Docs/ still runs. Pinned by Tests/CI/test_pytest_root_collection_skips_docs.py.
 # --durations: always report the slowest tests (>=1s) so wall-clock regressions are visible in every run.
 # --strict-markers: an unregistered marker is a collection error, not a silent no-op.
-addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-min=1.0 --strict-markers -ra"
+addopts = "--ignore=STests --ignore=Docs --import-mode=importlib --durations=25 --durations-min=1.0 --strict-markers -ra"
 # Auto mode suite-wide: async tests execute without per-function marks. Under
 # the old split config, unmarked async tests silently DID NOT RUN in full runs
 # from the repo root (pytest-asyncio strict mode skips unmarked coroutines).

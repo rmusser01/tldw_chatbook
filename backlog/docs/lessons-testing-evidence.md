@@ -19903,6 +19903,18 @@ option excluded nothing and both files were imported again. So start pytest at
 the root of the tree, and check that the argument list is not empty before the
 run.
 
+**The guard (TASK-33641.8, 2026-10-17).** `pyproject.toml`'s `addopts` now
+carries `--ignore=Docs` beside `--ignore=STests`.
+`Tests/CI/test_pytest_root_collection_skips_docs.py` gates it on every pull
+request through the PR Fast Lane's `Tests/CI` target. It runs pytest at the
+real root with an empty argument and with `.`, and fails if either visits any
+file under `Docs/`. A third run checks that an explicit path to a file there
+is still collected. Those runs pass `--noconftest -p no:python`, so a broken
+guard shows up as a list of visited paths and imports nothing; at the base the
+two root runs each visited all 17,093 files under `Docs/`. The option is still
+resolved from where pytest starts, so a run started inside `Tests/` is not
+covered by it.
+
 ## A test-added ownership wrapper can mask the real retry leak
 
 TASK-31966, 2026-10-05: four workspace projection tests wrapped calls in
