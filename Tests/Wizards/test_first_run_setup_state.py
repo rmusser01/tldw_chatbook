@@ -2537,7 +2537,7 @@ class TestProviderTrustChain:
             ),
         )
 
-        def line(ready: bool, outcome=no_list) -> tuple[str, str]:
+        def line(ready: bool, outcome=no_list, draft=None) -> tuple[str, str]:
             owner = SimpleNamespace(
                 wizard=None,
                 _current_provider_readiness=lambda: SimpleNamespace(ready=ready),
@@ -2547,7 +2547,7 @@ class TestProviderTrustChain:
             )
             before = dict(vars(owner))
             told = first_run_model_discovery.failed_listing(
-                owner, "llama.cpp", outcome, None
+                owner, "llama.cpp", outcome, draft
             )
             assert vars(owner) == before  # no key mark, no refresh
             return told
@@ -2571,6 +2571,19 @@ class TestProviderTrustChain:
             "",
         )
         assert line(True, forbidden) == (
+            setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
+            setup_state.PROVIDER_PROBE_NONE,
+        )
+        # The same ruling when no key was sent: a keyless 403 asks for no key
+        # (a keyless 401 does), so it reads as Test and Settings read it.
+        keyless = setup_state.FirstRunProviderDraft(
+            "llama_cpp", "", setup_state.ProviderCredentialDraft("none", "", 0)
+        )
+        assert line(True, refused, keyless) == (
+            "refusal for llama.cpp ('key_required')",
+            setup_state.PROVIDER_PROBE_KEY_REQUIRED,
+        )
+        assert line(True, forbidden, keyless) == (
             setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
             setup_state.PROVIDER_PROBE_NONE,
         )
