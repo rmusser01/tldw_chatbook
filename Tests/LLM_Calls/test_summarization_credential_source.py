@@ -4,8 +4,8 @@
 no caller key, its key is the one ``resolve_provider_credential`` returns for
 the provider's ``[api_settings]`` table, so ``credential_source`` decides for
 a summary as it does for Console readiness. Real loader on a scratch config;
-only the HTTP session (KoboldCpp, TabbyAPI) or the chat handler (OpenAI) is
-replaced.
+only the HTTP session (KoboldCpp, TabbyAPI), the hosted transport (Moonshot,
+Z.ai) or the chat handler (OpenAI) is replaced.
 """
 
 from __future__ import annotations
@@ -14,9 +14,11 @@ import pytest
 
 from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook.Chat import Chat_Functions
+from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
 from tldw_chatbook.LLM_Calls import Summarization_General_Lib as sgl
+from tldw_chatbook.LLM_Calls import moonshot, zai
 
 _URL = "http://summary.invalid/v1/chat/completions"
 _ENV_KEY = "sk-env-canary-33001-14"
@@ -76,9 +78,12 @@ def _load(tmp_path, monkeypatch, toml_text: str):
     settings = fresh.load_settings(force_reload=True)
     monkeypatch.setattr(sgl, "load_settings", fresh.load_settings, raising=False)
     monkeypatch.setattr(sgl, "get_cli_setting", fresh.get_cli_setting)
-    monkeypatch.setattr(
-        local, "get_runtime_config_snapshot", fresh.get_runtime_config_snapshot
-    )
+    for handler_module in (local, moonshot, zai):
+        monkeypatch.setattr(
+            handler_module,
+            "get_runtime_config_snapshot",
+            fresh.get_runtime_config_snapshot,
+        )
     return settings
 
 
@@ -234,3 +239,63 @@ def test_a_cloud_summary_with_no_caller_key_sends_the_saved_key(
     else:
         assert result == "SUMMARY", result
         assert handed == [expected]
+
+
+_NAMED_KEY = "sk-named-canary-33001-14"
+#: Per hosted provider: the variable its handler falls back to on its own
+#: when handed no key.
+_HOSTED = {"moonshot": "MOONSHOT_API_KEY", "zai": "ZAI_API_KEY"}
+
+
+@pytest.fixture
+def hosted_wire(monkeypatch):
+    """The key each hosted handler hands its transport; nothing is sent."""
+    sent: list = []
+
+    def transport(*, config, **_kwargs):
+        sent.append(config.api_key)
+        raise ChatProviderError(provider=config.provider, message="stubbed")
+
+    monkeypatch.setattr(moonshot, "hosted_chat_request", transport)
+    monkeypatch.setattr(zai, "owned_json_post", transport)
+    return sent
+
+
+@pytest.mark.parametrize(
+    ("source", "named_exported", "expected"),
+    [
+        ("none", True, None),
+        ("environment", False, None),
+        ("environment", True, _NAMED_KEY),
+    ],
+    ids=["none", "environment-named-unset", "environment-named-exported"],
+)
+@pytest.mark.parametrize("provider", sorted(_HOSTED))
+def test_a_hosted_summary_sends_only_the_key_readiness_resolves(
+    tmp_path, monkeypatch, hosted_wire, provider, source, named_exported, expected
+):
+    """Moonshot and Z.ai handlers search the environment themselves when
+    handed no key, so a summary refuses where readiness resolves none: under
+    "none", and under "environment" with the named variable unset, the
+    conventional variable stays unsent."""
+    named = f"{provider.upper()}_SUMMARY_KEY"
+    settings = _load(
+        tmp_path,
+        monkeypatch,
+        f'[api_settings.{provider}]\napi_key_env_var = "{named}"\n'
+        f'credential_source = "{source}"\n',
+    )
+    monkeypatch.setenv(_HOSTED[provider], _ENV_KEY)
+    if named_exported:
+        monkeypatch.setenv(named, _NAMED_KEY)
+    else:
+        monkeypatch.delenv(named, raising=False)
+
+    result = sgl.analyze(
+        api_name=provider, input_data="body", custom_prompt_arg="Sum.", api_key=None
+    )
+
+    assert get_provider_readiness(provider, settings).api_key == expected
+    assert hosted_wire == ([] if expected is None else [expected])
+    if expected is None:
+        assert result == sgl._SUMMARIZER_CHAT_SPECS[provider].missing_key_message

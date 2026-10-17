@@ -1009,7 +1009,9 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
     # --- engine presets (task-34895): summarization can now select any
     # chat-dispatch endpoint; these had NO legacy per-provider function,
     # so there is no legacy behavior to preserve -- the chat handler's own
-    # defaults govern model/temperature.
+    # defaults govern model/temperature. Moonshot and Z.ai require a key:
+    # their handlers search the environment themselves when handed none,
+    # so a summary refuses where readiness resolves none (TASK-33001.14).
     "moonshot": _SummarizerChatSpec(
         endpoint="moonshot",
         legacy_section="moonshot_api",
@@ -1018,7 +1020,6 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="Moonshot: API Key Not Provided/Found in Config file or is empty",
         empty_message="Moonshot: Summary not available",
         error_template="Moonshot: Error occurred while processing summary: {detail}",
-        require_key=False,
     ),
     "zai": _SummarizerChatSpec(
         endpoint="zai",
@@ -1028,7 +1029,6 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="ZAI: API Key Not Provided/Found in Config file or is empty",
         empty_message="ZAI: Summary not available",
         error_template="ZAI: Error occurred while processing summary: {detail}",
-        require_key=False,
     ),
     "aphrodite": _SummarizerChatSpec(
         endpoint="aphrodite",
