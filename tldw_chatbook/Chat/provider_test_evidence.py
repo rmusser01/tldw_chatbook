@@ -233,6 +233,25 @@ def console_generation_test_availability(
     return ConsoleGenerationTestAvailability.UNSUPPORTED
 
 
+def model_facet(
+    model: object, endpoint: str, model_ids: Collection[str]
+) -> ModelFacet:
+    """The model facet of a snapshot (TASK-33005.10: one derivation).
+
+    Args:
+        model: The selected model; blank or not a string is missing.
+        endpoint: The endpoint facet of the evidence for this connection.
+        model_ids: The models that evidence's listing returned.
+
+    Returns:
+        ``confirmed`` only for a model a reached listing returned.
+    """
+    model_id = model.strip() if isinstance(model, str) else ""
+    if not model_id:
+        return "missing"
+    return "confirmed" if endpoint == "reachable" and model_id in model_ids else "unconfirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderReadinessSnapshot:
     """Independent configuration, credential, endpoint, model, and generation facets."""
@@ -611,6 +630,15 @@ class _MutationResult(Protocol):
 #: of the probe that BEGAN last, so a slow probe settling late on one surface
 #: never overwrites a newer one from another (and a clock step cannot either).
 _BEGIN_ORDER = count(1)
+#: TASK-33005.10: ``next()`` on a shared count is atomic only under the GIL,
+#: and stores on different threads allocate from it (the free-threaded build
+#: the owner plans gives no such guarantee), so allocation takes this lock.
+_BEGIN_ORDER_LOCK = Lock()
+
+
+def _next_begin_order() -> int:
+    with _BEGIN_ORDER_LOCK:
+        return next(_BEGIN_ORDER)
 
 
 class _ProviderTestToken:
@@ -619,7 +647,7 @@ class _ProviderTestToken:
     __slots__ = ("order",)
 
     def __init__(self) -> None:
-        self.order = next(_BEGIN_ORDER)
+        self.order = _next_begin_order()
 
     def __repr__(self) -> str:
         return "<ProviderTestToken>"
@@ -631,7 +659,7 @@ class _ProviderGenerationTestToken:
     __slots__ = ("order",)
 
     def __init__(self) -> None:
-        self.order = next(_BEGIN_ORDER)
+        self.order = _next_begin_order()
 
     def __repr__(self) -> str:
         return "<ProviderGenerationTestToken>"

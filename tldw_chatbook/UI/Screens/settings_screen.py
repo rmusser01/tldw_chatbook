@@ -137,6 +137,7 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
     connection_credential_revision,
     listing_unavailable_endpoint_copy,
+    model_facet,
     shared_connection_evidence,
 )
 from ...Chat.sampling_params import temperature_range
@@ -17392,13 +17393,7 @@ class SettingsScreen(BaseAppScreen):
             ProviderReadinessSnapshot(
                 configuration=readiness.configuration_facet,
                 endpoint=listing,
-                model=(
-                    "missing"
-                    if not model
-                    else "confirmed"
-                    if listing == "reachable" and model in model_ids
-                    else "unconfirmed"
-                ),
+                model=model_facet(model, listing, model_ids),  # TASK-33005.10
                 category=(
                     getattr(evidence, "category", None)
                     if listing in {"unreachable", "model_listing_unavailable"}

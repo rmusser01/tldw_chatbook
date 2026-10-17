@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from ipaddress import ip_address
 from typing import Literal
 from unicodedata import category
@@ -144,8 +145,31 @@ def connection_probe_availability(
 def resolve_provider_endpoint(
     provider: str, value: object
 ) -> ProviderEndpointResolution:
-    """Interpret one endpoint value without reading config or performing I/O."""
+    """Interpret one endpoint value without reading config or performing I/O.
 
+    TASK-33005.10: memoized. With shared evidence present, every Console
+    readiness build keys its connection, which parsed the endpoint three more
+    times: a warm build went from 10 to 34 us (llama.cpp) and 25 to 53 us
+    (OpenAI), on a path TASK-18909 counted ~400 builds per warm switch. With
+    the memo it is 15 and 31 us. The result is a frozen pure function of two
+    strings. A value that could carry a secret (user info, a query, a
+    fragment) is refused anyway and never kept as a cache key.
+    """
+
+    if (
+        type(provider) is str
+        and type(value) is str
+        and "@" not in value
+        and "?" not in value
+        and "#" not in value
+    ):
+        return _memoized_resolution(provider, value)
+    return _resolve_provider_endpoint(provider, value)
+
+
+def _resolve_provider_endpoint(
+    provider: str, value: object
+) -> ProviderEndpointResolution:
     if not isinstance(provider, str) or len(provider) > _MAX_PROVIDER_LENGTH:
         return _invalid_resolution("", "Provider name is invalid or too long.")
     provider_key = normalize_provider_key_for_contract(provider)
@@ -339,6 +363,10 @@ def _engine_preset_resolution(
             else ()
         ),
     )
+
+
+#: ponytail: 256 entries bounds it; the strings are endpoints, short and few.
+_memoized_resolution = lru_cache(maxsize=256)(_resolve_provider_endpoint)
 
 
 def canonical_connection_identity(

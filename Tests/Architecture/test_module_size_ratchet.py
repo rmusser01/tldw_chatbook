@@ -243,7 +243,9 @@ _BUDGETS: dict[str, int] = {
     # Phase 9 Task 7 (TASK-33002.10, .11, 33005.8, 33007.11): its lines are
     # offset by dropping three evidence lookups' None guards (evidence_for
     # refuses None itself) and the stale check's sentinel pair (net -1): 35,777.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35777,
+    # Phase 9 Task 12, TASK-33005.10: the Test rows' model facet is the
+    # snapshot's own model_facet, not a second copy (-5): 35,772.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35772,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
