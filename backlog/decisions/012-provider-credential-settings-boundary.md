@@ -365,11 +365,23 @@ the projection sends that key too, so they must change with it.
 OmniVoice and remote GGUF downloads use) reads `[API] huggingface_api_key`. So
 after a Clear those still show or spend the key the user removed (TASK-35227).
 
-A second older difference holds whatever `credential_source` says: the TTS
-projection and the Voice step take stored config before the environment (the
-2026-09-19 order), but `_credential_states` ranks an exported `OPENAI_API_KEY`
-or `ELEVENLABS_API_KEY` first. So the panel says the key comes from outside
-Chatbook and the saved one is shadowed, while synthesis sends the saved key.
+A second older difference holds whatever `credential_source` says. The TTS
+projection and the Voice step read `api_settings.<provider>.api_key`, then
+`[API] <provider>_api_key`, then the environment, but `_credential_states`
+ranks an exported `OPENAI_API_KEY` or `ELEVENLABS_API_KEY` first.
+
+- **A table key.** The projection's order is the 2026-09-19 order, so the
+  panel is out of line: it says the key comes from outside Chatbook and the
+  saved one is shadowed, while synthesis sends the table key.
+- **An `[API]` key.** The projection's order inverts the 2026-09-19 order,
+  under which the variable the table names outranks `[API]`. Chat, readiness
+  and `get_api_key("openai")` send the variable and the panel agrees with
+  them, while synthesis and the Voice step use the `[API]` key. So a stale
+  `[API]` key fails synthesis even with a valid key exported, and the defect
+  is in the projection, not the panel.
+- **ElevenLabs.** No table names its variable. The loader's `elevenlabs_api`
+  dict and the panel take `ELEVENLABS_API_KEY` before `[API]`, while the
+  projection and `get_api_key("elevenlabs")` take `[API]` first.
 
 The two surfaces that save the OpenAI TTS key, Settings ▸ Speech & TTS
 Set/Replace (`Event_Handlers/STTS_Events/stts_events.py`) and the Voice step's
