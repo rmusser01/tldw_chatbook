@@ -1171,6 +1171,13 @@ async def test_idle_draft_edit_burst_coalesces_one_cost_refresh(monkeypatch, rec
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # The attach reconcile's on_screen_resume refreshes the chip once; let
+        # it land first, or it races into the watched window (unattributed).
+        for _ in range(200):
+            if console._console_attach_reconciled:
+                break
+            await pilot.pause(0.01)
+        assert console._console_attach_reconciled
         summary_refresh = Mock(wraps=console._sync_console_settings_summary)
         cost_refresh = Mock(wraps=console._sync_console_cost_chip)
         monkeypatch.setattr(console, "_sync_console_settings_summary", summary_refresh)
