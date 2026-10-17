@@ -249,7 +249,9 @@ def model_facet(
     model_id = model.strip() if isinstance(model, str) else ""
     if not model_id:
         return "missing"
-    return "confirmed" if endpoint == "reachable" and model_id in model_ids else "unconfirmed"
+    if endpoint == "reachable" and model_id in model_ids:
+        return "confirmed"
+    return "unconfirmed"
 
 
 @dataclass(frozen=True, slots=True)
