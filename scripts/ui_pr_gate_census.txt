@@ -586,3 +586,5 @@ Tests/UI/test_study_user_text_literal.py
 # not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
 # unit cases that build no app).
 Tests/UI/test_study_flashcards_quit_mid_rebuild.py
+# TASK-33005.11 (Phase 9): Switch model rows read verified only for the models the key check listed, and agree with the Console and Settings (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_rows_read_verified_only_for_the_models_the_key_check_listed

@@ -174,6 +174,9 @@ FAST_LANE_TARGETS = (
     # Ctrl+T session-default path fed by both surviving mirror producers.
     "Tests/Provider/test_provider_model_resolution.py",
     "Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another",
+    # TASK-33005.11: the one readiness vocabulary, a key check verifying only
+    # the models it listed included (whole file, pure, about a second).
+    "Tests/Chat/test_readiness_words.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

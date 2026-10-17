@@ -347,6 +347,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (a markup-shaped workspace name in the scope banner; type-to-search over
 # markup-shaped deck and quiz names) and its quit-mid-rebuild pin, appended
 # last.
+# Phase 9 Task 2 (2026-10-17) appends its Tests/UI tests that no lane ran,
+# each a node id (their files are slow whole or hold reds that are not this
+# task's), each 3 of 3 serial alone. TASK-33005.11's switcher rows: 321.
 MINIMUM_FILES = 329
 
 

@@ -49,8 +49,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    model_readiness_words,
     provider_left_at_shipped_default,
-    readiness_words,
     resolve_console_value_layers,
     resolve_effective_chat_configuration,
 )
@@ -244,9 +244,12 @@ class SwitcherRow:
         return (self.kind, self.provider, self.model)
 
 
-def switcher_readiness_words(readiness: ConsoleSettingsReadiness | None) -> str:
-    """A row's spec §5 word (TASK-33005.3: the one shared mapping)."""
-    return "checking…" if readiness is None else readiness_words(readiness)
+def switcher_readiness_words(
+    readiness: ConsoleSettingsReadiness | None, model: str | None = None
+) -> str:
+    """A row's spec §5 word (TASK-33005.3: the one shared mapping), for the
+    row's own model (TASK-33005.11: a listing verifies only what it listed)."""
+    return "checking…" if readiness is None else model_readiness_words(readiness, model)
 
 
 def _is_ready(readiness: ConsoleSettingsReadiness | None) -> bool:
@@ -1574,7 +1577,7 @@ class ConsoleModelPopover(
             f"{glyph} {model:<{self._model_columns}} "
             f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
-            f"{_fit(switcher_readiness_words(readiness), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
+            f"{_fit(switcher_readiness_words(readiness, row.model), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
             f"{row.note}",
             style=style,
         )

@@ -590,8 +590,10 @@ async def test_settings_t_lists_kimi_and_zai_at_the_alias_a_send_pins(
 ):
     """Fix round 2 (AC#10): the gateway pins a Kimi/Z.AI send to the first
     configured endpoint alias, so 't' lists there and never at the
-    official host the resolver would pick from ``api_base_url`` alone."""
-    provider = _Provider(httpx.Response(200, json=LISTING))
+    official host the resolver would pick from ``api_base_url`` alone.
+    TASK-33005.11 (rewritten on purpose): the listing returns the chosen
+    model, since a key check now verifies only the models it lists."""
+    provider = _Provider(httpx.Response(200, json={"data": [{"id": model}]}))
     _route_discovery_to(monkeypatch, provider)
     app = _cloud_app(
         provider_name,

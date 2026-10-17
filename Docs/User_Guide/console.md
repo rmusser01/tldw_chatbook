@@ -341,8 +341,8 @@ same one of four things for the same connection:
 | Word | Means |
 |---|---|
 | **Ready · not tested** | Nothing blocks a send, and nothing has been checked this session. |
-| **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. |
-| **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing, or a paid generation test of this model succeeded, at that time. A test of one model never verifies another, and a listing alone never means generation was tested. |
+| **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. A cloud key check that accepted the key but did not list this model reads this too. |
+| **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing that listed this model, or a paid generation test of this model succeeded, at that time. A test of one model never verifies another, and a listing alone never means generation was tested. In Switch model each row reads its own model this way, so one key check can show some of a provider's rows verified and others reachable. |
 | **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out" or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
 
 The words carry the state; colour only repeats it (the Model section line

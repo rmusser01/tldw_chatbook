@@ -689,6 +689,77 @@ async def test_a_listing_403_never_blocks_but_a_401_does(servers, status, word, 
     assert (console.operability != "ready_to_send") is blocked
 
 
+@private_profile_test
+async def test_rows_read_verified_only_for_the_models_the_key_check_listed(request):
+    """TASK-33005.11 AC#2/#3/#4 (captures 10 and 12): one accepted OpenAI key
+    check listed gpt-4o only. Every OpenAI row read "Ready · verified"; now the
+    listed row does (the control) and the unlisted row keeps a weaker word.
+    For each model the switcher row, the Console's status row and rail word
+    (the readiness presentation) and Settings' Readiness row agree. Nothing
+    is probed: the evidence is the key check's, published as Settings does."""
+    from datetime import datetime
+
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderTestEvidence
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.Widgets.Console.console_settings_summary import (
+        build_console_readiness_presentation,
+    )
+
+    models = ("gpt-4o", "gpt-5.6-terra")
+    words = {
+        "gpt-4o": "Ready · verified 09:07",
+        "gpt-5.6-terra": "Ready · reachable 09:07",
+    }
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        owner = shared_connection_evidence(lambda: app)
+        identity = console_send_connection(
+            build_target_default_console_session_settings(CONFIG, "openai", None),
+            app_config=CONFIG,
+        )
+        evidence = ProviderTestEvidence(
+            identity,
+            "reachable",
+            ("gpt-4o",),
+            credential="listing_accepted",
+            observed_at=datetime(2026, 10, 1, 9, 7).astimezone(),
+        )
+        owner.publish(evidence, order=1)
+        switcher = build(
+            app,
+            providers_models={**PROVIDERS_MODELS, "openai": list(models)},
+            prober=False,
+            pair=("openai", "gpt-4o"),
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        lines = list_lines(app, switcher)
+
+    readiness = get_provider_readiness("openai", CONFIG, environ={})
+    for model in models:
+        console = build_console_settings_readiness(
+            build_target_default_console_session_settings(CONFIG, "openai", model),
+            app_config=CONFIG,
+            connection_evidence=owner,
+        )
+        settings_rows = dict(
+            SettingsScreen._provider_test_rows(
+                readiness,
+                display_name="OpenAI",
+                model=model,
+                endpoint="",
+                evidence=evidence,
+            )
+        )
+        assert words[model] in line_with(lines, f" {model} ", "OpenAI"), lines
+        assert build_console_readiness_presentation(console).primary_label == (
+            words[model]
+        )
+        assert settings_rows["Readiness"] == words[model]
+    assert "not listed by the server" in settings_rows["Model"]
+
+
 async def test_the_switcher_widget_makes_no_network_call_itself(servers):
     """AC#5 (ADR-011): probes only through the injected, screen-owned seam."""
     source = inspect.getsource(popover_module)

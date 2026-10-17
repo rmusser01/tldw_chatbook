@@ -7,7 +7,7 @@ import json
 import math
 import os
 import re
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
@@ -589,6 +589,11 @@ class ConsoleSettingsReadiness:
     connection: ProviderDraftIdentity | None = None
     observed_at: datetime | None = None
     generation_observed_at: datetime | None = None
+    #: TASK-33005.11: the evidence behind ``connection``, so one provider's
+    #: readiness can word each of its models (``model_readiness_words``).
+    evidence: ProviderTestEvidence | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -1590,7 +1595,9 @@ def resolve_effective_chat_configuration(
         _string_value(provider) or _string_setting(chat_defaults, "provider"),
         app_config,
     )
-    owns_defaults_model = owns_chat_defaults_model(provider_id, chat_defaults, app_config)
+    owns_defaults_model = owns_chat_defaults_model(
+        provider_id, chat_defaults, app_config
+    )
     provider_settings = console_provider_settings(app_config, provider_id)
     candidates = (
         ("session", model),
@@ -2148,6 +2155,7 @@ def build_console_settings_readiness(
         connection=current_identity if evidence_is_current else None,
         observed_at=evidence.observed_at if evidence_is_current and evidence else None,
         generation_observed_at=generation_at,
+        evidence=evidence if evidence_is_current else None,
     )
 
 
@@ -2860,6 +2868,7 @@ def readiness_words(readiness: ConsoleSettingsReadiness) -> str:
             readiness.generation,
             readiness.observed_at,
             readiness.generation_observed_at,
+            readiness.model,
         )
     return _not_ready_words(
         readiness.blocker or "readiness_unknown",
@@ -2908,6 +2917,7 @@ def verdict_readiness_words(
             getattr(evidence, "generation", "not_tested"),
             getattr(evidence, "observed_at", None),
             getattr(evidence, "generation_observed_at", None),
+            snapshot.model,
         )
     if reads == "provider_configuration_invalid":
         reads = _CONFIGURATION_ISSUE_BLOCKER.get(snapshot.configuration_issue, reads)
@@ -2917,6 +2927,41 @@ def verdict_readiness_words(
         issue=snapshot.configuration_issue,
         subscription=subscription_status,
         connection=connection,
+    )
+
+
+def model_readiness_words(
+    readiness: ConsoleSettingsReadiness, model: str | None
+) -> str:
+    """Return the readiness word for ``model`` on ``readiness``'s connection.
+
+    TASK-33005.11: Switch model builds one readiness per provider and lists
+    many of its models. A key check's listing verifies only the models it
+    returned, and a paid test only the model it sent, so each row is worded
+    from the evidence for its own model.
+
+    Args:
+        readiness: One provider's built readiness.
+        model: The row's model id (``None`` reads ``readiness`` as built).
+
+    Returns:
+        The same word ``readiness_words`` gives a readiness built for
+        ``model``.
+    """
+    evidence = readiness.evidence
+    if readiness.operability != "ready_to_send" or evidence is None or not model:
+        return readiness_words(readiness)
+    tested = evidence.for_model(model)
+    return _ready_words(
+        readiness.connection,
+        readiness.endpoint,
+        readiness.credential,
+        tested.generation,
+        readiness.observed_at,
+        tested.generation_observed_at,
+        "confirmed"
+        if readiness.endpoint == "reachable" and model in evidence.model_ids
+        else "unconfirmed",
     )
 
 
@@ -2930,14 +2975,18 @@ def _ready_words(
     generation: str,
     endpoint_at: datetime | None,
     generation_at: datetime | None,
+    model: str,
 ) -> str:
     """Qualify Ready by what was observed, and when (local HH:MM).
 
     'verified': a successful paid test (its time), or a cloud key its
-    authenticated listing accepted (the listing's time). 'reachable': a
-    local, URL or custom endpoint answered its listing -- even with a key,
-    since a self-hosted server may ignore it. A public cloud listing
-    (OpenRouter) proves nothing: 'not tested'.
+    authenticated listing accepted (the listing's time) for a model that
+    listing returned (``model`` facet 'confirmed', TASK-33005.11). Another
+    model under that accepted key reads 'reachable': the server answered, but
+    nothing says this model will. 'reachable': a local, URL or custom
+    endpoint answered its listing -- even with a key, since a self-hosted
+    server may ignore it. A public cloud listing (OpenRouter) proves
+    nothing: 'not tested'.
     """
     if connection is None:
         return READY_NOT_TESTED
@@ -2958,7 +3007,7 @@ def _ready_words(
         and connection.provider_key not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
     )
     if accepted and not local:
-        return f"Ready · verified {when}"
+        return f"Ready · {'verified' if model == 'confirmed' else 'reachable'} {when}"
     if endpoint == "reachable" and local:
         return f"Ready · reachable {when}"
     return READY_NOT_TESTED
