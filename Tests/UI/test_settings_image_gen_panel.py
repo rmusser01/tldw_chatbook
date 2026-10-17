@@ -1242,9 +1242,10 @@ enabled_backends = ["swarmui"]
 
 
 # ---------------------------------------------------------------------------
-# Live-CSS layout regression (whole-branch review): DestinationHarness (used
-# by every other test in this file) has no CSS_PATH, so it structurally
-# cannot exercise the real app-tier TCSS bundle -- it never caught that a
+# Live-CSS layout regression (whole-branch review): the plain
+# DestinationHarness most tests here use has no CSS_PATH (the
+# _SettingsCssHarness tests further down, TASK-33641.3, load the full
+# stylesheet). When this was written it had never caught that a
 # bare `Checkbox { width: 100%; height: 2; }` type selector living in
 # _conversations.tcss (unscoped, app-wide) was stretching every Enabled
 # checkbox to its row's full width, clipping the default marker + Test
@@ -1253,9 +1254,9 @@ enabled_backends = ["swarmui"]
 # `#settings-imagegen-panel` rule) starved its nested backend-editor
 # VerticalScroll down to ~1 row, hiding Backend settings/Generation
 # defaults/Save/Revert below the fold with nothing able to scroll them into
-# view. These two tests run against the REAL `TldwCli` app directly (the
-# same pattern `test_screen_navigation.py`'s real-app tests use) specifically
-# so the real CSS bundle is exercised -- confirmed live via a tmux capture
+# view. This test (both sizes) runs the REAL `TldwCli` app directly (the
+# same pattern `test_screen_navigation.py`'s real-app tests use) so the real
+# app, not a harness, is exercised -- confirmed live via a tmux capture
 # at 235 and 120 columns before writing this pin (see task-5-report.md).
 # ---------------------------------------------------------------------------
 
