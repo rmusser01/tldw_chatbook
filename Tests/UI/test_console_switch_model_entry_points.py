@@ -240,7 +240,8 @@ async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
     the widget focus went back to. Opened from a rail control it leads with
     the rail's exits; opened from the composer it is the composer's. At
     211x44 both keep Alt+A and Alt+C, and so does the Inspect rail's footer
-    with its n/p hint (round-1 review: the rail prefix pushed them off)."""
+    with its n/p hint, composer collapsed or not (round-1 review: the rail
+    prefix pushed them off)."""
     app = _console_app()
     harness = _Harness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -249,6 +250,9 @@ async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
 
         def shown() -> str:
             return str(footer._shortcut_display.content)
+
+        def footer_pairs() -> tuple:
+            return console._footer_shortcut_registration[1]
 
         await open_rail_section(console, pilot, "model")
         toggle = console.query_one("#console-rail-section-toggle-model", Button)
@@ -274,11 +278,24 @@ async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
             for hint in ("Alt+A approval", "Alt+C context rail"):
                 assert hint in shown(), (hint, shown())
         console._set_console_rail_preference(right_open=True)
-        await pilot.pause()
-        console.query_one("#console-inspector-rail-collapse", Button).focus()
-        await _until(pilot, lambda: "n/p Sections" in shown(), "the Inspect footer")
-        for hint in ("Alt+A approval", "Alt+C context rail"):
-            assert hint in shown(), (hint, shown())
+        inspect = console.query_one("#console-inspector-rail-collapse", Button)
+        # The Inspect rail adds n/p; a collapsed composer adds its own Esc
+        # hint, and its registration has no Enter send.
+        for collapsed in (False, True):
+            console._set_console_composer_collapsed(collapsed)
+            await pilot.pause()
+            inspect.focus()
+            await _until(
+                pilot,
+                lambda collapsed=collapsed: (
+                    "n/p Sections" in shown()
+                    and (("Enter", "send / queue") in footer_pairs()) is not collapsed
+                ),
+                f"the Inspect footer, composer collapsed={collapsed}",
+            )
+            assert shown().count("Esc ") == 1, shown()
+            for hint in ("Alt+A approval", "Alt+C context rail"):
+                assert hint in shown(), (hint, shown())
 
 
 @pytest.mark.asyncio

@@ -5061,11 +5061,13 @@ class ChatScreen(BaseAppScreen):
             shortcuts = (("n/p", "Sections"), *shortcuts)
         # TASK-32322: with focus inside a rail, Tab is region-locked -- the
         # exits are F6 and Esc, taught first (degradation drops from the END).
-        # That names F6, so its own hint goes, and Ctrl+K/T trail the rail's
-        # Alt+I/A/C: a 211-column footer keeps all three (TASK-33006.20).
+        # That names F6 and Esc, so their own hints go (a collapsed composer's
+        # Esc too), and Ctrl+K/T trail the rail's Alt+I/A/C: a 211-column
+        # footer keeps all three (TASK-33006.20).
         if self._console_rail_focus_active():
             later = (("Ctrl+K", "switch session"), ("Ctrl+T", "new tab"))
-            rest = [p for p in shortcuts if p not in (("F6", "next pane"), *later)]
+            gone = (("F6", "next pane"), ("Esc", "show composer"), *later)
+            rest = [p for p in shortcuts if p not in gone]
             keys = ("Alt+I", "Alt+A", "Alt+C")
             at = max([i + 1 for i, p in enumerate(rest) if p[0] in keys] or [len(rest)])
             rest[at:at] = [p for p in shortcuts if p in later]
