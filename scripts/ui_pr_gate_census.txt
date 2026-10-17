@@ -629,7 +629,7 @@ Tests/UI/test_settings_fallback_field_search.py
 Tests/UI/test_settings_provider_test_draft.py::test_save_redraws_the_test_rows_from_the_saved_values
 # TASK-33005.8 (review round 1): a Save that changes no connection field keeps the 'Key check' row 't' added (~7 s, private profile).
 Tests/UI/test_settings_provider_key_check.py::test_a_save_that_changes_no_connection_field_keeps_the_key_check_row
-# Phase 9 Task 8: TASK-33002.19's mode strip shows a markup-like provider id or endpoint name literally (2 cases, 14 s, private profile).
+# Phase 9 Task 8: TASK-33002.19's mode strip shows a markup-like provider id or endpoint name literally, at open, on a switch and through a later push (3 cases, 25 s, private profile).
 Tests/UI/test_console_mode_strip_literal_text.py
 # TASK-33006.20: after Esc closes Chat settings the footer is the focused widget's, Alt+A kept at 211x44 (10 s, private profile).
 Tests/UI/test_console_switch_model_entry_points.py::test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer
