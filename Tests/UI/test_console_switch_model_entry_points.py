@@ -238,8 +238,9 @@ async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
 ) -> None:
     """TASK-33006.20: after Esc closes Chat settings, the footer is the one for
     the widget focus went back to. Opened from a rail control it leads with
-    the rail's exits; opened from the composer it is the composer's, and at
-    211x44 that keeps Alt+A and Alt+C, not the rail footer it had before."""
+    the rail's exits; opened from the composer it is the composer's. At
+    211x44 both keep Alt+A and Alt+C, and so does the Inspect rail's footer
+    with its n/p hint (round-1 review: the rail prefix pushed them off)."""
     app = _console_app()
     harness = _Harness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -270,6 +271,12 @@ async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
                 ),
                 f"the footer of {start.id}",
             )
+            for hint in ("Alt+A approval", "Alt+C context rail"):
+                assert hint in shown(), (hint, shown())
+        console._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        console.query_one("#console-inspector-rail-collapse", Button).focus()
+        await _until(pilot, lambda: "n/p Sections" in shown(), "the Inspect footer")
         for hint in ("Alt+A approval", "Alt+C context rail"):
             assert hint in shown(), (hint, shown())
 
