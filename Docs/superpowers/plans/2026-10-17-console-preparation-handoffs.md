@@ -15,3 +15,7 @@ Evidence: qualified original live permission reads73.578/24.741ms and272.145/29.
 5. With passing gate, publish reviewed PR, resolve review threads, run required CI and use current merge-queue policy. Rebase if needed, verify exact combined changes and merge only while the measured implementation is preserved.
 
 Review focus: interpreter-wide effect despite finite lexical lifetime; unrelated global interval setters; overlapping callbacks and error/cancellation/submission ordering; source drift and original permission/native retirement; measurement source/guard fidelity and honest scope. No new task implementation outside these criteria.
+
+## Authorized release criterion revision — 2026-10-17
+
+The completed original both-boundaries gate failed and its result remains preserved. The user explicitly accepts Enter-to-HTTP improving in all4 matched pairs (19.5% median reduction) as sufficient for this release, and requests CI/rebase/merge followed by continued post-save profiling. Step5 now proceeds under that instruction; no check, measurement or adverse packet changes. Post-save improvement is not yet consistent.

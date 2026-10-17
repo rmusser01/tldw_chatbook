@@ -14,7 +14,7 @@ Evidence is retained under the task's `pr-review-wave2` artifacts: `permission-w
 
 No full suite, population p95, Windows/native paint, OS-cold-cache, later-send/large-history/broad-provider, separate real-home census/app-child exit or arbitrary native-worker retirement claim.
 
-## Actual first-send result — keep unmerged
+## Actual first-send result — original gate held
 
 All8 packets qualify: full supplied/expanded settings,27 exact ordered schemas/headers, HTTP200/exact replies, verified complete traces/checkpoints0, actual Quit/Chat+App unmount, driver/server exits0, observed owned PIDs absent/ports closed, unchanged whole-Python maps (baseline8607, candidate8609), no profiler/sampler. Expected Python difference is only the finite-read module and2 new tests.
 
@@ -26,3 +26,7 @@ All8 packets qualify: full supplied/expanded settings,27 exact ordered schemas/h
 Post-save pairs (baseline→candidate):943→1075,801→937,1197→763,877→767ms. Enter-to-HTTP pairs:2.302393→2.062940,1.866584→1.695522,2.943640→1.535327,1.892820→1.681483s. The whole first-send improvement is consistent in this small cohort; the post-save reduction is not. The preregistered gate requires3/4 improvements for each metric, so it fails. Do not relax that gate after inspecting the data. Keep the reviewed implementation on `codex/console-permission-filesystem-waits`, unpushed with no PR/merge, pending further post-save work or an explicit change of release criterion. Task remains In Progress.
 
 Exact measured production/test head:18d02c72955b71f206313cb8f10187346fbf4b1e, compared with current merged111f8e48fc14dccd654f691396fca1a9d704236c. Root full qualification/statistics: `permission-scheduling-paired-qualified-r1.json`; all raw/adverse packets retained. Final closeout changes only Markdown; no new performance claim follows.
+
+## Explicit release criterion revision — 2026-10-17
+
+After reviewing all four matched pairs, the user explicitly accepted the consistent Enter-to-HTTP improvement and requested CI, rebase and merge before further post-save profiling. This supersedes the extra both-boundaries release hold; it does not change the preregistered gate result or any recorded observation. Enter-to-HTTP median improves by409.104ms (19.5%), with4/4 pairs faster. Post-save remains inconsistent (2/4 pairs faster); further profiling remains necessary. Required CI, resolved review threads and the reviewed implementation's permission/freshness/native-lifetime checks remain mandatory. Independent whole-branch review substitutes for unavailable Qodo under the user's existing batch authorization.
