@@ -274,6 +274,24 @@ async def _wait_for_displayed(console, pilot, selector: str) -> None:
     await _until_clock(pilot, shown, f"{selector} to be shown")
 
 
+async def _first_look_done(app, console, pilot) -> None:
+    """The card's first discovery ran, and so did the mount's own resume.
+
+    The first look can end before that resume runs (it waits on the attach
+    reconciliation). A return in that window is merged into it and reads as
+    the mount's, so it re-arms no discovery; a test that leaves and comes
+    back waits for it, as a user's return comes after the first visit
+    (TASK-33008 review round 4).
+    """
+    await _wait_for_selector(console, pilot, "#console-setup-modal")
+    await _until(pilot, lambda: len(app._discovery_calls) == 1, "discovery")
+    await _until_clock(
+        pilot,
+        lambda: not console._console_mount_visit_refreshed,
+        "the mount's own resume",
+    )
+
+
 async def _detected_action_focused(host, console, pilot) -> Button:
     """AC#1: discovery ends after the card's first focus; the guidance sync
     that follows moves focus to "Use detected <server>"."""
@@ -837,17 +855,7 @@ async def test_a_card_resumed_with_nothing_detected_runs_discovery_again(
 
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-setup-modal")
-        await _until(pilot, lambda: len(app._discovery_calls) == 1, "discovery")
-        # The first look can end before the mount's own resume runs (it waits
-        # on the attach reconciliation). A return in that window is merged
-        # into it and reads as the mount's, so it re-arms nothing; the test
-        # leaves only after it, as a user does (TASK-33008 review round 4).
-        await _until_clock(
-            pilot,
-            lambda: not console._console_mount_visit_refreshed,
-            "the mount's own resume",
-        )
+        await _first_look_done(app, console, pilot)
 
         async def server_started(config):
             app._discovery_calls.append(config)
@@ -888,8 +896,7 @@ async def test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return(
 
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-setup-modal")
-        await _until(pilot, lambda: len(app._discovery_calls) == 1, "discovery")
+        await _first_look_done(app, console, pilot)
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
