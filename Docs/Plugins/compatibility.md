@@ -14,7 +14,7 @@ Local execution: macOS 26.5.2, Darwin 25.5.0 arm64; CPython 3.12.11; Textual 8.2
 | `tldw_chatbook/UI/Console_Modules/session.py` | `23269c3c58742750fe882bd6861a8238039725ce9aa77aa681d85d805f0f5ffc` |
 | `tldw_chatbook/Widgets/plugin_review_modal.py` | `a42e7c81c2daa670f81dcb3f370361ad4f800dde9c8d8a2377f69d2dc492c933` |
 | `tldw_chatbook/Chat/console_chat_controller.py` | `53c17ea23ffe4363f29c27b262bfff23489de9ce845540f5622ec47b54655c1c` |
-| `Tests/Plugins/test_owned_hook_acceptance.py` | `8b2c9de6625557f8ae12553a626732f9fdc66ec704a2b86379a51b7c455e9245` |
+| `Tests/Plugins/test_owned_hook_acceptance.py` | `334358b697ad97e410931ceface2fa142e363996bc3e2ca214818e3c56a82aa4` |
 | `tldw_chatbook/Plugins/adapters/cursor.py` | `2d883313bfbf11a7fa55fea3ec0b18aa46bbe3aad591adfbedf2d802401e977f` |
 | `tldw_chatbook/Plugins/adapters/codex.py` | `3c9292697426c7d1398b08054638bc02282af3b82cde19dbb60717fd8da6ca3c` |
 | `tldw_chatbook/Plugins/adapters/portable.py` | `3c756e45f61222d9e4729ecf83adcfb3aef1eea73e1162f55e23006529ac6668` |
@@ -97,3 +97,30 @@ Static checks compile all 17 eligible Python files. Twelve pass Ruff and Black. 
 The [testing-evidence lesson](../../backlog/docs/lessons-testing-evidence.md) records the actual lost-snapshot incident and why the bounded 14-case renewal was required.
 
 The final two installed standalone/owned-MCP controls also assert that the first real input clears the handoff and a following real input omits the old context, with no command-hook witness or owned-MCP audit replay: 2 passed in 10.97s (raw SHA `a425e79f8b7576b76c6e0e82e6b247e51be1615a79a022011f117fb958318a03`). Only those two affected cases were renewed.
+
+
+## Fix round 2: platform-aware command-hook selection
+
+The new installed-hook file is selected by the three-platform workflow, but Windows deliberately returns `unsupported_platform` before command-hook root access or launch. Command-success expectations and command-output negatives cannot qualify that platform. Granular standard pytest `skipif("sys.platform == 'win32'")` marks now select the following **30 cases as skipped on Windows**, with an explicit unsupported-command reason. A skip is unexercised behavior, not a Windows pass. The original 59 case IDs and bodies are unchanged; one installed refusal control brings collection to 60.
+
+All function names below are in `Tests/Plugins/test_owned_hook_acceptance.py`; each bracket lists the exact affected parameter IDs.
+
+| Windows command-dependent skips | Cases |
+|---|---:|
+| `test_installed_required_effect_admission[empty_success, valid_context, empty_required_context, whitespace_context, oversized_context, optional_failure, dependency_failure, disabled_required]` | 8 |
+| `test_installed_hook_aggregate_admission_and_teardown` | 1 |
+| `test_installed_post_tool_checkpoint[success, failure, stale]` | 3 |
+| `test_installed_post_child_checkpoint[success-inline, success-fleet, failure-inline, failure-fleet, stale-inline, stale-fleet]` | 6 |
+| `test_installed_post_compaction_checkpoint[success, failure, stale]` | 3 |
+| `test_installed_final_arguments_reach_normal_permission_and_dispatch[allowed, final_guard_denied, invalid_schema, changed_after_review]` | 4 |
+| `test_installed_compaction_authority_fence[nonce]` | 1 |
+| `test_installed_compaction_operation_cleanup[initializer_failure, cancelled_initialization, cancelled_post]` | 3 |
+| `test_installed_standalone_compact_now_releases_admission[installed]` | 1 |
+
+**30 cases remain selected:** required `master_off`/`invalid_required` (2); all typed owned-MCP modes over stdio/HTTP (16); all provisional MCP modes including cycle exclusion (5); compaction authority `disabled`/`selection_changed` (2); no-hook cleanup/standalone/automatic (3); owned-MCP PostCompact (1); and new `test_installed_windows_command_refuses_before_root_access_or_launch` (1). Markdown command rendering in the cyclic control is not a command-hook process. Authority disabled/selection-change cases stop before commit and assert no command marker. Owned-MCP and no-hook cases do not depend on command-hook support.
+
+The new refusal case uses actual installed/trusted/selected NativeHookSet ownership and the real executor. It changes only that executor module's local `sys` reference to a namespace with `platform="win32"`, observes/delegates the original process-owner reservation, and asserts exact required `unsupported_platform`, no reservation/launch marker/process, zero budget slots and no live plugin custody. It closes the engine through the existing fixture ownership contract. This is local platform-branch evidence, not Windows host execution.
+
+Pre-edit collection found 59 cases with all 30 required Windows marks missing. Post-edit collection found exactly 60, with original IDs retained and all original function bodies AST-identical. Evaluating only the recorded marker strings in isolated namespaces gives Windows30skip/30retain and Darwin/Linux0skip; shared `sys.platform` and product ownership are never simulated during collection. Five targeted ordinary checks passed in 15.86s: new installed refusal, required master-off/invalid constraints and compaction authority disabled/selection-change (raw SHA `ef69d3b6851539b73e7d7777d523b6c794a94adb0cf684d06aa55fd63e192f47`). The other local behavior results carry their unchanged bodies and explicit source applicability; no 60-case, resource, live or ratchet sweep was repeated.
+
+No workflow edit or Windows execution is claimed. Pre-existing selected Windows issues remain for whole-branch triage: `Tests/Agents/test_hooks_v2_execution.py::test_windows_command_refuses_before_root_access_or_launch` restores the real platform and then requires successful command execution, which cannot succeed on Windows. That earlier selection was not changed by this correction. The full workflow is therefore **not claimed Windows-green**; remaining earlier platform selections require their own disposition.

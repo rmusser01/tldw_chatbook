@@ -12,6 +12,11 @@ import pytest
 from Tests.hooks_v2_process_support import child_argv
 from Tests.Plugins.test_native_components import install_components
 
+_REQUIRES_COMMAND_HOOKS = pytest.mark.skipif(
+    "sys.platform == 'win32'",
+    reason="Windows command hooks refuse with unsupported_platform; command effects are unexercised.",
+)
+
 
 def _command(identity, event, code="pass", **values):
     return {
@@ -92,15 +97,15 @@ async def _native_engine(service, installation, run_id, budget=None, *, enabled=
 @pytest.mark.parametrize(
     "mode",
     [
-        "empty_success",
-        "valid_context",
-        "empty_required_context",
-        "whitespace_context",
-        "oversized_context",
-        "optional_failure",
-        "dependency_failure",
+        pytest.param("empty_success", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("valid_context", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("empty_required_context", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("whitespace_context", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("oversized_context", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("optional_failure", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("dependency_failure", marks=_REQUIRES_COMMAND_HOOKS),
         "master_off",
-        "disabled_required",
+        pytest.param("disabled_required", marks=_REQUIRES_COMMAND_HOOKS),
         "invalid_required",
     ],
 )
@@ -264,6 +269,7 @@ async def test_installed_required_effect_admission(
     assert not rig.service.live_runs()
 
 
+@_REQUIRES_COMMAND_HOOKS
 @pytest.mark.asyncio
 async def test_installed_hook_aggregate_admission_and_teardown(
     native_console, native_package, tmp_path
@@ -770,6 +776,7 @@ def _post_barrier(entered, release, mode):
     )
 
 
+@_REQUIRES_COMMAND_HOOKS
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["success", "failure", "stale"])
 async def test_installed_post_tool_checkpoint(
@@ -866,6 +873,7 @@ async def test_installed_post_tool_checkpoint(
     assert not engine.processes.records and not native_console.service.live_runs()
 
 
+@_REQUIRES_COMMAND_HOOKS
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fleet", [False, True], ids=["inline", "fleet"])
 @pytest.mark.parametrize("mode", ["success", "failure", "stale"])
@@ -1692,6 +1700,7 @@ async def test_installed_provisional_mcp_initialization(
                 await asyncio.gather(waiter, return_exceptions=True)
 
 
+@_REQUIRES_COMMAND_HOOKS
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["success", "failure", "stale"])
 async def test_installed_post_compaction_checkpoint(
@@ -1701,13 +1710,21 @@ async def test_installed_post_compaction_checkpoint(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["nonce", "disabled", "selection_changed"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        pytest.param("nonce", marks=_REQUIRES_COMMAND_HOOKS),
+        "disabled",
+        "selection_changed",
+    ],
+)
 async def test_installed_compaction_authority_fence(
     native_console, native_package, tmp_path, mode
 ):
     await _installed_compaction_case(native_console, native_package, tmp_path, mode)
 
 
+@_REQUIRES_COMMAND_HOOKS
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mode", ["allowed", "final_guard_denied", "invalid_schema", "changed_after_review"]
@@ -1898,7 +1915,12 @@ async def test_installed_final_arguments_reach_normal_permission_and_dispatch(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mode",
-    ["no_hooks", "initializer_failure", "cancelled_initialization", "cancelled_post"],
+    [
+        "no_hooks",
+        pytest.param("initializer_failure", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("cancelled_initialization", marks=_REQUIRES_COMMAND_HOOKS),
+        pytest.param("cancelled_post", marks=_REQUIRES_COMMAND_HOOKS),
+    ],
 )
 async def test_installed_compaction_operation_cleanup(
     native_console, native_package, tmp_path, mode
@@ -1907,7 +1929,9 @@ async def test_installed_compaction_operation_cleanup(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["installed", "no_hooks"])
+@pytest.mark.parametrize(
+    "mode", [pytest.param("installed", marks=_REQUIRES_COMMAND_HOOKS), "no_hooks"]
+)
 async def test_installed_standalone_compact_now_releases_admission(
     native_console, native_package, tmp_path, mode
 ):
@@ -1963,3 +1987,60 @@ async def test_runtime_no_hook_automatic_compaction_preserves_submission(
         automatic=True,
         monkeypatch=monkeypatch,
     )
+
+
+@pytest.mark.asyncio
+async def test_installed_windows_command_refuses_before_root_access_or_launch(
+    native_console, native_package, tmp_path, monkeypatch
+):
+    from tldw_chatbook.Agents.hooks_v2 import command_executor
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import lifecycle_event
+    from tldw_chatbook.Plugins.components import NativeHookProcessOwner
+
+    launched = tmp_path / "unsupported-command-launched"
+    package = _package(
+        native_package,
+        [
+            _command(
+                "unsupported",
+                "SessionStart",
+                f"from pathlib import Path;Path({str(launched)!r}).touch()",
+                required=True,
+            )
+        ],
+    )
+    installed = await install_components(
+        native_console.service, package, ("hook:unsupported",)
+    )
+    engine = await _native_engine(
+        native_console.service, installed.installation_id, "windows-refusal"
+    )
+    reservations = []
+    reserve = NativeHookProcessOwner.reserve_launch
+
+    def observe_reserve(owner, event):
+        reservations.append(event.event_id)
+        return reserve(owner, event)
+
+    assert not launched.exists()
+    try:
+        with monkeypatch.context() as patch:
+            # Exercise only the executor's platform guard, not shared sys/platform state.
+            patch.setattr(command_executor, "sys", SimpleNamespace(platform="win32"))
+            patch.setattr(NativeHookProcessOwner, "reserve_launch", observe_reserve)
+            result = await engine.fire_async(
+                lifecycle_event(
+                    "SessionStart",
+                    "windows-refusal",
+                    data={"reason": "startup"},
+                    workspace_id="workspace-a",
+                )
+            )
+        assert not result.allowed
+        assert [failure.code for failure in result.failures] == ["unsupported_platform"]
+        assert not reservations and not launched.exists()
+        assert not engine.processes.records
+        assert not any(engine.budget_owner.snapshot().values())
+        assert not native_console.service.live_runs()
+    finally:
+        await engine.close()
