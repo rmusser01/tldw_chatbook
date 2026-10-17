@@ -882,6 +882,8 @@ reaches the unchanged geometry assertions; restoring the actual retired bare
 the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
 not the final qualification of a guard intended to run in CI.
 
+**PR3146 follow-up,2026-10-17.** A later replay case called the same provider-ready factory without the first geometry case's persisted splash override; required UI shard1 again timed out mounting behind the7s splash. Persist splash-off in the factory's existing provider settings transaction, so every caller survives its forced reload. Assert through `get_cli_setting`, the production startup seam: `app.app_config` is a normalized projection and need not expose raw TOML sections. The corrected assertion failed True-is-False before the fix; both unchanged production geometry/replay journeys passed afterward, without changing their10s mount bound.
+
 **TASK-33008.2, 2026-10-11.** A one-line change to `SettingsScreen._stage_provider_value` was
 covered by tests that fail here in their bodies with `RecoveryRequired`
 (`Tests/UI/test_settings_configuration_hub.py`'s provider-navigation tests, which the phase's
@@ -20312,3 +20314,13 @@ atomic insertion and Enter, waited for actual rendered Send readiness, and kept
 exact persisted prompts/replies, schemas and verified traces as the content
 oracles. Failed packets remain separate. This does not establish that historical
 failed drafts were valid or that any product input behavior was fixed.
+
+
+## A faster permission span can coexist with inconsistent post-save gains
+
+**TASK-34406.11,2026-10-17.** Passive native-call profiling reproduced a272ms permission read using29ms thread CPU. A1ms interpreter handoff intervention retained313 posture stats,400 content stats,324 realpath lstats and27 mount checks while reducing that profiled span to26ms. The finite-callback implementation then passed383 connected tests and independent review. Eight qualified unprofiled fresh-app sends improved Enter-to-HTTP in4/4 pairs (median2.098→1.689s), but post-save preparation in only2/4 (median910→852ms). The preregistered release gate required3/4 for both, so the branch stayed unmerged. Bill the actual requested boundary and keep adverse pairs; a component or different boundary cannot substitute for it. C monitoring also missed BEFORE_WITH lock entry: verify the observer against a real contended lock before claiming a specific lock wait from CALL/C_RETURN events.
+
+
+## Worker failure injection must leave unrelated work running
+
+**PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.

@@ -518,11 +518,17 @@ async def _verify_close_flow_that_cannot_start_tells_the_user(request, monkeypat
         await _show_tabs(console, pilot, {keeper, blank.id})
         blank_title = next(s.title for s in store.sessions() if s.id == blank.id)
 
-        def refuse_worker(*_args, **_kwargs):
-            raise RuntimeError("worker manager is closed")
+        original_run_worker = console.run_worker
+
+        def refuse_worker(*args, **kwargs):
+            if kwargs.get("group") == f"console-close-session:{blank.id}":
+                raise RuntimeError("worker manager is closed")
+            return original_run_worker(*args, **kwargs)
 
         with monkeypatch.context() as patch:
             patch.setattr(console, "run_worker", refuse_worker)
+            console._on_console_workspace_context_recomposed()
+            await pilot.pause()
             await _click(pilot, f"#console-close-session-tab-{blank.id}")
             assert await _settle(pilot, lambda: bool(notes)), (
                 "unstartable close was silent"
