@@ -33,6 +33,21 @@ _FIELDS = (
 )
 
 
+def _is_well_typed_record(value: object) -> bool:
+    """Whether one decoded record carries the scalar types it claims.
+
+    A wrong-typed ``sign_count`` (e.g. ``"soon"`` from a hand-edited file)
+    must be skipped like a malformed one, mirroring ``session_store``'s
+    discipline: letting it through would surface later as a ``TypeError``
+    inside the service's numeric sign-count comparison (#3130).
+    """
+
+    if not isinstance(value, dict):
+        return False
+    sign_count = value.get("sign_count")
+    return isinstance(sign_count, int) and not isinstance(sign_count, bool)
+
+
 @dataclass(frozen=True)
 class StoredCredential:
     credential_id_hex: str
@@ -69,6 +84,8 @@ class WebAuthnCredentialStore:
             return {}
         records: dict[str, StoredCredential] = {}
         for key, value in raw.items():
+            if not _is_well_typed_record(value):
+                continue  # skip wrong-typed entries, keep the rest
             try:
                 records[key] = StoredCredential(
                     **{name: value[name] for name in _FIELDS}

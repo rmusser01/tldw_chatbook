@@ -639,6 +639,11 @@ _DEVICE_BROWSER_MARKERS = (
 )
 _DEVICE_LABEL_MAX_LENGTH = 64
 
+#: Attestation bodies can pack x5c certificate chains well beyond the 4 KiB
+#: device-JSON default, so the passkey register/complete route alone admits
+#: bodies up to 32 KiB (#3130); every other device-JSON route stays at 4 KiB.
+_ATTESTATION_BODY_MAX_BYTES = 32 * 1024
+
 
 def _device_label_from_user_agent(ua: str) -> str:
     """Derive a short, non-identifying device label from a User-Agent string.
@@ -659,14 +664,20 @@ def _device_label_from_user_agent(ua: str) -> str:
     return (label or "Unknown device")[:_DEVICE_LABEL_MAX_LENGTH]
 
 
-async def _read_device_json(request) -> dict:
-    """Read one bounded JSON object body for the device-manager endpoints."""
+async def _read_device_json(request, max_bytes: int = 4096) -> dict:
+    """Read one bounded JSON object body for the device-manager endpoints.
+
+    ``max_bytes`` lets a single route widen the bound (the passkey
+    register/complete route admits attestation bodies up to
+    ``_ATTESTATION_BODY_MAX_BYTES``); the 4 KiB default covers every other
+    device-JSON route.
+    """
 
     from aiohttp import web
 
-    if request.content_length is not None and request.content_length > 4096:
+    if request.content_length is not None and request.content_length > max_bytes:
         raise web.HTTPRequestEntityTooLarge(
-            max_size=4096, actual_size=request.content_length
+            max_size=max_bytes, actual_size=request.content_length
         )
     try:
         payload = await request.json()
@@ -1462,7 +1473,11 @@ class ChatbookWebServerMixin:
 
         if self._webauthn_service is None:
             return self._passkeys_unavailable()
-        payload = await _read_device_json(request)
+        # Attestation objects may carry packed x5c chains, so this route alone
+        # widens the device-JSON body bound to 32 KiB (#3130).
+        payload = await _read_device_json(
+            request, max_bytes=_ATTESTATION_BODY_MAX_BYTES
+        )
         try:
             result = self._webauthn_service.register_complete(
                 _required_str(payload, "challenge_id"),

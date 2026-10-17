@@ -972,9 +972,18 @@ def _passkey_client_data(kind: str, challenge, origin: str = _PASSKEY_ORIGIN) ->
 
 
 async def _register_passkey_via_routes(
-    client, *, label: str = "YubiKey 5", credential_id: bytes = b"\x02" * 32
+    client,
+    *,
+    label: str = "YubiKey 5",
+    credential_id: bytes = b"\x02" * 32,
+    extensions_padding: int = 0,
 ):
-    """Drive register begin -> complete against the live authed routes."""
+    """Drive register begin -> complete against the live authed routes.
+
+    ``extensions_padding`` grows the attestation with a well-shaped
+    authenticator-data extensions blob (ED flag set), standing in for the
+    packed x5c chains that make real registration bodies large.
+    """
 
     csrf = await _csrf(client)
     begin = await client.post(
@@ -986,9 +995,12 @@ async def _register_passkey_via_routes(
     payload = await begin.json()
     private_key = ec.generate_private_key(ec.SECP256R1())
     cose_key = cbor.encode(_passkey_cose_key(private_key.public_key()))
-    auth_data = _passkey_auth_data(
-        _PASSKEY_FLAG_UP_UV_AT, 0, credential_id, cose_key
-    )
+    flags = _PASSKEY_FLAG_UP_UV_AT | (0x80 if extensions_padding else 0)
+    auth_data = _passkey_auth_data(flags, 0, credential_id, cose_key)
+    if extensions_padding:
+        auth_data += cbor.encode(
+            {"org.example.padding": b"\x00" * extensions_padding}
+        )
     attestation_object = cbor.encode(
         {"fmt": "none", "attStmt": {}, "authData": auth_data}
     )
@@ -1190,6 +1202,55 @@ async def test_passkey_register_and_login_round_trip_via_server_routes(
     assert len(records) == 1
     [record] = records.values()
     assert record.device_label.endswith(" (passkey)")
+
+
+@pytest.mark.asyncio
+async def test_passkey_register_complete_accepts_attestation_up_to_32_kib(
+    tmp_path,
+) -> None:
+    """Registration bodies may carry packed x5c chains past the 4 KiB default.
+
+    The register/complete route alone admits bodies up to 32 KiB (#3130) —
+    here a >4 KiB, well-shaped attestation (authenticator-data extensions
+    blob) completes — while anything beyond the cap still answers 413.
+    """
+    async with _logged_in_client(
+        tmp_path, webauthn_service=_passkey_service(tmp_path)
+    ) as client:
+        _private_key, _credential_id, result = await _register_passkey_via_routes(
+            client, extensions_padding=8192
+        )
+        assert result["ok"] is True
+
+        csrf = await _csrf(client)
+        begin = await client.post(
+            "/auth/passkeys/register/begin",
+            json={"label": "too big"},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert begin.status == 200
+        payload = await begin.json()
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        cose_key = cbor.encode(_passkey_cose_key(private_key.public_key()))
+        credential_id = b"\x03" * 32
+        auth_data = _passkey_auth_data(
+            _PASSKEY_FLAG_UP_UV_AT | 0x80, 0, credential_id, cose_key
+        ) + cbor.encode({"org.example.padding": b"\x00" * (48 * 1024)})
+        attestation_object = cbor.encode(
+            {"fmt": "none", "attStmt": {}, "authData": auth_data}
+        )
+        oversized = await client.post(
+            "/auth/passkeys/register/complete",
+            json={
+                "challenge_id": payload["challenge_id"],
+                "client_data_json": _passkey_client_data(
+                    "webauthn.create", payload["publicKey"]["challenge"]
+                ),
+                "attestation_object_b64": base64.b64encode(attestation_object).decode(),
+            },
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert oversized.status == 413
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import logging
 import secrets
 import time
@@ -32,12 +33,14 @@ from urllib.parse import urlsplit
 
 from fido2 import cbor
 from fido2.cose import CoseKey
+from fido2.rpid import verify_rp_id
 from fido2.server import Fido2Server
-from fido2.utils import websafe_encode
+from fido2.utils import websafe_decode, websafe_encode
 from fido2.webauthn import (
     AttestationObject,
     AttestedCredentialData,
     AuthenticatorData,
+    CollectedClientData,
     PublicKeyCredentialRpEntity,
     PublicKeyCredentialUserEntity,
     ResidentKeyRequirement,
@@ -80,16 +83,19 @@ def _derive_rp_host(public_url: str | None) -> str:
 
     WebAuthn RP ids must be registrable domains: an IP literal or localhost
     cannot anchor an origin, so ``PasskeysUnavailable`` is raised for them and
-    callers can degrade to token-only login.
+    callers can degrade to token-only login.  Only an https public URL can
+    back a passkey RP — browsers never sign client data for any other
+    scheme — so non-https schemes are refused the same way (2a final F3).
     """
     if not public_url:
         raise PasskeysUnavailable("passkeys require a public URL")
     try:
-        host = urlsplit(public_url).hostname
+        split = urlsplit(public_url)
     except ValueError:
         raise PasskeysUnavailable("passkeys require a public URL") from None
-    if not host:
-        raise PasskeysUnavailable("passkeys require a public URL")
+    host = split.hostname
+    if split.scheme != "https" or not host:
+        raise PasskeysUnavailable("passkeys require an https public URL")
     host = host.strip("[]").lower()
     if host == _LOCALHOST or ":" in host:
         # localhost or an IPv6 literal (brackets already stripped by hostname)
@@ -168,6 +174,26 @@ class WebAuthnService:
         if state is None or now >= state.expiry or state.kind != kind:
             raise AuthenticationError("authentication denied")
         return state
+
+    def _check_client_data(
+        self, state: _ChallengeState, client_data_json: str
+    ) -> None:
+        """O(1) client-data gate before any credential work (#3130).
+
+        Parses the client data once and rejects a wrong type, a wrong origin
+        (fido2's own RP-domain rule), or a non-member challenge BEFORE the
+        per-credential verification loop, so hostile attempts fail without
+        iterating stored credentials.  The loop's own fido2 checks still run
+        afterwards unchanged.
+        """
+        client_data = CollectedClientData(client_data_json.encode("utf-8"))
+        if client_data.type != CollectedClientData.TYPE.GET:
+            raise ValueError("client data type")
+        if not verify_rp_id(self._rp_id, client_data.origin):
+            raise ValueError("client data origin")
+        expected_challenge = websafe_decode(state.fido2_state["challenge"])
+        if not hmac.compare_digest(expected_challenge, client_data.challenge):
+            raise ValueError("client data challenge")
 
     # ------------------------------------------------------------- registry
 
@@ -307,7 +333,13 @@ class WebAuthnService:
         authenticator_data_b64: str,
         signature_b64: str,
     ) -> StoredCredential:
-        """Verify an assertion; returns the updated stored credential."""
+        """Verify an assertion; returns the updated stored credential.
+
+        The client data is checked once up front (type, origin, challenge
+        membership against the issued state) so wrong-origin and wrong-
+        challenge attempts are rejected before any credential iteration;
+        the per-credential loop then runs fido2's full verification.
+        """
         try:
             auth_data_bytes = base64.b64decode(authenticator_data_b64, validate=True)
             signature = base64.b64decode(signature_b64, validate=True)
@@ -319,6 +351,7 @@ class WebAuthnService:
         prefix = "-"
         try:
             state = self._take_state(challenge_id, "login")
+            self._check_client_data(state, client_data_json)
             creds = self._store.load()
             matched_hex: str | None = None
             for credential_id_hex, attested in self._attested_credentials(creds):
