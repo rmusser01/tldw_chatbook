@@ -275,8 +275,8 @@ it from `config.toml` to stop them using it.
 Summaries (Library analysis, web search) send the key the **API key** row
 resolves for their provider, so "no credential", **Clear** and an **Env var**
 choice decide for them as they do for the **Key check**. A summary for
-**Llamafile**, or for llama.cpp, Ollama or vLLM **(legacy alias)**, is sent to
-the server of the provider it aliases, and that provider's row decides.
+**Llamafile** goes to the **llama.cpp** server, and one for llama.cpp, Ollama or
+vLLM **(legacy alias)** to the server it aliases; that provider's row decides.
 
 Open **Saved model list**, then use **Tab** to reach the discovered-model
 list, arrow keys to move, and **Space** to select a model; its row then starts
