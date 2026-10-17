@@ -3011,8 +3011,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "6786bb56a96488396274",
+      "call_count": 1,
+      "diagnostic_digest": "2cab13ba810e9181ec41",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/status_row.py",
       "reason": "remaining Chatbook production diagnostic owner"

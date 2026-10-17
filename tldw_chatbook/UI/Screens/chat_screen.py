@@ -98,9 +98,6 @@ from ..Console_Modules.frame import (
 from ..Console_Modules.status_row import (
     STATUS_CHIPS_POSITION_ABOVE,
     apply_status_chips_position,
-    persist_status_chips_collapsed,
-    poke_console_setting,
-    resolve_status_chips_collapsed,
     resolve_status_chips_position,
 )
 
@@ -301,6 +298,12 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
+from ...Chat.console_token_rate import (
+    TokenRateReading,
+    TokenRateTracker,
+    format_rate_chip_settled,
+    merge_rate_into_run_copy,
+)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -592,7 +595,6 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
     ConsoleAssistantChip,
     ConsoleCostChip,
-    ConsoleLibraryChip,
     ConsoleRunChip,
     ConsoleScopeChip,
     ConsoleSourcesChip,
@@ -615,6 +617,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_IMPERSONATE,
     ACTION_BUDDY,
     ACTION_IMPROVE_CURRENT_DRAFT,
+    ACTION_LIBRARY_ACCESS,
     ACTION_PROMPTS,
     ACTION_SAVE_PROMPT_DRAFT,
     ACTION_SAVE_CHATBOOK,
@@ -7047,10 +7050,16 @@ class ChatScreen(BaseAppScreen):
         self._watchlists_operation_rows: dict[str, dict[str, Any]] = {}
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
-        self._console_status_chips_collapsed = resolve_status_chips_collapsed(
-            getattr(app_instance, "app_config", None)
-        )
-        self._console_status_chips_layout_revision = 0
+        # TASK-35100: tok/s tracker fed once per transcript poll tick from
+        # the viewed session's newest assistant row. Live counts use the
+        # shared estimator; the settled figure upgrades to the provider's
+        # reported output total when the message carries usage.
+        self._console_rate_tracker = TokenRateTracker(count_fn=estimate_tokens)
+        #: TASK-35100: this tick's tracker reading, stashed for the mode
+        #: bar's run-chip merge (which syncs BEFORE the transcript sync and
+        #: therefore consumes the previous tick's reading -- one 0.2s lag
+        #: on a ~1s-smoothed label).
+        self._console_rate_reading = None
         self._state_dirty = False
         self._console_settings_coordinated_submission_ids: deque[str] = deque(maxlen=64)
         self._handoff_consumption_in_progress = False
@@ -10023,6 +10032,12 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_SAVE_CHAT:
             self._session._dispatch_promote_console_temporary_session()
             return
+        if action_id == ACTION_LIBRARY_ACCESS:
+            # TASK-35160 follow-up: the status line's Library policy readout
+            # moved into the composer menu; this opens the SAME editor its
+            # segment click used to open.
+            self._library_policy.open_access()
+            return
         if action_id == ACTION_PROMPTS:
             self._open_console_prompts_modal()
             return
@@ -10629,62 +10644,6 @@ class ChatScreen(BaseAppScreen):
             reading_state,
         )
 
-    def _set_console_status_chips_collapsed(self, collapsed: bool) -> None:
-        """Synchronize screen-owned collapse state with the mounted status row."""
-        if self._console_setup_modal_blocking():
-            return
-        collapsed = bool(collapsed)
-        if self._console_status_chips_collapsed == collapsed:
-            return
-        try:
-            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
-        except QueryError:
-            return
-        self._console_status_chips_collapsed = collapsed
-        # task-17652: the collapse choice survives Console re-entry and app
-        # restart. Poke the live config synchronously (compose and __init__
-        # read it back) and move only the disk write off the event loop —
-        # never-raising, since a worker exception is fatal by default.
-        poke_console_setting(
-            getattr(self.app_instance, "app_config", None),
-            "status_chips_collapsed",
-            collapsed,
-        )
-        self.run_worker(
-            partial(persist_status_chips_collapsed, collapsed),
-            thread=True,
-            group="console-status-row-pref",
-            exclusive=True,
-        )
-        self._console_status_chips_layout_revision += 1
-        revision = self._console_status_chips_layout_revision
-        status_chips.set_collapsed(collapsed)
-        status_chips.refresh(layout=True)
-        self.call_after_refresh(
-            self._finish_console_status_chips_layout_change,
-            revision,
-            collapsed,
-        )
-
-    def _finish_console_status_chips_layout_change(
-        self,
-        revision: int,
-        expected_collapsed: bool,
-    ) -> None:
-        """Focus the inverse control after the latest status-row transition."""
-        if (
-            revision != self._console_status_chips_layout_revision
-            or expected_collapsed != self._console_status_chips_collapsed
-        ):
-            return
-        target_id = (
-            "console-status-expand" if expected_collapsed else "console-status-collapse"
-        )
-        try:
-            self.query_one(f"#{target_id}", Button).focus()
-        except QueryError:
-            return
-
     def _finish_console_composer_layout_change(
         self,
         revision: int,
@@ -11021,14 +10980,6 @@ class ChatScreen(BaseAppScreen):
         """
         event.stop()
         self.action_open_console_system_prompt_editor()
-
-    @on(ConsoleLibraryChip.OpenRequested)
-    def _console_library_chip_activated(
-        self, event: ConsoleLibraryChip.OpenRequested
-    ) -> None:
-        """Open the active conversation's two-axis Library policy editor."""
-        event.stop()
-        self._library_policy.open_access()
 
     @on(ConsoleSourcesChip.OpenRequested)
     def _console_sources_chip_activated(
@@ -15237,7 +15188,6 @@ class ChatScreen(BaseAppScreen):
             status_chips = ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
-                collapsed=self._console_status_chips_collapsed,
                 # F1 (final review): compose the chip correctly on the very
                 # first render instead of relying on a post-mount sync call
                 # that some code paths (screen recreation via
@@ -17185,6 +17135,9 @@ class ChatScreen(BaseAppScreen):
                 self._agent.console_turn_activity(),
                 action=self._agent.console_turn_activity_abandon_action(),
             )
+            # TASK-35100: the same poll tick feeds the tok/s tracker from
+            # the messages this sync just pushed and drives its chip.
+            self._sync_console_rate_chip(messages)
             visible_citation_counts = {
                 message_id: count
                 for message_id, count in self._console_citation_counts.items()
@@ -17450,7 +17403,110 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         active_run_copy = self._console_active_run_copy()
+        # TASK-35100 redesign: the live rate rides the run chip's own copy
+        # ("Run: streaming · 42.3 tok/s") -- the strip never gains a slot
+        # while streaming. Compact form on purpose: a live rate exists only
+        # mid-stream, and the full "Streaming response." sentence plus the
+        # rate would cross the chip's 34-cell cap and ellipsize the rate
+        # into unreadability ("· 30..."). The reading is the previous tick's
+        # (the transcript sync stashes it and runs later in the same tick).
+        if active_run_copy:
+            # TASK-35160 review round 2: the merge decision is a pure
+            # function (unit-pinned). Agent runs stay STREAMING through
+            # tool rounds and approval parking, so the status alone does
+            # not prove tokens are flowing -- the approval gate and the
+            # tracker's freshness flag are what keep "Waiting for
+            # approval..." visible.
+            reading = self._console_rate_reading
+            controller = self._console_chat_controller
+            store = self._console_chat_store
+            session_id = (
+                store.active_session_id if store is not None else None
+            )
+            active_run_copy = merge_rate_into_run_copy(
+                active_run_copy,
+                reading,
+                run_streaming=(
+                    controller is not None
+                    and controller.run_state is not None
+                    and controller.run_state.status
+                    == ConsoleRunStatus.STREAMING
+                ),
+                approval_pending=(
+                    controller is not None
+                    and controller.has_pending_approval_round(session_id or "")
+                ),
+            )
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
+
+    def _show_console_rate(self) -> bool:
+        """Return the tok/s readout preference (TASK-35100, ``[console]``)."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        raw = (
+            console.get("show_tokens_per_second", True)
+            if isinstance(console, Mapping)
+            else True
+        )
+        return raw if type(raw) is bool else True
+
+    def _sync_console_rate_chip(self, messages: list[Any]) -> None:
+        """Feed the tok/s tracker this poll tick and push its surfaces (TASK-35100).
+
+        Redesign (2026-10-16): the tracker feeds TWO readouts and owns no
+        strip slot while streaming. The live rate rides the run chip's
+        copy (merged in ``_sync_console_mode_bar`` from the stashed
+        reading); this method shows the settled badge -- compact label,
+        detail in the tooltip -- ONLY once the run has gone terminal and
+        vacated that slot, so the two transient readouts never share the
+        row. Config-off resets the tracker and hides.
+        """
+        visible = False
+        copy = ""
+        tooltip = ""
+        if self._show_console_rate():
+            message = None
+            for candidate in reversed(messages):
+                if getattr(candidate, "role", None) is ConsoleMessageRole.ASSISTANT:
+                    message = candidate
+                    break
+            if message is not None:
+                content = (
+                    message.variants.current.content
+                    if getattr(message, "variants", None) is not None
+                    else getattr(message, "content", None)
+                )
+                usage = getattr(message, "usage", None)
+                reading = self._console_rate_tracker.observe(
+                    getattr(message, "id", None),
+                    status=str(getattr(message, "status", "") or ""),
+                    content=content if isinstance(content, str) else "",
+                    now=time.monotonic(),
+                    output_tokens=getattr(usage, "output", None),
+                )
+                self._console_rate_reading = reading
+                # Slot discipline: the badge waits for the run chip to
+                # vacate (terminal), so streaming never shows both.
+                if reading.kind == "settled" and not self._console_active_run_copy():
+                    visible, copy, tooltip = format_rate_chip_settled(reading)
+            else:
+                # No assistant row in this session (fresh/other tab): the
+                # stashed reading belongs to a DIFFERENT session's stream.
+                self._console_rate_tracker.reset()
+                self._console_rate_reading = None
+        else:
+            self._console_rate_tracker.reset()
+            self._console_rate_reading = None
+        try:
+            status_chips = self.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            )
+        except QueryError:
+            return
+        status_chips.sync_rate_chip(visible, copy, tooltip)
+
 
     def _console_sync_maintenance_close_admission(self) -> None:
         """Defer new UI sync passes while an admitted pass finishes naturally."""
@@ -19310,18 +19366,6 @@ class ChatScreen(BaseAppScreen):
         """Expand the Console composer and restore draft focus."""
         event.stop()
         self._set_console_composer_collapsed(False)
-
-    @on(Button.Pressed, "#console-status-collapse")
-    def handle_console_status_collapse(self, event: Button.Pressed) -> None:
-        """Collapse the Console status row."""
-        event.stop()
-        self._set_console_status_chips_collapsed(True)
-
-    @on(Button.Pressed, "#console-status-expand")
-    def handle_console_status_expand(self, event: Button.Pressed) -> None:
-        """Expand the Console status row."""
-        event.stop()
-        self._set_console_status_chips_collapsed(False)
 
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""

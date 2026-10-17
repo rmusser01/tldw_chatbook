@@ -1,10 +1,10 @@
 """Status-row (chips strip) placement and collapse preferences (task-17652).
 
-The Console status chips either top the composer cluster (the default —
-owner ruling 2026-08-17) or close the shell underneath it, the pre-17652
+The Console status strip either tops the composer cluster (the default —
+owner ruling 2026-08-17) or closes the shell underneath it, the pre-17652
 order from TASK-15704. The preference lives at ``[console]
-status_chips_position``; the strip's collapse state persists at
-``[console] status_chips_collapsed``. ChatScreen composes from these
+status_chips_position``. (The strip's collapse preference was removed with
+the collapsible itself, TASK-35160 follow-up 2026-10-16.) ChatScreen composes from these
 resolvers and re-applies the position on screen resume, because the
 screen instance is cached across navigation and a Settings change must
 take effect without a recompose.
@@ -49,11 +49,6 @@ def resolve_status_chips_position(app_config: Mapping[str, Any] | None) -> str:
         if value in (STATUS_CHIPS_POSITION_ABOVE, STATUS_CHIPS_POSITION_BELOW):
             return value
     return DEFAULT_STATUS_CHIPS_POSITION
-
-
-def resolve_status_chips_collapsed(app_config: Mapping[str, Any] | None) -> bool:
-    """Return the persisted Status-row collapse preference (default expanded)."""
-    return bool(_console_section(app_config).get("status_chips_collapsed", False))
 
 
 def poke_console_setting(app_config: Any, key: str, value: Any) -> None:
@@ -121,16 +116,4 @@ def apply_status_chips_position(screen: Any) -> bool:
     return True
 
 
-def persist_status_chips_collapsed(collapsed: bool) -> None:
-    """Best-effort disk write for the collapse preference.
 
-    Safe to run on a worker thread; a config-write hiccup logs instead of
-    raising, because an uncaught exception in a Textual worker is fatal to
-    the app by default.
-    """
-    from ...config import save_setting_to_cli_config
-
-    try:
-        save_setting_to_cli_config("console", "status_chips_collapsed", collapsed)
-    except Exception:
-        logger.warning("Failed to persist status_chips_collapsed.")

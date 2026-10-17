@@ -2431,10 +2431,6 @@ def _load_settings_uncached(
     else:
         _status_chips_position = _status_chips_position.strip().lower()
     final_console_settings_cli["status_chips_position"] = _status_chips_position
-    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
-        final_console_settings_cli.get("status_chips_collapsed", False),
-        False,
-    )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
             "paste_collapse_threshold",
@@ -4087,6 +4083,7 @@ collapse_large_pastes = true  # Display large pasted chunks compactly in Console
 # the [api_settings.custom] fallbacks are identical either way.
 custom_endpoints_use_engine = true
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
+show_tokens_per_second = true  # Console status chip: live streaming rate, then the finished response's average
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
 # Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
 # TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES / TLDW_CONSOLE_REASONING_NATIVE_TOOL_OVERRIDES.
