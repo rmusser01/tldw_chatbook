@@ -212,6 +212,7 @@ jobs:
             Tests/Chat/test_provider_evidence_hardening.py \
             Tests/Chat/test_first_run_connection_evidence.py \
             Tests/ProductionApp/test_provider_selection_ownership.py \
+            Tests/Backup_Recovery/test_skills_recovery_controls.py \
             --timeout=180 \
             --tb=short
 
@@ -298,6 +299,8 @@ jobs:
             Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word \
             Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule \
             Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once \
+            Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column \
+            Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row \
             --timeout=300 \
             --tb=short
 

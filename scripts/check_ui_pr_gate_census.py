@@ -378,7 +378,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Phase 9 Task 12 appends four, each 3 of 3 serial: the shared-evidence
 # readers file whole (TASK-33005.9) and three TASK-33005.10 node ids (the
 # late switcher probe, the Model summary reflow, the keyed Settings case): 346.
-MINIMUM_FILES = 346
+# Phase 9 Task 14 appends four model-config entries no lane ran, each 3 of 3
+# serial in the lane's install set: the field-label file whole
+# (TASK-33002.17), the Lab GGUF one-row node (TASK-33641.2), the Skills
+# built-in rows file whole (TASK-33003.22) and the legacy [API] key save node
+# (TASK-33001.15); it also widens the provider save-scope node to its whole
+# file in place (TASK-33002.17, no count change): 350 (after Task 12's
+# 346, in the Wave 5 integration).
+MINIMUM_FILES = 350
 
 
 def read_census(path: Path) -> list[str]:

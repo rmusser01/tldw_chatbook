@@ -309,7 +309,8 @@ Tests/UI/test_settings_api_key_clear_reset.py
 # Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft
 # Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
-Tests/UI/test_settings_provider_save_scope.py::test_providers_models_state_line_names_its_scope_in_one_row
+# TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
+Tests/UI/test_settings_provider_save_scope.py
 # TASK-33007.2, parent AC#2: Model is at most five Tab presses from Provider.
 Tests/UI/test_settings_connect_tab_budget.py
 # Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
@@ -642,3 +643,12 @@ Tests/UI/test_console_switcher_local_probe.py::test_closing_mid_probe_raises_not
 Tests/UI/test_console_resize_reflow.py::test_model_summary_sync_invalidates_mounted_context_allocation
 # TASK-33005.10 AC#4: a keyed Settings test reaches Chat settings for the same stored key (8 s, private profile).
 Tests/UI/test_settings_provider_test_draft.py::test_settings_test_result_reaches_chat_settings_for_the_same_connection[stored-key]
+# Phase 9 Task 14 (2026-10-17) appends the model-config tests no PR lane ran, each 3 of 3 serial in the lane's install set.
+# TASK-33002.17: every model-config surface takes its labels from the one field table (whole file, 16 tests, ~22 s, private profile).
+Tests/UI/test_model_config_field_labels.py
+# TASK-33641.2 (ledger R11): the Lab GGUF "Model source:" label and its Select paint on one row at 211x44 and 235x52 (~12 s, private profile).
+Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_on_one_row
+# TASK-33003.22 (ledger R11): the Skills preview's Enabled label hugs its text under the app stylesheet (whole file, 15 tests, ~3 s).
+Tests/UI/test_library_skills_builtin_rows.py
+# TASK-33001.15 (ledger R18): a Settings model save writes a key copied from legacy [API] into the provider table (private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table

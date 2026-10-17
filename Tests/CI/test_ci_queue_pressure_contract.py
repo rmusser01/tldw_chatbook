@@ -196,6 +196,10 @@ FAST_LANE_TARGETS = (
     # provider-selection tests, each in its own private-profile child (three
     # app mounts, ~30 s).
     "Tests/ProductionApp/test_provider_selection_ownership.py",
+    # TASK-33641.7 (ledger R11): the mounted Library Skills recovery controls,
+    # each case in a subprocess host that resolves the theme guards (13 cases,
+    # ~40 s).
+    "Tests/Backup_Recovery/test_skills_recovery_controls.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -286,6 +290,10 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word",
     "Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule",
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",
+    # Phase 9 Task 14 (ledger R11): TASK-33641.3's backend-row tests are
+    # bootstrap_profile, so they run here (12 cases, ~20 s, 3 of 3 serial).
+    "Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column",
+    "Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
