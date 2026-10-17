@@ -317,8 +317,6 @@ from ...Chat.console_prefill import (
     describe_prefill_preview,
     parse_prefill_args,
 )
-from ...Chat.console_generate_image import insert_style_token_into_draft
-from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
@@ -19181,6 +19179,8 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return False
+        from ...Chat.console_generate_image import insert_style_token_into_draft
+
         new_draft = insert_style_token_into_draft(composer.draft_text(), style_id)
         composer.clear_draft()
         composer.insert_text_as_paste(new_draft)
@@ -22520,6 +22520,8 @@ class ChatScreen(BaseAppScreen):
             # a contentless More Details prompt) would be a lie (T5 final
             # review).
             return
+        from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
+
         sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
         template = str(
             get_cli_setting(

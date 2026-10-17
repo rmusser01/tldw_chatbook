@@ -1232,3 +1232,70 @@ async def test_import_local_read_failure_stays_per_item_when_preview_is_unchange
     assert len(result.failures) == 1
     assert result.failures[0].code == "import_item_unavailable"
     assert sources.list_sources() == before
+
+
+async def test_persisted_reference_discard_uses_retained_review_and_rechecks_identity(
+    source_stack, native_package
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service = source_stack
+    op = "persisted-display-candidate"
+    snapshot = await service.acquire_snapshot(
+        select_local_source(native_package()),
+        op,
+        await service.acquisition_destination(op),
+    )
+    sources = SourceService(service)
+    rows = await sources.list_persisted_candidates()
+    row = next(item for item in rows if item["operation_id"] == op)
+    assert row["reason"] is None
+    review = await sources.review_candidate_discard(row["reference"])
+    with pytest.raises(ValueError):
+        await sources.discard_candidate_reference(replace(review, token="forged"))
+    assert Path(snapshot.materialized_identity).exists()
+    await sources.discard_candidate_reference(review)
+    assert Path(
+        snapshot.materialized_identity
+    ).exists(), "reference discard is not physical cleanup"
+    after = next(
+        item
+        for item in await sources.list_persisted_candidates()
+        if item["operation_id"] == op
+    )
+    assert after["reason"] == "reference_already_released"
+
+
+async def test_selected_format_authenticates_unchanged_full_producer(
+    source_stack, native_package
+):
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service = source_stack
+    op = "format-reviewed"
+    snapshot = await service.acquire_snapshot(
+        select_local_source(native_package()),
+        op,
+        await service.acquisition_destination(op),
+    )
+    sources = SourceService(service)
+    inspected = await sources.inspect_acquired(snapshot, dialect="portable")
+    assert inspected.dialect == "portable"
+    forged = snapshot.model_copy(
+        update={
+            "inspection": snapshot.inspection.model_copy(
+                update={"source_identity": "forged"}
+            )
+        }
+    )
+    with pytest.raises(ValueError):
+        await sources.inspect_acquired(forged, dialect="portable")
+    review = await sources.review_acquired(
+        snapshot, dialect="portable", selection=("skill:review",), workspace_id=None
+    )
+    assert (await service.commit(review, review.operation_id)).committed
+    assert not (await service.management_snapshot(None))[0].trusted

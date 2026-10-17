@@ -33,6 +33,7 @@ class PluginReview:
         "update",
         "retain",
         "configure",
+        "select",
     ] = "install"
     intent: Literal["inherit", "enabled", "disabled"] | None = None
     previous_revision: str | None = None
@@ -57,6 +58,19 @@ class OperationReceipt:
     persistence_error: str | None = None
     cleanup_errors: tuple[str, ...] = ()
     request_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AuthorityResetReview:
+    """Explicit plugin-only reset, retaining the original namespace and roots."""
+
+    token: str
+    operation_id: str
+    namespace_id: str
+    posture: str
+    marker: object
+    roots_json: str
+    expires_at: float
 
 
 def inspection_identity(inspection: PackageInspection) -> str:

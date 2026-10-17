@@ -30,6 +30,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _message_row_plain_text,
     _select_llamacpp_console,
 )
+from tldw_chatbook.Chat import console_generate_image as generation_owner
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
@@ -485,7 +486,9 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         batch_calls += 1
         raise AssertionError("cancelled canonical decode reached dispatch")
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_then_dispatch)
+    monkeypatch.setattr(
+        generation_owner, "run_generation_batch", _canonical_then_dispatch
+    )
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -550,7 +553,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         assert kwargs["cancel_event"].is_set()
         raise ImageGenerationCancelled()
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _blocked_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _blocked_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         old = host.screen_stack[-1]
         await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -694,7 +697,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 errors=[],
             )
 
-        monkeypatch.setattr(image_module, "run_generation_batch", _terminal_batch)
+        monkeypatch.setattr(generation_owner, "run_generation_batch", _terminal_batch)
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -934,7 +937,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
             )
         raise RuntimeError("sentinel response body and private descriptor")
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _failed_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _failed_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         old = host.screen_stack[-1]
         await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -1020,7 +1023,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
                 raise ComfyUIImageEditError("source_upload")
             raise RuntimeError("sentinel response body /private/source.png")
 
-        monkeypatch.setattr(image_module, "run_generation_batch", _failed_batch)
+        monkeypatch.setattr(generation_owner, "run_generation_batch", _failed_batch)
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")

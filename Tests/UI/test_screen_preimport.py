@@ -381,6 +381,9 @@ async def test_screen_preimport_scheduled_only_after_ui_ready_flips(monkeypatch)
     is about a value observed synchronously inside the real call itself.
     """
     monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", "0")  # only the ordering matters here
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    assert save_setting_to_cli_config("splash_screen", "enabled", False)
     app = _build_test_app()
 
     ui_ready_at_call_time: list[bool] = []

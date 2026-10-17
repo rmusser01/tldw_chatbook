@@ -129,6 +129,9 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Task24/R107: explicit interaction helpers stay behind first use.
+    "tldw_chatbook.Chat.console_generate_image",
+    "tldw_chatbook.Chat.console_side_chat",
     # TASK-32507: run-hook commands and summaries are lifecycle-event work.
     "tldw_chatbook.Agents.run_hooks",
     # Speculative voice resources are first-voice work, never first paint.
@@ -488,3 +491,61 @@ def test_census_script_embeds_the_unit_tested_helper():
         in _CENSUS_SCRIPT
     )
     compile(_CENSUS_SCRIPT, "<census>", "exec")
+
+
+def test_console_interaction_helpers_load_only_on_first_use():
+    """Cold Console import defers helpers; actual handlers keep canonical owners."""
+    script = r"""
+import Tests.conftest  # private profile/null keyring/network guard before product
+import asyncio
+import sys
+from types import SimpleNamespace
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
+names = ("tldw_chatbook.Chat.console_generate_image", "tldw_chatbook.Chat.console_side_chat")
+assert all(name not in sys.modules for name in names), [n for n in names if n in sys.modules]
+
+class Composer:
+    text = "/generate-image a dragon"
+    def draft_text(self): return self.text
+    def clear_draft(self): self.text = ""
+    def insert_text_as_paste(self, value): self.text += value
+composer = Composer()
+assert ChatScreen._insert_console_style_token_into_composer(
+    SimpleNamespace(query_one=lambda *args: composer), "style_anime")
+from tldw_chatbook.Chat import console_generate_image as owner
+assert composer.text == owner.insert_style_token_into_draft("/generate-image a dragon", "style_anime")
+assert names[1] not in sys.modules
+options = asyncio.run(ConsoleImageController._console_generate_image_llm_context_options(
+    SimpleNamespace(), SimpleNamespace(context_llm_enabled=False, context_llm_turns=3, context_llm_timeout_seconds=2)))
+assert type(options) is owner.LLMContextOptions
+assert not options.enabled
+
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSideChatRequested
+pushed = []
+gateway = object()
+selection = ConsoleProviderSelection(provider="openai", explicit_model="test")
+screen = SimpleNamespace(app=SimpleNamespace(push_screen=pushed.append),
+    _ensure_console_provider_gateway=lambda: gateway,
+    _build_console_provider_selection=lambda: selection)
+ChatScreen._console_side_chat_requested(screen, ConsoleSideChatRequested(quote="selected text", mode="ask"))
+from tldw_chatbook.Chat.console_side_chat import ConsoleSideChatService
+assert len(pushed) == 1
+assert type(pushed[0]._service) is ConsoleSideChatService
+assert pushed[0]._service.gateway is gateway
+assert pushed[0]._provider_selection is selection
+assert pushed[0]._auto_send_prompt is None
+print("FIRST_USE_IDENTITY_OK")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FIRST_USE_IDENTITY_OK" in result.stdout

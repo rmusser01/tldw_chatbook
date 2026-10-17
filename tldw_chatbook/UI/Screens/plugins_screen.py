@@ -68,6 +68,11 @@ class PluginsScreen(BaseAppScreen):
                 yield Button("Repository…", id="plugins-repository")
                 yield Button("Import…", id="plugins-import")
                 yield Button("Add source…", id="plugins-add-source")
+            with Horizontal(id="plugins-management-actions"):
+                yield Button("Authority…", id="plugins-authority")
+                yield Button("History…", id="plugins-history")
+                yield Button("Candidates…", id="plugins-candidates")
+                yield Button("Reset authority…", id="plugins-reset-authority")
             yield Input(
                 self.browse.query,
                 placeholder="Search plugins or sources (/)",
@@ -94,6 +99,11 @@ class PluginsScreen(BaseAppScreen):
                         yield Static("", id="plugins-readme", markup=False)
                     with Horizontal(id="plugins-detail-actions"):
                         yield Button(
+                            "Review preview…",
+                            id="plugins-review-preview",
+                            disabled=True,
+                        )
+                        yield Button(
                             "Preview — select entry",
                             id="plugins-preview-entry",
                             disabled=True,
@@ -108,6 +118,7 @@ class PluginsScreen(BaseAppScreen):
                             id="plugins-read-readme",
                             disabled=True,
                         )
+                        yield Button("Manage…", id="plugins-manage", disabled=True)
             with VerticalScroll(id="plugins-entry-form"):
                 yield Static(
                     "", id="plugins-form-title", classes="section-title", markup=False
@@ -149,6 +160,7 @@ class PluginsScreen(BaseAppScreen):
                 )
                 with Horizontal(classes="plugins-form-actions"):
                     yield Button("Preview", id="plugins-submit")
+                    yield Button("Review install…", id="plugins-review-install")
                     yield Button("Back", id="plugins-form-back")
                 yield Static("", id="plugins-form-result", markup=False)
 
@@ -437,6 +449,7 @@ class PluginsScreen(BaseAppScreen):
                 "Read README",
                 "README — select installed",
             ),
+            ("plugins-manage", "installed", "Manage…", "Manage — select installed"),
         ):
             button = self.query_one(f"#{identity}", Button)
             button.display = self.browse.view == view
@@ -458,6 +471,12 @@ class PluginsScreen(BaseAppScreen):
             ):
                 button.label = "Preview unavailable — unsupported"
         self.query_one("#plugins-submit", Button).disabled = self._action_busy
+        self.query_one("#plugins-review-install", Button).disabled = (
+            self.browse.preview is None
+        )
+        self.query_one("#plugins-review-preview", Button).disabled = (
+            self.browse.preview is None
+        )
 
     @on(OptionList.OptionSelected, "#plugins-list")
     def _select_row(self, event):
@@ -518,6 +537,34 @@ class PluginsScreen(BaseAppScreen):
             self.action_plugins_view(action)
         elif action in {"back", "form-back"}:
             self.action_plugins_back()
+        elif action in {"manage", "review-install", "review-preview"}:
+            from ...Widgets.plugin_review_modal import PluginReviewModal
+
+            row = self._selected() if action == "manage" else None
+            producer = (
+                self.browse.preview
+                if action in {"review-install", "review-preview"}
+                else None
+            )
+            if row is not None or producer is not None:
+                self.app.push_screen(
+                    PluginReviewModal(
+                        self.sources,
+                        workspace_id=(
+                            self.browse.workspace_id
+                            if row
+                            else self.browse.preview_workspace_id
+                        ),
+                        installation_id=row.installation_id if row else None,
+                        producer=producer,
+                    )
+                )
+        elif action in {"authority", "history", "candidates", "reset-authority"}:
+            self.run_worker(
+                self._management_entry(action),
+                exclusive=True,
+                group="plugins-management-entry",
+            )
         elif action in {"previous", "next"}:
             self.browse.page += -1 if action == "previous" else 1
             self._reload()
@@ -543,6 +590,45 @@ class PluginsScreen(BaseAppScreen):
                 ),
                 group="plugins-action",
                 exclusive=True,
+            )
+
+    async def _management_entry(self, action):
+        from ...Widgets.plugin_review_modal import (
+            PluginAuthorityDialog,
+            PluginAuthorityResetModal,
+            PluginStatusModal,
+        )
+
+        try:
+            if action == "reset-authority":
+                self.app.push_screen(PluginAuthorityResetModal(self.sources.plugins))
+            elif action == "authority":
+                posture = await self.sources.plugins.authority_status()
+                if posture in {"needs_setup", "locked"}:
+                    self.app.push_screen(
+                        PluginAuthorityDialog(
+                            self.sources.plugins,
+                            "setup" if posture == "needs_setup" else "unlock",
+                        ),
+                        lambda ready: self._reload() if ready else None,
+                    )
+                elif posture in {"ready", "ready_reduced"}:
+                    await self.sources.plugins.recover()
+                    self._status(
+                        "Authority recovered; saved-data recovery remains separately reviewed."
+                    )
+                    self._reload()
+                else:
+                    self._status(
+                        f"Authority: {posture}. Restore the protected backend or wait for the owning instance; no automatic reset or takeover."
+                    )
+            else:
+                self.app.push_screen(
+                    PluginStatusModal(self.sources, candidates=action == "candidates")
+                )
+        except (OSError, ValueError, RuntimeError):
+            self._status(
+                "Authority unavailable. Check the protected backend and retry."
             )
 
     @on(Input.Changed, "#plugins-location")

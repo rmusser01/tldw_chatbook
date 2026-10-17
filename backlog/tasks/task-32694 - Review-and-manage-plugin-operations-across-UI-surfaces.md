@@ -1,9 +1,11 @@
 ---
 id: TASK-32694
 title: Review and manage plugin operations across UI surfaces
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-16 04:33'
+updated_date: '2026-10-17 00:12'
 labels:
   - plugins
   - implementation
@@ -30,7 +32,77 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [ ] #2 Updates, rollback, scoped disable, uninstall and data deletion expose affected workspaces, active blockers, stopping, persistence failure, cleanup-pending and recovery outcomes.
 - [ ] #3 Close/Back preserves in-session draft and focus without cancelling or approving; explicit cancellation follows the current durable phase and cannot retarget after navigation.
 - [ ] #4 Library Skills and MCP handoffs preserve installation/component/workspace identity with ownership labels and guarded edits; mounted/live isolated-profile flows verify all lifecycle actions.
+- [ ] #5 Users can review eligible persisted acquisition references for discard while pending, unknown, changed or reboot-bound custody remains protected and no full producer object is fabricated from a compact reference.
+- [ ] #6 First-use plugin authority setup, unlock and specific recovery actions use the existing owner; secrets stay in the owning credential flow and never enter plugin view drafts, logs or stable metadata.
+- [ ] #7 Ambiguous package formats require an explicit reviewed interpretation of authenticated unchanged acquired bytes; selection preserves source identity and format changes require renewed review without weakening native constraints.
+- [ ] #8 Users can review post-install component selection changes against the current immutable revision, with safe drain and generation advancement while existing trust, mappings and activation remain unchanged and ordinary dependency/readiness gates still apply.
+- [ ] #9 Library Skills collision warnings cover all current registered builtin/tool and Console command names while plugin-owned read-only management and standalone editing behavior remain intact.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/162-managed-agent-plugins.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/097-boot-budget-ratchets.md
+Reason: Implement approved exact-review/lifecycle/ownership UI in existing plugin, credential, permission, Console and navigation owners; amend ADR162 for concrete public API/UI seams before those edits, without a new authority owner or schema by default.
+
+1. Read actual TASK32694 and R1-verified task-24-brief.md, i6-ownership-ui-research.md, accepted I5 Fix1 report/review, relevant F4/F6/F7/F8/M4 APIs and spec9.1–9.3. Apply existing Impeccable context/Operate design, craft floor immediately before UI edits, branch design-language and current-user primary read-only component-patterns/architecture references plus relevant lessons. User has approved this design; no new interview, context rerun or concept contest.
+2. BASE e817ec8df5aef3177eb00d26ff8678affc53c040, five new and23eligible existing UI/ownership/test/style/doc paths captured before code, exact baseline manifest. Paths eligible, no forced hunks. Before any product/test edit, sole worker proposes minimal concrete missing backend and app-owned operation-task/status seams: combined install/explicit-workspace activation if needed, public authority setup/unlock/recovery, explicit selected interpretation at authenticated review, persisted candidate reference enumeration/reviewed discard and actual runtime/receipt views. Root CLI-amends exact additional source/test paths and ADR check before code. No private coordinator/registry calls from UI or parallel runtime/policy/permission owner.
+3. Establish meaningful RED through intended mounted/public review entry with valid neighboring control; implement exact immutable review/configuration inputs, selection/dependencies, privileges/adaptations/endpoints/secret-reference readiness and captured workspace/cross-workspace impact. UI holds actual issued PluginReview/RootReview/full producer objects, never constructs/fabricates them from display metadata. Preserve default-disabled install; Install and enable requires explicit captured workspace intent and current authority.
+4. Offer actual first-use public PluginService.bootstrap/unlock and specific recovery/secondary-owner paths through the owning ephemeral credential flow. Secrets stay there, absent from plugin view drafts, logs or stable metadata; no standalone SkillTrustService substitution or silent reduced protection. Revalidate all nonsecret drafts on return; explicit Discard alone clears them.
+5. Wire configure/install/enable/update/rollback/scoped disable/uninstall/data deletion through existing public facades and owners. Configuration save remains non-executing; explicit Test connection/Run hook test disclose execution and use normal review/permission. Honor M4 R67 two-stage connection and exact discovered-tool mapping review. Global defaults separate from captured workspace overrides with affected-workspace preview. Distinguish submitted/persisted/stopping/stopped/cleanup-pending/unknown-remote/session-only persistence failure; labels are pure display.
+6. Retain submitted operations across navigation and restart by existing durable receipt/reconciliation APIs and the smallest app-owned UI awaiter/status cache. Close/Back never approves/cancels. Separate wait, state-aware cancel operation and explicit affected-work cancellation; do not lose uncertain or surviving writer ownership, retarget after workspace changes or infer remote stop from detachment. Propose missing facade/status APIs before edits; no duplicate coordinator.
+7. Implement candidate management under recorded R95/I4 handoff: list authenticated persisted references and explicitly review eligible reference discard against full protected source/revision/transition/review/candidate/local-dependency union. Pending/lost/reboot/unknown candidates remain protected Recovery required. Never synthesize full AcquiredSnapshot from compact reference or infer abandonment from empty memory. Explicit dialect choice authenticates unchanged full producer DTO first, then reinspects exact retained bytes for the chosen interpretation; no mutated/fabricated producer result to bypass its signed digest. Preserve native-authoritative rejection, selected format/overlay/source identity and renewed review on switches.
+8. Saved data uses actual F8 R43/R46 exact-root APIs. Surface dirty/unknown/legacy/native boot/physical-identity reasons and explicit reviewed reconciliation, exact roots/users and deletion-wait status. No force takeover, automatic rebind after reboot, empty-process inference or widened filesystem/workspace grant. Run actual recovery UI control, with platform limits explicit.
+9. R31 paths include pure Library/library_skills_state.py, actual UI controller and canvas, MCP servers-mode/workbench plus original field-holder/profile form. Preserve typed installation/component/workspace identity and round-trip focus/state; package definitions read-only, removal routes to plugin selection. Supported user configuration/credential edits remain in existing owners. Pydantic extra allow already preserves ownership; no redundant schema changes. Keep independent skill/server edits working as positive controls.
+10. Review/operations/modules remain truly lazy at first use; one module and391LOC preimport headroom is explicit. Reuse standard token-backed terminal list/details/stacked forms at80x24/120x35, readable disabled reasons and actual paint contrast >=4.5. Preserve nested safe-dismissal/focus/drafts/query/page/stable selection and reject obsolete responses/deleted workspaces. No global token changes or new tokens without concrete scope; rebuild generated CSS via builder. Screen keys cannot shadow terminal/global conventions; footer only advertises implemented actions.
+11. Run exact four brief files plus affected public source/service and Library/MCP/widget/nav/CSS/token/startup/preimport checks. Add real controls for pending review+source refresh/reorder, nested dismissal, secret draft handling, cross-workspace impact, session-only failure, surviving writer/unknown remote cancellation, partial deletion and independent mutations. Live isolated profile must exercise actual lifecycle and setup/ownership routes, not only direct actions/prebootstrapped fakes, with parsed config/actual DB paths/private HOME+null keyring/no external network and interpreter/package provenance. R91 normal host only for evidenced kernel-dependent native cases, no blanket context or production shim. No full suite without user opt-in.
+12. Freeze exact product/tests/generated CSS before covering checks. Preserve raw RED/harness/product failures and successful controls, each command/exit/context, actual wide/narrow/focus/contrast artifacts, strict current/exact BASE static parity and clean changed hunks under R10, git diff check, self-review and final handoffs. Use task-24-specific unique files and preserve every indexed artifact before rewriting, including instruction drafts; Task23 root historical-dispatch gap remains documented. Sole worker/no helpers/no Git or Backlog mutations. Root verifies, commits, dispatches one fresh task spec+quality+visual gate and resolves its fix loop before AC/notes/Done.
+
+13. Concrete seam proposal and root decision: task-24-seam-proposal-e817ec8df5.md plus task-24-root-proof-addendum-e817ec8df5.md, constrained by task-24-root-seam-decision-e817ec8df5.md/R101–R103. Amend existing ADR162 and ADR163 cross-reference/spec/subplan before source edits. Exact additional eligible paths (no forced hunks):
+- tldw_chatbook/Plugins/service.py
+- tldw_chatbook/Plugins/source_service.py
+- tldw_chatbook/Plugins/coordinator.py
+- tldw_chatbook/Plugins/review.py
+- tldw_chatbook/Plugins/data_cleanup.py
+- tldw_chatbook/Chat/console_runtime.py
+- tldw_chatbook/Chat/console_chat_controller.py
+- tldw_chatbook/Chat/console_plugin_tests.py
+- Tests/Plugins/test_source_service.py
+- Tests/Plugins/test_coordinator.py
+- Tests/Plugins/test_native_skill_flow.py
+- Tests/Plugins/test_revision_drain.py
+- Tests/Plugins/test_recovery.py
+- Tests/Plugins/test_data_cleanup.py
+- Tests/Plugins/test_authority.py
+- Tests/Chat/test_hooks_v2_lifecycle.py
+- Tests/Chat/test_console_plugin_tests.py
+- backlog/decisions/163-expanded-console-hook-runtime.md
+Keep Plugins/authority.py read-only: closed OperationResult already includes select. Public APIs remain in existing SourceService/PluginService/coordinator/RootUsage/Console owners. Atomic install intent leaves trust false/global disabled; explicit acquired format authenticates unchanged full producer; reviewed reference discard rechecks full protected union and native custody. Bounded authenticated status enumeration never promotes SQLite hints to proof. Actual reviewed selection uses existing select/drain/commit while preserving trust/mappings/activation. Console tests use a real captured existing session and shared reservation/permission machinery with no model call/context injection. R103 permits only positive independently protected clean-checkpoint-qualified reboot reconciliation, exact native identities and current drained custody, rechecked at apply across its own dirty publication. Operator attestation, changed boot alone and empty rows are not proof; dirty/unknown/legacy/reconstructed/remote uncertainty stays specific Recovery required with actual stop/wait/retry/resume options. Exact whole-root proof limitation remains explicit in final qualification.
+
+14. R104 bounded affected-Library guard repair: unchanged test_shadow_name_set_stays_in_sync_with_real_sources exposed missing actual runtime/tool/Console command names; its explicit contract forbids accepting drift as baseline. In already eligible Library/library_skills_state.py, add only the exact uncovered current four-source union to existing _SHADOWED_BUILTIN_NAMES. No import/API/policy/architecture change, no weakened test, no unrelated repair. ADR required: no for this routine literal synchronization; existing ADR162 applies to the separate plugin ownership work. Root node comparison in task-24-root-library-node-classification-cli3.json proves only unchanged constant/test AST at Task24 BASE, not entire current files or branch-start cause. Preserve initial failure and rerun exact guard, complete affected Library file and actual ownership/standalone positive controls.
+
+15. R105 missing exact-review removal seam under existing AC1/2: before new seam source edits amend ADR162/spec/subplan, then expose PluginService/coordinator review_removal(installation_id, *, uninstall: bool) issuing existing revoke/uninstall PluginReview before UI confirmation and begin_reviewed_removal(original_review) through existing immediate fence/cancel/persist owner. Scoped disable reuses reviewed activation disabled+commit. Original object/kind/expiry/installation validated through minimal actual-object facade custody; coordinator/registry authority remains worker-only. No replacement review of newer state, new owner/schema or destructive cleanup before original review validation. Preserve F6 immediate fence before storage on accepted request, same request/operation ID dedup and honest session-only conservative block on failed worker validation/persistence; never reopen or claim durable removal falsely. Exact contract task-24-root-reviewed-removal-decision-cli4.md. All46paths remain eligible;9AC unchanged. Run stale revision/activation before confirm, held-worker, forged/expired, dedup, persistence/navigation and real success controls against final frozen bytes.
+
+16. R106 targeted HTTP fixture execution context only (no source/API/AC/path expansion): task-24-required01.txt records56pass/18fixture-bindEPERMfail/1nativecontrolseparate. Rerun only these exact three MCP HTTP function groups in tool-reviewed normalhost context, identical declared frozen source/test bytes/private bootstrap/nullkeyring/externalnetworkrefusal/127.0.0.1ephemerallistener:
+- Tests/MCP/test_control_plane_lifecycle.py::test_actual_http_auth_challenge_has_explicit_service_diagnostic
+- Tests/MCP/test_control_plane_lifecycle.py::test_actual_http_profile_uses_existing_service_audit_owner
+- Tests/MCP/test_control_plane_lifecycle.py::test_reopened_http_unsupported_fields_never_dispatch
+Record source hashes before/after and command/exit/raw/context; preserve all18initialfailures. No product/inherited qualification until actual successful rerun; no external endpoint, nonloopback listener, real profile, dependency change or full sweep. Separate R106 from native-only R91. Freeze02 includes semantic setup-success UI status reload plus formatting, not formatting-only; preserve Freeze01 and renew affected UI/live/static/ratchet or changed-backend coverage. ADR required: no for this bounded test-context qualification; existing ADR162/163 govern unchanged product contracts. Scope46eligible/84BASE/9AC remains.
+
+17. R107 bounded startup repair before final gate: paired exactTaskBASE02/current05 have identical975-name warm flag-time module sets (original branch-start cause unproved), over unchanged973 cap; ordering fixture enables7s splash but waits5s. Exact proposal task-24-startup-seam-proposal-e817ec8df5.md and root decision task-24-root-startup-decision-cli6.md govern. Additional eligible existing paths, not forced hunks:
+- tldw_chatbook/UI/Screens/chat_screen.py
+- tldw_chatbook/UI/Console_Modules/image.py
+- Tests/UI/test_screen_preimport.py
+- Tests/Performance/test_ui_ready_module_census.py
+- Tests/Chat/test_console_generation_actions.py
+- Tests/Chat/test_console_h3_image_edit.py
+- Tests/UI/test_console_pending_attachment_stash.py
+- Tests/Chat/test_console_style_picker.py
+Move only actual side-chat and generation imports to existing first-use consumers, retaining canonical class/function identities, runtime constructors/isinstance, annotation handling, closure custody and admission/default behavior. Migrate incidental test patch points to canonical owner, no duplicate wrappers. Disable optional splash only in named ordering fixture through supported config_overrides, retaining5s bound and observed ordering assertion. Add true cold absence/first-use positive control and pin deferred names, preserve973/all other caps, warm flag-time snapshot/anti-vacuity and production splash. Run actual style insertion, side-chat dispatch/service/modal, generation/H3/attachment cancellation and unchanged startup/preimport/CSS guards. No suppression, route omission, cap/snapshot increase or full sweep. ADR required: no newADR; direct implementation of existing ADR097; ADR150/162/163 boundaries unchanged. Document repair in existing spec/subplan; preserve all failure/freeze evidence. Scope54eligible paths and9AC unchanged, baseline copies captured before edits. Root CLI6 exact readback before worker edits.
+
+18. R108 precise correction to step17 supported splash fixture seam: actual app.compose rereads get_cli_setting after _build_test_app temporary patch exits, so config_overrides snapshot does not disable splash; startup-green06 preserves1pass1fail. In same eligible named ordering test only, use documented save_setting_to_cli_config("splash_screen", "enabled", False) into existing per-test private TOML before app build, checking success and preserving5s/synchronous ordering assertion. Replace redundant snapshot override; no production/factory change, real profile, wait/cap increase, suppression or scope expansion. Read task-24-root-startup-fixture-decision-cli7.md. ADR required: no newADR, routine fixture correction under unchanged ADR097/R107. Scope54eligible/9AC unchanged; app_factory read-only baseline captured; root CLI7 verified before edit.
+<!-- SECTION:PLAN:END -->
 
 ## Renumbering provenance
 

@@ -210,10 +210,16 @@ class PluginCoordinator:
         *,
         selection: tuple[str, ...],
         workspace_id: str | None,
+        enable_in_workspace: bool = False,
     ) -> PluginReview:
         """Capture a new local install identity and all current authority inputs."""
         self._require_worker()
         baseline = self.published_snapshot()
+        if type(enable_in_workspace) is not bool or (
+            enable_in_workspace
+            and workspace_id in {None, "global", "workspace-default"}
+        ):
+            raise ValueError("install_enable_requires_named_workspace")
         if inspection.rejected or inspection.effective_digest is None:
             raise ValueError("package cannot be installed")
         if (
@@ -253,8 +259,38 @@ class PluginCoordinator:
             authority_json=canonical_json(baseline),
             token=uuid4().hex,
             expires_at=time.monotonic() + REVIEW_SECONDS,
+            intent="enabled" if enable_in_workspace else None,
         )
         review = self._issue_review(review)
+        self._reviews[review.token] = review
+        return review
+
+    def review_selection(self, installation_id: str, *, selection: tuple[str, ...]):
+        """Review current component selection without conferring revision trust."""
+        from dataclasses import replace
+
+        prior = self._review_existing(installation_id, kind="select")
+        if (
+            type(selection) is not tuple
+            or len(selection) != len(set(selection))
+            or not set(selection) <= prior.inspection.inventory.keys()
+        ):
+            self._reviews.pop(prior.token, None)
+            raise ValueError("invalid reviewed selection")
+        token = self.revision_drain.reserve(
+            installation_id,
+            prior.inspection.effective_digest,
+            review_token=prior.token,
+            expires_at=prior.expires_at,
+        )
+        review = self._issue_review(
+            replace(
+                prior,
+                selection=tuple(sorted(selection)),
+                drain_token=token,
+                previous_revision=prior.inspection.effective_digest,
+            )
+        )
         self._reviews[review.token] = review
         return review
 
@@ -321,7 +357,10 @@ class PluginCoordinator:
     ) -> OperationReceipt:
         """Activate the reviewed fence and retain application after a waiter leaves."""
         self._require_worker()
-        if review.kind != "update" or self._reviews.get(review.token) != review:
+        if (
+            review.kind not in {"update", "select"}
+            or self._reviews.get(review.token) != review
+        ):
             raise ValueError("invalid revision review")
         ticket = self.revision_drain.activate(
             review.drain_token, review=review, operation_id=operation_id
@@ -354,6 +393,8 @@ class PluginCoordinator:
                         raise
                     with self.fences.live_lock:
                         ticket.phase = "complete"
+                    if review.kind == "select":
+                        return receipt
                     from dataclasses import replace
 
                     try:
@@ -381,6 +422,14 @@ class PluginCoordinator:
     def review_trust(self, installation_id: str) -> PluginReview:
         """Review the exact currently installed bytes for explicit trust."""
         return self._review_existing(installation_id, kind="trust")
+
+    def review_removal(self, installation_id: str, *, uninstall: bool) -> PluginReview:
+        """Issue exact management consequences before immediate revocation starts."""
+        if type(uninstall) is not bool:
+            raise ValueError("invalid_removal_kind")
+        return self._review_existing(
+            installation_id, kind="uninstall" if uninstall else "revoke"
+        )
 
     def review_activation(
         self, installation_id: str, *, workspace_id: str | None, intent: str
@@ -685,6 +734,31 @@ class PluginCoordinator:
                 review.selection,
                 alias=review.alias,
             )
+            if review.intent == "enabled":
+                cursor.execute(
+                    "INSERT INTO activation VALUES (?, ?, 'enabled')",
+                    (review.installation_id, review.workspace_id),
+                )
+                cursor.execute(
+                    "INSERT INTO authority_generations VALUES (?, 'workspace', ?, 1, 0)",
+                    (review.installation_id, review.workspace_id),
+                )
+            return
+        if review.kind == "select":
+            for key in retained.inventory:
+                cursor.execute(
+                    "UPDATE selections SET selected=? WHERE installation_id=? AND revision_digest=? AND component_id=?",
+                    (
+                        key in review.selection,
+                        review.installation_id,
+                        retained.effective_digest,
+                        key,
+                    ),
+                )
+            cursor.execute(
+                "UPDATE authority_generations SET generation=generation+1 WHERE installation_id=? AND scope_kind='installation'",
+                (review.installation_id,),
+            )
             return
         if review.kind == "update":
             revision = retained.effective_digest
@@ -972,7 +1046,7 @@ class PluginCoordinator:
 
         if operation_id != review.operation_id or not operation_id:
             raise ValueError("operation ID belongs to a different review")
-        if review.kind == "update":
+        if review.kind in {"update", "select"}:
             ticket = self.revision_drain.ticket(review.drain_token)
             if (
                 ticket.phase != "committing"
@@ -1183,6 +1257,12 @@ class PluginCoordinator:
             result["root_result"] = review.result
         if review.kind == "retain":
             result["retired_revisions"] = json.loads(review.retirement_json)
+        if review.kind == "root_data" and review.action == "reconcile":
+            refs, proof = self.root_usage.proofs[review.token]
+            # The serialized owner does not yield between this proof and apply.
+            # Proof may open its own registry read transaction.
+            if proof(refs) is not True:
+                raise PermissionError("root_quiescence_unproven")
         with self.registry.transaction() as cursor:
             self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
@@ -1258,6 +1338,12 @@ class PluginCoordinator:
 
         self._require_worker()
         return review_reconciliation(self, roots, confirm_quiescence)
+
+    def review_data_boot_reconciliation(self, roots):
+        from .data_cleanup import review_boot_reconciliation
+
+        self._require_worker()
+        return review_boot_reconciliation(self, roots)
 
     async def reconcile_data(
         self, review: RootReview, operation_id: str

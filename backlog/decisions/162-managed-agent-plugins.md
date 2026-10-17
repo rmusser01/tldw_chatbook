@@ -707,3 +707,59 @@ Admission shares its existing activation/trust/selection/mapping/dependency/revo
 R100 requires actual cold Overview and unrelated shared handlers to leave unopened category panels/models deferred. Symbol resolution follows its matching category/field/ID/saved-content/nonempty-query branch; genuine shared Overview model use must be identified and tested. Original class/export/assigned-module-patch identity and saved drafts are preserved. ADR097 caps and all routes remain unchanged.
 
 Fix1 controls cover zero package-member reads for list/search, entire selected README read bound, authenticated-record tampering, identical shared eligibility/runtime gates with full runtime verification, cold Overview then actual category/draft behavior, held-load Back/form/new-owner cleanup and scoped token-backed title/placeholder contrast. See task-23-fix1-proposal.md and CLI5 plan; root owns independent re-review and closeout.
+
+
+### Task24 / I6 exact management owners (R101–R103)
+
+The management UI consumes issued immutable reviews and the single app-owned
+PluginService/SourceService. Acquired format selection authenticates the unchanged
+full producer before reinspection; reference-discard separately authenticates
+terminal custody and the complete protected dependency union. Install-and-enable
+records only a named workspace intent, atomically with the default-disabled,
+untrusted installation. Trust and configuration remain separate gates.
+
+R101 adds the existing select result kind to the public reviewed selection path.
+It drains through the revision owner, commits exact selection/current revision and
+advances installation authority without changing trust, mappings or activation.
+
+Operation history derives from authenticated transition/current-marker evidence,
+never SQLite hints. App-owned UI awaiters preserve submitted work across navigation;
+restart resolves durable evidence, and session-only failure or uncertain cleanup
+never becomes durable success or confirmed stop. Nonsecret drafts survive Close;
+secrets remain exclusively in the owning ephemeral credential flow.
+
+R102 permits explicit hook/connection tests only through a lazy Console-owned
+review/reservation adapter for an existing real session in the captured workspace.
+It uses normal current authority, permission/persona/parent ceilings, process and
+MCP owners, budgets and cleanup. Review executes nothing; explicit execution
+discloses initialization, makes no model request and displays test effects without
+injecting them into conversation context. No UI-fabricated caller context.
+
+R103 exposes explicit reviewed reboot reconciliation only with a separately
+protected namespace/current-marker-matching clean checkpoint, exact native root
+identities and drained current users. The existing root owner retains that
+positive proof across its own fenced dirty publication and rechecks it at apply.
+Changed boot alone, SQL row absence, operator assertion and released locks never
+prove whole-root quiescence. Dirty, unknown, legacy, reconstructed, reduced-backend,
+remote-uncertain and pending-rebind cases remain Recovery required without proof;
+show specific reasons and available actual stop/wait/retry/resume actions. There
+is no automatic rebind, new persistent proof store or universal recovery claim.
+
+Concrete APIs/scope and controls: `.superpowers/sdd/2026-09-15-managed-plugins-delivery/`
+`task-24-seam-proposal-e817ec8df5.md`, its root-proof addendum and root seam decision.
+ADR required: yes; this amends ADR162 and the ADR163 Console execution handoff.
+
+### Reviewed management removal (R105)
+
+Management device-wide disable/uninstall obtains an actual issued PluginReview
+through PluginService.review_removal before confirmation. The existing
+coordinator binds current revision, authority and consequences.
+PluginService.begin_reviewed_removal validates the retained original object,
+kind, expiry and installation from minimal facade custody, then uses the existing
+immediate fence/cancel request and worker persistence. It carries the original
+review and operation ID; worker revalidation cannot replace them with newer
+state. Refusal after sealing remains a conservative session-only block with an
+honest persistence error, without deletion or automatic reopening. Scoped
+disable uses review_activation(intent="disabled") and commit. Existing emergency
+begin_disable/begin_uninstall behavior is unchanged. Same-request retry retains
+custody; navigation never retargets the reviewed installation or workspace.

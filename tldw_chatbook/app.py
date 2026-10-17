@@ -8681,6 +8681,13 @@ class TldwCli(
             self._plugin_source_service = service
         return service
 
+    @property
+    def plugin_operations(self) -> Any:
+        """Lazily retain presentation awaiters independently of navigation."""
+        from tldw_chatbook.UI.Plugins_Modules.operations import app_operations
+
+        return app_operations(self, self._build_plugin_service())
+
     def _build_local_skills_stack(self) -> None:
         """Build the local skills service + scope facade. Idempotent.
 

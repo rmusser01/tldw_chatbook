@@ -1205,6 +1205,98 @@ async def delete_data(coordinator, refs, operation_id):
     return await asyncio.shield(operation.task)
 
 
+def review_boot_reconciliation(coordinator, refs):
+    """Rebind after reboot only with positive independently protected clean proof."""
+    authority, usage = coordinator.authority, coordinator.root_usage
+    if getattr(authority.marker_store, "reduced_protection", False):
+        raise PermissionError("root_clean_proof_backend_unqualified")
+    checkpoint = authority.load_runtime_checkpoint()
+    marker = authority.load_marker()
+    namespace = authority.namespace_id()
+    if (
+        checkpoint is None
+        or checkpoint.phase != "clean"
+        or checkpoint.namespace_id != namespace
+        or checkpoint.marker != marker
+    ):
+        raise PermissionError("root_clean_checkpoint_required")
+    current_boot = boot_identity()
+    snapshot = coordinator.published_snapshot()
+    original = {row["root_id"]: row for row in snapshot["data_roots"]}
+    ids = {ref.root_id for ref in refs}
+    for ref in refs:
+        row = original.get(ref.root_id)
+        if row is None or root_ref(row) != ref:
+            raise PermissionError("root_review_stale")
+        binding = (row.get("custody") or {}).get("binding")
+        if not binding:
+            raise PermissionError("root_native_binding_required")
+        if row.get("cleanup"):
+            raise PermissionError("root_pending_cleanup_cannot_rebind")
+        if binding["boot_id"] == current_boot:
+            raise PermissionError("root_reboot_proof_unavailable")
+        if usage.recovery.get(ref.root_id) not in {None, "root_boot_identity_changed"}:
+            raise PermissionError(usage.recovery[ref.root_id])
+    owners = {original[key]["installation_id"] for key in ids}
+    owners.update(
+        (original[key].get("custody") or {}).get("attached_installation_id")
+        for key in ids
+    )
+
+    def proof(exact):
+        if (
+            exact != refs
+            or boot_identity() != current_boot
+            or authority.namespace_id() != namespace
+            or authority.load_marker() != marker
+        ):
+            return False
+        observed_checkpoint = authority.load_runtime_checkpoint()
+        if observed_checkpoint != checkpoint and not (
+            usage.dirty
+            and observed_checkpoint is not None
+            and observed_checkpoint.phase == "dirty"
+            and observed_checkpoint.session_nonce == coordinator.owner.session_id
+            and observed_checkpoint.namespace_id == namespace
+            and observed_checkpoint.marker == marker
+        ):
+            return False
+        # Commit temporarily fences the published projection. The protected
+        # current snapshot remains the exact pre-commit authority bound above.
+        rows = {row["root_id"]: row for row in authority.verify_current()["data_roots"]}
+        if any(rows.get(key) != original[key] for key in ids):
+            return False
+        with usage.fences.live_lock:
+            if usage.pending or any(
+                ids.intersection(held) for held in usage.live_grants.values()
+            ):
+                return False
+            if any(
+                ids.intersection(row["root_id"] for row in op.review.targets)
+                and (op.task is not None and not op.task.done() or op.cleanup_tasks)
+                for op in usage.operations.values()
+            ):
+                return False
+        with coordinator.registry.transaction() as cursor:
+            for owner in cursor.execute(
+                "SELECT * FROM processes WHERE state!='settled'"
+            ).fetchall():
+                joins = cursor.execute(
+                    "SELECT root_id FROM root_users WHERE owner_token=?",
+                    (owner["token"],),
+                ).fetchall()
+                if owner["installation_id"] in owners or ids.intersection(
+                    row[0] for row in joins
+                ):
+                    return False
+        for key in ids:
+            with open_root(coordinator.owner, original[key], rebind=True):
+                pass
+        return True
+
+    return review_reconciliation(coordinator, refs, proof)
+
+
 def review_reconciliation(coordinator, refs, confirm_quiescence):
     """Review host-supplied whole-root terminal proof, never a PID/zero-row guess."""
     if not callable(confirm_quiescence) or confirm_quiescence(refs) is not True:
@@ -1252,6 +1344,10 @@ async def reconcile_data(coordinator, review, operation_id):
     ):
         raise ValueError("original root reconciliation review required")
     refs, proof = usage.proofs[review.token]
+    # Check prior evidence before our own dirty publication can replace it.
+    # A foreign dirty checkpoint must never be laundered into this session's proof.
+    if proof(refs) is not True:
+        raise PermissionError("root_quiescence_unproven")
     new_fences = tuple(ref for ref in refs if ref.root_id not in usage.root_fences)
     token = usage.fence(new_fences)
     usage.require_dirty()

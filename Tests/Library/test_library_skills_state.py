@@ -524,3 +524,23 @@ def test_console_command_names_are_treated_as_shadowing():
     for name in ("rewind", "generate-image"):
         assert skill_name_shadows_builtin(name) == name
         assert skill_name_shadows_builtin(f"  {name.upper()} ") == name
+
+
+def test_plugin_owned_editor_preserves_typed_owner_and_unknown_trust():
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    state = build_skill_editor_state(
+        {
+            "name": "display:ambiguous",
+            "plugin_owned": True,
+            "plugin_installation_id": "installation-42",
+            "plugin_component_id": "skill:read",
+        }
+    )
+    assert state.plugin_installation_id == "installation-42"
+    assert state.plugin_component_id == "skill:read"
+    assert state.plugin_owned and state.trust_blocked
+    assert state.trust_status == "plugin_managed"
+    standalone = build_skill_editor_state({"name": "normal"})
+    assert not standalone.plugin_owned
+    assert standalone.trust_status == "trusted"

@@ -108,6 +108,8 @@ class PluginService:
         self._lock = self.fences.live_lock
         self._thread = None
         self._closed = False
+        self._removal_reviews = {}
+        self._removal_requests = {}
         self._closing = False
         self._ordinary_calls = set()
         self._ready = Future()
@@ -229,6 +231,273 @@ class PluginService:
             self._refresh()
 
         await self._call(operation)
+
+    async def authority_status(self) -> str:
+        """Expose the existing authority posture without retrieving secrets."""
+        try:
+            return await self._call(lambda: self._coordinator.authority.posture())
+        except PluginUnavailable as error:
+            if str(error) == "plugin_owner_busy":
+                return "plugin_owner_busy"
+            raise
+
+    async def recover(self) -> tuple[OperationReceipt, ...]:
+        async def operation():
+            receipts = await self._coordinator.recover()
+            self._refresh()
+            return receipts
+
+        return await self._call(operation)
+
+    async def management_details(
+        self, installation_id: str, *, workspace_id: str | None
+    ):
+        """Explicit current-byte verification for management, never a run grant."""
+
+        def operation():
+            from .data_cleanup import root_ref
+            from .recovery import retained_inspections
+
+            self._admission._workspace(workspace_id)
+            state = self._coordinator.published_snapshot()
+            installed = next(
+                (
+                    row
+                    for row in state["installations"]
+                    if row["installation_id"] == installation_id
+                ),
+                None,
+            )
+            if installed is None:
+                raise ValueError("installation_unavailable")
+            inspection = retained_inspections(state, coordinator=self._coordinator)[
+                (installation_id, installed["revision_digest"])
+            ]
+            return {
+                "installation": deepcopy(installed),
+                "inspection": inspection,
+                "workspace_id": workspace_id,
+                "activation": tuple(
+                    deepcopy(row)
+                    for row in state["activation"]
+                    if row["installation_id"] == installation_id
+                ),
+                "mappings": tuple(
+                    deepcopy(row)
+                    for row in state["mappings"]
+                    if row["installation_id"] == installation_id
+                ),
+                "revisions": tuple(
+                    row["revision_digest"]
+                    for row in state["revisions"]
+                    if row["installation_id"] == installation_id
+                ),
+                "roots": tuple(
+                    root_ref(row)
+                    for row in state["data_roots"]
+                    if row["installation_id"] == installation_id
+                    or (row.get("custody") or {}).get("attached_installation_id")
+                    == installation_id
+                ),
+                "selection": tuple(
+                    row["component_id"]
+                    for row in state["selections"]
+                    if row["installation_id"] == installation_id
+                    and row["revision_digest"] == installed["revision_digest"]
+                    and row["selected"]
+                ),
+            }
+
+        return await self._call(operation)
+
+    async def list_operations(self, *, installation_id=None, limit=50, offset=0):
+        """Discover authenticated durable history independently of SQLite hints."""
+        from .registry import validate_page
+
+        validate_page(limit, offset)
+
+        async def operation():
+            receipts = await self._coordinator.recover()
+            authority = self._coordinator.authority
+            marker = authority.load_marker()
+            rows = []
+            for receipt in receipts:
+                if receipt.phase == "recovery_required":
+                    return (
+                        {
+                            "installation_id": None,
+                            "kind": "recovery",
+                            "receipt": receipt,
+                        },
+                    )
+                result = (
+                    authority.verify_current()
+                    if receipt.operation_id == marker.operation_id
+                    else authority.verify_transition(receipt.operation_id).snapshot
+                )["operation_result"]
+                if (
+                    installation_id is None
+                    or result["installation_id"] == installation_id
+                ):
+                    rows.append(
+                        {
+                            "installation_id": result["installation_id"],
+                            "kind": result["kind"],
+                            "receipt": receipt,
+                        }
+                    )
+            return tuple(rows[offset : offset + limit])
+
+        return await self._call(operation)
+
+    async def operation_status(self, identity: str):
+        """Read current custody separately from durable commitment."""
+        with self._lock:
+            for operation in self.fences.operations.values():
+                if identity in {operation.operation_id, operation.durable_id}:
+                    return {
+                        "receipt": operation.status(),
+                        "blockers": tuple(
+                            {"owner_token": token, "reason": "unresolved_owner"}
+                            for token in operation.unresolved_tokens
+                        )
+                        + tuple(
+                            {"run_id": record.run_id, "reason": "stopping"}
+                            for record in operation.records
+                            if not record.completed.is_set()
+                        ),
+                        "cancel_operation": False,
+                    }
+            for ticket in self.fences.drains.values():
+                if ticket.operation_id == identity:
+                    return {
+                        "receipt": OperationReceipt(
+                            identity, ticket.phase, ticket.phase == "complete"
+                        ),
+                        "blockers": self.revision_drain.blockers(ticket.token),
+                        "cancel_operation": ticket.phase in {"reserved", "waiting"},
+                    }
+
+        def root_operation():
+            from .data_cleanup import root_ref
+
+            usage = self._coordinator.root_usage
+            operation = usage.operations.get(identity)
+            if operation is None:
+                return None
+            return {
+                "receipt": operation.receipt,
+                "blockers": usage.blockers(
+                    tuple(root_ref(row) for row in operation.review.targets)
+                ),
+                "cancel_operation": operation.receipt.phase == "waiting",
+                "cancel_work": operation.receipt.phase == "waiting",
+            }
+
+        root_state = await self._call(root_operation)
+        if root_state is not None:
+            return root_state
+        receipt = await self.lookup_operation(identity)
+        return {"receipt": receipt, "blockers": (), "cancel_operation": False}
+
+    async def data_status(self, roots=None, *, limit=50, offset=0):
+        def operation():
+            from .data_cleanup import open_root, root_ref
+            from .registry import validate_page
+
+            validate_page(limit, offset)
+            state = self._coordinator.published_snapshot()
+            rows = state["data_roots"]
+            if roots is not None:
+                wanted = {ref.root_id: ref for ref in roots}
+                rows = [row for row in rows if row["root_id"] in wanted]
+                if {row["root_id"]: root_ref(row) for row in rows} != wanted:
+                    raise ValueError("root_review_stale")
+            result = []
+            for row in rows[offset : offset + limit]:
+                ref = root_ref(row)
+                reason = self._coordinator.root_usage.recovery.get(ref.root_id)
+                try:
+                    with open_root(self._coordinator.owner, row):
+                        pass
+                except (ValueError, OSError) as error:
+                    reason = (
+                        str(error)
+                        if isinstance(error, PermissionError)
+                        else "root_identity_unqualified"
+                    )
+                result.append(
+                    {
+                        "root": ref,
+                        "recovery_reason": reason,
+                        "cleanup": deepcopy(row.get("cleanup")),
+                        "blockers": self._coordinator.root_usage.blockers((ref,)),
+                    }
+                )
+            return tuple(result)
+
+        return await self._call(operation)
+
+    async def review_authority_reset(self):
+        def operation():
+            import time
+
+            from .package_files import canonical_json
+            from .review import AuthorityResetReview
+
+            authority = self._coordinator.authority
+            posture = authority.posture()
+            if posture not in {"ready", "ready_reduced", "locked", "recovery_required"}:
+                raise ValueError("plugin_reset_unavailable")
+            roots = self._coordinator.registry.authority_projection(
+                operation_result=None
+            )["data_roots"]
+            review = AuthorityResetReview(
+                uuid4().hex,
+                uuid4().hex,
+                authority.namespace_id(),
+                posture,
+                authority.load_marker(),
+                canonical_json(roots),
+                time.monotonic() + 900,
+            )
+            self._reset_review = review
+            return review
+
+        return await self._call(operation)
+
+    async def reset_authority(self, review):
+        def operation():
+            import time
+
+            from .package_files import canonical_json
+
+            authority = self._coordinator.authority
+            if (
+                getattr(self, "_reset_review", None) is not review
+                or review.expires_at <= time.monotonic()
+                or review.namespace_id != authority.namespace_id()
+                or review.marker != authority.load_marker()
+                or review.posture != authority.posture()
+                or review.roots_json
+                != canonical_json(
+                    self._coordinator.registry.authority_projection(
+                        operation_result=None
+                    )["data_roots"]
+                )
+            ):
+                raise ValueError("plugin_reset_review_stale")
+            result = self._coordinator.reset(operation_id=review.operation_id)
+            self._reset_review = None
+            self._refresh()
+            return result
+
+        return await self._call(operation)
+
+    async def review_data_boot_reconciliation(self, roots):
+        return await self._call(
+            lambda: self._coordinator.review_data_boot_reconciliation(roots)
+        )
 
     async def management_snapshot(
         self,
@@ -416,14 +685,23 @@ class PluginService:
             raise PluginUnavailable("plugin_details_unavailable") from error
 
     async def review_install(
-        self, root: Path, *, selection: tuple[str, ...], workspace_id: str | None
+        self,
+        root: Path,
+        *,
+        selection: tuple[str, ...],
+        workspace_id: str | None,
+        dialect: str | None = None,
+        enable_in_workspace: bool = False,
     ) -> PluginReview:
         def operation():
             from .inspection import inspect_package
 
             self._admission._workspace(workspace_id)
             return self._coordinator.review(
-                inspect_package(root), selection=selection, workspace_id=workspace_id
+                inspect_package(root, dialect=dialect),
+                selection=selection,
+                workspace_id=workspace_id,
+                enable_in_workspace=enable_in_workspace,
             )
 
         return await self._call(operation)
@@ -637,6 +915,33 @@ class PluginService:
     async def review_trust(self, installation_id: str) -> PluginReview:
         return await self._call(lambda: self._coordinator.review_trust(installation_id))
 
+    async def review_selection(
+        self, installation_id: str, *, selection: tuple[str, ...]
+    ) -> PluginReview:
+        return await self._call(
+            lambda: self._coordinator.review_selection(
+                installation_id, selection=selection
+            )
+        )
+
+    def cancel_revision(self, review: PluginReview) -> None:
+        ticket = self.revision_drain.ticket(review.drain_token)
+        if (
+            ticket.review_token != review.token
+            or ticket.installation_id != review.installation_id
+        ):
+            raise ValueError("plugin_drain_review_changed")
+        self.revision_drain.cancel(review.drain_token)
+
+    def cancel_revision_work(self, review: PluginReview) -> None:
+        ticket = self.revision_drain.ticket(review.drain_token)
+        if (
+            ticket.review_token != review.token
+            or ticket.installation_id != review.installation_id
+        ):
+            raise ValueError("plugin_drain_review_changed")
+        self.revision_drain.cancel_work(review.drain_token)
+
     async def review_configuration(
         self,
         installation_id: str,
@@ -693,7 +998,11 @@ class PluginService:
     async def commit(self, review: PluginReview, operation_id: str) -> OperationReceipt:
         from .revocation import revocation_for_review
 
-        if review.kind == "update":
+        if review.kind in {"revoke", "uninstall"}:
+            if operation_id != review.operation_id:
+                raise ValueError("original issued review required")
+            return await self.finish_revocation(self.begin_reviewed_removal(review))
+        if review.kind in {"update", "select"}:
             return await self.apply_revision(review, operation_id)
         target = revocation_for_review(review)
         if target is not None:
@@ -1214,6 +1523,54 @@ class PluginService:
                     if snapshot is None:
                         raise PluginUnavailable("plugin_run_admission_required")
                     self.fences.check_snapshot(snapshot)
+
+    async def review_removal(
+        self, installation_id: str, *, uninstall: bool
+    ) -> PluginReview:
+        """Retain an actual worker-issued review before management confirmation."""
+        import time
+
+        review = await self._call(
+            lambda: self._coordinator.review_removal(
+                installation_id, uninstall=uninstall
+            )
+        )
+        with self._lock:
+            self._removal_reviews = {
+                token: value
+                for token, value in self._removal_reviews.items()
+                if value.expires_at > time.monotonic()
+                or token in self._removal_requests
+            }
+            if len(self._removal_reviews) >= 1000:
+                raise RuntimeError("plugin_removal_review_limit")
+            self._removal_reviews[review.token] = review
+        return review
+
+    def begin_reviewed_removal(self, review: PluginReview) -> RevocationRequest:
+        """Seal now using original custody; authoritative revalidation stays on worker."""
+        import time
+
+        with self._lock:
+            if (
+                type(review) is not PluginReview
+                or self._removal_reviews.get(review.token) is not review
+                or review.kind not in {"revoke", "uninstall"}
+                or not review.installation_id
+            ):
+                raise ValueError("plugin_removal_review_unavailable")
+            prior = self._removal_requests.get(review.token)
+            if prior is not None:
+                return prior
+            if review.expires_at <= time.monotonic():
+                raise ValueError("plugin_removal_review_expired")
+            request = self._begin_revocation(
+                RevocationTarget(review.installation_id, None, True),
+                review.kind,
+                review=review,
+            )
+            self._removal_requests[review.token] = request
+            return request
 
     def begin_disable(self, target: RevocationTarget) -> RevocationRequest:
         """Retain caller custody and seal/cancel before any storage-worker access."""

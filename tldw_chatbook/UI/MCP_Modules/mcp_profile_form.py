@@ -70,6 +70,16 @@ class MCPProfileForm(Vertical):
             self.warning = warning
             self.connect_after = connect_after
 
+    class ManagePluginRequested(Message, namespace="mcp_profile_form"):
+        def __init__(self, owner: dict[str, Any]) -> None:
+            super().__init__()
+            self.owner = dict(owner)
+
+    @property
+    def plugin_owner(self) -> dict[str, Any] | None:
+        owner = (self._profile or {}).get("plugin_owner")
+        return dict(owner) if isinstance(owner, dict) else None
+
     class Cancelled(Message, namespace="mcp_profile_form"):
         pass
 
@@ -86,6 +96,17 @@ class MCPProfileForm(Vertical):
         return self._profile is not None
 
     def compose(self) -> ComposeResult:
+        if self.plugin_owner is not None:
+            owner = self.plugin_owner
+            yield Static(
+                f"Managed plugin: {owner.get('installation_id', 'unknown')}\n"
+                f"Component: {owner.get('component_id', 'unknown')}\n"
+                "Configuration, discovery and removal are reviewed in Plugins.",
+                markup=False,
+            )
+            yield Button("Manage in Plugins…", id="mcp-form-manage-plugin")
+            yield Button("Back", id="mcp-form-cancel")
+            return
         title = "Edit server" if self.is_edit else "Add local server (stdio)"
         yield Static(title, classes="destination-section", markup=False)
         profile = self._profile or {}
@@ -167,6 +188,11 @@ class MCPProfileForm(Vertical):
             )
 
     def on_mount(self) -> None:
+        if self.plugin_owner is not None:
+            self.call_after_refresh(
+                self.query_one("#mcp-form-manage-plugin", Button).focus
+            )
+            return
         # A4: `self.watch(...)` (not the `on_input_changed` message handler)
         # deliberately -- Reactive watchers registered this way run
         # SYNCHRONOUSLY inside the Input's own `value` setter (see
@@ -259,6 +285,8 @@ class MCPProfileForm(Vertical):
         Raises:
             ValueError: A malformed env line (with its 1-based line number).
         """
+        if self.plugin_owner is not None:
+            raise ValueError("plugin_owned_profile_use_plugins")
         placeholders: dict[str, str] = {}
         literals: dict[str, str] = {}
         env_text = self.query_one("#mcp-form-env", TextArea).text
@@ -335,6 +363,13 @@ class MCPProfileForm(Vertical):
         return ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if self.plugin_owner is not None:
+            event.stop()
+            if event.button.id == "mcp-form-manage-plugin":
+                self.post_message(self.ManagePluginRequested(self.plugin_owner))
+            elif event.button.id == "mcp-form-cancel":
+                self.post_message(self.Cancelled())
+            return
         if event.button.id in ("mcp-form-save", "mcp-form-save-connect"):
             event.stop()
             try:

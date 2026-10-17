@@ -500,3 +500,13 @@ Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations
 ### I2 vendor command-hook codecs (R78)
 
 Qualified vendor command hooks use an optional closed version/source-event marker on the existing immutable handler. Native declaration validation binds that marker to the supported command/event/effects combination. Pure bounded stdin/result codecs run inside the existing command executor, retaining the original handler, CommandJob, per-handler process owner, authority checks, deadlines, output caps, cancellation and terminal-custody rules. Success-only source post events and MCP-only source events retain their actual host filters. Source exit status 2 is interpreted only under the qualified event/result mapping and ordinary acceptance checks. Unknown markers and unsupported required semantics refuse; no dynamic codecs or vendor runtime are introduced. Package-root cwd and stricter Chatbook guard-failure behavior are reported as adaptations where they differ from the source host. Foreign allow/ask responses never grant permission.
+
+
+### Explicit managed-plugin tests (R102)
+
+ADR162 Task24/R101–R103 specifies the lazy Console-owned test review/reservation
+adapter. An existing real session supplies captured authority, host event context,
+permissions, budgets and process/MCP lifetime ownership. UI cannot fabricate these
+inputs. Explicit Run may initialize disclosed SessionStart hooks; test effects are
+displayed, not injected into conversation context; no model request is made.
+Cancellation retains actual cleanup and remote uncertainty through existing owners.

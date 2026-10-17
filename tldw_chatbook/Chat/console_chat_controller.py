@@ -9043,14 +9043,8 @@ class ConsoleChatController:
                 busy = [identity for identity in busy if identity != session.id]
             if session.id in busy or len(busy) >= self.max_parallel_runs:
                 return ConsoleSubmitResult(False, False, "A run is already preparing.")
-            self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
-                session_id=session.id,
-            )
-            submissions = getattr(self, "_hooks_v2_submissions", None)
-            if submissions is None:
-                submissions = self._hooks_v2_submissions = {}
-            submissions[asyncio.current_task()] = (None, None, session.id)
+            self._begin_hook_submission(session.id)
+            submissions = self._hooks_v2_submissions
             try:
                 lifecycle = await hook_runtime.prepare_hooks_v2(
                     session.id,
@@ -15209,6 +15203,22 @@ class ConsoleChatController:
         if not callable(getter):
             return None
         return lambda: bool(getter())
+
+    def _begin_hook_submission(self, session_id: str) -> None:
+        """Publish the shared provisional admission after the caller checks its slot."""
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
+            session_id=session_id,
+        )
+        if not hasattr(self, "_hooks_v2_submissions"):
+            self._hooks_v2_submissions = {}
+        self._hooks_v2_submissions[asyncio.current_task()] = (None, None, session_id)
+
+    def plugin_test_admission(self, configuration):
+        """Reserve the real Console slot through the lazy explicit-test adapter."""
+        from .console_plugin_tests import plugin_test_admission
+
+        return plugin_test_admission(self, configuration)
 
     async def compose_prospective_hook_context(
         self, configuration, lifecycle, input_scope

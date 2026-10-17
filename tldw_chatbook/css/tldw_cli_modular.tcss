@@ -9448,7 +9448,7 @@ MediaDetailsWidget {
 #plugins-shell .section-title { height: $ds-control-height-compact; text-style: $ds-text-strong; color: $ds-text-primary; }
 #plugins-scope { height: auto; color: $ds-authority-workspace; }
 #plugins-status { height: auto; max-height: $ds-control-height; color: $ds-text-muted; }
-#plugins-modes, #plugins-entry-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
+#plugins-modes, #plugins-entry-actions, #plugins-management-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
     height: $ds-control-height;
 }
 #plugins-shell Button { min-width: 0; width: 1fr; }
@@ -9473,11 +9473,13 @@ MediaDetailsWidget {
 /* Keep the 24-row terminal usable with the incumbent compact controls. */
 #plugins-shell .section-title, #plugins-scope, #plugins-search { margin: $ds-space-0; }
 .plugins-narrow #plugins-modes, .plugins-narrow #plugins-entry-actions,
+.plugins-narrow #plugins-management-actions,
 .plugins-narrow #plugins-pager, .plugins-narrow #plugins-detail-actions,
 .plugins-narrow #plugins-back {
     height: $ds-control-height-compact;
 }
 .plugins-narrow #plugins-modes Button, .plugins-narrow #plugins-entry-actions Button,
+.plugins-narrow #plugins-management-actions Button,
 .plugins-narrow #plugins-pager Button, .plugins-narrow #plugins-detail-actions Button,
 .plugins-narrow #plugins-back {
     height: $ds-control-height-compact;
@@ -9486,6 +9488,27 @@ MediaDetailsWidget {
     padding: $ds-space-0 $ds-space-inline;
 }
 .plugins-narrow #plugins-page { padding: $ds-space-0 $ds-space-inline; }
+
+PluginReviewModal, PluginStatusModal, PluginAuthorityResetModal { align: center middle; }
+#plugin-review-shell {
+    width: 90%; height: 90%; background: $ds-surface-raised;
+    border: solid $ds-grid-line; padding: $ds-space-inset;
+    color: $ds-text-primary;
+}
+#plugin-review-shell .dialog-title, #plugin-review-status, #plugin-review-body { height: auto; color: $ds-text-primary; }
+#plugin-review-selection { height: $ds-textarea-min-height; }
+#plugin-review-shell .dialog-buttons { height: $ds-control-height; }
+#plugin-review-shell Button { width: 1fr; min-width: 0; }
+
+#plugin-review-test-data { height: $ds-textarea-min-height; }
+
+/* The credential owner keeps its masked fields and scrolling behavior. */
+PluginAuthorityDialog .dialog-title,
+PluginAuthorityDialog .password-input > .input--placeholder { color: $ds-text-primary; }
+PluginAuthorityDialog .password-dialog-error,
+PluginAuthorityDialog .strength-weak { color: $ds-status-error-readable; }
+
+#plugin-review-shell Input > .input--placeholder { color: $ds-text-primary; }
 
 /* ===== MODULE: features/_ingest.tcss ===== */
 /* ========================================

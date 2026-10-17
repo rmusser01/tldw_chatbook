@@ -1021,6 +1021,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
 
     async def set_editor_mode(self, mode: str) -> None:
         """Switch the mounted Skill presentations without rebuilding the draft."""
+        if self.editor_state is not None and self.editor_state.plugin_owned:
+            return
         requested = coerce_skill_editor_mode(mode)
         focused = self.app.focused
         basic = self.query_one("#library-skill-basic-fields")
@@ -1095,6 +1097,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         if is_create is not None:
             self.is_create = bool(is_create)
 
+        if self.editor_state is not None and self.editor_state.plugin_owned:
+            return
         busy = self.mutation_in_flight
         conflict_active = self.conflict and not busy
         delete_armed = (
@@ -1520,6 +1524,29 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         """
         editor_state = self.editor_state
         if editor_state is None:
+            return
+        if editor_state.plugin_owned:
+            yield Static(
+                f"Managed plugin: {editor_state.plugin_installation_id or 'owner unavailable'}\n"
+                f"Component: {editor_state.plugin_component_id or 'unknown'}\n"
+                "Read-only package content. Trust, selection and removal belong to Plugins.",
+                markup=False,
+            )
+            yield Static(editor_state.body, markup=False)
+            yield Button(
+                "Manage in Plugins…",
+                id="library-skill-manage-plugin",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=not editor_state.plugin_installation_id,
+            )
+            yield Button(
+                "Back",
+                id="library-skill-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static("", id="library-skill-save-status", markup=False)
             return
         advanced = self.editor_mode == "advanced"
         yield Button(

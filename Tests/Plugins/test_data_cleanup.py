@@ -822,3 +822,58 @@ def test_later_grants_preserve_released_history_without_refreshing_held_epochs(
     finally:
         case.stack.call(lambda: case.stack.owner.settle_process(token, True))
         usage.unfence(fence)
+
+
+def test_boot_reconciliation_rejects_reduced_marker_backend(data_cleanup_case):
+    case = data_cleanup_case
+    ref = create_root(case)
+    with pytest.raises(PermissionError, match="backend_unqualified"):
+        case.stack.call(
+            lambda: case.stack.coordinator.review_data_boot_reconciliation((ref,))
+        )
+
+
+@pytest.mark.parametrize("foreign_dirty", [False, True, "commit"])
+def test_boot_reconciliation_requires_clean_exact_proof_at_review_and_apply(
+    data_cleanup_case, monkeypatch, foreign_dirty
+):
+    """Simulated reboot + isolated qualified marker double; no real reboot/keychain claim."""
+    from tldw_chatbook.Plugins import data_cleanup
+
+    case, stack = data_cleanup_case, data_cleanup_case.stack
+    ref = create_root(case)
+    authority = stack.authority
+    # The production reduced file backend is still refused above. This is a
+    # separately held test marker seam for the protected-checkpoint branch.
+    monkeypatch.setattr(authority.marker_store, "reduced_protection", False)
+    stack.call(lambda: authority.save_runtime_checkpoint("a" * 32, "clean"))
+    stack.call(lambda: setattr(stack.coordinator.root_usage, "dirty", False))
+    with pytest.raises(PermissionError, match="reboot_proof_unavailable"):
+        stack.call(lambda: stack.coordinator.review_data_boot_reconciliation((ref,)))
+    monkeypatch.setattr(
+        data_cleanup, "boot_identity", lambda: "11111111-2222-3333-4444-555555555555"
+    )
+    review = stack.call(
+        lambda: stack.coordinator.review_data_boot_reconciliation((ref,))
+    )
+    if foreign_dirty:
+        if foreign_dirty == "commit":
+
+            def race(phase):
+                if phase == "materialized":
+                    authority.save_runtime_checkpoint("b" * 32, "dirty")
+
+            stack.call(lambda: setattr(stack.coordinator, "progress", race))
+        else:
+            stack.call(lambda: authority.save_runtime_checkpoint("b" * 32, "dirty"))
+        with pytest.raises(PermissionError, match="quiescence_unproven"):
+            stack.call(
+                lambda: stack.coordinator.reconcile_data(review, review.operation_id)
+            )
+        return
+    rebound = stack.call(
+        lambda: stack.coordinator.reconcile_data(review, review.operation_id)
+    )
+    assert len(rebound) == 1 and rebound[0].generation > ref.generation
+    with pytest.raises(PermissionError, match="root_review_stale"):
+        stack.call(lambda: stack.coordinator.root_usage.validate_ref(ref))

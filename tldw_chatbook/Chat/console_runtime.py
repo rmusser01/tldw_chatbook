@@ -2886,6 +2886,30 @@ class ConsoleRuntime:
             configuration.project_authority,
         )
 
+    def _plugin_test_owner(self):
+        from .console_plugin_tests import ConsolePluginTests
+
+        owner = getattr(self, "_plugin_tests", None)
+        if owner is None:
+            owner = self._plugin_tests = ConsolePluginTests(self)
+        return owner
+
+    async def prepare_plugin_test(
+        self, session_id, installation_id, component_id, **options
+    ):
+        """Review an explicit test against an existing Console session, without execution."""
+        return await self._plugin_test_owner().prepare(
+            session_id, installation_id, component_id, **options
+        )
+
+    async def execute_plugin_test(self, review):
+        """Keep test custody in Console when a presentation waiter leaves."""
+        return await self._plugin_test_owner().execute(review)
+
+    def discard_plugin_test(self, review):
+        """Discard only an unexecuted review; running work retains its runtime owner."""
+        return self._plugin_test_owner().discard(review)
+
     async def prepare_hooks_v2(
         self,
         session_id: str,
@@ -2893,6 +2917,7 @@ class ConsoleRuntime:
         reason="startup",
         initiator="manual",
         configuration=None,
+        test_only=False,
     ):
         """Initialize only at validated execution admission, never at view access."""
         from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
@@ -2939,6 +2964,18 @@ class ConsoleRuntime:
             engine is not None
             and getattr(engine, "native_identity", ()) != native_identity
         )
+        if (
+            test_only
+            and engine is not None
+            and (
+                previous != configured
+                or context_changed
+                or native_changed
+                or owner is None
+                or not owner.live
+            )
+        ):
+            raise PermissionError("plugin_test_requires_compatible_idle_hook_session")
         if (
             (previous is not None and previous != configured)
             or context_changed
@@ -3045,13 +3082,14 @@ class ConsoleRuntime:
                 lifecycle.turn_scope = None
                 raise
         if not lifecycle.live:
-            token = lifecycle.reserve(
-                lifecycle.event(
-                    "SessionStart",
-                    data={"reason": reason},
-                    initiator=initiator,
-                )
+            start_event = lifecycle.event(
+                "SessionStart", data={"reason": reason}, initiator=initiator
             )
+            if test_only:
+                start_event = start_event.model_copy(
+                    update={"origin": "host_plugin_test"}
+                )
+            token = lifecycle.reserve(start_event)
             try:
                 await lifecycle.initialize(token)
                 lifecycle.publish(token)

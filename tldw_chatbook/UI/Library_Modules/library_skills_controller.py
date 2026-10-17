@@ -2072,7 +2072,7 @@ class LibrarySkillsController:
         name = self._selected_skill_name
         is_create = not name
         base_state = self._library_skill_editor_state
-        if base_state is None:
+        if base_state is None or base_state.plugin_owned:
             return
         fields = self._read_library_skill_editor_fields()
         if fields is None:
@@ -2508,6 +2508,11 @@ class LibrarySkillsController:
             self._update_library_skill_status_static("Skill deletion is unavailable.")
             return
         state = self._library_skill_editor_state
+        if state is not None and state.plugin_owned:
+            self._update_library_skill_status_static(
+                "Manage this owned component in Plugins."
+            )
+            return
         version = state.version if state is not None else None
         try:
             result = await self._run_library_service_call(
@@ -3033,6 +3038,9 @@ class LibrarySkillsController:
             self._refresh_local_source_snapshot()
 
     async def _review_library_skill_trust(self) -> None:
+        state = self._library_skill_editor_state
+        if state is not None and state.plugin_owned:
+            return
         if self._library_skills_view != "editor" or not self._selected_skill_name:
             return
         name = self._selected_skill_name
@@ -3050,6 +3058,18 @@ class LibrarySkillsController:
         self._library_skill_active_review = dict(result)
         self._render_library_skill_trust_panel()
 
+    @on(Button.Pressed, "#library-skill-manage-plugin")
+    async def handle_library_skill_manage_plugin(self, event: Button.Pressed) -> None:
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None or not state.plugin_owned or not state.plugin_installation_id:
+            return
+        from tldw_chatbook.UI.Plugins_Modules.review import open_owned_plugin
+
+        await open_owned_plugin(
+            self.app_instance, state.plugin_installation_id, state.plugin_component_id
+        )
+
     @on(Button.Pressed, "#library-skill-trust-approve")
     def handle_library_skill_trust_approve(self, event: Button.Pressed) -> None:
         """Approve the captured trust review via the passphrase modal.
@@ -3060,6 +3080,9 @@ class LibrarySkillsController:
         """
         event.stop()
         # task-417: any trust action supersedes a lingering "Saved.".
+        state = self._library_skill_editor_state
+        if state is not None and state.plugin_owned:
+            return
         self._update_library_skill_status_static("")
         self.run_worker(
             self._approve_library_skill_trust(),

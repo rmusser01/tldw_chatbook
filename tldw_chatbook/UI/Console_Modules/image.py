@@ -6,7 +6,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -17,16 +17,6 @@ from ...Chat.console_chat_fork import (
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_command_grammar import CommandParse
-from ...Chat.console_generate_image import (
-    GenerationRefusal,
-    LLMContextOptions,
-    PreparedGeneration,
-    clamp_initial_batch,
-    generation_content_marker,
-    parse_generate_image_args,
-    prepare_generation_request,
-    run_generation_batch,
-)
 from ...Chat.console_image_edit_operations import (
     ImageEditCompletion,
     ImageEditFailureNotice,
@@ -39,6 +29,10 @@ from ...Chat.console_image_view import (
     resolve_render_remote_images,
 )
 from ...Widgets.Console.console_generation_card import ConsoleGenerationCardSpec
+
+if TYPE_CHECKING:
+    from ...Chat.console_generate_image import LLMContextOptions, PreparedGeneration
+
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 REMOTE_IMAGE_FETCH_ATTEMPT_LIMIT = 256
@@ -433,6 +427,10 @@ class ConsoleImageController:
         self, cfg: Any
     ) -> LLMContextOptions:
         """Resolve the active chat provider for conversation prompt composition."""
+        from ...Chat.console_generate_image import (
+            LLMContextOptions,
+        )
+
         if not cfg.context_llm_enabled:
             return LLMContextOptions(
                 enabled=False,
@@ -467,6 +465,10 @@ class ConsoleImageController:
 
     async def _regenerate_console_generation_variant(self, message_id: str) -> None:
         """Append one random-seed variant to an existing generation message."""
+        from ...Chat.console_generate_image import (
+            run_generation_batch,
+        )
+
         store = self._ensure_console_chat_store()
         try:
             message = store.get_message(message_id)
@@ -914,6 +916,10 @@ class ConsoleImageController:
         """Validate, own, persist, and reconcile one ComfyUI H3 edit."""
         from functools import partial
 
+        from ...Chat.console_generate_image import (
+            generation_content_marker,
+            run_generation_batch,
+        )
         from ...Image_Generation import worker as image_worker
         from ...Image_Generation.exceptions import (
             ComfyUIImageEditError,
@@ -1144,6 +1150,15 @@ class ConsoleImageController:
         for most providers; llama.cpp additionally does its own bounded
         ``/health`` reachability probe there, same as a normal send).
         """
+        from ...Chat.console_generate_image import (
+            GenerationRefusal,
+            clamp_initial_batch,
+            generation_content_marker,
+            parse_generate_image_args,
+            prepare_generation_request,
+            run_generation_batch,
+        )
+
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
         session = store.ensure_session(
