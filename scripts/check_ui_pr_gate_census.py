@@ -371,7 +371,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (TASK-33005.8): 339 (after Task 6's 336, in the Wave 4 integration).
 # Its review round 1: a Save that changes no connection field keeps the Key
 # check row (TASK-33005.8): 340.
-MINIMUM_FILES = 344
+# Phase 9 Task 8 appends its two, each 3 of 3 serial: the mode strip's
+# literal provider text (TASK-33002.19, a new file, whole): 341 (after
+# Task 7's 340, in the Wave 4 integration).
+MINIMUM_FILES = 345
 
 
 def read_census(path: Path) -> list[str]:
