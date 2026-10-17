@@ -905,6 +905,52 @@ async def test_oversized_body_answers_uniform_413_shape(
 
 
 @pytest.mark.asyncio
+async def test_chunked_body_over_the_app_cap_answers_uniform_413_shape(
+    tmp_path, mobile_surface_gate
+) -> None:
+    """#3127 review minor: the over-app-cap path during read answers JSON 413.
+
+    The test above covers the declared-length route (the Content-Length
+    pre-check). A CHUNKED upload has no length up front, so the rejection
+    comes from aiohttp's ``HTTPRequestEntityTooLarge`` raised by
+    ``client_max_size`` enforcement while ``_read_mobile_json`` reads — the
+    route boundary must still answer the surface's uniform
+    ``{"error": "body_too_large"}``, never aiohttp's plain-text 413, and the
+    service is never touched.
+    """
+
+    async def oversized_chunks():
+        yield b'{"text": "'
+        yield b"x" * (mobile_api.MOBILE_MAX_BODY_BYTES + 8192)
+        yield b'"}'
+
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = await _csrf(client)
+
+        send = await client.post(
+            "/api/v1/mobile/conversations/s-known/messages",
+            data=oversized_chunks(),
+            headers={CSRF_HEADER_NAME: csrf, "Content-Type": "application/json"},
+        )
+        assert send.status == 413
+        assert (await send.json()) == {"error": "body_too_large"}
+
+        # Same app-cap answer on a small-cap route: the route's tighter
+        # bound cannot be pre-checked on a chunked body, but the app cap
+        # still stops the read and the shape stays uniform.
+        new_conversation = await client.post(
+            "/api/v1/mobile/conversations",
+            data=oversized_chunks(),
+            headers={CSRF_HEADER_NAME: csrf, "Content-Type": "application/json"},
+        )
+        assert new_conversation.status == 413
+        assert (await new_conversation.json()) == {"error": "body_too_large"}
+
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
 async def test_unknown_cursor_message_is_400(
     tmp_path, mobile_surface_gate
 ) -> None:

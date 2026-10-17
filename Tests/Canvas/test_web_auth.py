@@ -893,3 +893,54 @@ def test_restart_drops_persisted_sessions_past_their_idle_window(tmp_path) -> No
     with pytest.raises(AuthenticationError):
         revived.authenticate_request(_facts(grant))
     assert revived_store.load() == {}
+
+
+def _spy_on_store_saves(store) -> list:
+    """Count subsequent ``save`` calls on one live store (spy keeps writing)."""
+
+    saves: list = []
+    original_save = store.save
+
+    def spying_save(payload):
+        saves.append(dict(payload))
+        original_save(payload)
+
+    store.save = spying_save  # type: ignore[method-assign]
+    return saves
+
+
+def test_pruning_expired_sessions_batches_one_persisted_write(tmp_path) -> None:
+    """#3127 review minor: a prune pass writes the store once, not N times.
+
+    Expired-session revocation used to persist inside the prune loop, so one
+    sweep over N dead sessions cost N full-store writes.
+    """
+
+    manager, store, now = _persisted_manager(tmp_path)
+    for _ in range(4):
+        manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    assert manager.session_count == 4
+
+    now[0] += 31 * 86400  # every session is past its idle window
+    saves = _spy_on_store_saves(store)
+    manager._prune_sessions(now[0])
+
+    assert manager.session_count == 0
+    assert len(saves) == 1  # one batched write for the whole prune pass
+    assert store.load() == {}  # the batched write really emptied the disk
+
+
+def test_capacity_eviction_and_grant_batch_one_persisted_write(tmp_path) -> None:
+    """The eviction loop in ``_new_session`` persists once, not per eviction."""
+
+    manager, store, _now = _persisted_manager(tmp_path, max_sessions=2)
+    manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    manager.login_with_access_token("tok", client_ip="192.168.1.9")
+    assert manager.session_count == 2
+
+    saves = _spy_on_store_saves(store)
+    manager.login_with_access_token("tok", client_ip="192.168.1.9")
+
+    # One oldest session evicted for the new grant — one write covering both.
+    assert manager.session_count == 2
+    assert len(saves) == 1
