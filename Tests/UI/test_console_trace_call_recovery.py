@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -14,6 +17,8 @@ from tldw_chatbook.UI.Console_Modules.trace_call_recovery import (
     TraceCallRecoveryState,
     dispatch_trace_call_recovery_action,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _Controller:
@@ -241,9 +246,7 @@ async def test_a_compaction_hold_shows_its_numbers_and_three_choices() -> None:
         assert "1,650 of 1,800 tokens" in painted
         assert "Nothing was sent" in painted
         visible = {
-            str(button.label)
-            for button in app.screen.query(Button)
-            if button.display
+            str(button.label) for button in app.screen.query(Button) if button.display
         }
         assert visible == {"Compact and send", "Send without compacting", "Cancel send"}
         assert "Problem:" not in painted
@@ -273,3 +276,117 @@ async def test_each_compaction_hold_button_reaches_its_controller_action() -> No
             await pilot.pause()
             await app.workers.wait_for_complete()
         assert controller.actions == [(action, "preparation-1")]
+
+
+@pytest.mark.parametrize("kind", ["trace", "continuation"])
+@pytest.mark.parametrize("cleared", [False, True])
+async def test_recovery_sync_waits_for_nested_mount_and_replays_current_state(
+    monkeypatch, kind, cleared
+):
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        ProviderContinuationRecoveryCallout,
+        ProviderContinuationTranscriptRegion,
+    )
+
+    def message(identity, version):
+        return ConsoleChatMessage(
+            id=identity,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            generation_projection_quarantined=True,
+            generation_projection_quarantine_version=version,
+            generation_projection_quarantine_reason="Reload current generation.",
+        )
+
+    trace = [TraceCallRecoveryState("initial") if kind == "trace" else None]
+    continuation = [message("initial", 1) if kind == "continuation" else None]
+    latest_trace = TraceCallRecoveryState("latest", temporary_capture=True)
+    latest_message = message("latest", 2)
+    actions = []
+    region = ProviderContinuationTranscriptRegion(
+        session_surface_builder=lambda: Static("Conversation"),
+        recovery_message_builder=lambda: continuation[0],
+        on_recovery_action=lambda *args: (
+            actions.append(("continuation", *args)) or False
+        ),
+        trace_recovery_state_builder=lambda: trace[0],
+        on_trace_recovery_action=lambda *args: (
+            actions.append(("trace", *args)) or False
+        ),
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_mount = Widget.mount_composed_widgets
+    held_id = f"console-{kind}-actions"
+
+    async def hold_action_children(owner, widgets):
+        if owner.id == held_id:
+            entered.set()
+            await asyncio.wait_for(release.wait(), timeout=5)
+        await original_mount(owner, widgets)
+
+    monkeypatch.setattr(Widget, "mount_composed_widgets", hold_action_children)
+
+    class MountOrderApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield region
+
+    async def publish_during_mount():
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            assert not region.is_mounted
+            card_type = (
+                TraceCallRecoveryCallout
+                if kind == "trace"
+                else ProviderContinuationRecoveryCallout
+            )
+            card = region.query_one(card_type)
+            assert card.query_one(f"#console-{kind}-title", Static)
+            assert not card.query(Button), "the original nested buttons must be pending"
+            trace[0] = latest_trace if kind == "trace" and not cleared else None
+            continuation[0] = (
+                latest_message if kind == "continuation" and not cleared else None
+            )
+            region.sync_recovery()
+        finally:
+            release.set()
+
+    probe = asyncio.create_task(publish_during_mount())
+    app = MountOrderApp()
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            await probe
+            await pilot.pause()
+            trace_card = region.query_one(TraceCallRecoveryCallout)
+            continuation_card = region.query_one(ProviderContinuationRecoveryCallout)
+            if cleared:
+                assert not trace_card.display and not continuation_card.display
+                trace[0] = latest_trace if kind == "trace" else None
+                continuation[0] = latest_message if kind == "continuation" else None
+                region.sync_recovery()
+            if kind == "trace":
+                assert trace_card.recovery_state is latest_trace
+                target = trace_card.query_one("#console-trace-save-send", Button)
+                expected = ("trace", "save_and_send", "latest")
+            else:
+                assert continuation_card.recovery_state.message_id == "latest"
+                assert continuation_card.recovery_state.message_version == 2
+                target = continuation_card.query_one(
+                    "#console-continuation-reload", Button
+                )
+                expected = ("continuation", "reload", "latest", 2)
+            assert target.display and not target.disabled
+            target.focus()
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            assert actions == [expected]
+            assert region.is_mounted
+            await trace_card.remove()
+            with pytest.raises(NoMatches):
+                region.sync_recovery()
+    finally:
+        release.set()
+        await asyncio.gather(probe, return_exceptions=True)

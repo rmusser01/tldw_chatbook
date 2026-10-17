@@ -28,6 +28,7 @@ def test_pinned_textual_serve_exposes_the_supported_child_environment_seam() -> 
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 def test_parent_captures_one_snapshot_for_gateway_and_child_authentication(tmp_path):
     import asyncio

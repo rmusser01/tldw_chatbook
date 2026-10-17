@@ -108,3 +108,66 @@ async def test_session_switch_reopens_the_pipeline():
     store.active_session_id = "s2"
     await _run(screen)
     assert len(fetches) == 2, "switching sessions must re-run the pipeline"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["trace", "continuation"])
+async def test_recovery_changes_are_visible_while_message_pipeline_is_gated(kind):
+    from textual.app import ComposeResult
+    from textual.widgets import Static
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from Tests.UI.test_console_provider_continuation_recovery import _message
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        ProviderContinuationRecoveryCallout,
+        ProviderContinuationTranscriptRegion,
+        TraceCallRecoveryCallout,
+        TraceCallRecoveryState,
+    )
+
+    current = {"trace": None, "continuation": None}
+
+    class RecoveryApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield ProviderContinuationTranscriptRegion(
+                session_surface_builder=lambda: Static("transcript"),
+                recovery_message_builder=lambda: current["continuation"],
+                on_recovery_action=lambda *_: False,
+                trace_recovery_state_builder=lambda: current["trace"],
+            )
+
+    class PipelineReached(Exception):
+        pass
+
+    def stop_pipeline(_messages):
+        raise PipelineReached
+
+    app = RecoveryApp()
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        region = app.query_one(ProviderContinuationTranscriptRegion)
+        card = region.query_one(
+            TraceCallRecoveryCallout
+            if kind == "trace"
+            else ProviderContinuationRecoveryCallout
+        )
+        assert region.is_mounted and not card.display
+        store = SimpleNamespace(
+            active_session_id="s1", display_projection_revision=lambda _sid: 7
+        )
+        screen, fetches = _screen(store)
+        screen._console_transcript_region_or_none = lambda: region
+        screen._change_review_projection.project = stop_pipeline
+        with pytest.raises(PipelineReached):
+            await screen._sync_native_console_transcript()
+        assert fetches == [1]
+
+        current[kind] = (
+            TraceCallRecoveryState("held-send") if kind == "trace" else _message()
+        )
+        await screen._sync_native_console_transcript()
+        assert card.display
+        current[kind] = None
+        await screen._sync_native_console_transcript()
+        assert not card.display
+        assert fetches == [1], "recovery must not reopen the message pipeline"

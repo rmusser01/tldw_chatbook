@@ -65,6 +65,7 @@ EXTRACTED_MODULES = (
     "app_command_providers",
     "app_feature_glue",
     "app_startup",
+    "app_served",
 )
 
 #: Rule 2 exemptions: (test file, name) -> why a bare app-module patch is right.

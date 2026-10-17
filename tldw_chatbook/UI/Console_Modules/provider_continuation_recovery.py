@@ -762,8 +762,14 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
             ),
         )
 
+    def on_mount(self) -> None:
+        # Textual sets is_mounted after Mount; re-read the current builders then.
+        self.call_later(self.sync_recovery)
+
     def sync_recovery(self) -> None:
         """Synchronize the always-mounted recovery placeholder in place."""
+        if not self.is_mounted:
+            return
         self.query_one(TraceCallRecoveryCallout).sync_recovery(
             self._trace_recovery_state_builder()
         )
