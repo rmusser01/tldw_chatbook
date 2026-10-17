@@ -119,8 +119,9 @@ explanation ("Local mode is active. Server sync is optional."), "Agent
 readiness: …", "Server events: …", and "Work: N active, N approvals" (plus
 "Notifications: N unread" when any). Every readiness field shown is real:
 "Model:" is driven by the same send-path check Console enforces (it reads
-"Not set up" until a usable credential+model resolves), and "ACP:" by the ACP
-runtime manager. The former "RAG:"/"MCP:" segments — hard-coded constants
+"Not set up" until a usable credential+model resolves, and also after the
+default connection's last test failed, wherever it ran: Settings, Chat
+settings, Switch model or setup), and "ACP:" by the ACP runtime manager. The former "RAG:"/"MCP:" segments — hard-coded constants
 nothing ever updated — were removed rather than shown as lies (task-2761).
 
 ## Common tasks
