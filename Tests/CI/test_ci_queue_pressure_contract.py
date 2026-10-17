@@ -163,6 +163,8 @@ FAST_LANE_TARGETS = (
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_provider_notice_and_line_both_offer_to_continue",
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_subscription_table_spelled_otherwise_reads_as_readiness_reads_it",
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_provider_tells_a_listing_that_cannot_list_as_model_does",
+    # Review round 5: a 403 or a 404 to Test reads as the listing reads it.
+    "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

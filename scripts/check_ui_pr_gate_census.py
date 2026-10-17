@@ -328,7 +328,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Its review round 2 raised it by 2, to 317: two more of the phase's Tests/UI
 # tests ran in no lane, appended after the 33 (Use detected keeps the saved
 # endpoint, ~5 s; the footer under a dialog, ~10 s), each 3 of 3 serial.
-MINIMUM_FILES = 317
+# Its review round 5 raised it by 3, to 320: the round's regression test (a
+# card covered at launch runs discovery on the first return) and the two
+# discovery-on-return tests it stopped masking ran in no lane. Appended after
+# the 35, so they land on shards 8-10 of ten (5-6 s each), each 3 of 3 serial.
+MINIMUM_FILES = 320
 
 
 def read_census(path: Path) -> list[str]:

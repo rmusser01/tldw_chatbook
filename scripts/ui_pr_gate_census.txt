@@ -556,3 +556,9 @@ Tests/UI/test_console_switcher_local_probe.py::test_find_counts_one_listed_provi
 Tests/UI/test_console_provider_persistence_regressions.py::test_detected_server_adoption_keeps_configured_endpoint
 # TASK-33008 review round 2: under a dialog the footer names only the keys that act (10 s).
 Tests/UI/test_console_switch_model_entry_points.py::test_a_dialog_over_a_ready_console_names_only_the_keys_that_act
+# TASK-33008 review round 5: a card covered at launch (the first-run wizard) runs discovery on the first return (6 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_a_card_covered_at_launch_runs_discovery_again_on_the_first_return
+# TASK-33008: a card resumed with nothing detected runs discovery again, and not once a server is found (6 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_a_card_resumed_with_nothing_detected_runs_discovery_again
+# TASK-33008: a card unblocked and broken again while away runs discovery on the return (5 s).
+Tests/UI/test_console_local_server_discovery_card.py::test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return
