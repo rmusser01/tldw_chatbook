@@ -319,7 +319,10 @@ Five differences from readiness remain:
   table's key on those saves. One written by hand is still read by the chat
   handler's own fallback when the summary hands it no key (`chat_with_kobold`
   reads `api_settings.koboldcpp.api_key`), so it can be sent while readiness
-  resolves none.
+  resolves none. For Moonshot and Z.ai under "environment" with the named
+  variable exported, it runs the other way: the summary sends the variable,
+  and readiness returns the leftover key labelled `env:<VAR>`, because its
+  hosted re-resolve reads the table's key first (TASK-35369).
 - **`[API] kobold_api_key` and `tabby_api_key`** reach neither readiness nor a
   summary: the loader does not copy them into `api_settings`.
 - **The local legacy aliases** `local_llamacpp`, `local_llamafile`,
