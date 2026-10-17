@@ -44,3 +44,7 @@ Reason: Existing accepted plugin/hook contracts govern direct integration. No ne
 | Task1 code vs verification | Rebase changes caller/fixture context; old passes are historical | Targeted tests run on copied rebased source; gates and unqualified platforms stay explicit. |
 | Task1 review/publication | Reviewer needs final source and resolution evidence; push rewrites PR head | One independent read-only gate, explicit lease pin, no auto-merge. |
 | Task1 self consistency | Root Git/metadata vs worker product/testing | Sequential handoffs; no source writes or background test phase during root rebase/continue. |
+
+## Accepted StageA decisions
+
+The StageA proposal/addendum SHA256 `9648b48ea2683c95633f9e6cad449a591aa325e88db92d0e7043ac567013dfa2` is accepted under integration R3–R6. Existing ADR162/163 and both original specs were amended before product edits. One current native facade/provider group, exact retained-reference compatibility, closed historical interpretation matching plus new /2 identities, and shipped v81/v75 migration ownership govern the replay. The source/check/provenance map remains bounded by the actual resolved paths.
