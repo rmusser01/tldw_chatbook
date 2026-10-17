@@ -1,11 +1,11 @@
 ---
 id: TASK-32695
 title: Qualify plugin lifecycle interoperability and authoring examples
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-17 05:23'
+updated_date: '2026-10-17 05:32'
 labels:
   - plugins
   - implementation
@@ -27,12 +27,12 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Integrated native and adapted examples exercise install, configure, normal permission review, use, update, disable and removal with controlled repositories and servers.
-- [ ] #2 Linux/macOS/Windows qualification covers private storage, locks, interrupted publication, path handling and real process cleanup; skipped platforms remain explicitly unqualified.
-- [ ] #3 The compatibility matrix distinguishes parsed, connected, behavior-exercised and original-host comparison evidence by revision, adapter, platform and configuration.
-- [ ] #4 Authoring examples, diagnostics and operation documentation cover all approved component/hook contracts and limits; targeted regression, privacy, startup and resource evidence is recorded without asserting a full-suite run.
-- [ ] #5 Saved-data status distinguishes authenticated cleaned absence from retained roots and unknown recovery without weakening ownership, exact-reference validation or drain gates.
-- [ ] #6 Action forms show the inputs relevant to the selected operation while preserving hidden in-session drafts and keyboard access at80x24 and120x35.
+- [x] #1 Integrated native and adapted examples exercise install, configure, normal permission review, use, update, disable and removal with controlled repositories and servers.
+- [x] #2 Linux/macOS/Windows qualification covers private storage, locks, interrupted publication, path handling and real process cleanup; skipped platforms remain explicitly unqualified.
+- [x] #3 The compatibility matrix distinguishes parsed, connected, behavior-exercised and original-host comparison evidence by revision, adapter, platform and configuration.
+- [x] #4 Authoring examples, diagnostics and operation documentation cover all approved component/hook contracts and limits; targeted regression, privacy, startup and resource evidence is recorded without asserting a full-suite run.
+- [x] #5 Saved-data status distinguishes authenticated cleaned absence from retained roots and unknown recovery without weakening ownership, exact-reference validation or drain gates.
+- [x] #6 Action forms show the inputs relevant to the selected operation while preserving hidden in-session drafts and keyboard access at80x24 and120x35.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -139,6 +139,20 @@ Current dev rebase qualification (active TASK32695 integration AC15 in root-prot
 
 Current I7 reconciliation R17: add only actual moved turn_admission.py and console_context_compaction.py to original20product scope,22total. Pass captured owning workspace at actual authority capture; keep session.py basis. Current compaction owner gets one named live release accessor per existing ADR220 (backlog/decisions/220-console-human-decision-coordination-ownership.md), wired at sole constructor and used in actual compact/finish/wait finally; retain retry_fence/honor_failure_latch/current projections/automatic placeholder and actual reservation checks. Preserve current exact typed execute_skill command/manual-rule routes and current_definition callers underR11; private optional kind filter applies to skill-only supporting read. Original collision tests adaptcurrenttypednames, valid commands/rules, MCP/wrongkindread refusal and retiredtoken controls. No new owner/schema/permission/cap. New-current-base checks remain AC15; source inputs captured before code.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Qualified managed plugin lifecycle/interoperability through real Git/local catalogs, Console provider input, owned MCP, durable SQLite/post-effect boundaries and both terminal sizes. Published authoring, operations and compatibility documents plus a bounded three-platform qualification workflow. The matrix distinguishes parsed, connected, locally exercised and unexecuted/original-host behavior.
+
+Repaired authenticated cleaned-absence display, relevant action fields, owning-workspace capture and typed skill alias lookup. Scoped fixes preserve painted keyboard focus after body growth and share eight test finalizers. Manual/standalone compaction now uses actual captured hooks/configuration and exact task/reservation/state ownership, preserving successful handoff and captured no-hook automatic submissions. No permission/runtime/default broadening.
+
+Validation:59 installed-hook cases have preserved actual local passing phases, plus one installed platform-refusal control. Forty cleanup consumers, both live focus sizes and targeted UI/native/Console/provider controls passed. Source-copy-dependent14 and handoff-consumption2 were renewed. Granular marker audit retains30 applicable/refusal cases and skips30 command-dependent cases on Windows; isolated marker evaluation is not Windows execution. Exact5 retained/refusal checks pass. New/clean Python static checks pass; five inherited files retain exact BASE diagnostic/source-line parity. Two startup ratchets pass with existing headroom warnings. Fresh scoped reviews68d084bf and269a7b8e address I1/I2/I3/N1 with no open task findings.
+
+ADRs: existing backlog/decisions/162-managed-agent-plugins.md and163-expanded-console-hook-runtime.md govern authority/lifecycle; ADR150 governs focus. No new ADR required for these corrections. Implementation plans/rulings and the complete test/source provenance are preserved in the task report and Docs/Plugins/compatibility.md.
+
+Limits remain explicit: zero UI-ready headroom, inherited cold optional-audio/static debt, historical timing/resource/provenance gaps and unexecuted Linux/Windows/vendor/keychain/reboot boundaries. Older Windows workflow selections remain a source-confirmed whole-branch review item. No full suite, dependency change, remote workflow, push or merge. The independent whole-branch source gate follows this task closeout.
+<!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
 
