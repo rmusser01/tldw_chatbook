@@ -86,7 +86,8 @@ WAIT_RUN_DELAY_S = 6.0
 # past this; it wakes a fresh run instead.
 RUN_BUDGET = timedelta(minutes=4)
 # A lasting failure to get a head going -- a rebase that did not take effect, no CI run the queue can
-# start, an unclassified re-run error, a refused approval -- is warned about once per head; it evicts
+# start, an unclassified re-run error, a refused approval, the queue's re-run not showing up or
+# finishing with no result -- is warned about once per head; it evicts
 # only once the warning is at least this old, so one GitHub slowdown failing two attempts a minute
 # apart cannot disarm the PR (spec section 8).
 STRIKE_GAP = timedelta(minutes=10)
@@ -1285,11 +1286,11 @@ def _after_retry(gh: GhApi, pr: PrState, run: dict, note: RetryNote, links: tupl
         # count toward an unrelated `rerun-unseen` strike, nor the other way round.
         return _strike(
             gh, pr, "rerun-unreported",
-            f"Merge queue: the queue's re-run of the required check on `{pr.head_sha[:10]}` finished, but its result has "
-            "not shown up yet. A queue run will look again, and remove it from the line if it still has not shown up "
-            "10 minutes from now.",
-            Action("evict", "the queue's re-run of the required check finished without reporting the check", links,
-                   "rerun-unreported"), True, log, now,
+            f"Merge queue: the queue's re-run of the required check on `{pr.head_sha[:10]}` finished, but no pass or "
+            "failure of the check from it has shown up yet. A queue run will look again, and remove it from the line "
+            "if there is still none 10 minutes from now.",
+            Action("evict", "the queue's re-run of the required check finished without a pass or failure of the check",
+                   links, "rerun-unreported"), True, log, now,
         )
     return _evict(gh, pr, twice, log)
 

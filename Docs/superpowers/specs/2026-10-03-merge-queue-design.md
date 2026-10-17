@@ -291,7 +291,8 @@ never rebased, dispatched or commented on.
     exists on `main` (F1).
   - Known gap: a stall during a stretch with no activity waits for the next event or a manual kick. There is no periodic
     timer, because `schedule` reads `main`.
-  - The same gap after a strike (rebase, no-run, an unclassified re-run error, or a refused approval): a strike inside its 10-minute gap
+  - The same gap after a strike (rebase, no-run, an unclassified re-run error, a refused approval, `rerun-unseen` or
+    `rerun-unreported`): a strike inside its 10-minute gap
     stands down and wakes nothing, so on a quiet repo the front (and the line behind it) waits for the next event after
     the gap. These failures are rare, and evicting sooner would let one GitHub slowdown disarm the PR.
   - An Actions incident that keeps a head's runs from being created for more than 10 minutes, seen by two events that
