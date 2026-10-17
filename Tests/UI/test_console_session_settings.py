@@ -13323,20 +13323,28 @@ async def test_connection_probe_renders_only_bounded_terminal_outcomes(
 
 
 @pytest.mark.parametrize(
-    ("api_key", "hinted"), [(None, True), ("sk-local-0123456789", False)],
-    ids=["sent-no-key", "sent-a-key"],
+    ("table", "hinted"),
+    [
+        ({}, True),
+        # A named source that finds no key sends none either (review round 1).
+        ({"credential_source": "environment", "api_key_env_var": "TLDW_P8D_UNSET"}, True),
+        ({"credential_source": "stored"}, True),
+        ({"api_key": "sk-local-0123456789"}, False),
+    ],
+    ids=["sent-no-key", "unset-env-var", "stored-without-a-key", "sent-a-key"],
 )
 @pytest.mark.asyncio
 async def test_a_keyless_403_to_test_connection_suggests_a_key_in_settings(
-    api_key: str | None, hinted: bool
+    table: dict[str, str], hinted: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The owner's decision of 2026-10-17 (PR #3144, D2): a 403 to a listing
     still reads "model listing unavailable" (only a 401 rejects a key). When
     the Test sent no key, the line adds that the server may want one, and
-    where keys are entered: Settings, since Chat settings takes none (D4)."""
+    where keys are entered: Settings, since Chat settings takes none (AC#4,
+    ADR-012)."""
+    monkeypatch.delenv("TLDW_P8D_UNSET", raising=False)
     app = ModalHarness()
-    if api_key:
-        app.app_config["api_settings"]["llama_cpp"]["api_key"] = api_key
+    app.app_config["api_settings"]["llama_cpp"].update(table)
     modal = _basic_modal(
         ConsoleSessionSettings(
             provider="llama_cpp",

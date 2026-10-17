@@ -1527,8 +1527,10 @@ def listing_refused_without_a_key(evidence: object) -> bool:
 
     The owner's decision of 2026-10-17 (PR #3144, D2): such a listing still
     reads "model listing unavailable" and blocks nothing, but the server may
-    want a key, so a surface adds a hint naming its key field. A probe result
-    carries no identity, so it never qualifies.
+    want a key, so a surface adds a hint naming its key field. "Sent no key"
+    is revision 0, whichever source names it (``_connection_key``'s rule): an
+    explicit "environment" naming an unset variable sends none either. A probe
+    result carries no identity, so it never qualifies.
 
     Args:
         evidence: A ``ProviderTestEvidence`` (or a bare probe result).
@@ -1539,8 +1541,8 @@ def listing_refused_without_a_key(evidence: object) -> bool:
     return (
         getattr(evidence, "endpoint", None) == "model_listing_unavailable"
         and getattr(evidence, "category", None) == "forbidden"
-        and getattr(getattr(evidence, "identity", None), "credential_source", None)
-        == "none"
+        and getattr(getattr(evidence, "identity", None), "credential_revision", None)
+        == 0
     )
 
 

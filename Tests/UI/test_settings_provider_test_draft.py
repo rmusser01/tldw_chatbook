@@ -998,16 +998,28 @@ def test_a_rejected_key_reads_rejected_on_the_key_row_too(
 
 
 @pytest.mark.parametrize(
-    ("category", "credential_source", "hinted"),
+    ("category", "credential_source", "credential_revision", "hinted"),
     (
-        ("forbidden", "none", True),  # a 403 to a listing that sent no key
-        ("forbidden", "stored", False),  # a 403 to a key that was sent
-        ("http_status", "none", False),  # a 404 refuses nothing
+        ("forbidden", "none", 0, True),  # a 403 to a listing that sent no key
+        # A named source that finds no key (an explicit "environment" naming an
+        # unset variable, or "stored" with none saved) sends none: revision 0.
+        ("forbidden", "environment", 0, True),
+        ("forbidden", "stored", 0, True),
+        ("forbidden", "stored", 7, False),  # a 403 to a key that was sent
+        ("forbidden", "environment", 7, False),
+        ("http_status", "none", 0, False),  # a 404 refuses nothing
     ),
-    ids=("keyless-403", "keyed-403", "keyless-404"),
+    ids=(
+        "keyless-403",
+        "unset-env-var-403",
+        "stored-without-a-key-403",
+        "keyed-403",
+        "env-keyed-403",
+        "keyless-404",
+    ),
 )
 def test_a_keyless_403_listing_suggests_a_key_on_the_endpoint_row(
-    category, credential_source, hinted
+    category, credential_source, credential_revision, hinted
 ):
     """The owner's decision of 2026-10-17 (PR #3144, D2): a 403 to a model
     listing that sent no key still reads "model listing unavailable" (only a
@@ -1015,7 +1027,10 @@ def test_a_keyless_403_listing_suggests_a_key_on_the_endpoint_row(
     server may want a key, which this card takes in its API key field."""
     endpoint = "http://127.0.0.1:8080"
     identity = _semantic_identity(
-        endpoint, provider_key="llama_cpp", credential_source=credential_source
+        endpoint,
+        provider_key="llama_cpp",
+        credential_source=credential_source,
+        credential_revision=credential_revision,
     )
     evidence = ProviderTestEvidence(
         identity, "model_listing_unavailable", (), category=category
