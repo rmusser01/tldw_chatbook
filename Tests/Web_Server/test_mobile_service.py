@@ -30,6 +30,9 @@ from tldw_chatbook.Canvas.control_protocol import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Chat.console_chat_store import (
+    GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER,
+)
 from tldw_chatbook.Web_Server.mobile_service import MobileChatService, MobileSendRefused
 
 # The real engine's submit path reads the guarded config loader (turn
@@ -85,6 +88,35 @@ async def _shutdown(service: MobileChatService, subscriber: asyncio.Task) -> Non
     except asyncio.CancelledError:
         pass
     await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+class _LoopSafeGate:
+    """An ``asyncio.Event`` whose release works from any thread (TASK-35133).
+
+    The engine consumes provider streams on its private model-call
+    lifeline loop (``run_coroutine_threadsafe``, Chat/console_agent_bridge);
+    the lifeline's only doors are threadsafe submissions. A plain
+    cross-loop ``Event.set()`` resolves the parked waiter without waking
+    that loop, so the call resumes only when the loop's next timer fires
+    -- the stall watchdog's deadline (measured: exactly 90 s at the default
+    window). Gated gateway doubles park via ``wait()`` and are opened via
+    ``release()``.
+    """
+
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def wait(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        await self.event.wait()
+
+    def release(self) -> None:
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.event.set)
+        else:
+            self.event.set()
 
 
 async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
@@ -227,11 +259,16 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
     """
 
     class _GatedAgentGateway(AgentModeGateway):
-        """AgentModeGateway whose provider calls park on ``gate``."""
+        """AgentModeGateway whose provider calls park on ``gate``.
+
+        The gate is ``_LoopSafeGate`` (TASK-35133): releasing it from this
+        test's loop must wake the engine's private model-call lifeline
+        loop where the parked call actually runs.
+        """
 
         def __init__(self) -> None:
             super().__init__()
-            self.gate = asyncio.Event()
+            self.gate = _LoopSafeGate()
 
         async def stream_chat(self, resolution, messages, **kwargs):
             await self.gate.wait()
@@ -257,7 +294,7 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
         with pytest.raises(MobileSendRefused):
             await service.send(session["id"], "too soon")
 
-        gateway.gate.set()
+        gateway.gate.release()
         await _wait_for(
             lambda: any(
                 e.type == "run_completed" and e.session_id == session["id"]
@@ -279,7 +316,164 @@ async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
             for m in messages
         )
     finally:
-        gateway.gate.set()  # never leave the parked turn holding shutdown
+        gateway.gate.release()  # never leave the parked turn holding shutdown
+        await _shutdown(service, subscriber)
+
+
+def _dump_asyncio_stacks() -> str:
+    """Every task's await stack + every thread's stack (TASK-35133's instrument).
+
+    On the parked-call stall this dump is the evidence: it names the exact
+    await chain the engine's second agent step is suspended in, and any
+    worker thread the contended resource is parked inside.
+    """
+    import io
+    import sys
+    import threading
+    import traceback
+
+    current = asyncio.current_task()
+    parts: list[str] = []
+    for task in sorted(asyncio.all_tasks(), key=lambda t: t.get_name()):
+        if task is current:
+            continue
+        sink = io.StringIO()
+        try:
+            task.print_stack(file=sink)
+        except Exception as exc:  # noqa: BLE001 - the dump must never mask
+            sink.write(f"    <stack unavailable: {type(exc).__name__}: {exc}>\n")
+        parts.append(
+            f"===== task {task.get_name()} "
+            f"({'done' if task.done() else 'pending'}) =====\n"
+            f"{sink.getvalue().rstrip()}"
+        )
+    frames = sys._current_frames()
+    for thread in sorted(threading.enumerate(), key=lambda t: t.name):
+        if thread is threading.current_thread():
+            continue
+        frame = frames.get(thread.ident)
+        if frame is None:
+            continue
+        parts.append(
+            f"===== thread {thread.name} =====\n"
+            + "".join(traceback.format_stack(frame)).rstrip()
+        )
+    return "\n".join(parts)
+
+
+async def test_second_agent_step_not_stalled_by_parked_provider_call(
+    tmp_path: Path,
+) -> None:
+    """TASK-35133 regression: a provider call parked mid-run must not stall
+    the engine's second agent step.
+
+    The first provider call parks on a gate only this test opens (the run
+    sits in status STREAMING under the stall watchdog). Once released, the
+    first call emits the tool call, the tool runs after its approval is
+    decided, and the SECOND provider call (the post-tool agent step) must
+    arrive within a 10 s bound.
+
+    Root cause (TASK-35133, evidenced by the timeout dump below): the engine
+    consumes provider streams on its private model-call lifeline loop
+    (``run_coroutine_threadsafe``, Chat/console_agent_bridge.py), so a
+    parked stream can only be released through that loop's threadsafe
+    door. A plain cross-loop ``asyncio.Event.set()`` resolves the waiter
+    without waking the lifeline loop, and the parked call then resumes
+    only when the loop's next timer fires -- the stall watchdog's deadline
+    (measured: exactly 90 s at the default window, the T2 report's "30s+"
+    under a 30 s window). The release must take the loop's own door
+    (``call_soon_threadsafe``); with that, the engine's second step
+    arrives in well under a second. On timeout the failure message
+    carries every asyncio task's and thread's stack.
+    """
+
+    class _ParkedFirstCallGateway(AgentModeGateway):
+        """AgentModeGateway whose FIRST provider call parks on ``gate``.
+
+        The gate is ``_LoopSafeGate`` (TASK-35133): it must be released
+        through the loop the parked call runs on, never by a plain
+        cross-loop ``Event.set()`` -- that is the stall this test guards.
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = _LoopSafeGate()
+            self.call_count = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.call_count += 1
+            if self.call_count == 1:
+                await self.gate.wait()
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = _ParkedFirstCallGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        session = await service.create_session(
+            title="parked provider call", workspace_id=workspace_id
+        )
+
+        await asyncio.wait_for(
+            service.send(session["id"], "list the folder"), timeout=5
+        )
+        # The first provider call has arrived and is parked (STREAMING).
+        await _wait_for(
+            lambda: gateway.call_count >= 1,
+            timeout=10,
+            what="first provider call to arrive",
+        )
+
+        loop = asyncio.get_running_loop()
+        released_at = loop.time()
+        gateway.gate.release()
+        # Release the tool's approval round as soon as it is raised so the
+        # measured window covers only the engine's own work, then wait for
+        # the second (post-tool) provider call. One bound over both
+        # stages; whichever stage stalls names itself in the failure.
+        deadline = released_at + 10.0
+        decided = False
+        second_call_seen = False
+        while loop.time() < deadline:
+            if not decided:
+                approvals = [
+                    e
+                    for e in got
+                    if e.type == "approval_requested"
+                    and e.session_id == session["id"]
+                ]
+                if approvals:
+                    payload = approvals[0].payload
+                    call = payload["calls"][0]
+                    assert (
+                        await service.decide_approval(
+                            payload["round_id"], {call["call_id"]: "approve_once"}
+                        )
+                        is True
+                    )
+                    decided = True
+            if gateway.call_count >= 2:
+                second_call_seen = True
+                break
+            await asyncio.sleep(0.1)
+        else:
+            stage = (
+                "approval_requested"
+                if not decided
+                else "second (post-tool) provider call"
+            )
+            raise AssertionError(
+                f"the {stage} did not arrive within 10s of releasing the "
+                "parked first provider call; asyncio task stacks follow:\n"
+                + _dump_asyncio_stacks()
+            )
+        assert second_call_seen
+        assert gateway.tool_result_messages, "fs_list result never reached provider"
+    finally:
+        gateway.gate.release()  # never leave the parked turn holding shutdown
         await _shutdown(service, subscriber)
 
 
@@ -662,6 +856,79 @@ async def test_session_messages_reuses_cached_wire_until_fingerprint_changes(
             m["role"] == "user" and m["content"] == "turn two"
             for m in third["messages"]
         )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_session_messages_rebuilds_when_cached_wire_disagrees_with_the_seam(
+    tmp_path: Path,
+) -> None:
+    """Projection-equality second line (PR-#3142 minor — the store seam's
+    documented caveat): the fingerprint cache never serves a wire whose
+    shape disagrees with the seam's values.
+
+    ``ConsoleChatStore.session_fingerprint`` records the invisible class —
+    mutations preserving BOTH the transcript count and the last message's
+    visible length — and directs callers to keep an equality gate on the
+    rendered projection as the second line of defense. Constructed here
+    directly against the store, bypassing ``append_stream_chunk``: a
+    same-length content edit on the settled last message, then a
+    quarantine flag flip (both fingerprint-invisible — pinned below),
+    leave the fingerprint unchanged while the wire projection replaces
+    the last body with the fixed quarantine placeholder. The cached
+    wire's last length then permanently disagrees with the seam's raw
+    length; a key-only gate would serve that wire forever, the projection
+    gate rebuilds on every read while the disagreement stands.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="projection gate")
+        await service.send(session["id"], "one turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        store = engine.store
+        sid = session["id"]
+        live_last = store._messages_by_session[sid][-1]
+        # Keep the raw length off the placeholder's: the gate needs a
+        # real disagreement between the two shapes to observe.
+        if len(live_last.content or "") == len(
+            GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
+        ):
+            live_last.content = (live_last.content or "") + "  "
+        before = store.session_fingerprint(sid)
+
+        # The fingerprint-invisible caveat path, constructed directly
+        # against the store (never through append_stream_chunk): a
+        # same-length edit of the settled last message's content…
+        live_last.content = "x" * len(live_last.content or "")
+        # …and the quarantine flag flip, whose snapshot projection
+        # answers with a fixed placeholder while the raw content — what
+        # the seam measures — stays as edited.
+        live_last.generation_projection_quarantined = True
+        assert store.session_fingerprint(sid) == before
+
+        counter, _original = _counting_materializations(engine)
+        first = await service.session_messages(sid)
+        assert counter["calls"] >= 1
+        assert first["messages"][-1]["content"] == (
+            GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
+        )
+        after_first = counter["calls"]
+
+        # Same fingerprint → a key-only gate serves the cache here; the
+        # wire's placeholder length disagrees with the seam's raw-length
+        # value, so the projection gate rebuilds instead.
+        second = await service.session_messages(sid)
+        assert counter["calls"] > after_first
+        assert second == first
     finally:
         await _shutdown(service, subscriber)
 
@@ -1911,6 +2178,106 @@ async def test_relay_same_round_id_across_children_never_shadows(
             ],
             timeout=5,
             what="child-a's colliding round cleared by its own event",
+        )
+    finally:
+        await child_a.aclose()
+        await child_b.aclose()
+        await broker.aclose()
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+def _mobile_api_module():
+    """Import the mobile route module under the web-server optional-dep guard."""
+    if not _serve_module().check_web_server_available():
+        pytest.skip("web server optional dependencies are unavailable")
+    from tldw_chatbook.Web_Server import mobile_api
+
+    return mobile_api
+
+
+class _DecideRequest:
+    """The request surface ``handle_decide`` reads: match_info + one JSON body."""
+
+    def __init__(self, round_id: str, body: dict[str, Any]) -> None:
+        self.match_info = {"round_id": round_id}
+        self.content_length = None
+        self._body = body
+
+    async def json(self) -> dict[str, Any]:
+        return self._body
+
+
+@pytest.mark.loopback_network
+async def test_decide_route_child_id_addresses_the_exact_colliding_child(
+    tmp_path: Path,
+) -> None:
+    """PR-#3142 minor: the decide ROUTE forwards the body's ``child_id``
+    and, under a cross-child round_id collision, the phone's card
+    addresses exactly its child.
+
+    One layer above the service-seam collision test above: the full wire
+    path — JSON body → route validation → ``decide_approval`` →
+    ``relay.decide.request`` — over the real relay. Child-b owns the
+    decided round; child-a's colliding round is untouched.
+    """
+    mobile_api = _mobile_api_module()
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child_a = _ScriptedChild(broker, "child-a")
+    child_b = _ScriptedChild(broker, "child-b")
+    await child_a.start()
+    await child_b.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a", "child-b"])
+    shared = "round-shared"
+    host = types.SimpleNamespace(_get_mobile_service=lambda: service)
+    try:
+        await child_a.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await child_b.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await _wait_for(
+            lambda: sorted(
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            )
+            == ["child-a", "child-b"],
+            timeout=5,
+            what="both children's colliding rounds listed",
+        )
+
+        response = await mobile_api.handle_decide(
+            host,
+            _DecideRequest(
+                shared,
+                {
+                    "decisions": {"call-1": "approve_once"},
+                    "child_id": "child-b",
+                },
+            ),
+        )
+        assert response.status == 200
+        assert json.loads(response.text) == {"ok": True}
+        assert [
+            m for m in child_a.seen if m.message_type == "relay.decide.request"
+        ] == []
+        decide_b = [
+            m for m in child_b.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_b) == 1
+        assert decide_b[0].payload["round_id"] == shared
+        await _wait_for(
+            lambda: [
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            ]
+            == ["child-a"],
+            timeout=5,
+            what="only child-b's colliding round cleared by the routed decide",
         )
     finally:
         await child_a.aclose()

@@ -496,6 +496,26 @@ async def test_mobile_app_js_tags_approval_surfaces_and_handles_run_status(
 
 
 @pytest.mark.asyncio
+async def test_mobile_app_js_decide_posts_carry_the_rounds_child_id(
+    tmp_path,
+) -> None:
+    """PR-#3142 minor: the approval card's decide POST includes its
+    round's ``child_id`` when present — exact addressing for desktop
+    rounds whose child-local round_id collides across children (ADR-236).
+    Grep-style pinning over the served client."""
+    async with _logged_in_client(tmp_path) as client:
+        response = await client.get("/static/mobile/app.js")
+        assert response.status == 200
+        js = await response.text()
+
+    # The decide body is built before the POST and gains child_id only
+    # for a non-empty string off the round — phone rounds (no child_id)
+    # stay unaddressed and keep the service's fallback routing.
+    assert 'typeof round.child_id === "string"' in js
+    assert "body.child_id = round.child_id;" in js
+
+
+@pytest.mark.asyncio
 async def test_mobile_app_js_resyncs_truncated_bubbles_and_reconnects_past_1011(
     tmp_path,
 ) -> None:
