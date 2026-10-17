@@ -213,6 +213,9 @@ jobs:
             Tests/Chat/test_first_run_connection_evidence.py \
             Tests/ProductionApp/test_provider_selection_ownership.py \
             Tests/Backup_Recovery/test_skills_recovery_controls.py \
+            Tests/LLM_Calls/test_summarization_credential_source.py \
+            Tests/Chat/test_legacy_api_key_credential_source.py \
+            Tests/LLM_Calls/test_dispatch_local_argument_routing.py \
             --timeout=180 \
             --tb=short
 

@@ -200,6 +200,13 @@ FAST_LANE_TARGETS = (
     # each case in a subprocess host that resolves the theme guards (13 cases,
     # ~40 s).
     "Tests/Backup_Recovery/test_skills_recovery_controls.py",
+    # Phase 9 Task 17 (TASK-33001.14, TASK-33641.11, TASK-33641.10): a summary
+    # sends the key readiness resolves; the legacy [API] bridge honours a
+    # recorded credential_source; analyze() hands each provider every argument
+    # by name. Real loader on scratch configs, ~20 s together, 3 of 3 serial.
+    "Tests/LLM_Calls/test_summarization_credential_source.py",
+    "Tests/Chat/test_legacy_api_key_credential_source.py",
+    "Tests/LLM_Calls/test_dispatch_local_argument_routing.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
