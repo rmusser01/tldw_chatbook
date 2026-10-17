@@ -125,7 +125,15 @@ async def test_surface_refusal_recovers_the_existing_accepted_user(
                 "cancel": "Cancel send",
             }[action] in action_frame
             await pilot.press("enter")
-            await asyncio.wait_for(host.workers.wait_for_complete(), 10)
+            recovery_workers = [
+                worker
+                for worker in host.workers
+                if worker.group.startswith("trace-call-recovery-")
+            ]
+            if recovery_workers:
+                await asyncio.wait_for(
+                    host.workers.wait_for_complete(recovery_workers), 10
+                )
             await console._sync_native_console_chat_ui()
             await pilot.pause()
             users = [
