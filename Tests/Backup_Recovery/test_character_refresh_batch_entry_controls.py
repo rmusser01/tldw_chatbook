@@ -194,11 +194,13 @@ def _entry_hold(database, controller, boundary, executor, observed):
         ("inner_entry", "_read_refresh_scope_sync"),
     ],
 )
+@pytest.mark.parametrize("display_mode", ["idle", "active"])
 async def test_character_entry_body_drift_refuses_before_changed_body(
-    tmp_path, boundary, method
+    tmp_path, boundary, method, display_mode
 ):
     database = CharactersRAGDB(tmp_path / "entry.sqlite", "entry")
     controller, screen, *_ = _character(database)
+    controller._run_active = lambda: display_mode == "active"
     loop = asyncio.get_running_loop()
     previous_executor = loop._default_executor
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="character-entry")

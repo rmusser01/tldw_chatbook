@@ -679,3 +679,27 @@ async def test_foreign_character_presentation_keeps_no_argument_callback():
     receiver = SimpleNamespace(refresh_if_scope_changed=declared)
     assert await character_presentation_work(receiver, object()) is result
     assert events == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_force_fresh_display_bypasses_warm_run_check(tmp_path):
+    database = CharactersRAGDB(tmp_path / "forced-run-display.db", "forced-run")
+    controller, screen, *_ = _character(database)
+    controller._run_active = lambda: True
+    try:
+        await controller.refresh()
+        await _display(controller, screen)
+        checked = controller._scope_checked
+        assert checked is not None
+        with _actual_calls() as warm:
+            assert not await _display(controller, screen)
+        assert warm["pairs"] == 0
+        with _actual_calls() as forced:
+            assert not await controller.refresh_presentation_if_scope_changed(
+                screen, force_fresh=True
+            )
+        assert forced["pairs"] == 1 and forced["recent"] == 0
+        assert controller._scope_checked is checked
+        assert not worker_leases(database)
+    finally:
+        database.close()
