@@ -184,3 +184,9 @@ can delay warming unvisited screens until custody clears; direct navigation
 still uses its ordinary loader. The certain-work, single-route splash warmup
 remains immediate. Prefer this existing custody projection over a duplicate
 busy flag, extra executor or permission cache.
+
+### TASK-34406.11 — bounded interpreter handoffs during finite preparation
+
+Existing finite synchronous preparation callbacks may lower Python's interpreter-wide thread handoff interval to at most1ms while physical callback bodies run. Live original-function profiles identify a scheduling convoy across many GIL-releasing metadata syscalls, rather than a single269ms permission-file operation. This changes scheduling, not observation: every original permission, source, generation, path, epoch, native acquisition, error and retirement check still executes at its original boundary.
+
+Overlap is counted under the existing finite-read bookkeeping lock. The first physical callback captures the prior interval; the last restores it only if the interval is still the value this scope installed. An already shorter interval is preserved, as is a later different external setting. Callback exceptions and repeated caller cancellation cannot end scheduling ownership before the physical body exits. No native lease, result, deadline, timer or authority is cached or broadened; no new worker pool, scheduler service or public setting is added. The interval affects all interpreter threads during that bounded window, so exact unprofiled first-send comparisons must demonstrate a whole-path gain before release. Profile-only or syscall-count improvements are insufficient.

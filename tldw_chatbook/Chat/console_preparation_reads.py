@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import threading
 from collections.abc import Callable, Coroutine
+from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,6 +29,33 @@ class ConsolePreparationRead:
 
 # Only finite handle bookkeeping is serialized; no callback or await is inside.
 _READS_LOCK = threading.RLock()
+
+_READ_HANDOFF_LIMIT = 0.001
+_read_handoff_users = 0
+_read_handoff_intervals: tuple[float, float] | None = None
+
+
+@contextmanager
+def _preparation_handoffs():
+    """Limit GIL convoys only while original finite callback bodies run."""
+    global _read_handoff_users, _read_handoff_intervals
+    with _READS_LOCK:
+        if _read_handoff_users == 0:
+            previous = sys.getswitchinterval()
+            if previous > _READ_HANDOFF_LIMIT:
+                sys.setswitchinterval(_READ_HANDOFF_LIMIT)
+                _read_handoff_intervals = previous, sys.getswitchinterval()
+        _read_handoff_users += 1
+    try:
+        yield
+    finally:
+        with _READS_LOCK:
+            _read_handoff_users -= 1
+            if _read_handoff_users == 0 and _read_handoff_intervals is not None:
+                previous, installed = _read_handoff_intervals
+                _read_handoff_intervals = None
+                if sys.getswitchinterval() == installed:
+                    sys.setswitchinterval(previous)
 
 
 def _observe_locked(read, observer):
@@ -60,7 +89,9 @@ def preparation_reads_for(
 
 def preparation_tasks_for(reads, session_id=None):
     """Return the exact issuing tasks for a creator's retained native reads."""
-    return tuple(dict.fromkeys(read.task for read in preparation_reads_for(reads, session_id)))
+    return tuple(
+        dict.fromkeys(read.task for read in preparation_reads_for(reads, session_id))
+    )
 
 
 def _retire(read):
@@ -166,10 +197,11 @@ async def run_preparation_read[Result](
         )
         token = _source_binding.set(binding)
         try:
-            require_current()
-            result = callback()
-            require_current()
-            return result
+            with _preparation_handoffs():
+                require_current()
+                result = callback()
+                require_current()
+                return result
         except StopIteration as error:
             # asyncio Futures cannot transport StopIteration; convert inside
             # the worker before its physical outcome crosses to the coroutine.
@@ -254,7 +286,6 @@ async def drain_preparation_reads(
                 raise RuntimeError("Hook read retirement signal was cancelled.")
             read.retired.result()
     return cancelled
-
 
 
 async def await_finite_read[_Result](
