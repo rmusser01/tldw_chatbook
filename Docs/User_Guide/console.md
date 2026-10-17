@@ -377,7 +377,10 @@ API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that
 key was refused (a 401). A 403 from any model listing, local or cloud, means
 only that the key may not list models: it reads "Ready · not tested" and
-never blocks sending. Test results last for this session only, and a test of a
+never blocks sending. When the test sent no key, Chat settings' **Test
+connection** line adds "If this server needs a key, add it in Settings ▸
+Providers & Models (F4).", since a server may answer a missing key that way.
+Test results last for this session only, and a test of a
 different endpoint or key never changes this chat's readiness.
 
 A second action, **Write a note in Library**, stays available beside it for

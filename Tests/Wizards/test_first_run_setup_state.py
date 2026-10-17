@@ -2568,14 +2568,17 @@ class TestProviderTrustChain:
         assert first_run_model_discovery._model_discovery_ui_outcome(forbidden) == (
             [],
             "listing_unavailable",
-            "",
+            "forbidden",
         )
         assert line(True, forbidden) == (
             setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
             setup_state.PROVIDER_PROBE_NONE,
         )
         # The same ruling when no key was sent: a keyless 403 asks for no key
-        # (a keyless 401 does), so it reads as Test and Settings read it.
+        # (a keyless 401 does), so it reads as Test and Settings read it. The
+        # owner's decision of 2026-10-17 (PR #3144, D2) adds a hint that such
+        # a server may want a key, where this step's key field is. A 404 is
+        # no refusal and gets none.
         keyless = setup_state.FirstRunProviderDraft(
             "llama_cpp", "", setup_state.ProviderCredentialDraft("none", "", 0)
         )
@@ -2584,6 +2587,13 @@ class TestProviderTrustChain:
             setup_state.PROVIDER_PROBE_KEY_REQUIRED,
         )
         assert line(True, forbidden, keyless) == (
+            (
+                "Model listing unavailable; you can enter the model ID on the next "
+                "step. If this server needs a key, add one under Authentication."
+            ),
+            setup_state.PROVIDER_PROBE_NONE,
+        )
+        assert line(True, no_list, keyless) == (
             setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
             setup_state.PROVIDER_PROBE_NONE,
         )
@@ -2600,12 +2610,15 @@ class TestProviderTrustChain:
         ],
         ids=["403", "404"],
     )
+    @pytest.mark.parametrize("credential_source", ["stored", "none"])
     def test_a_test_that_could_not_list_reads_as_the_listing_reads_it(
-        self, state, category, summary
+        self, state, category, summary, credential_source
     ):
         """TASK-33008 review round 4: a 403 or a 404 to Test read as the shared
         verdict's "…; chat endpoint not tested" on Provider, while the listing
-        of the same server read "Model listing unavailable…"."""
+        of the same server read "Model listing unavailable…". The owner's
+        decision of 2026-10-17 (PR #3144, D2): a 403 to a Test that sent no
+        key adds the listing's hint that the server may want one."""
         from types import SimpleNamespace
 
         from tldw_chatbook.Chat.provider_test_evidence import (
@@ -2634,7 +2647,7 @@ class TestProviderTrustChain:
         assert shared != setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE
         identity = SimpleNamespace(
             provider_key="llama_cpp",
-            credential_source="stored",
+            credential_source=credential_source,
             connection_identity=("llama_cpp", "http://127.0.0.1:8080"),
         )
         owner = SimpleNamespace(
@@ -2645,8 +2658,51 @@ class TestProviderTrustChain:
             owner, identity, evidence, shared
         )
 
-        assert told == setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        hinted = state == "unreachable" and credential_source == "none"
+        assert told == setup_state.PROVIDER_LISTING_UNAVAILABLE_LINE + (
+            " If this server needs a key, add one under Authentication."
+            if hinted
+            else ""
+        )
         assert owner._key_required_at is None
+
+    @pytest.mark.parametrize(
+        ("category", "key", "provider", "hinted"),
+        [
+            ("forbidden", "", "llama_cpp", True),  # a keyless 403
+            ("forbidden", "sk-list-only", "llama_cpp", False),  # a 403, key sent
+            ("http_status", "", "llama_cpp", False),  # a keyless 404
+            ("", "", "llama_cpp", False),  # no list at all
+            ("forbidden", "", "anthropic", False),  # a Claude subscription
+        ],
+        ids=["keyless-403", "keyed-403", "keyless-404", "no-list", "subscription"],
+    )
+    def test_the_model_step_hints_at_a_key_only_after_a_keyless_403(
+        self, category, key, provider, hinted
+    ):
+        """The owner's decision of 2026-10-17 (PR #3144, D2): a 403 to a
+        listing that sent no key still reads "Model listing unavailable" on
+        Model (only a 401 rejects a key), plus a hint that the server may want
+        a key. Model has no key field, so the hint says go Back. A Claude
+        subscription signs in without a key, so it never gets the hint."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.UI.Wizards import first_run_model_discovery
+
+        source = "draft" if key else "none"
+        draft = setup_state.FirstRunProviderDraft(
+            provider, "", setup_state.ProviderCredentialDraft(source, key, 0)
+        )
+        config = {"api_settings": {"anthropic": {"auth_source": "claude_subscription"}}}
+        step = SimpleNamespace(
+            wizard=SimpleNamespace(app_instance=SimpleNamespace(app_config=config)),
+            _current_provider_draft=lambda: draft,
+        )
+
+        assert first_run_model_discovery.model_unavailable_line(step, category) == (
+            "Model listing unavailable; enter the model ID used by this endpoint."
+            + (" If this server needs a key, go Back to add one." if hinted else "")
+        )
 
     def test_summary_actions_flip_on_probe_failure(self):
         primary, secondary, tertiary = setup_state.build_first_run_summary_actions(

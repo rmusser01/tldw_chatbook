@@ -431,8 +431,8 @@ class ModelStep(SetupStep):
             evidence = owner._test_evidence_for_discovery_key(discovery_key)
             if evidence is not None:
                 if evidence.endpoint == "model_listing_unavailable":
-                    discovery_state = "listing_unavailable"
-                    models = []
+                    discovery_state, models = "listing_unavailable", []
+                    failure_category = evidence.category or ""
                 elif evidence.endpoint == "unreachable":
                     discovery_state = "connection_failed"
                     failure_category = model_discovery.tested_failure_category(
@@ -578,7 +578,7 @@ class ModelStep(SetupStep):
         elif discovery_state == "listing_unavailable":
             await radio_set.mount(
                 _status_line(
-                    wizard_state.MODEL_LISTING_UNAVAILABLE_LINE,
+                    model_discovery.model_unavailable_line(self, failure_category),
                     "setup-model-listing-unavailable",
                 )
             )

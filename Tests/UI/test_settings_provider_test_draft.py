@@ -956,10 +956,11 @@ def test_a_paid_test_of_another_model_never_verifies_the_settings_rows():
         ("unreachable", "unauthorized", "Not ready · key rejected", "key rejected"),
         # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403 key
         # check now records "listing unavailable", so neither row rejects the
-        # key and nothing blocks.
+        # key and nothing blocks. It keeps "forbidden" since the owner's
+        # decision of 2026-10-17 (PR #3144, D2).
         (
             "model_listing_unavailable",
-            "http_status",
+            "forbidden",
             "Ready · not tested",
             "present, not verified",
         ),
@@ -994,6 +995,49 @@ def test_a_rejected_key_reads_rejected_on_the_key_row_too(
 
     assert rows["Readiness"] == readiness_word
     assert rows["Key"] == f"saved in config · {key_text}"
+
+
+@pytest.mark.parametrize(
+    ("category", "credential_source", "hinted"),
+    (
+        ("forbidden", "none", True),  # a 403 to a listing that sent no key
+        ("forbidden", "stored", False),  # a 403 to a key that was sent
+        ("http_status", "none", False),  # a 404 refuses nothing
+    ),
+    ids=("keyless-403", "keyed-403", "keyless-404"),
+)
+def test_a_keyless_403_listing_suggests_a_key_on_the_endpoint_row(
+    category, credential_source, hinted
+):
+    """The owner's decision of 2026-10-17 (PR #3144, D2): a 403 to a model
+    listing that sent no key still reads "model listing unavailable" (only a
+    401 rejects a key, so nothing blocks), and the Endpoint row adds that the
+    server may want a key, which this card takes in its API key field."""
+    endpoint = "http://127.0.0.1:8080"
+    identity = _semantic_identity(
+        endpoint, provider_key="llama_cpp", credential_source=credential_source
+    )
+    evidence = ProviderTestEvidence(
+        identity, "model_listing_unavailable", (), category=category
+    )
+    config = {"api_settings": {"llama_cpp": {"api_url": endpoint}}}
+    readiness = get_provider_readiness("llama_cpp", config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="llama.cpp",
+            model="m-1",
+            endpoint=endpoint,
+            evidence=evidence,
+        )
+    )
+
+    hint = "; if this server needs a key, enter one in the API key field"
+    assert rows["Endpoint"].endswith(
+        "model listing unavailable; chat endpoint not tested" + (hint if hinted else "")
+    )
+    assert rows["Readiness"] == "Ready · not tested"
 
 
 @pytest.mark.parametrize(

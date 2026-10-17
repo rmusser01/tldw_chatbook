@@ -639,6 +639,12 @@ MODEL_LISTING_UNAVAILABLE_LINE = (
 PROVIDER_LISTING_UNAVAILABLE_LINE = (
     "Model listing unavailable; you can enter the model ID on the next step."
 )
+#: The owner's decision of 2026-10-17 (PR #3144, D2): after a 403 to a check
+#: that sent no key, each line adds that the server may want a key, where the
+#: step's key field is (Provider's Authentication section is below its line;
+#: Model has none, so the key is one step Back).
+PROVIDER_KEYLESS_REFUSAL_HINT = "If this server needs a key, add one under Authentication."
+MODEL_KEYLESS_REFUSAL_HINT = "If this server needs a key, go Back to add one."
 
 
 def probe_failure_copy(probe_failure: str) -> ProbeFailureCopy:

@@ -2811,7 +2811,8 @@ def test_settings_probe_outcomes_convert_to_exact_provider_probe_results(
 
 def test_a_listing_403_converts_to_the_non_blocking_listing_result():
     """Qodo #2958 follow-up (owner ruling): the wizard records a 403 listing as
-    every other surface does -- listing not permitted, never key rejected."""
+    every other surface does -- listing not permitted, never key rejected. It
+    keeps "forbidden" (owner decision 2026-10-17, PR #3144 D2)."""
     from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
     from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
         SettingsEndpointProbeOutcome,
@@ -2821,7 +2822,7 @@ def test_a_listing_403_converts_to_the_non_blocking_listing_result():
         state="unreachable", summary="unreachable: forbidden", category="forbidden"
     )
     assert ProviderStep._provider_probe_result_from_outcome(outcome) == (
-        ProviderProbeResult("model_listing_unavailable", (), "http_status")
+        ProviderProbeResult("model_listing_unavailable", (), "forbidden")
     )
 
 
@@ -14003,6 +14004,83 @@ async def test_a_claude_subscription_is_never_told_to_add_an_api_key(monkeypatch
         )
         assert container.provider_probe_failure() == ""
         assert model_step.confirm_before_advance() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check", ["listing", "test"])
+async def test_a_keyless_403_reads_as_unavailable_with_a_key_hint_on_both_steps(check):
+    """The owner's decision of 2026-10-17 (PR #3144, D2): a 403 to a check
+    that sent no key keeps "Model listing unavailable" on both steps (only a
+    401 rejects a key) and adds that the server may want a key, where each
+    step's key field is: under Authentication on Provider, one step Back from
+    Model. Driven through the listing and through Test, which reach Model by
+    the handed-over outcome and by the Test's evidence. No failed check is
+    recorded. A 403 to a key that was sent gets no hint
+    (``test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it``)."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    forbidden = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="forbidden",
+        ),
+    )
+    listing = forbidden if check == "listing" else _typed_model_discovery_result(
+        "llama_cpp"
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=listing)
+    )
+    app = _HostApp(wizard)
+    provider_line = (
+        "Model listing unavailable; you can enter the model ID on the next step. "
+        "If this server needs a key, add one under Authentication."
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        step._local_discover = AsyncMock(return_value=())
+        step._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="unreachable", summary="unreachable: forbidden", category="forbidden"
+            )
+        )
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(
+            pilot, lambda: step._selected_discovery_state in {"failed", "complete"}
+        )
+        status = step.query_one("#setup-provider-probe-status", Static)
+        if check == "test":
+            step.query_one("#setup-provider-test", Button).press()
+            await _until(pilot, lambda: str(status.render()) == provider_line)
+            assert step._probe.await_args.kwargs["credential_source"] == "none"
+        assert str(status.render()) == provider_line
+
+        await container._advance()
+        await _until(
+            pilot, lambda: bool(model_step.query("#setup-model-listing-unavailable"))
+        )
+        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
+            "Model listing unavailable; enter the model ID used by this endpoint. "
+            "If this server needs a key, go Back to add one."
+        )
+        assert container.provider_probe_failure() == ""
 
 
 @pytest.mark.asyncio

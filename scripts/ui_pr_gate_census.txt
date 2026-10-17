@@ -562,3 +562,7 @@ Tests/UI/test_console_local_server_discovery_card.py::test_a_card_covered_at_lau
 Tests/UI/test_console_local_server_discovery_card.py::test_a_card_resumed_with_nothing_detected_runs_discovery_again
 # TASK-33008: a card unblocked and broken again while away runs discovery on the return (5 s).
 Tests/UI/test_console_local_server_discovery_card.py::test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return
+# TASK-33008 owner decision D2 (2026-10-17): a keyless 403 hints at a key; a sent key gets none (Settings rows, 1 s).
+Tests/UI/test_settings_provider_test_draft.py::test_a_keyless_403_listing_suggests_a_key_on_the_endpoint_row
+# TASK-33008 owner decision D2: Chat settings' Test connection says the same, naming Settings (2 s).
+Tests/UI/test_console_session_settings.py::test_a_keyless_403_to_test_connection_suggests_a_key_in_settings
