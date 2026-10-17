@@ -80,7 +80,7 @@ if TYPE_CHECKING:
     )
 
 #: Opens Switch model in pick-only mode for Change: (origin, draft, Find
-#: text, callback, served models by provider, each one a pick lands on the
+#: text, callback, served models by provider, each one whose pick lands on the
 #: connection that listed it); the callback gets ``(provider, model)`` or
 #: ``None`` on Esc.
 ModelPicker = Callable[
