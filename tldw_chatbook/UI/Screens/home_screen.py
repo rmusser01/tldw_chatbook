@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
 )
+from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
 from tldw_chatbook.config import (
     get_cli_setting,
     load_settings,
@@ -715,7 +716,9 @@ class HomeScreen(BaseAppScreen):
         bug just fixed for Console (task-177) must not be reintroduced on
         Home. An injected hermetic test config (no disk-load marker
         sections) is honored verbatim, same as Console's
-        ``_provider_readiness_app_config``.
+        ``_provider_readiness_app_config``. TASK-33005.9: it reads the app's
+        shared connection evidence as the Console does (memory only, no
+        probe), so a refused test reads not ready here too.
 
         Args:
             background_credentials: Return cached credential readiness without
@@ -750,6 +753,7 @@ class HomeScreen(BaseAppScreen):
                 settings,
                 app_config=config,
                 background_credentials=background_credentials,
+                connection_evidence=shared_connection_evidence(lambda: self.app),
             )
         except Exception as exc:
             logger.debug(f"Home Console readiness check failed: {exc}")

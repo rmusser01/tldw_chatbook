@@ -418,11 +418,12 @@ class ProviderStep(SetupStep):
             OrderedDict()
         )
         self._provider_draft_generation = 0
-        from tldw_chatbook.Chat.provider_test_evidence import (
-            ProviderTestEvidenceStore,
-        )
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderTestEvidenceStore
 
-        self._provider_test_evidence = ProviderTestEvidenceStore()
+        self._provider_test_evidence = ProviderTestEvidenceStore(
+            lambda: self.app,  # TASK-33005.9: publish to the app's shared owner
+            credential_of=lambda: self._credential_at_request_boundary()[1],
+        )
         self._active_probe_token: object | None = None
         self._last_tested_provider_identity: object | None = None
         if wizard is not None:
@@ -2181,8 +2182,7 @@ class ProviderStep(SetupStep):
             return
         # Review TASK-21143 follow-up (P-5): the returned-to-Provider notice
         # ("this API key was rejected") must not outlive the edit that
-        # addresses it — a stale rejection over a fresh key reads as "still
-        # broken".
+        # addresses it — a stale rejection over a fresh key reads as "still broken".
         try:
             wizard = self.wizard
             if wizard is not None and hasattr(wizard, "_clear_pinned_step_error"):

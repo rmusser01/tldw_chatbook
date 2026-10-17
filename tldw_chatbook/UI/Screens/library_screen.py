@@ -36066,7 +36066,14 @@ class LibraryScreen(BaseAppScreen):
         )
         try:
             settings = build_default_console_session_settings(config)
-            readiness = build_console_settings_readiness(settings, app_config=config)
+            # TASK-33005.9: the Console's shared test results, memory only.
+            from ...Chat.provider_test_evidence import shared_connection_evidence
+
+            readiness = build_console_settings_readiness(
+                settings,
+                app_config=config,
+                connection_evidence=shared_connection_evidence(lambda: self.app),
+            )
         except Exception:
             logger.debug(
                 "Library Console-lock pre-check failed; assuming unlocked.",
