@@ -1024,7 +1024,7 @@ async def test_phase_plan_stable_dependency_and_closed_foreign_scopes(required):
         )
         with pytest.raises(ValueError, match="event execution"):
             other.plan_handlers(scope, event())
-        assert (await engine.fire_handler_async(scope, "command", event())).succeeded
+        assert not engine.processes.records and not other.processes.records
         scope.close()
         with pytest.raises(ValueError, match="event execution"):
             engine.plan_handlers(scope, event())
@@ -1032,3 +1032,27 @@ async def test_phase_plan_stable_dependency_and_closed_foreign_scopes(required):
         scope.close()
         await engine.close()
         await other.close()
+
+
+@platform_support.v2_command
+@pytest.mark.asyncio
+@pytest.mark.parametrize("required", [False, True])
+async def test_phase_plan_stable_dependency_executes_supported_command(required):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    engine = HookEngine(
+        (command(),),
+        lambda *_: True,
+        HookBudgetOwner(),
+        dependency_required=lambda *_: required,
+    )
+    scope = engine.begin_event(event())
+    try:
+        assert engine.plan_handlers(scope, event())[0].phase == (
+            "validate" if required else "observe"
+        )
+        assert (await engine.fire_handler_async(scope, "command", event())).succeeded
+    finally:
+        scope.close()
+        await engine.close()

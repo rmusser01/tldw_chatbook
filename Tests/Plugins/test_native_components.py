@@ -989,6 +989,103 @@ async def test_native_hook_path_uses_host_lookup_and_explicit_package_control(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path_kind", ["relative", "dot", "empty-segment"])
+async def test_native_hook_relative_host_path_is_anchored(
+    native_console, native_package, tmp_path, monkeypatch, path_kind
+):
+    import json
+    import os
+    import sys
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Plugins.components import NativeHookSet
+
+    package = native_package(extension={"version": 1, "hooks": "hooks.json"})
+    host_cwd = tmp_path / "host-cwd"
+    relative = (
+        "host-bin/owned-path-probe" if path_kind == "relative" else "owned-path-probe"
+    )
+    for program, label in (
+        (host_cwd / relative, "host"),
+        (package / relative, "package"),
+        (package / "bin/owned-path-probe", "package"),
+    ):
+        program.parent.mkdir(parents=True, exist_ok=True)
+        program.write_text(
+            f"#!{sys.executable}\nimport os,json\nfrom pathlib import Path\n"
+            f"with Path({str(tmp_path / (label + '-executions'))!r}).open('a') as marker:\n"
+            " marker.write(json.dumps([__file__,os.environ['PATH'],os.environ['CUSTOM']])+'\\n')\n"
+            'print(\'{"version":2,"decision":"pass"}\')\n'
+        )
+        program.chmod(0o700)
+    monkeypatch.chdir(host_cwd)
+    monkeypatch.setenv(
+        "PATH",
+        {
+            "relative": "host-bin",
+            "dot": ".",
+            "empty-segment": os.pathsep + str(tmp_path / "missing-bin"),
+        }[path_kind],
+    )
+    (package / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": "path",
+                        "event": "PreToolUse",
+                        "type": "command",
+                        "effects": ["deny"],
+                        "argv": ["owned-path-probe"],
+                        "env": {"PATH": "${PLUGIN_ROOT}/bin", "CUSTOM": "preserved"},
+                    }
+                ],
+            }
+        )
+    )
+    installed = await install_components(
+        native_console.service, package, ("hook:path",)
+    )
+    snapshot = await native_console.service.capture_mcp_snapshot(
+        installed.installation_id, "workspace-a", "relative-path-run"
+    )
+    native = NativeHookSet(native_console.service, (snapshot,))
+    engine = HookEngine(
+        native.definitions,
+        native.current,
+        HookBudgetOwner(),
+        process_owner_for=native.process_owner,
+        host_environment=native.host_environment,
+        command_launch=native.command_launch,
+    )
+    try:
+        assert (await engine.fire_async(event())).succeeded
+        marker = tmp_path / "host-executions"
+        assert marker.exists() and not (tmp_path / "package-executions").exists()
+        before = marker.read_text()
+        assert json.loads(before) == [
+            str(host_cwd / relative),
+            snapshot.inspection.materialized_identity + "/bin",
+            "preserved",
+        ]
+        for missing in (True, False):
+            with monkeypatch.context() as context:
+                if missing:
+                    context.delenv("PATH")
+                else:
+                    context.setenv("PATH", "")
+                result = await engine.fire_async(event())
+                assert not result.allowed and not result.succeeded
+                assert marker.read_text() == before
+                assert not (tmp_path / "package-executions").exists()
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
 async def test_unscoped_hook_retains_real_scratch_lease_until_child_terminal(
     native_console, native_package, tmp_path
 ):

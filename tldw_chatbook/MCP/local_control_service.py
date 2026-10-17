@@ -276,11 +276,19 @@ class LocalMCPControlService:
         if definition["type"] != "stdio":
             return "", (), None, {}
         token = definition["command"]
-        command = (
-            str(Path(root) / token)
-            if token.startswith("./")
-            else shutil.which(token, path=baseline.get("PATH", ""))
-        )
+        if token.startswith("./"):
+            command = str(Path(root) / token)
+        else:
+            host_cwd = Path.cwd()
+            lookup_path = baseline.get("PATH", "")
+            if lookup_path:
+                # Child cwd/PATH must not reinterpret the host's selection.
+                lookup_path = os.pathsep.join(
+                    str(host_cwd / entry) for entry in lookup_path.split(os.pathsep)
+                )
+            command = shutil.which(token, path=lookup_path)
+            if command:
+                command = str(host_cwd / command)
         if not command:
             raise ValueError("plugin_executable_unavailable")
         args = tuple(expand(value) for value in definition.get("args", []))

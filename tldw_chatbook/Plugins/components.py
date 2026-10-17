@@ -568,6 +568,7 @@ class NativeHookSet:
 
     def command_launch(self, handler, event, host_environment):
         """Resolve protected values once after reservation, only into launch locals."""
+        import os
         import shutil
 
         from tldw_chatbook.Agents.hooks_v2.command_executor import CommandLaunchValues
@@ -616,7 +617,16 @@ class NativeHookSet:
         elif Path(token).is_absolute():
             executable = token
         else:
-            executable = shutil.which(token, path=host_environment.get("PATH", ""))
+            host_cwd = Path.cwd()
+            lookup_path = host_environment.get("PATH", "")
+            if lookup_path:
+                # Child cwd/PATH must not reinterpret the host's selection.
+                lookup_path = os.pathsep.join(
+                    str(host_cwd / entry) for entry in lookup_path.split(os.pathsep)
+                )
+            executable = shutil.which(token, path=lookup_path)
+            if executable:
+                executable = str(host_cwd / executable)
         if not executable:
             raise PluginUnavailable("plugin_executable_unavailable")
         cwd = (root / expand(handler.cwd or ".")).resolve()

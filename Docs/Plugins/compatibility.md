@@ -175,3 +175,41 @@ Native Linux/Windows runtime execution, real OS keychain and reboot behavior rem
 unqualified locally. The updated workflow retains actual collected-node capability
 metadata and JUnit outcomes for future platform runs; it was not dispatched here.
 No full-suite or whole-workflow execution was requested or run in this final wave.
+
+## Focused residual repair: absolute host lookup and pure planning
+
+The final scoped review found that the earlier I7 controls covered absolute host
+PATH entries only. Relative entries could still select a different executable
+after the child changed cwd. Owned MCP and native hook builders now anchor each
+host PATH entry, and the successful result, to one captured host cwd. Empty
+segments inside a nonempty PATH mean that captured directory; absent or exactly
+empty PATH still refuses. Child PATH and other reviewed environment values stay
+unchanged. Explicit package commands and native absolute commands retain their
+existing branches. MCP recapture rejects a different host selection without
+rewriting the retained profile.
+
+| New focused evidence | Executed result |
+|---|---|
+| `test_native_hook_relative_host_path_is_anchored[relative, dot, empty-segment]` | Three installed hooks run the host script despite competing package scripts, preserve child PATH/CUSTOM, and refuse missing/exact-empty PATH without another execution. Phase01 reproduced all three wrong-executable failures; phase03 passed. |
+| `test_installed_mcp_relative_host_path_is_anchored[path-relative, path-dot, path-empty]` | Three installed MCP controls select absolute host commands and complete normal approved RPCs. Missing/exact-empty PATH and changed host cwd refuse public mapping recapture and retained mapped dispatch, with no new RPC or competing-host launch. Phase02 reproduced all three relative commands/package executions; phase04 passed in 5.36s. |
+| Dependency planning and command execution | The original two planning/foreign-scope/closed-scope cases remain ungated and launch no process. Two separate command-success cases use the existing v2 capability mark. Those four cases and the genuine Windows-refusal control passed in phase03, alongside the three native controls: 8 passed in 4.03s. The refusal branch is simulated on this Darwin host. |
+
+MCP phase01 first failed at the sandbox-denied Darwin boot-identity prerequisite.
+R173 authorized only the three named MCP RED/GREEN cases with that real host read;
+private profiles, null keyring and external-network refusal remained active.
+Raw GREEN hashes: phase03 `b572d38b22bfe6143a3317452584662f652c9861b22b23efb2467abd30173531`;
+phase04 `41965fa11a57c307e9e718e3937345e05400d5b235c21f86d2f75a39ffc2309d`.
+
+The unchanged workflow's exact 21-file selection now collects **689 nodes** on
+Darwin, including both ungated planning cases and both conditional command cases;
+235 nodes use managed-runtime fixture gates and 221 carry skip declarations.
+Phase07 is collection only, with raw SHA
+`94539e9dee603b2f9bdd4db7d8d5ccdbf888e27677451719aaad2b51a43eb3e8`.
+It does not qualify native Linux/Windows execution. No full suite or workflow
+was run. Five changed Python files compile with no new Ruff diagnostics; the MCP
+service retains six exact baseline diagnostics and passes changed-hunk Black.
+The other four files pass whole-file Ruff/Black. Two test formatting corrections
+were checked for whole-module AST equality after GREEN; only their static checks
+were renewed. Earlier I1–I6, UI and startup evidence remains historical and scoped
+to its preserved sources; this extension adds no new qualification for those
+boundaries, OS keychain/reboot behavior or executable replacement races.

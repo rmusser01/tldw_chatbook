@@ -118,6 +118,40 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
         definition["env"].update(PATH="${PLUGIN_ROOT}/bin", CUSTOM="preserved")
         if fixture_mode == "path-explicit":
             definition["command"] = "./bin/" + program.name
+    path_case = None
+    if fixture_mode in {"path-relative", "path-dot", "path-empty"}:
+        import sys
+
+        host_cwd = tmp_path / "host-cwd"
+        other_cwd = tmp_path / "other-host-cwd"
+        relative = (
+            "host-bin/owned-path-probe"
+            if fixture_mode == "path-relative"
+            else "owned-path-probe"
+        )
+        for program, label in (
+            (host_cwd / relative, "host"),
+            (other_cwd / relative, "other-host"),
+            (package / relative, "package"),
+            (package / "bin/owned-path-probe", "package"),
+        ):
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_text(
+                f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\n"
+                f"Path({str(tmp_path / (label + '-executable'))!r}).write_text(__file__)\n"
+                f"os.execv({sys.executable!r},[{sys.executable!r},*sys.argv[1:]])\n"
+            )
+            program.chmod(0o700)
+        lookup = {
+            "path-relative": "host-bin",
+            "path-dot": ".",
+            "path-empty": os.pathsep + str(tmp_path / "missing-bin"),
+        }[fixture_mode]
+        monkeypatch.chdir(host_cwd)
+        monkeypatch.setenv("PATH", lookup)
+        definition["command"] = "owned-path-probe"
+        definition["env"].update(PATH="${PLUGIN_ROOT}/bin", CUSTOM="preserved")
+        path_case = SimpleNamespace(executable=host_cwd / relative, other_cwd=other_cwd)
     definitions = {"shared": definition}
     if fixture_mode == "multi_separate":
         definitions["second"] = dict(
@@ -325,6 +359,7 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
             package=package,
             inspection=inspection,
             unified=unified,
+            path_case=path_case,
         )
     finally:
         release.touch()
@@ -1957,3 +1992,52 @@ async def test_installed_mcp_path_uses_host_lookup_and_explicit_package_control(
     )
     assert observed["custom"] == "preserved"
     assert (await case.invoke("b")).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shared_connection_case",
+    ["path-relative", "path-dot", "path-empty"],
+    indirect=True,
+)
+async def test_installed_mcp_relative_host_path_is_anchored(
+    shared_connection_case, monkeypatch
+):
+    from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+    case = shared_connection_case
+    case.release.touch()
+    assert (await case.pending).ok
+    saved = case.local.store.get_profile(case.profile_id)
+    assert saved.command == str(case.path_case.executable)
+    assert (case.calls.parent / "host-executable").read_text() == saved.command
+    assert not (case.calls.parent / "package-executable").exists()
+    observed = json.loads((case.calls.parent / "launch.json").read_text())
+    assert observed["path"] == case.inspection.materialized_identity + "/bin"
+    assert observed["custom"] == "preserved"
+    assert (await case.invoke("b")).ok
+    name = case.providers["b"].list_catalog()[0].name
+    before = case.calls.read_text()
+    for change in ("missing", "empty", "cwd"):
+        with monkeypatch.context() as context:
+            if change == "missing":
+                context.delenv("PATH")
+            elif change == "empty":
+                context.setenv("PATH", "")
+            else:
+                context.chdir(case.path_case.other_cwd)
+            with pytest.raises(CredentialError):
+                case.local.capture_connection_mapping(
+                    installation_id=case.installation,
+                    mapping_id="connection:mcp:shared",
+                    inspection=case.inspection,
+                    component_id="mcp:shared",
+                    profile_id=case.profile_id,
+                )
+            result = await asyncio.to_thread(
+                case.registries["b"].invoke_by_name, name, {}
+            )
+            assert not result.ok
+            assert case.calls.read_text() == before
+            assert not (case.calls.parent / "other-host-executable").exists()
+            assert case.local.store.get_profile(case.profile_id) == saved
