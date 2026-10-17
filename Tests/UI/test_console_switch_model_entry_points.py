@@ -264,8 +264,10 @@ async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
             assert harness.focused is start
             await _until(
                 pilot,
-                lambda: shown().startswith("Esc composer · F6 panes") is in_rail
-                and "Alt+M switch model" in shown(),
+                lambda in_rail=in_rail: (
+                    shown().startswith("Esc composer · F6 panes") is in_rail
+                    and "Alt+M switch model" in shown()
+                ),
                 f"the footer of {start.id}",
             )
         for hint in ("Alt+A approval", "Alt+C context rail"):
