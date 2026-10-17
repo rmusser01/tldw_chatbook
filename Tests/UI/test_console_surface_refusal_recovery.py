@@ -11,7 +11,7 @@ from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_native_chat_flow import _persist_console_provider_config
-from Tests.UI.test_destination_shells import _wait_for_selector, _wait_for_visible_text
+from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -94,8 +94,10 @@ async def test_surface_refusal_recovers_the_existing_accepted_user(
             await asyncio.wait_for(tasks[0], 10)
             await console._sync_native_console_chat_ui()
             await pilot.pause()
-            await _wait_for_visible_text(console, pilot, "Trace capture blocked")
             card = console.query_one(TraceCallRecoveryCallout)
+            async with asyncio.timeout(4):
+                while not card.display:
+                    await pilot.pause(0.01)
             assert card.display and not adapter_calls and refusals == [True]
             frame = " ".join(
                 ElementTree.fromstring(host.export_screenshot()).itertext()

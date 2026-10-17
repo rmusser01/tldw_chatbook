@@ -4082,3 +4082,5 @@ fresh `mktemp -d` directory (never a `/tmp/...` literal path — the sticky
 parent trips private-path validation), and export it in the shell so the
 child cannot inherit the real one. Afterwards, diff the real user data dir
 by mtime to confirm nothing leaked.
+
+PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
