@@ -204,6 +204,14 @@ class SkillTrustService:
         self.reduced_rollback_protection = reduced_rollback_protection
         self._keys: SkillTrustKeys | None = None
         self._salt: bytes | None = None
+        # Monotonic deadline before another automatic keyring-convenience
+        # attempt is allowed. A failed attempt is NOT latched forever (an
+        # unavailable keyring must stay recoverable), but without a cool-down
+        # every per-skill status check re-pays the salt load + keyring
+        # round-trip, which stalls the console turn loop for seconds per
+        # skill when the keyring is persistently unavailable (headless /
+        # served sessions, locked keyring).
+        self._convenience_retry_not_before = 0.0
         self._reviews: dict[str, dict[str, Any]] = {}
         self._recovery_original_store = trust_store
         from .recovery_activation import select
@@ -275,14 +283,23 @@ class SkillTrustService:
     def unlock_from_keyring_convenience(self) -> bool:
         """Load derived trust keys from a salt-bound secure keyring cache."""
 
+        if self._keys is not None:
+            return True
         if self.key_cache is None or not self.trust_store.has_manifest():
+            return False
+        import time as _time
+
+        now = _time.monotonic()
+        if now < self._convenience_retry_not_before:
             return False
         try:
             salt = self.trust_store.load_salt()
             keys = self.key_cache.load_keys(expected_salt=salt)
         except (OSError, ValueError, SkillTrustMarkerUnavailable):
+            self._convenience_retry_not_before = now + 60.0
             return False
         if keys is None:
+            self._convenience_retry_not_before = now + 60.0
             return False
         self._keys = keys
         self._salt = salt
