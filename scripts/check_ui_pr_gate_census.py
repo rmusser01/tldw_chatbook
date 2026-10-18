@@ -409,8 +409,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (TASK-35190): 363. The Phase 9 capture fix wave appends one node id, 3 of
 # 3 serial: a dispatched weekly row paints its relative next run
 # (TASK-33641.4): 364; and one more, 3 of 3 serial: every Send disabled
-# reason fits its strip whole (TASK-33005.7): 365.
-MINIMUM_FILES = 365
+# reason fits its strip whole (TASK-33005.7): 365; and one more, 3 of 3
+# serial: both generation panels' backend editors are whole and Save is
+# reachable (TASK-33641.3): 366.
+MINIMUM_FILES = 366
 
 
 def read_census(path: Path) -> list[str]:

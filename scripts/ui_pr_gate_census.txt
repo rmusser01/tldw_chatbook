@@ -689,3 +689,5 @@ Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint
 Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run
 # TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
 Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole
+# TASK-33641.3: Image Gen's and Video Gen's backend editors are as tall as their content and Save is reachable, at 211x44 and 235x52 (4 cases, ~10 s).
+Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable

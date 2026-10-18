@@ -1713,7 +1713,9 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
-/* Settings > Image Gen: the whole panel and its nested backend-editor
+/* Settings > Image Gen (and Video Gen, the same shape; its editor
+   collapsed to one row until the 2026-10-18 capture fix, TASK-33641.3):
+   the whole panel and its nested backend-editor
    scroll region default to Textual's framework-level width/height
    fallback (1fr) since neither `Vertical`/`VerticalScroll` declares one
    in DEFAULT_CSS for a widget shaped like this -- fine for a SINGLE
@@ -1726,11 +1728,13 @@ Button.settings-category-group-toggle:focus {
    defaults, Save/Revert) off the bottom entirely -- `settings-detail-
    pane` (the ancestor Settings already scrolls the WHOLE category
    through) is the one and only scroll owner here. */
-#settings-imagegen-panel {
+#settings-imagegen-panel,
+#settings-videogen-panel {
     height: auto;
 }
 
-#settings-imagegen-editor {
+#settings-imagegen-editor,
+#settings-videogen-editor {
     height: auto;
 }
 

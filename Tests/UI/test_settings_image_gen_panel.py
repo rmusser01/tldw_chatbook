@@ -1467,6 +1467,47 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
         )
 
 
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+@pytest.mark.parametrize("panel", ["imagegen", "videogen"])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_the_backend_editor_is_whole_and_save_reachable(size, panel):
+    """Capture phase (TASK-33641.3): nothing sized Video Gen's panel or its
+    backend editor, so both kept ``height: 1fr`` and the editor collapsed
+    to one row, cutting Save off. Image Gen's 2026-07-25 fix (3058f378c1)
+    sized its own two ids only; the same pin now holds for both panels."""
+    category = (
+        SettingsCategoryId.IMAGE_GENERATION
+        if panel == "imagegen"
+        else SettingsCategoryId.VIDEO_GENERATION
+    )
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(pilot, host, category, panel)
+
+        editor = screen.query_one(f"#settings-{panel}-editor")
+        deadline = time.monotonic() + 5.0
+        while not editor.region.height:  # the panel loaded; wait for its layout
+            assert time.monotonic() < deadline, f"{panel} @ {size}: never laid out"
+            await pilot.pause(0.02)
+        assert editor.region.height == editor.virtual_size.height, (
+            f"{panel} @ {size}: Backend settings editor region "
+            f"({editor.region.height}) is shorter than its content "
+            f"({editor.virtual_size.height})"
+        )
+        save_btn = screen.query_one(f"#settings-{panel}-save", Button)
+        save_btn.scroll_visible(animate=False)
+        deadline = time.monotonic() + 5.0
+        while not screen.find_widget(save_btn).clip.contains_region(save_btn.region):
+            assert time.monotonic() < deadline, (
+                f"{panel} @ {size}: scrolling never brought Save into view "
+                f"(Save {save_btn.region}, editor {editor.region})"
+            )
+            await pilot.pause(0.02)
+        widget, _offset = screen.screen.get_widget_at(*save_btn.region.center)
+        assert widget is save_btn, f"{panel} @ {size}: Save is not reachable"
+
+
 @pytest.mark.parametrize("size", [(150, 45), (151, 45)])
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
