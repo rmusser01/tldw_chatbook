@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import re
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -48,12 +47,25 @@ from tldw_chatbook.Chat.console_chat_models import (
     console_activity_status_word,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
-    EffectiveMemoryKind,
-    EffectiveMemoryResult,
+    EffectiveMemoryKind as EffectiveMemoryKind,  # noqa: PLC0414 -- retain the original module export.
+)
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryResult as EffectiveMemoryResult,  # noqa: PLC0414 -- retain the original module export.
 )
 from tldw_chatbook.Chat.console_context_repository import (
-    MemoryCoverageKind,
-    MemoryOriginKind,
+    MemoryCoverageKind as MemoryCoverageKind,  # noqa: PLC0414 -- retain the original module export.
+)
+from tldw_chatbook.Chat.console_context_repository import (
+    MemoryOriginKind as MemoryOriginKind,  # noqa: PLC0414 -- retain the original module export.
+)
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_SUMMARY_BANNER_COPY as CONSOLE_SUMMARY_BANNER_COPY,  # noqa: PLC0414 -- retain the original module export.
+)
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleMemoryBannerPresentation,
+)
+from tldw_chatbook.Chat.console_display_state import (
+    derive_console_memory_banner_presentation as derive_console_memory_banner_presentation,  # noqa: PLC0414 -- retain the original module export.
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -103,6 +115,7 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
 from tldw_chatbook.Widgets.Console.console_canvas_card import (
     ConsoleCanvasCard,
     ConsoleCanvasCardPresentation,
+    canvas_card_presentations,
     canvas_card_signature,
 )
 from tldw_chatbook.Widgets.Console.console_generation_card import (
@@ -117,6 +130,10 @@ from tldw_chatbook.Widgets.Console.console_message_more_menu import (
 from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
     TextSelection,
+    _diff_cell_to_offset,
+    _markdown_cell_to_offset,
+    _snap_to_line_bounds,
+    _tool_diff_display_text,
     cap_quote,
     line_end_offset,
     line_start_offset,
@@ -186,11 +203,6 @@ SCROLLBACK_HYDRATION_THRESHOLD = 2
 #: (dimmed) with the state carried by a separate dim status line. Same copy
 #: as the agent runtime's persisted empty-final-text fallback.
 CONSOLE_FAILED_EMPTY_PLACEHOLDER = "No response was generated."
-#: SP2 /rewind: render-derived (never a tree node) one-line banner shown above
-#: the boundary message when "summarize up to here" is in effect.
-CONSOLE_SUMMARY_BANNER_COPY = (
-    "⤵ Earlier turns summarized for context — full history above"
-)
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
@@ -201,206 +213,6 @@ _SESSION_ID_UNSET = object()
 # task-2154.14 (DS-01): the static line was replaced by `action_row_guide()`,
 # which names the row's glyph-only buttons in words derived from the row's own
 # actions -- see the "action-help" row in `_transcript_rows` and `to_plain_text`.
-
-
-@dataclass(frozen=True, slots=True)
-class ConsoleMemoryBannerPresentation:
-    """One content-free banner derived from validated effective memory."""
-
-    kind: Literal["prefix", "range"]
-    render_anchor_message_id: str
-    start_message_id: str | None
-    end_message_id: str
-    copy: str
-
-    def __post_init__(self) -> None:
-        if self.kind not in {"prefix", "range"}:
-            raise ValueError("memory banner kind must be prefix or range")
-        for name in ("render_anchor_message_id", "end_message_id", "copy"):
-            if not isinstance(getattr(self, name), str) or not getattr(self, name):
-                raise ValueError(f"memory banner {name} must be non-empty text")
-        if self.kind == "range":
-            if not isinstance(self.start_message_id, str) or not self.start_message_id:
-                raise ValueError("range memory banner requires a start identity")
-        elif self.start_message_id is not None:
-            raise ValueError("prefix memory banner cannot carry a start identity")
-
-
-def canvas_card_presentations(
-    message: ConsoleChatMessage,
-) -> tuple[ConsoleCanvasCardPresentation, ...]:
-    """Project validated Canvas metadata without ever accepting source bytes."""
-
-    metadata = message.metadata
-    if metadata is None:
-        return ()
-    return tuple(
-        ConsoleCanvasCardPresentation(
-            canvas_id=card.canvas_id,
-            revision_id=card.revision_id,
-            label=f"{card.title} · revision {card.sequence} · {card.status}",
-            digest=card.digest,
-            reopenable=card.reopenable,
-            error_code=card.error_code,
-        )
-        for card in metadata.canvas_cards
-    )
-
-
-def derive_console_memory_banner_presentation(
-    effective: EffectiveMemoryResult,
-    active_messages: Iterable[ConsoleChatMessage],
-) -> ConsoleMemoryBannerPresentation | None:
-    """Derive one banner from the same typed memory result used by dispatch.
-
-    Every persisted identity lookup is exact. Missing or duplicate anchors,
-    malformed effective state, and prefix memories without a real placement
-    row return ``None`` rather than guessing from content or proximity.
-
-    Args:
-        effective: Validated effective-memory result used by provider dispatch.
-        active_messages: Ordered native messages on the visible active branch.
-
-    Returns:
-        A content-free banner presentation, or ``None`` when exact placement
-        cannot be proven.
-
-    Raises:
-        TypeError: If ``effective`` is not an ``EffectiveMemoryResult``.
-    """
-
-    if not isinstance(effective, EffectiveMemoryResult):
-        raise TypeError("effective must be an EffectiveMemoryResult")
-    rows = tuple(active_messages)
-    positions_by_persisted_id: dict[str, list[int]] = {}
-    for index, message in enumerate(rows):
-        persisted_id = message.persisted_message_id
-        if isinstance(persisted_id, str) and persisted_id:
-            positions_by_persisted_id.setdefault(persisted_id, []).append(index)
-
-    def exact_index(persisted_id: str | None) -> int | None:
-        if not isinstance(persisted_id, str) or not persisted_id:
-            return None
-        matches = positions_by_persisted_id.get(persisted_id, ())
-        return matches[0] if len(matches) == 1 else None
-
-    def prefix_presentation(
-        *, render_index: int, end_message_id: str
-    ) -> ConsoleMemoryBannerPresentation:
-        return ConsoleMemoryBannerPresentation(
-            kind="prefix",
-            render_anchor_message_id=rows[render_index].id,
-            start_message_id=None,
-            end_message_id=end_message_id,
-            copy=CONSOLE_SUMMARY_BANNER_COPY,
-        )
-
-    if effective.kind is EffectiveMemoryKind.RAW:
-        return None
-    if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX:
-        legacy = effective.legacy
-        if legacy is None:
-            return None
-        boundary_index = exact_index(legacy.boundary_message_id)
-        if boundary_index is None:
-            return None
-        return prefix_presentation(
-            render_index=boundary_index,
-            end_message_id=legacy.boundary_message_id,
-        )
-
-    memory = effective.memory
-    scope = effective.scope
-    if (
-        memory is None
-        or scope is None
-        or not memory.active
-        or memory.source_kind != "generated"
-        or memory.memory_id != scope.memory_id
-        or memory.conversation_id != scope.conversation_id
-    ):
-        return None
-    boundary_index = exact_index(memory.boundary_message_id)
-    if boundary_index is None:
-        return None
-
-    if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
-        if (
-            scope.coverage_kind is not MemoryCoverageKind.RANGE
-            or scope.origin_kind is not MemoryOriginKind.MANUAL_REWIND
-        ):
-            return None
-        start_index = exact_index(scope.selection_anchor_message_id)
-        if (
-            start_index is None
-            or start_index >= boundary_index
-            or rows[start_index].role is not ConsoleMessageRole.USER
-        ):
-            return None
-        user_ordinals: dict[int, int] = {}
-        ordinal = 0
-        for index, message in enumerate(rows):
-            if message.role is ConsoleMessageRole.USER:
-                ordinal += 1
-                user_ordinals[index] = ordinal
-        start_ordinal = user_ordinals.get(start_index)
-        end_ordinal = next(
-            (
-                user_ordinals[index]
-                for index in range(boundary_index, start_index - 1, -1)
-                if index in user_ordinals
-            ),
-            None,
-        )
-        if start_ordinal is None or end_ordinal is None:
-            return None
-        return ConsoleMemoryBannerPresentation(
-            kind="range",
-            render_anchor_message_id=rows[start_index].id,
-            start_message_id=scope.selection_anchor_message_id,
-            end_message_id=memory.boundary_message_id,
-            copy=(
-                "Context uses a summary of turns "
-                f"#{start_ordinal}-#{end_ordinal} - full transcript remains visible."
-            ),
-        )
-
-    if (
-        effective.kind is not EffectiveMemoryKind.GENERATED_PREFIX
-        or scope.coverage_kind is not MemoryCoverageKind.PREFIX
-    ):
-        return None
-    if scope.origin_kind is MemoryOriginKind.MANUAL_REWIND:
-        anchor_index = exact_index(scope.selection_anchor_message_id)
-        if (
-            anchor_index is None
-            or boundary_index >= anchor_index
-            or rows[anchor_index].role is not ConsoleMessageRole.USER
-        ):
-            return None
-        return prefix_presentation(
-            render_index=anchor_index,
-            end_message_id=memory.boundary_message_id,
-        )
-    if (
-        scope.origin_kind is not MemoryOriginKind.AUTOMATIC
-        or scope.selection_anchor_message_id is not None
-    ):
-        return None
-    next_user_index = next(
-        (
-            index
-            for index in range(boundary_index + 1, len(rows))
-            if rows[index].role is ConsoleMessageRole.USER
-        ),
-        None,
-    )
-    if next_user_index is None:
-        return None
-    return prefix_presentation(
-        render_index=next_user_index,
-        end_message_id=memory.boundary_message_id,
-    )
 
 
 _ACTION_TOOLTIPS = {
@@ -2862,121 +2674,6 @@ def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int
         return offset_for_cell(text, cell_x)
     start, line = table[cell_y]
     return start + offset_for_cell(line, cell_x)
-
-
-def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
-    """Snap ``[start, end)`` outward to whole ``'\\n'``-delimited lines.
-
-    Console selection phase 1 (task G): markdown-row granularity is the whole
-    source line, so a character range grows to cover every line it touches.
-    The trailing newline of the last touched line is excluded, so the quoted
-    text is exactly the selected lines.
-    """
-    start, end = sorted((start, end))
-    start = max(0, min(start, len(text)))
-    end = max(0, min(end, len(text)))
-    line_start = text.rfind("\n", 0, start) + 1
-    newline = text.find("\n", end)
-    line_end = len(text) if newline == -1 else newline
-    return line_start, line_end
-
-
-def _markdown_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
-    """Map a markdown-body-local cell to a source-line character offset.
-
-    Console selection phase 1 (task G). The ``Markdown`` widget does not
-    expose which rendered line belongs to which SOURCE line (blocks re-flow,
-    wrap, and pad internally), so the body-local ``cell_y`` is distributed
-    evenly across the source lines and clamped to the nearest line -- the
-    recorded phase-1 approximation (ADR-068). ``set_selection_range`` then
-    snaps outward to whole lines, which bounds the damage of a coarse y map:
-    the quoted text is always whole lines regardless.
-
-    Two clamp details keep drags useful when the render COLLAPSES source
-    lines (soft-wrapped paragraphs render several source lines as one row,
-    so ``height < line count``): cells above the body map to the first line,
-    and the LAST rendered row maps to the last source line -- otherwise a
-    drag that ends on the bottom row could never reach the final lines.
-    ``cell_x`` maps within the target line via ``offset_for_cell``.
-
-    Args:
-        text: The row's markdown source text -- the selection domain.
-        height: The Markdown widget's rendered height (cells).
-        cell_x: Body-local column of the pointer.
-        cell_y: Body-local row of the pointer.
-
-    Returns:
-        Character offset into ``text`` for the cell, always in
-        ``[0, len(text)]``.
-    """
-    lines = text.split("\n")
-    if height <= 0 or len(lines) <= 1:
-        # Not laid out (or a single source line): monotone single-line map.
-        return offset_for_cell(text, cell_x)
-    if cell_y < 0:
-        line_index = 0
-    elif cell_y >= height:
-        return len(text)
-    elif cell_y == height - 1:
-        line_index = len(lines) - 1
-    else:
-        line_index = min(int(cell_y * len(lines) / height), len(lines) - 1)
-    line_start = sum(len(line) + 1 for line in lines[:line_index])
-    return line_start + offset_for_cell(lines[line_index], cell_x)
-
-
-def _tool_diff_display_text(diff: tuple[str, str, str]) -> str:
-    """Deterministic plain-text projection of a tool diff (selection domain).
-
-    Console selection phase 3, task 1. The selection domain of a
-    ``ConsoleToolDiffRow`` is the unified diff of its immutable
-    ``(path, old, new)`` contents, built with ``keepends=True`` so offsets
-    are line-anchored, and ``fromfile=tofile=path`` so the header names the
-    file. Pure function on the tuple -- unit-testable without a widget.
-
-    Args:
-        diff: ``(file_path, old_content, new_content)`` as captured at the
-            provider's strip seam.
-
-    Returns:
-        The joined unified-diff text (the row's selection domain).
-    """
-    path, old_content, new_content = diff
-    return "".join(
-        difflib.unified_diff(
-            old_content.splitlines(keepends=True),
-            new_content.splitlines(keepends=True),
-            fromfile=path,
-            tofile=path,
-        )
-    )
-
-
-def _diff_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
-    """Map a DiffView-local cell to a diff-projection character offset.
-
-    Console selection phase 3, task 1. ``DiffView`` renders line-number
-    gutters, hunk headers, and (in split mode) paired +/- columns, so its
-    rows do not map 1:1 onto any exposed text -- exactly like the Markdown
-    rows (task G), the body-local ``cell_y`` is distributed evenly across
-    the projection's lines and clamped to the nearest line, and
-    ``set_selection_range`` then snaps outward to whole diff lines, which
-    bounds the damage of a coarse y map: the quoted text is always whole
-    diff lines regardless. ``wrap=False`` (the diff-widgets default) keeps
-    long diff lines unwrapped (they scroll horizontally), so ``cell_x``
-    maps monotonically within the target line.
-
-    Args:
-        text: The row's unified-diff projection -- the selection domain.
-        height: The DiffView's rendered height (cells).
-        cell_x: Diff-view-local column of the pointer.
-        cell_y: Diff-view-local row of the pointer.
-
-    Returns:
-        Character offset into ``text`` for the cell, always in
-        ``[0, len(text)]``.
-    """
-    return _markdown_cell_to_offset(text, height, cell_x, cell_y)
 
 
 #: Character/word/line-granularity motion keys (plain + markdown rows only;

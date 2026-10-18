@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 15:04'
+updated_date: '2026-10-18 15:19'
 labels:
   - plugins
   - implementation
@@ -46,6 +46,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [ ] #17 Previously unqualified Settings cases have current-source targeted execution evidence; diagnosed fixture or production blockers are repaired without weakening profile, permission or persistence guards.
 - [ ] #18 The remaining relevant module-size and CSS-dimension gates pass without increasing ratchet ceilings, formatting compression, blanket exclusions or changed visual values.
 - [ ] #19 Relevant affected regression, static and integration checks pass on the repaired source; remaining limits and review disposition are documented and the existing draft PR is updated safely.
+- [ ] #20 Observed published-head CI bootstrap, plugin timestamp, diagnostic-inventory and worker/markup gate blockers are repaired or explicitly bounded by native platform evidence, preserving guards and currentness rather than suppressing checks.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -219,6 +220,8 @@ Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and 
 86. Fresh full component/design governance baseline exposes two static Python style writes and Library panels2004active lines. Use explicit existing None width/height resets in _swap_size_class; standard w-auto on the built-in preview label; consolidate the two adjacent byte-identical Library notes status/empty declaration blocks (real duplication removal, preserving selector cascade). Replace18CSS numeric dimensions with equal-valued existing tokens, adding named wizard21/14/11fraction and workflow100-column tokens in the core owner before use. Tokenize the same wizard grid ratios consistently. Preserve all old token definitions/values and prove resolved declarations unchanged; canonical build only, no cap/exclusion/format compression or visual value changes. These are direct ADR150/161 corrections, no new ADR.
 
 87. Accept the bound 18-production-path static decomposition proposal at .superpowers/pr3148-blockers-20261018/static-diagnosis/report.md and scope.json: move only the named stateless projections and complete ordered service-cleanup phase into existing owners; retain explicit old-name exports, same-signature delegates, lazy imports and late lifecycle patch points. Preserve every cleanup/finally/error-ordering assertion, strengthen the existing TTS source-pin through the caller, lower all eight source caps to measured final counts and pin existing recipients restrictively. No new modules, raised caps, exclusions, compression or global formatting. Root runs affected semantic/startup/static checks after source review; existing ADR-097/162/163 and decomposition doctrine apply; no new ADR for mechanical existing-boundary moves.
+
+88. Follow the newly observed published-head CI evidence before publication: preserve qualification/performance/derived logs; repair the three plugin timestamp writers through existing Utils.timestamps.utc_now_iso under ADR-173, retaining old read compatibility. Review exact moved diagnostic statement content and sink topology before regenerated inventory; review every newly reported post-await DOM site and already-escaped MCP notification before any census update; fix real lifecycle hazards rather than hide them. Diagnose CI test bootstrap/profile/native-admission failures separately and bind the smallest existing-harness repair before source writes; actual foreign platforms stay unqualified until executed. Re-run each affected checker and native plugin/source/UI controls, with no full sweep, guard bypass, fabricated identity, cap increase or unrelated cleanup. No new ADR for direct compliance with existing timestamp/security/runtime contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

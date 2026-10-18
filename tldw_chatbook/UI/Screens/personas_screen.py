@@ -243,6 +243,11 @@ from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
 )
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
 from ...Widgets.Persona_Widgets.personas_library_pane import (
+    CHARACTER_ROW_META_MAX_CHARS as CHARACTER_ROW_META_MAX_CHARS,  # noqa: PLC0414 -- retain the original module export.
+    _LIBRARY_SORT_LABELS as _LIBRARY_SORT_LABELS,  # noqa: PLC0414 -- retain the original module export.
+    _character_row_meta as _character_row_meta,  # noqa: PLC0414 -- retain the original module export.
+    _build_library_rows,
+    _character_sort_cycle,
     LibraryRow,
     PersonasLibraryPane,
 )
@@ -481,14 +486,6 @@ PERSONAS_CONVERSATION_SEARCH_DEBOUNCE_SECONDS = 0.2
 PERSONAS_LIBRARY_PAGE_SIZE = 50
 _SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
 _MAX_CHARACTER_ID = (1 << 63) - 1
-#: Display labels for the library sort keys (shared by the character sort cycle
-#: and the persona render path).
-_LIBRARY_SORT_LABELS: dict[str, str] = {
-    "relevance": "Relevance",
-    "name_asc": "Name",
-    "modified_desc": "Recent edit",
-    "created_desc": "Recent add",
-}
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 # TASK-32806.6: the two importers above cap at 10 MB before reading;
@@ -602,36 +599,6 @@ def _character_import_filters() -> Any:
 PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
 PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
 PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
-
-#: Longest character-row meta line. One row, one line: the library row is a
-#: two-line cell (name + meta) and a wrapped snippet would reflow the list.
-CHARACTER_ROW_META_MAX_CHARS = 72
-
-
-def _character_row_meta(record: dict) -> str | None:
-    """Return the secondary line for a character library row.
-
-    Prefers a one-line description snippet, because that is what makes a row
-    recognizable in a library of many characters. The previous meta was the
-    last-modified date alone, which in practice was identical across rows and
-    so identified nothing. Falls back to the date when a character carries no
-    description, so nothing loses its subtitle.
-
-    Args:
-        record: Character summary record from the library query.
-
-    Returns:
-        A single-line meta string, or ``None`` when neither a description nor
-        a last-modified timestamp is available.
-    """
-    description = " ".join(str(record.get("description") or "").split())
-    if description:
-        if len(description) > CHARACTER_ROW_META_MAX_CHARS:
-            return description[: CHARACTER_ROW_META_MAX_CHARS - 1].rstrip() + "…"
-        return description
-    last_modified = str(record.get("last_modified") or "")
-    return last_modified[:10] if last_modified else None
-
 
 #: Center-area widgets toggled by ``_show_center``.
 _CHARACTER_DEEP_LINK_RECOVERY_ID = "#personas-character-link-recovery"
@@ -2476,28 +2443,7 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
-        """Map id/name records onto library rows, skipping id-less records.
-
-        Character rows carry a ``YYYY-MM-DD`` last-modified meta line; personas
-        (id/name summaries) render without one.
-        """
-        rows: list[LibraryRow] = []
-        for record in records:
-            if record.get("id") is None:
-                continue
-            meta = None
-            if kind == "character":
-                meta = _character_row_meta(record)
-            name = str(record.get("name") or "Unnamed")
-            rows.append(
-                LibraryRow(
-                    item_id=str(record.get("id")),
-                    kind=kind,
-                    name=name,
-                    meta=meta,
-                )
-            )
-        return tuple(rows)
+        return _build_library_rows(records, kind)
 
     def _library_render_snapshot_is_current(
         self,
@@ -2538,22 +2484,7 @@ class PersonasScreen(BaseAppScreen):
         await self._reload_character_page()
 
     def _character_sort_cycle(self) -> list[tuple[str, str]]:
-        """Ordered ``(key, label)`` sort options for the character library.
-
-        A "Relevance" option is prepended (and becomes the natural default) only
-        while a CHARACTERS-mode search is active, since relevance is FTS
-        search-scored and only the character library searches via FTS —
-        personas page in-memory and previously showed a "Relevance" option
-        that was silently remapped to name_asc (task-463 #4).
-        """
-        base = [
-            ("name_asc", _LIBRARY_SORT_LABELS["name_asc"]),
-            ("modified_desc", _LIBRARY_SORT_LABELS["modified_desc"]),
-            ("created_desc", _LIBRARY_SORT_LABELS["created_desc"]),
-        ]
-        if self.state.search_query and self.state.active_mode == "characters":
-            return [("relevance", _LIBRARY_SORT_LABELS["relevance"]), *base]
-        return base
+        return _character_sort_cycle(self.state.search_query, self.state.active_mode)
 
     def _fts_match_query(self) -> str | None:
         """Wrap the raw search term as a quoted FTS5 prefix query, or None."""

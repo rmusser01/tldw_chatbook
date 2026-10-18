@@ -1404,10 +1404,74 @@ def test_existing_mount_binds_before_screen_work() -> None:
     assert bind_calls[0].lineno < restore_calls[0].lineno
 
 
+@pytest.mark.asyncio
+async def test_unmount_preserves_service_cancellation_when_tts_cleanup_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import app_lifecycle
+
+    cancellation = asyncio.CancelledError("service shutdown interrupted")
+    tts_error = RuntimeError("secondary TTS cleanup failure")
+
+    class InterruptedTasks:
+        def __iter__(self) -> Iterator[asyncio.Task[None]]:
+            raise cancellation
+
+    tts_close = AsyncMock(side_effect=tts_error)
+    later_cleanup = Mock()
+    owner = SimpleNamespace(
+        _shutdown_actor_pack_recovery=AsyncMock(return_value=None),
+        _shutdown_workflow_session=AsyncMock(),
+        _settle_speech_initialization=AsyncMock(return_value=None),
+        _stop_served_canvas_control=AsyncMock(),
+        _shutdown_app_owned_lifecycles=AsyncMock(),
+        _stop_ui_responsiveness_monitor=Mock(),
+        ui_responsiveness_monitor=None,
+        _shutdown_ingest_parse_pool=Mock(),
+        _deferred_startup_tasks=InterruptedTasks(),
+        _close_owned_tts_resources=tts_close,
+        _rich_log_handler=None,
+        db_status_manager=SimpleNamespace(stop_periodic_updates=later_cleanup),
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_lifecycle, "arm_exit_watchdog", Mock())
+    monkeypatch.setattr(app_lifecycle, "persist_event", Mock())
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle.stop_all_server_processes",
+        lambda app: [],
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await TldwCli.on_unmount(owner)
+
+    assert caught.value is cancellation
+    tts_close.assert_awaited_once_with()
+    assert any("TTS cleanup also failed" in note for note in cancellation.__notes__)
+    later_cleanup.assert_not_called()
+
+
 def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
-    # TASK-33011: TldwCli.on_unmount moved verbatim to LifecycleMixin.
-    method = _method_node(
+    unmount = _method_node(
         REPO_ROOT / "tldw_chatbook/app_lifecycle.py", "LifecycleMixin", "on_unmount"
+    )
+    delegated = [
+        statement
+        for statement in unmount.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Await)
+        and ast.unparse(statement.value.value)
+        == "_drain_app_unmount_services(self, speech_cleanup_cancellation)"
+    ]
+    assert len(delegated) == 1
+    following = unmount.body[unmount.body.index(delegated[0]) + 1]
+    assert isinstance(following, ast.If)
+    assert ast.unparse(following.test) == "self._rich_log_handler"
+    assert (
+        _self_method_calls(unmount, "_shutdown_ingest_parse_pool")[0].lineno
+        < delegated[0].lineno
+    )
+    method = _function_node(
+        REPO_ROOT / "tldw_chatbook/Utils/app_shutdown.py", "_drain_app_unmount_services"
     )
     close_calls = _self_method_calls(method, "_close_owned_tts_resources")
 

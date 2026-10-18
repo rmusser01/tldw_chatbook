@@ -34,7 +34,13 @@ from loguru import logger
 from loguru import logger as loguru_logger
 from textual import work
 from textual.message_pump import active_message_pump
-from textual.worker import Worker, WorkerCancelled, WorkerState
+from textual.worker import (
+    Worker,
+    WorkerState,
+)
+from textual.worker import (
+    WorkerCancelled as WorkerCancelled,  # noqa: PLC0414 -- retained late shutdown patch point.
+)
 
 from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
@@ -51,7 +57,11 @@ from tldw_chatbook.Constants import TAB_ARTIFACTS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
-from tldw_chatbook.Utils.app_shutdown import arm_exit_watchdog, unregister_running_app
+from tldw_chatbook.Utils.app_shutdown import (
+    _drain_app_unmount_services,
+    arm_exit_watchdog,
+    unregister_running_app,
+)
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Widgets.confirmation_dialog import (
     ConfirmationDialog,
@@ -1127,220 +1137,7 @@ class LifecycleMixin:
             )
 
         # Stop all background services and threads
-        service_cleanup_primary: BaseException | None = speech_cleanup_cancellation
-        try:
-            deferred_tasks = [
-                task
-                for task in getattr(self, "_deferred_startup_tasks", set())
-                if not task.done()
-            ]
-            for task in deferred_tasks:
-                task.cancel()
-            if deferred_tasks:
-                await asyncio.gather(*deferred_tasks, return_exceptions=True)
-
-            # Stop audio player if it exists
-            if hasattr(self, "audio_player"):
-                try:
-                    await self.audio_player.cleanup()
-                    self.loguru_logger.info("Audio player cleaned up")
-                except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up audio player: {e}")
-
-            # Clean up handler-owned TTS tasks and files if initialized.
-            if hasattr(self, "_tts_handler") and self._tts_handler:
-                try:
-                    await self._tts_handler.cleanup_tts_resources()
-                except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up TTS handler: {e}")
-
-            # Clean up handler-owned S/TT/S tasks and files if initialized.
-            if hasattr(self, "_stts_handler") and self._stts_handler:
-                try:
-                    if hasattr(self._stts_handler, "cleanup_tts_resources"):
-                        await self._stts_handler.cleanup_tts_resources()
-                except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up STTS handler: {e}")
-
-            # Stop the background scheduler loop cleanly.
-            scheduler_loop = getattr(self, "scheduler_loop", None)
-            scheduler_worker = getattr(self, "scheduler_worker", None)
-            if scheduler_loop is not None:
-                scheduler_loop.stop()
-            if scheduler_worker is not None:
-                try:
-                    if not scheduler_worker.is_finished:
-                        # Textual's public cancellation contract cancels the
-                        # underlying asyncio task. Worker.wait() has no timeout
-                        # parameter, so request cancellation before observing it.
-                        scheduler_worker.cancel()
-                    await scheduler_worker.wait()
-                except WorkerCancelled:
-                    # Cancellation is the expected public Textual shutdown
-                    # contract for a loop that may be sleeping between polls.
-                    pass
-                except Exception as e:
-                    self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
-
-            # task-19561: stopping the scheduler worker does NOT stop the
-            # generations it dispatched. `BriefingJobHandler.handle` spawns
-            # each one as a bare `asyncio.Task` (Locked Decision 3 -- a
-            # multi-minute LLM call must not stall the tick), so they are
-            # absent from `App.workers` and survived every cancellation
-            # above, only to be destroyed mid-flight when the loop closed.
-            # Cancel them here, while the loop is still alive to deliver it.
-            briefing_handler = getattr(self, "_briefing_job_handler", None)
-            if briefing_handler is not None:
-                try:
-                    cancelled = await briefing_handler.shutdown()
-                    if cancelled:
-                        self.loguru_logger.info(
-                            f"Cancelled {cancelled} in-flight scheduled briefing "
-                            "generation(s)"
-                        )
-                except Exception as e:
-                    self.loguru_logger.error(
-                        f"Error stopping scheduled briefing generations: {e}"
-                    )
-
-            # dreams phase 1: the same seam for scheduled Dreams cycles --
-            # `DreamsCycleHandler` spawns them as bare `asyncio.Task`s too,
-            # held in the handler module's own set.
-            try:
-                from .Scheduling.scheduler.handlers.dreams_handler import (
-                    shutdown as dreams_shutdown,
-                )
-
-                cancelled = await dreams_shutdown()
-                if cancelled:
-                    self.loguru_logger.info(
-                        f"Cancelled {cancelled} in-flight Dreams cycle(s)"
-                    )
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error stopping scheduled Dreams cycles: {e}"
-                )
-
-            # dreams phase 2: the same seam for scheduled Dreams track
-            # checks -- `DreamTrackHandler` spawns them as bare
-            # `asyncio.Task`s too, held in its handler module's own set
-            # (ruling P9: the call is what makes that set's documented
-            # on_unmount reachability true).
-            try:
-                from .Scheduling.scheduler.handlers.dream_track_handler import (
-                    shutdown as dream_track_shutdown,
-                )
-
-                cancelled = await dream_track_shutdown()
-                if cancelled:
-                    self.loguru_logger.info(
-                        f"Cancelled {cancelled} in-flight Dreams track "
-                        f"check(s)"
-                    )
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error stopping scheduled Dreams track checks: {e}"
-                )
-
-            # Drain admitted Guardian SQLite callbacks before stores are closed.
-            try:
-                from .Scheduling.scheduler.handlers.guardian_trend_handler import (
-                    shutdown as guardian_trend_shutdown,
-                )
-                await guardian_trend_shutdown()
-            except Exception as e:
-                self.loguru_logger.error(f"Error stopping Guardian trend work: {type(e).__name__}")
-
-            # Disconnect local MCP client sessions (P5-T6), if any were ever
-            # established this run.
-            try:
-                await self._disconnect_local_mcp_client()
-                self.loguru_logger.info("Local MCP client sessions disconnected")
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error disconnecting local MCP client sessions: {e}"
-                )
-
-            # Stop any running artifact share (child web server) before the
-            # process goes away; idempotent and failure-tolerant.
-            try:
-                self._shutdown_artifact_share()
-                self.loguru_logger.info("Artifact share stopped (if running)")
-            except Exception as e:
-                self.loguru_logger.error(f"Error stopping artifact share: {e}")
-
-            # Cancel any pending workers and wait for them, bounded.
-            await self._cancel_and_settle_workers("unmount")
-
-            # SSH ControlMaster cleanup (Phase 2a): `ssh -O exit` for every
-            # master this process started, only after in-flight calls have
-            # settled above so closing a master cannot cut a live call.
-            # Best-effort and bounded (5s per host, off the loop);
-            # ControlPersist remains the crash backstop, so a failure here
-            # degrades to an eventually-expiring master and must never
-            # block the quit.
-            # Session workers close first: closing their stdin lets the
-            # remote parents exit before the masters go away.
-            try:
-                from tldw_chatbook.Tools.remote_session_registry import (
-                    close_all_remote_sessions,
-                )
-                from tldw_chatbook.Tools.remote_workspace_transport import (
-                    get_master_manager,
-                )
-
-                await asyncio.to_thread(close_all_remote_sessions)
-                await asyncio.to_thread(get_master_manager().close_all)
-            except Exception as error:
-                self.loguru_logger.warning(
-                    "Closing SSH control masters on shutdown failed type={}",
-                    type(error).__name__,
-                )
-
-            # Stop media cleanup timer
-            if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
-                self._media_cleanup_timer.stop()
-                self.loguru_logger.info("Media cleanup timer stopped")
-
-            try:
-                await self._close_server_context_provider_cached_client()
-                self.loguru_logger.info("Server context provider cached client closed")
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error closing server context provider cached client: {e}"
-                )
-
-        except asyncio.CancelledError as error:
-            service_cleanup_primary = error
-        except Exception as e:
-            self.loguru_logger.error(f"Error during service cleanup: {e}")
-        except BaseException as error:
-            service_cleanup_primary = error
-        finally:
-            try:
-                await self._close_owned_tts_resources()
-                self.loguru_logger.info("TTS resources cleaned up properly")
-            except BaseException as cleanup_error:
-                if service_cleanup_primary is not None:
-                    service_cleanup_primary.add_note(
-                        "TTS cleanup also failed while preserving the primary "
-                        "shutdown error"
-                    )
-                    self.loguru_logger.warning(
-                        "TTS owner cleanup failed while preserving shutdown "
-                        f"type={type(cleanup_error).__name__} "
-                        "code=operation_failed"
-                    )
-                elif isinstance(cleanup_error, Exception):
-                    self.loguru_logger.warning(
-                        "TTS owner cleanup phase=unmount failed "
-                        f"type={type(cleanup_error).__name__} "
-                        "code=operation_failed"
-                    )
-                else:
-                    raise
-        if service_cleanup_primary is not None:
-            raise service_cleanup_primary
+        await _drain_app_unmount_services(self, speech_cleanup_cancellation)
 
         # Original cleanup code
         if self._rich_log_handler:  # Ensure it's removed if it exists
