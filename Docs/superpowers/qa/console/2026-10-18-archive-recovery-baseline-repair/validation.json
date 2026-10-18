@@ -906,5 +906,14 @@
     "path": "Docs/superpowers/qa/console/2026-10-18-archive-recovery-baseline-repair/review.md",
     "sha256": "95962c112e53aff211806f18239f6c949f70d002fbfadcb6ceef539e244292f9",
     "verdict": "No open actionable critical or important findings; ready for requested draft PR update."
+  },
+  "publication": {
+    "source_commit": "82de05e88db885bc0710125963f5770163c0dc4e",
+    "verified_source_blobs": 31,
+    "pr": "https://github.com/rmusser01/tldw_chatbook/pull/3162",
+    "draft": true,
+    "auto_merge": false,
+    "mergeable": "MERGEABLE",
+    "original_verified_feature_head": "ea5c335462b33e0b8c3c19011b60feca9360576c"
   }
 }
