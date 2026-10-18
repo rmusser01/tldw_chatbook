@@ -831,7 +831,9 @@ async def test_rows_read_verified_only_for_the_models_the_key_check_listed(reque
     assert "not listed by the server" in settings_rows["Model"]
 
 
-@pytest.mark.parametrize("server", ["lists", "lists-this-chat", "not-probed", "refused"])
+@pytest.mark.parametrize(
+    "server", ["lists", "lists-this-chat", "not-probed", "refused"]
+)
 async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, server):
     """TASK-33005.12: Ollama's rows came from its saved list (qwen3:4b,
     gemma3:12b) although the running server listed only qwen2.5:0.5b, which
