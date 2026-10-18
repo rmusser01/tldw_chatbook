@@ -2141,7 +2141,45 @@ async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> N
         custom = {row.provider for row in switcher._rows if row.provider}
         text = "\n".join(list_lines(app, switcher))
     assert {"custom", "custom_2"} <= custom
-    assert "Custom OpenAI-co…ble" in text and "Custom OpenAI-co… #2" in text
+    # Rewritten on purpose for TASK-33005.14: the 140-column box has room for
+    # the whole names, which a fixed 20-column cut showed as
+    # "Custom OpenAI-co…ble" and "Custom OpenAI-co… #2".
+    assert "Custom OpenAI-compatible #2" in text and "…" not in text
+
+
+@pytest.mark.parametrize(
+    "size, cut",
+    [
+        ((211, 44), False),
+        ((235, 52), False),
+        # A 98-column terminal leaves the list about 92 cells: room for the
+        # 24-cell name beside the model, context and readiness columns, not
+        # for the 27-cell one.
+        ((98, 44), True),
+    ],
+    ids=["211x44", "235x52", "98x44"],
+)
+async def test_provider_names_show_whole_while_the_list_has_room(size, cut) -> None:
+    """TASK-33005.14 AC#2: Switch model cut provider names at a fixed 20
+    columns ("Custom OpenAI-co…ble", "Custom OpenAI-co… #2", captures 06 and
+    12) though the 140-column box had room. The column fits the longest name
+    listed; only a list too narrow for it beside the other columns shortens
+    a name, in the middle, to the room left (never below 20), and the note
+    gives way first. Readiness stays in one column on every row."""
+    app = SwitcherHarness()
+    async with app.run_test(size=size) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(Recorder()))
+        await pilot.press(*"custom")
+        await _settle(app, pilot)
+        lines = [line for line in list_lines(app, switcher) if "Custom OpenAI" in line]
+    first = next(line for line in lines if "#2" not in line)
+    second = next(line for line in lines if "#2" in line)
+    assert "Custom OpenAI-compatible  " in first, first
+    assert ("Custom OpenAI-compatible #2" not in second) is cut, second
+    assert ("…" in second.split("Not ready")[0]) is cut, second  # in the middle
+    assert "Custom OpenAI-comp" in second and " #2 " in second, second
+    readiness = {line.index("Not ready · no key") for line in (first, second)}
+    assert len(readiness) == 1, lines
 
 
 async def test_enter_on_needs_setup_opens_that_providers_settings_fix() -> None:

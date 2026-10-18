@@ -132,11 +132,16 @@ HIGHLIGHT_GLYPH = "▶"
 #: Column widths of one pair row (mockup (a)). The model column grows to the
 #: longest id shown, so ids render whole (spec: never truncated); a row too
 #: long for the list ends in an ellipsis (the list is ``nowrap``), so the
-#: note, then readiness, give way before any id does.
+#: note, then readiness, give way before any id does. The provider column
+#: grows to the longest name shown, cut only to what the list leaves beside
+#: the other columns, and never below this floor (TASK-33005.14).
 _MODEL_COLUMNS = 28
 _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
 _READINESS_COLUMNS = 28
+#: A row's cells beside its model, provider and note: glyph, context,
+#: readiness and the five gaps between the columns (``_prompt``).
+_OTHER_COLUMNS = 1 + _CONTEXT_COLUMNS + _READINESS_COLUMNS + 6
 
 _SETUP_HINTS = {
     "configure_credential": "Enter: add key in Settings",
@@ -615,6 +620,7 @@ class ConsoleModelPopover(
         self._reopened = provider_key(reopened_provider or "")
         self._rows: list[SwitcherRow] = []
         self._model_columns = _MODEL_COLUMNS
+        self._provider_columns = _PROVIDER_COLUMNS
         self._painted_index: int | None = None
         self._highlight_key: tuple[str, str, str | None] | None = None
         self._user_moved = False
@@ -1450,8 +1456,7 @@ class ConsoleModelPopover(
         read when the rows are built (``on_resize`` rebuilds them), less the
         scrollbar's cells in case the list starts to scroll.
         """
-        pairs = self.query_one("#console-popover-pairs", OptionList)
-        width = pairs.content_region.width - pairs.styles.scrollbar_size_vertical
+        width = self._list_width()
         lines: list[str] = []
         for name in names:
             if lines and (width <= 0 or cell_len(f"{lines[-1]} · {name}") <= width):
@@ -1459,6 +1464,12 @@ class ConsoleModelPopover(
             else:
                 lines.append(f"  {name}")
         return lines
+
+    def _list_width(self) -> int:
+        """The pair list's text width, less the scrollbar's cells in case the
+        list starts to scroll; 0 before the first layout."""
+        pairs = self.query_one("#console-popover-pairs", OptionList)
+        return pairs.content_region.width - pairs.styles.scrollbar_size_vertical
 
     def _catalog_status_rows(self, key: str, has_rows: bool) -> list[SwitcherRow]:
         """AC#9: a loading, empty or unavailable catalog says so in a row."""
@@ -1592,7 +1603,7 @@ class ConsoleModelPopover(
             style = Style(color=muted.color, bold=False)
         return Text(
             f"{glyph} {model:<{self._model_columns}} "
-            f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "
+            f"{_fit(self._display(row.provider), self._provider_columns):<{self._provider_columns}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
             f"{_fit(switcher_readiness_words(readiness, row.model), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
             f"{row.note}",
@@ -1606,6 +1617,12 @@ class ConsoleModelPopover(
         pairs = self.query_one("#console-popover-pairs", OptionList)
         self._rows = self._build_rows()
         self._model_columns = _model_column_width(self._rows)
+        longest = max(
+            (len(self._display(row.provider)) for row in self._rows if row.provider),
+            default=0,
+        )
+        room = self._list_width() - self._model_columns - _OTHER_COLUMNS
+        self._provider_columns = max(_PROVIDER_COLUMNS, min(longest, room))
         self._painted_index = None
         with pairs.prevent(OptionList.OptionHighlighted):
             pairs.clear_options()
