@@ -3036,6 +3036,15 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        async def sync_console():
+            for _ in range(400):
+                completed = await console._sync_native_console_chat_ui()
+                if completed is True:
+                    return
+                await pilot.pause(0.01)
+            assert completed is True, "Console transcript sync did not complete"
+
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         messages = [
@@ -3112,7 +3121,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
             ),
         )
 
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.memory_banner_presentation is not None
         await _wait_for_selector(
@@ -3133,7 +3142,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
         assert transcript.selected_message_id == messages[-1].id
         assert transcript.to_plain_text(width=80) == plain_before
@@ -3144,18 +3153,18 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
         second_session = store.create_session(title="Second branch")
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert store.active_session_id == second_session.id
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
 
         store.switch_session(session.id)
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
 

@@ -770,6 +770,8 @@ class PluginReviewModal(ModalScreen):
         self.run_worker(self._load(), exclusive=True, group="plugin-review-load")
 
     def _status(self, value):
+        if not self.is_running:
+            return
         self.query_one("#plugin-review-status", Static).update(
             display_text(value, limit=4096)
         )
@@ -802,6 +804,8 @@ class PluginReviewModal(ModalScreen):
                 else:
                     inspection = self.producer.inspection
                 selected = self.draft.selection or ()
+            if not self.is_running:
+                return
             self.inspection = inspection
             listing = self.query_one("#plugin-review-selection", SelectionList)
             with listing.prevent(SelectionList.SelectedChanged):
@@ -832,6 +836,8 @@ class PluginReviewModal(ModalScreen):
             )
             self.call_after_refresh(self._loaded)
         except (OSError, ValueError, RuntimeError):
+            if not self.is_running:
+                return
             self._status(
                 "Management inputs unavailable. Unlock authority, check workspace and refresh."
             )
@@ -881,6 +887,8 @@ class PluginReviewModal(ModalScreen):
     async def _load_retained_data(self):
         self.details = None
         rows = await self._data_rows()
+        if not self.is_running:
+            return
         actions = [
             ("Review saved-data deletion", "delete-data"),
             ("Resume saved-data cleanup", "resume-data"),
@@ -913,6 +921,8 @@ class PluginReviewModal(ModalScreen):
         self.call_after_refresh(self._loaded)
 
     def _loaded(self):
+        if not self.is_running:
+            return
         self._loading = False
         self.query_one("#plugin-review-dialect", Select).disabled = False
         self._show_action_inputs()
@@ -1334,14 +1344,18 @@ class PluginReviewModal(ModalScreen):
     async def _save_profile(self, review):
         draft = self.draft
         generation = self._input_generation
-        original = self.query_one("#plugin-review-reference", Input).value
+        original = (
+            self.query_one("#plugin-review-reference", Input).value
+            if self.is_running
+            else draft.configuration
+        )
         try:
             owner = getattr(self.app, "local_mcp_control_service", None)
             if owner is None:
                 raise ValueError("mcp_configuration_owner_unavailable")
             result = await self.operations.save_profile(review, owner)
         except (OSError, ValueError, RuntimeError) as error:
-            if self.is_mounted:
+            if self.is_running:
                 self._status(
                     f"Configuration save unavailable: {type(error).__name__}. No mapping or connection was approved."
                 )
@@ -1365,13 +1379,13 @@ class PluginReviewModal(ModalScreen):
                     "plugin_configuration_unavailable"
                 )
         except (OSError, ValueError, RuntimeError, KeyError):
-            if self.is_mounted:
+            if self.is_running:
                 self._status(
                     saved
                     + "Mapping refresh unavailable. Draft preserved; refresh and review the complete configuration."
                 )
             return
-        if not self.is_mounted:
+        if not self.is_running:
             return
         same_draft = (
             self.draft is draft
@@ -1462,7 +1476,7 @@ class PluginReviewModal(ModalScreen):
     async def _execute_test(self, review):
         try:
             outcome = await self.app.console_runtime.execute_plugin_test(review)
-            if self.is_mounted:
+            if self.is_running:
                 self.query_one("#plugin-review-body", Static).update(
                     display_text(str(outcome), limit=16384)
                 )
@@ -1470,7 +1484,7 @@ class PluginReviewModal(ModalScreen):
                     "Test returned; inspect failures and cleanup above. No effects were added to the conversation."
                 )
         except (OSError, ValueError, RuntimeError) as error:
-            if self.is_mounted:
+            if self.is_running:
                 self._status(
                     f"Test unavailable: {type(error).__name__}. Review current authority and Console session."
                 )

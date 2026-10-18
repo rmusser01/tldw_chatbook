@@ -269,7 +269,9 @@ class PluginsScreen(BaseAppScreen):
         self._update_actions()
         try:
             workspace = await self._workspace()
-            if not accept_response(generation, self.browse.request_generation):
+            if not self.is_running or not accept_response(
+                generation, self.browse.request_generation
+            ):
                 return
             self.browse.workspace_id = workspace
             self.query_one("#plugins-scope", Static).update(
@@ -302,7 +304,9 @@ class PluginsScreen(BaseAppScreen):
                 return
             self._publish(rows)
         except (OSError, ValueError, PermissionError):
-            if accept_response(generation, self.browse.request_generation):
+            if self.is_running and accept_response(
+                generation, self.browse.request_generation
+            ):
                 self.rows = ()
                 self.query_one("#plugins-list", OptionList).clear_options()
                 self._status(
@@ -403,6 +407,8 @@ class PluginsScreen(BaseAppScreen):
         self._restore_focus = False
 
     def _status(self, message):
+        if not self.is_running:
+            return
         from ..Plugins_Modules.details import display_text
 
         self.query_one("#plugins-status", Static).update(display_text(message))
@@ -427,6 +433,8 @@ class PluginsScreen(BaseAppScreen):
         self._update_actions()
 
     def _update_actions(self):
+        if not self.is_running:
+            return
         if not self.query("#plugins-preview-entry"):
             return
         selected = self._selected()
