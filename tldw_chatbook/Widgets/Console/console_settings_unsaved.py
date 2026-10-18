@@ -160,10 +160,8 @@ def rebased_unsaved_baseline(
     """
     rebased = dict(baseline)
     for label in _SETTINGS_FIELDS.values():
-        carried_edit = before.get(label) != baseline.get(label) and after.get(
-            label
-        ) == before.get(label)
-        if not carried_edit:
+        edited = before.get(label) != baseline.get(label)
+        if not (edited and after.get(label) == before.get(label)):
             rebased[label] = after.get(label)
     return rebased
 
