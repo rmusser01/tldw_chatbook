@@ -16,6 +16,29 @@ on the UI loop, fix the read and pin it deterministically (hold the lock, call
 the read, assert it returns). Check the stack's siblings too: here three display
 builders made the same call, and fixing only the first would have moved the wait.
 
+## Integration watchdogs must allow valid native work (PR #3148, 2026-10-18)
+
+**Incident.** Windows qualification timed out a real MCP initializer and typed
+transport boundary at five seconds, while their hooks allowed ten active seconds.
+A ten-second whole-agent watchdog also expired; a bounded snapshot at nine seconds
+showed ordinary database persistence after the required pre-hook had been accepted.
+The product's active-time budget did not cover all surrounding native store work.
+
+**What to do.** Distinguish an outer functional-test watchdog from the product's
+execution and cleanup budgets. Allow the complete integration to settle and keep
+its semantic assertions. Preserve separate cancellation/refusal timing controls;
+an outer timeout alone does not identify the worker's blocked stage.
+
+## Fixture existence can precede complete JSON (PR #3148, 2026-10-18)
+
+**Incident.** The legacy hook cwd test polled for a child-written payload file,
+then parsed an empty string on Windows. The child created the final file before
+writing its JSON, so existence was not a completion signal.
+
+**What to do.** For this fixture, close a sibling staging file before atomically
+replacing the final payload. Keep the original bounded wait and content assertion.
+Do not use the hook engine's `close()` as a join: it cancels live processes.
+
 ## A strict child bootstrap can shadow pytest's network policy (PR #3148, 2026-10-18)
 
 **Incident.** Plugin qualification installed the hook-child socket/DNS refusal
