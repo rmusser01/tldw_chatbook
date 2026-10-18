@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from tldw_chatbook.Plugins.admission import RunPluginSnapshot
-from tldw_chatbook.Plugins.data_cleanup import root_ref
 from tldw_chatbook.Plugins.service import PluginRunOwnership
 
 from .activation import _guard
@@ -171,6 +170,8 @@ class ConnectionOwnership:
         root = connection.profile.plugin_owner["data_root"]
         roots = ()
         if root is not None:
+            from tldw_chatbook.Plugins.data_cleanup import root_ref
+
             rows = json.loads(snapshot.data_roots_json)
             matching = [
                 row
