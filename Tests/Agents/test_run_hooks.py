@@ -839,8 +839,9 @@ class TestCwdOverride:
         # process with cwd=payload["cwd"], and Popen ENOENTs on a fake path.
         payload_file = tmp_path / "hook_payload.json"
         code = (
-            "import json, sys; p = json.load(sys.stdin); "
-            f"open({str(payload_file)!r}, 'w').write(json.dumps(p))"
+            "import json, sys; from pathlib import Path; p = json.load(sys.stdin); "
+            f"target = Path({str(payload_file)!r}); staging = target.with_suffix('.tmp'); "
+            "staging.write_text(json.dumps(p)); staging.replace(target)"
         )
         cfg = RunHooksConfig(
             enabled=True, hooks=(HookSpec("Stop", (sys.executable, "-c", code)),)
