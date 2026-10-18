@@ -827,6 +827,8 @@ Depends on: Task 6 (TASK-33006.19, integrated in Wave 4)
 - tldw_chatbook/Widgets/Console/console_model_popover.py
 - tldw_chatbook/Widgets/Console/console_settings_field_row.py
 - tldw_chatbook/Widgets/Console/console_settings_modal.py (net lines <= 0)
+- tldw_chatbook/UI/Console_Modules/model_switcher.py (added by the controller 2026-10-18 after review round 1: the chat's own provider's readiness and probe resolve over the session endpoint, as `_open_switcher` already does for a detected server)
+- tldw_chatbook/Chat/console_settings_apply.py (added 2026-10-18: `rebased_endpoint` lives beside `remember_model_draft`, because console_chat_controller.py had 2 lines of headroom)
 - Tests/UI/test_console_endpoint_discovery.py
 
 ## Execution order
