@@ -318,6 +318,10 @@ from ...Chat.console_chat_models import (
     derive_console_session_title,
 )
 from ...UI.character_display_text import sanitize_character_display_label
+from ...Utils.os_notifications import (
+    normalize_console_os_notifications,
+    send_os_notification,
+)
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
@@ -929,6 +933,21 @@ CONSOLE_FOCUS_PANE_FOR_WIDGET = {
 #: The immutable writer may outlive this deadline, but never the screen-bound
 #: coordinator or its store/session presentation state.
 CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS = 0.25
+
+
+def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
+    """Run one OS notification off the UI/event-loop thread (TASK-18925).
+
+    A daemon one-shot thread is the failure floor: the sender bounds
+    itself with a hard 3s subprocess timeout, needs no Textual worker
+    lifecycle, and is safe to abandon at app teardown (the notifier child
+    runs in its own session, so a quit can strand it for at most that
+    timeout). Never call this on the UI thread -- the whole point is that
+    a stuck ``osascript``/``notify-send`` cannot freeze the Console.
+    """
+    threading.Thread(
+        target=notify, daemon=True, name="console-os-notification"
+    ).start()
 
 
 class _ConsoleTurnUndoUnavailableError(RuntimeError):
@@ -23532,6 +23551,11 @@ class ChatScreen(BaseAppScreen):
                 controller, session_id
             )
         )
+        # TASK-18925: compose the OS body from the RAW resolver values,
+        # before the toast's markup escaping mutates them.
+        os_display = self._console_os_notification_display(
+            session_title, workspace_name
+        )
         session_title = escape_markup(
             sanitize_character_display_label(session_title, max_characters=500)
         )
@@ -23541,6 +23565,7 @@ class ChatScreen(BaseAppScreen):
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
         )
+        self._fire_console_os_notification("needs_approval", os_display)
 
     @staticmethod
     def _current_park_round_ids(
@@ -23623,6 +23648,11 @@ class ChatScreen(BaseAppScreen):
                 controller, session_id
             )
         )
+        # TASK-18925: compose the OS body from the RAW resolver values,
+        # before the toast's markup escaping mutates them.
+        os_display = self._console_os_notification_display(
+            session_title, workspace_name
+        )
         session_title = escape_markup(
             sanitize_character_display_label(session_title, max_characters=500)
         )
@@ -23631,6 +23661,10 @@ class ChatScreen(BaseAppScreen):
         )
         verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
         self.app_instance.notify(f"Agent in {session_title} ({workspace_name}) {verb}.")
+        self._fire_console_os_notification(
+            "run_finished" if status is ConsoleRunStatus.COMPLETED else "run_failed",
+            os_display,
+        )
 
     def _notify_console_run_failure(self, visible_copy: str) -> None:
         """task-2154.16 (FB-05): one error toast for the VIEWED session's run
@@ -23647,7 +23681,59 @@ class ChatScreen(BaseAppScreen):
             visible_copy: The failed run's user-facing copy (e.g.
                 "Provider stream failed: unexpected provider error (...)").
         """
+        # TASK-18925: the toast carries visible_copy, but the OS
+        # notification must NOT -- its body is the session display name +
+        # outcome category only, so resolve the viewed session's identity
+        # here instead of reusing the error text.
+        controller = self._console_chat_controller
+        if controller is not None:
+            session_title, workspace_name = (
+                self._workspace._console_session_title_and_workspace_name(
+                    controller, controller.store.active_session_id
+                )
+            )
+            self._fire_console_os_notification(
+                "run_failed",
+                self._console_os_notification_display(session_title, workspace_name),
+            )
         self.app_instance.notify(visible_copy, severity="error")
+
+    @staticmethod
+    def _console_os_notification_display(
+        session_title: str, workspace_name: str
+    ) -> str:
+        """Compose the OS-notification body's identity (TASK-18925).
+
+        Sanitized-but-NOT-markup-escaped (the OS channel renders raw text,
+        so ``escape_markup`` brackets would show up verbatim) and carrying
+        only the conversation/tab name and workspace -- the outcome
+        category is appended by the dispatcher from its own copy map, so
+        no run copy, tool output, or secret can enter this string.
+        """
+        return (
+            f"{sanitize_character_display_label(session_title, max_characters=500)} "
+            f"({sanitize_character_display_label(workspace_name, max_characters=500)})"
+        )
+
+    def _fire_console_os_notification(self, kind: str, session_display: str) -> None:
+        """Gate one OS notification on ``[console] os_notifications`` and
+        fire it off the UI thread (TASK-18925).
+
+        Called from the same once-guarded bridge methods that toast (run
+        outcome / viewed failure / approval park), so the OS channel
+        inherits the toasts' exact one-per-event dedupe for free. The gate
+        read is cheap and failure-tolerant: absent/garbage config normalizes
+        to the feature's opt-in OFF default, and the spawn itself can never
+        block this (UI) thread.
+        """
+        settings = normalize_console_os_notifications(
+            get_cli_setting("console", "os_notifications", None)
+        )
+        if not settings.allows(kind):
+            return
+        _spawn_os_notification_thread(
+            lambda: send_os_notification(kind, session_display, settings=settings)
+        )
 
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(

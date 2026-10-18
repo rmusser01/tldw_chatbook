@@ -278,6 +278,7 @@ from ...Utils.console_background_effects import (
     MIN_CONSOLE_BACKGROUND_FPS,
     normalize_console_background_effects,
 )
+from ...Utils.os_notifications import normalize_console_os_notifications
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.timestamps import parse_utc, utc_now, utc_now_iso
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -1591,6 +1592,25 @@ CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER = (
 CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY = (
     "Workbench scope is not available in this build; using Transcript scope."
 )
+# TASK-18925: opt-in OS notifications for background Console events. Dotted
+# draft keys staged exactly like the background-effects group; the master
+# ships OFF and the per-type toggles default ON (normalize_console_os_
+# notifications owns those defaults; these frozensets only drive staging/
+# save partitioning).
+CONSOLE_OS_NOTIFICATION_KEYS = frozenset(
+    {
+        "os_notifications.enabled",
+        "os_notifications.run_finished",
+        "os_notifications.run_failed",
+        "os_notifications.needs_approval",
+    }
+)
+CONSOLE_OS_NOTIFICATION_SAVE_ORDER = (
+    "os_notifications.enabled",
+    "os_notifications.run_finished",
+    "os_notifications.run_failed",
+    "os_notifications.needs_approval",
+)
 # Task 4 (SP3): shared honest re-index warning, appended to BOTH triggers that
 # can re-point the active profile at a fresh (empty) fingerprinted vector
 # collection -- saving an index-determining field (settings_rag_profile_adapter
@@ -1655,6 +1675,7 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "thinking_effort",
     "thinking_budget_tokens",
     *CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER,
+    *CONSOLE_OS_NOTIFICATION_SAVE_ORDER,
 )
 ADVANCED_CONFIG_GUIDED_PATHS = (
     # task-1565: labels mirror the sidebar's category names exactly so the
@@ -4089,6 +4110,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_defaults = False
         self._syncing_console_context_memory = False
         self._syncing_console_background_effects = False
+        self._syncing_console_os_notifications = False
         self._syncing_provider_context_window = False
         self._syncing_library_rag_defaults = False
         #: A profile id set by the "Save then switch" branch of the unsaved-
@@ -7997,6 +8019,34 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _available_console_background_scope(scope: object) -> str:
         return "transcript" if str(scope) == "workbench" else str(scope or "transcript")
+
+    def _loaded_console_os_notifications(self) -> dict[str, object]:
+        """Normalized ``[console] os_notifications`` values (draft-agnostic)."""
+        return normalize_console_os_notifications(
+            self._console_settings().get("os_notifications")
+        ).to_config()
+
+    def _console_os_notification_value(self, key: str) -> bool:
+        """Draft-first read backing the four OS-notification checkboxes."""
+        draft_key = f"os_notifications.{key}"
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and draft_key in draft.values:
+            return bool(draft.values[draft_key])
+        return bool(self._loaded_console_os_notifications().get(key, True))
+
+    def _stage_console_os_notification_value(self, key: str, value: bool) -> None:
+        """Stage one OS-notification toggle into the Console Behavior draft."""
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        draft.set_value(
+            f"os_notifications.{key}",
+            self._loaded_console_os_notifications().get(key),
+            value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
 
     def _console_behavior_result_text(self) -> str:
         has_unsaved_changes = self._category_has_unsaved_changes(
@@ -20353,6 +20403,35 @@ class SettingsScreen(BaseAppScreen):
                         f"{MAX_CONSOLE_BACKGROUND_FPS} FPS."
                     ),
                 )
+            yield Static("OS notifications", classes="destination-section")
+            yield StateCheckbox(
+                "Enable OS notifications",
+                value=self._console_os_notification_value("enabled"),
+                id="settings-console-os-notifications-enabled",
+                tooltip=(
+                    "Desktop notifications for background Console events when "
+                    "the terminal is buried. Off by default; the body carries "
+                    "only the conversation name and outcome category."
+                ),
+            )
+            yield StateCheckbox(
+                "Notify: run finished",
+                value=self._console_os_notification_value("run_finished"),
+                id="settings-console-os-notifications-run-finished",
+                tooltip="OS notification when a background run finishes.",
+            )
+            yield StateCheckbox(
+                "Notify: run failed",
+                value=self._console_os_notification_value("run_failed"),
+                id="settings-console-os-notifications-run-failed",
+                tooltip="OS notification when a run fails.",
+            )
+            yield StateCheckbox(
+                "Notify: needs approval",
+                value=self._console_os_notification_value("needs_approval"),
+                id="settings-console-os-notifications-needs-approval",
+                tooltip="OS notification when a background run parks an approval.",
+            )
             yield SettingsResultLine(
                 self._console_behavior_result_text(),
                 id="settings-console-behavior-result",
@@ -29286,6 +29365,46 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_background_effect_value("enabled", bool(event.value))
         self._mark_console_behavior_settings_staged()
 
+    @on(Checkbox.Changed, "#settings-console-os-notifications-enabled")
+    def handle_console_os_notifications_enabled_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_console_os_notifications:
+            return
+        self._stage_console_os_notification_value("enabled", bool(event.value))
+        self._mark_console_behavior_settings_staged()
+
+    @on(Checkbox.Changed, "#settings-console-os-notifications-run-finished")
+    def handle_console_os_notifications_run_finished_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_console_os_notifications:
+            return
+        self._stage_console_os_notification_value("run_finished", bool(event.value))
+        self._mark_console_behavior_settings_staged()
+
+    @on(Checkbox.Changed, "#settings-console-os-notifications-run-failed")
+    def handle_console_os_notifications_run_failed_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_console_os_notifications:
+            return
+        self._stage_console_os_notification_value("run_failed", bool(event.value))
+        self._mark_console_behavior_settings_staged()
+
+    @on(Checkbox.Changed, "#settings-console-os-notifications-needs-approval")
+    def handle_console_os_notifications_needs_approval_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_console_os_notifications:
+            return
+        self._stage_console_os_notification_value("needs_approval", bool(event.value))
+        self._mark_console_behavior_settings_staged()
+
     @on(Select.Changed, "#settings-console-background-effect-type")
     def handle_console_background_effect_type_changed(
         self, event: Select.Changed
@@ -34104,6 +34223,23 @@ class SettingsScreen(BaseAppScreen):
                         merged_background_effects
                     ).to_config()
                 )
+            os_notifications_dirty = any(
+                key.startswith("os_notifications.")
+                and key in CONSOLE_OS_NOTIFICATION_KEYS
+                for key in dirty_values
+            )
+            if os_notifications_dirty:
+                merged_os_notifications = self._loaded_console_os_notifications()
+                for key in CONSOLE_OS_NOTIFICATION_SAVE_ORDER:
+                    if key in dirty_values:
+                        merged_os_notifications[
+                            key.removeprefix("os_notifications.")
+                        ] = bool(dirty_values[key])
+                console_values["os_notifications"] = (
+                    normalize_console_os_notifications(
+                        merged_os_notifications
+                    ).to_config()
+                )
             chat_default_values = {
                 key: value
                 for key, value in dirty_values.items()
@@ -35589,6 +35725,25 @@ class SettingsScreen(BaseAppScreen):
                 pass
         finally:
             self._syncing_console_background_effects = False
+        self._syncing_console_os_notifications = True
+        try:
+            for key, selector in (
+                ("enabled", "#settings-console-os-notifications-enabled"),
+                ("run_finished", "#settings-console-os-notifications-run-finished"),
+                ("run_failed", "#settings-console-os-notifications-run-failed"),
+                (
+                    "needs_approval",
+                    "#settings-console-os-notifications-needs-approval",
+                ),
+            ):
+                try:
+                    self.query_one(selector, Checkbox).value = (
+                        self._console_os_notification_value(key)
+                    )
+                except QueryError:
+                    pass
+        finally:
+            self._syncing_console_os_notifications = False
         self._set_static_text(
             "#settings-console-behavior-result", self._console_behavior_result_text()
         )
