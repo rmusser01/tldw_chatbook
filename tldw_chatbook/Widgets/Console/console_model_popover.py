@@ -72,7 +72,10 @@ from tldw_chatbook.Chat.provider_catalog import (
     PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
+    canonical_connection_identity,
+)
 from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
     provider_config_key,
@@ -181,8 +184,6 @@ def _server_listing(
     ``known`` models (Chat settings' listed ones, its catalog, its saved
     ones) follow it there.
     """
-    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
-
     if readiness is None or readiness.endpoint != "reachable":
         return None
     evidence, connection = readiness.evidence, readiness.connection
@@ -195,7 +196,13 @@ def _server_listing(
         )
     ):
         return None
-    listed: Sequence[str] = evidence.model_ids
+    return _with_known(evidence.model_ids, *known)
+
+
+def _with_known(listed: Sequence[str], *known: Sequence[str]) -> tuple[str, ...]:
+    """A listing, with the ``known`` models after it when it reached the bound."""
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+
     if len(listed) >= MODEL_IDS_MAX_COUNT:
         listed = [*listed, *(model for models in known for model in models)]
     return tuple(dict.fromkeys(m for m in map(normalize_model_id, listed) if m))
@@ -563,8 +570,9 @@ class ConsoleModelPopover(
                 listed provider per open; this widget calls no network.
             served_models: Models a Chat settings listing found per provider,
                 listed beside the saved ones (a new entry's, TASK-33006.4), or
-                that a detected server listed. A served provider is used, so
-                it is listed even as a legacy alias.
+                that a detected server listed. On this chat's own provider
+                they are its listing (TASK-35190, ``_listing``). A served
+                provider is used, so it is listed even as a legacy alias.
             highlight_pair: The pair highlighted first, until Find changes.
                 Until then its NEEDS SETUP row is preferred to PREVIOUS's or
                 RECENT's copy of the pair. In a list opened with text in Find
@@ -1125,8 +1133,9 @@ class ConsoleModelPopover(
         return cached
 
     def _models_for(self, key: str) -> tuple[str, ...]:
-        """What the server listed, else the catalog, else the saved models,
-        then the models a Chat settings listing found (``served_models``).
+        """What the server listed (``_listing``), else the catalog, else the
+        saved models, then the models a Chat settings listing found
+        (``served_models``).
 
         Each of those was listed by the endpoint a pick of it lands on, which
         may not be this readiness's own (TASK-33006.19), so a saved model no
@@ -1135,10 +1144,37 @@ class ConsoleModelPopover(
         """
         catalog, saved = self._catalogs.get(key), self._saved_models(key)
         served = tuple(filter(None, map(normalize_model_id, self._served.get(key, ()))))
-        listed = _server_listing(self._readiness.get(key), served, catalog or (), saved)
+        listed = self._listing(key, served, catalog or (), saved)
         if listed is None:
             listed = catalog if catalog is not None else saved
         return tuple(dict.fromkeys((*listed, *served)))
+
+    def _listing(self, key: str, *known: Sequence[str]) -> tuple[str, ...] | None:
+        """The last listing of the server a pick of ``key`` lands on, or None.
+
+        That is the readiness's connection (``_server_listing``), except on
+        this chat's own provider, where a pick keeps this chat's Endpoint
+        (TASK-35190). There a Chat settings listing (``served_models``, kept
+        only where a pick lands, TASK-33006.19) is the listing; without one,
+        the readiness's listing counts only while this chat's Endpoint is the
+        connection it listed (the configured one), else there is none.
+        """
+        readiness = self._readiness.get(key)
+        if key != provider_key(self._current[0]):
+            return _server_listing(readiness, *known)
+        if key in self._served:
+            return _with_known(self._served[key], *known)
+        connection = readiness.connection if readiness is not None else None
+        endpoint = self._chat_settings.base_url
+        if (
+            connection is not None
+            and connection.custom_endpoint_id is None
+            and endpoint
+            and canonical_connection_identity(connection.provider_key, endpoint)
+            != connection.connection_identity
+        ):
+            return None
+        return _server_listing(readiness, *known)
 
     # -- rows -----------------------------------------------------------
 
@@ -1514,7 +1550,7 @@ class ConsoleModelPopover(
 
     def _catalog_status_rows(self, key: str, has_rows: bool) -> list[SwitcherRow]:
         """AC#9: a loading, empty or unavailable catalog says so in a row."""
-        if has_rows and _server_listing(self._readiness.get(key)) is not None:
+        if has_rows and self._listing(key) is not None:
             return []  # the server's own listing fills them, not a catalog
         state = self._catalog_state.get(key)
         name = self._display(key)

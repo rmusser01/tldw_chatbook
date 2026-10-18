@@ -618,7 +618,7 @@ Tests/UI/test_settings_provider_test_draft.py::test_a_test_that_probes_nothing_t
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it
 # TASK-33006.19 (review round 1): a listing is not offered once a pick of it restores another endpoint (5 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint
-# TASK-33006.19 (review round 1): a listing is offered only while a pick of it keeps the listed endpoint (4 s).
+# TASK-33006.19 (review round 1): a listing is offered only while a pick of it keeps the listed endpoint (4 s); since TASK-35190 a pick keeps this chat's session endpoint, so it is offered there without retyping.
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint
 # TASK-33006.25: a new entry listed under the close guard says how to pick its model (5 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it
@@ -660,7 +660,14 @@ Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keep
 # Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
 # TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
-# TASK-33005.12 (Wave 6 integration review): pick mode offers a Chat settings listing beside the configured server's own listing (3 of 3 serial, ~3 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_beside_the_configured_servers_own_listing
-# TASK-33005.12 (Wave 6 integration review round 2): pick mode offers a Chat settings listing beside a loaded catalog (3 of 3 serial, ~2 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_beside_a_loaded_catalog
+# TASK-33005.12 (Wave 6 integration review), renamed by TASK-35190: on this chat's endpoint a Chat settings listing, not the configured server's, is the provider's rows (3 cases, 3 of 3 serial, ~4 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers
+# TASK-33005.12 (Wave 6 integration review round 2), renamed by TASK-35190: on this chat's endpoint a Chat settings listing replaces a loaded catalog (3 of 3 serial, ~2 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog
+# Phase 9 Task 18 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial.
+# TASK-35190 AC#1/#3: a pick on the chat's own provider keeps its session endpoint, after a pick of another provider too, which takes its own (3 cases, ~5 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint
+# TASK-35190: the rebaser keeps the chat's URL for an unseen model on its provider, but a registry entry keeps its own (2 cases, <1 s).
+Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry
+# TASK-35190 AC#4: Switch model keeps the session endpoint, offers what the configured listing left out, and Make default saves no endpoint (~7 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_switch_model_keeps_the_chats_session_endpoint_and_saves_none

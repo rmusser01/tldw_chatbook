@@ -102,7 +102,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
-    "tldw_chatbook/Chat/console_chat_controller.py": 29184,
+    # TASK-35190: the rebaser's endpoint choice moved to
+    # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29150,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,

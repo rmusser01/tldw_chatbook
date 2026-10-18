@@ -1443,40 +1443,124 @@ async def test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint(
         )
 
 
+#: TASK-35190: this chat's own Endpoint, a second local server beside the
+#: configured :9099 (CoreFirstHarness, ``_persisted_console_app``).
+SESSION_URL = "http://127.0.0.1:9200"
+
+
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint():
-    """TASK-33006.19 review round 1: a chat on :9200 while the config says
-    :9099 lists served-y at :9200, but a pick of it would reset the unedited
-    Endpoint to :9099, so it is not offered. Once :9200 is typed, a pick
-    keeps it, and served-y is offered."""
+    """TASK-35190 AC#2 (until then this pinned TASK-33006.19's reset): a chat
+    on :9200 while the config says :9099 lists served-y at :9200. A pick of
+    it keeps the unedited Endpoint on :9200, so pick mode offers it without
+    retyping the Endpoint, and picking it keeps the chat on :9200."""
     app = CoreFirstHarness()
-    modal = _served_y_modal(app, replace(_settings(), base_url="http://127.0.0.1:9200"))
+    modal = _served_y_modal(app, replace(_settings(), base_url=SESSION_URL))
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         base_url = modal.query_one("#console-settings-base-url", Input)
-        assert base_url.value == "http://127.0.0.1:9200"
+        assert base_url.value == SESSION_URL
         await _list_served_y(pilot, app, modal)
-        served = ("llama_cpp", "served-y")
-        assert served not in await _pick_mode_pairs(pilot, app, modal)
+        assert ("llama_cpp", "served-y") in await _pick_mode_pairs(pilot, app, modal)
 
-        base_url.value = "http://127.0.0.1:9201"
-        await settle(pilot, app)
-        base_url.value = "http://127.0.0.1:9200"
-        await settle(pilot, app)
-        assert served in await _pick_mode_pairs(pilot, app, modal)
+        await pick(pilot, app, modal, "served-y")
+        assert modal._current_model_value() == "served-y"
+        assert base_url.value == SESSION_URL
+        assert modal._draft.settings.base_url == SESSION_URL
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_a_listing_is_offered_beside_the_configured_servers_own_listing():
-    """Wave 6 integration review (TASK-33005.12): pick mode reads the
-    configured :9099's readiness, as the Console's does. Once :9099's own
-    listing (model-a) was in the shared evidence, from the switcher's probe
-    or a Test of :9099, llama.cpp's rows were that listing alone, and served-y,
-    which :9200 listed and a pick keeps :9200 for (TASK-33006.19), was gone.
-    It is offered beside that listing; the saved model-b, which no server
-    listed, is not (TASK-33005.12 AC#1)."""
+@pytest.mark.parametrize(
+    "detour",
+    [None, ("gpt-5", "openai", "gpt-5"), ("GPU box", "custom-ep:gpu-box", "model-a")],
+    ids=["direct", "after-openai", "after-an-entry"],
+)
+async def test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint(detour):
+    """TASK-35190 AC#1 and AC#3: a chat on :9200 while the config says :9099.
+    A pick of the saved model-b keeps :9200, also after a pick onto another
+    provider in between. That pick takes the other provider's own endpoint
+    (OpenAI's, the GPU box entry's URL), never :9200."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, replace(_settings(), base_url=SESSION_URL))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        if detour is not None:
+            find, provider, model = detour
+            await pick(pilot, app, modal, find)
+            own = build_target_default_console_session_settings(
+                app.app_config, provider, model
+            ).base_url
+            assert (modal._draft.settings.provider, modal._current_model_value()) == (
+                provider,
+                model,
+            )
+            assert modal._draft.settings.base_url == own != SESSION_URL
+        await pick(pilot, app, modal, "model-b")
+        assert (modal._draft.settings.provider, modal._current_model_value()) == (
+            "llama_cpp",
+            "model-b",
+        )
+        assert base_url.value == SESSION_URL
+        assert modal._draft.settings.base_url == SESSION_URL
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("provider", "kept"),
+    [("llama_cpp", True), ("custom-ep:gpu-box", False)],
+    ids=["server", "registry-entry"],
+)
+def test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry(provider, kept):
+    """TASK-35190: the rebaser keeps the URL the chat holds for an unseen
+    model on its own provider, but an entry's URL is its endpoint (ADR-146):
+    a pick of another of its models takes the entry's saved URL, never one
+    the chat's settings still hold."""
+    from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
+
+    app_config = CoreFirstHarness().app_config
+    chat_url = "http://127.0.0.1:9201"
+    state = ConsoleSettingsModal._initial_full_draft(
+        ConsoleSessionSettings(provider=provider, model="model-a", base_url=chat_url)
+    )
+    rebased = real_rebase(
+        state,
+        provider=provider,
+        model="model-b",
+        app_config=app_config,
+        exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+    )
+    entry_url = build_target_default_console_session_settings(
+        app_config, provider, "model-b"
+    ).base_url
+    expected = chat_url if kept else entry_url
+    assert expected and rebased.settings.base_url == expected
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed", "listed", "offered"),
+    [
+        (False, True, {"model-a", "served-y"}),
+        (True, True, {"model-a", "served-y"}),
+        (True, False, {"model-a", "model-b"}),
+    ],
+    ids=["chats-endpoint", "typed", "typed-unlisted"],
+)
+async def test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers(
+    typed, listed, offered
+):
+    """TASK-35190, for TASK-33005.12's listing: pick mode reads the configured
+    :9099's readiness, as the Console's does, and :9099's own listing
+    (model-a, only-at-9099) is in the shared evidence. A pick on llama.cpp
+    lands on this chat's Endpoint, :9200, the chat's own or one typed, so
+    :9099's only-at-9099 is never offered. llama.cpp's rows are what Test
+    connection listed at :9200 (model-a, served-y), without the saved
+    model-b, which no server listed (TASK-33005.12 AC#1); with no listing
+    there they are the saved models (its AC#2)."""
     app = CoreFirstHarness()
     owner = provider_connection_evidence(app)
     configured = console_send_connection(
@@ -1485,46 +1569,130 @@ async def test_a_listing_is_offered_beside_the_configured_servers_own_listing():
         ),
         app_config=app.app_config,
     )
-    owner.publish(ProviderTestEvidence(configured, "reachable", ("model-a",)), order=1)
+    listing = ("model-a", "only-at-9099")
+    owner.publish(ProviderTestEvidence(configured, "reachable", listing), order=1)
     picker = pick_mode_opener(app, app.app_config, connection_evidence=owner)
-    assert await _llama_models_listed_at_9200(app, model_picker=picker) == {
-        "model-a",
-        "served-y",
-    }
+    assert (
+        await _llama_models_listed_at_9200(
+            app, typed=typed, listed=listed, model_picker=picker
+        )
+        == offered
+    )
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_a_listing_is_offered_beside_a_loaded_catalog():
-    """Wave 6 integration review round 2 (TASK-33005.12): with no listing of
-    the configured :9099, llama.cpp's rows are its loaded catalog, as Switch
-    model's are once ``catalog_loader`` resolves it. The catalog replaced the
-    saved models, which were where served-y reached pick mode, so the model
-    Test connection had just listed at :9200 was gone. It follows the
-    catalog."""
+async def test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog():
+    """TASK-35190, for the Wave 6 integration review round 2's case: with no
+    listing of the configured :9099, llama.cpp's rows were its loaded catalog
+    (model-a, model-b), served-y after it. A pick lands on :9200, so they are
+    what Test connection listed there; model-b, which :9200 did not list, is
+    not offered (TASK-33005.12 AC#1)."""
     assert await _llama_models_listed_at_9200(CoreFirstHarness()) == {
         "model-a",
-        "model-b",
         "served-y",
     }
 
 
-async def _llama_models_listed_at_9200(app, **kwargs) -> set[str]:
-    """Chat settings on :9200 lists served-y there, retypes :9200 so a pick
-    keeps it (TASK-33006.19), and returns the llama.cpp models Change offers."""
-    modal = _served_y_modal(
-        app, replace(_settings(), base_url="http://127.0.0.1:9200"), **kwargs
-    )
+async def _llama_models_listed_at_9200(
+    app, *, typed=False, listed=True, **kwargs
+) -> set[str]:
+    """Chat settings on :9200, this chat's Endpoint or (``typed``) one typed
+    over the configured :9099, lists served-y there (unless not ``listed``);
+    return the llama.cpp models Change offers."""
+    settings = _settings() if typed else replace(_settings(), base_url=SESSION_URL)
+    modal = _served_y_modal(app, settings, **kwargs)
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
-        await _list_served_y(pilot, app, modal)
-        base_url = modal.query_one("#console-settings-base-url", Input)
-        base_url.value = "http://127.0.0.1:9201"
-        await settle(pilot, app)
-        base_url.value = "http://127.0.0.1:9200"
-        await settle(pilot, app)
+        if typed:
+            modal.query_one("#console-settings-base-url", Input).value = SESSION_URL
+            await settle(pilot, app)
+        if listed:
+            await _list_served_y(pilot, app, modal)
         pairs = await _pick_mode_pairs(pilot, app, modal)
     return {model for provider, model in pairs if provider == "llama_cpp"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
+    request, monkeypatch
+):
+    """TASK-35190 AC#4: Switch model (Alt+M) on a llama.cpp chat on :9200
+    while the config says :9099, whose listing (model-a alone) is in the
+    shared evidence. A pick on llama.cpp lands on :9200, so :9099's listing
+    is not llama.cpp's rows, and the saved model-b is offered, as with no
+    listing (TASK-33005.12 AC#2). Picked after a detour through vLLM it keeps
+    :9200, as Chat settings does (AC#1); Make default for new chats then saves
+    the pair and never the Endpoint."""
+    import tomllib
+
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _drain_settings_tasks,
+        _highlight,
+        _open_provider_popover,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.config import get_cli_config_path
+
+    _stub_llama_network(monkeypatch, {"up": True})  # no probe reaches a socket
+    app = _persisted_console_app()
+    app.providers_models = {
+        "llama_cpp": ["model-a", "model-b", "model-c"],
+        "vllm": ["vendor/model:b"],
+    }
+    config_path = get_cli_config_path()
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        console._session._replace_active_console_session_settings(
+            replace(store.session_settings(session_id), base_url=SESSION_URL)
+        )
+
+        config = console._provider_readiness_app_config()
+        configured = console_send_connection(
+            build_target_default_console_session_settings(config, "llama_cpp", None),
+            app_config=config,
+        )
+        provider_connection_evidence(harness).publish(
+            ProviderTestEvidence(configured, "reachable", ("model-a",)), order=1
+        )
+
+        quick = await _open_provider_popover(console, harness, pilot)
+        assert quick._readiness["llama_cpp"].evidence.model_ids == ("model-a",)
+        assert (await _highlight(quick, pilot, "vllm")).provider == "vllm"
+        row = await _highlight(quick, pilot, "model-b")
+        assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-b")
+        quick.query_one("#console-popover-apply", Button).press()
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+        assert harness.screen is console
+        applied = store.session_settings(session_id)
+        assert (applied.provider, applied.model, applied.base_url) == (
+            "llama_cpp",
+            "model-b",
+            SESSION_URL,
+        )
+
+        quick = await _open_provider_popover(console, harness, pilot)
+        await _highlight(quick, pilot, "model-c")
+        quick.action_make_new_chat_default()
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+        assert harness.screen is console
+        applied = store.session_settings(session_id)
+        assert (applied.model, applied.base_url) == ("model-c", SESSION_URL)
+    saved = config_path.read_text(encoding="utf-8")
+    assert tomllib.loads(saved)["chat_defaults"]["model"] == "model-c"
+    assert tomllib.loads(saved)["api_settings"]["llama_cpp"]["api_url"] == (
+        "http://127.0.0.1:9099"
+    )
+    assert "127.0.0.1:9200" not in saved
 
 
 @pytest.mark.bootstrap_profile

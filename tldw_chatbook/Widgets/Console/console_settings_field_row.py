@@ -640,7 +640,8 @@ class ConsoleSettingsFieldRowsMixin:
         it) and an entry keeps its own URL. Any other pair lands where the
         rebaser a pick uses puts it, as the Endpoint field then shows it
         (``_apply_rebased_state``): a remembered pair can restore its edited
-        Endpoint, an unseen one the configured URL (TASK-33006.19).
+        Endpoint (TASK-33006.19), and an unseen one takes the latest Endpoint
+        of its provider's drafts, so this chat's own (TASK-35190).
 
         Args:
             source: The draft a pick rebases from (``_snapshot_before_rebase``).
@@ -696,7 +697,8 @@ class ConsoleSettingsFieldRowsMixin:
         Pick mode lists the models this modal's listings found beside the
         saved ones, each only while a pick of it lands on the connection
         that listed it (TASK-33006.19); a listing never picks one (spec
-        rule 1).
+        rule 1). It opens on the draft as the controls show it, so it knows
+        the Endpoint a pick on this provider keeps (TASK-35190).
 
         Nothing opens while the close guard or a default recovery holds the
         modal: its Tab trap would lose focus to Change (review I4).
@@ -726,7 +728,7 @@ class ConsoleSettingsFieldRowsMixin:
             )
             if kept or not models:  # an empty listing still marks its provider used
                 served[provider] = kept
-        self._model_picker(self._origin, self._draft, query, self._model_picked, served)
+        self._model_picker(self._origin, source, query, self._model_picked, served)
         return True
 
     def pick_created_endpoint(self, provider_id: str | None) -> None:

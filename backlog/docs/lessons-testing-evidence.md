@@ -16812,6 +16812,26 @@ consumer of saved configuration, with conflicting live values as controls. An
 omitted optional setting must also be exercised: overlaying present keys does
 not establish that a child owns the absent ones.
 
+## A pick test that goes straight to its target skips the rebases a real switcher makes (TASK-35190, 2026-10-18)
+
+**Incident.** TASK-35190 keeps a chat's session endpoint when the user picks
+another model on the chat's provider. Keying that on "the draft being rebased
+is on the target's provider" passes a direct pick, but Switch model rebases
+its draft on every highlight change: with Find empty it highlights PREVIOUS
+first, often another provider's row, and typing re-ranks the highlight across
+providers. By the time Enter lands on the llama.cpp row the draft is on vLLM,
+and the pick takes the configured URL again. Chat settings has the same path
+after a pick of another provider in between. The fix reads the latest draft
+on the target's provider (the current one, else the last remembered one).
+With that lookup removed, the direct-pick and pick-mode listing tests still
+pass; only the three detour cases fail (`[after-openai]`, `[after-an-entry]`,
+and the Alt+M test that highlights a vLLM row first).
+
+**What to do.** When a fix reads the draft's state at pick time, list what
+moves that state before the pick (highlight rebases, earlier picks, a
+transfer from the other surface) and test the pick after each one, not only
+from the state the surface opened with.
+
 ## A first reactive read can reenter a loader before its arguments finish evaluating
 
 **TASK-32565, 2026-09-13.** The native slow-directory picker showed duplicate

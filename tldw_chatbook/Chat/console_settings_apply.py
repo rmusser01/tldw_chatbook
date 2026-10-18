@@ -16,7 +16,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     normalize_console_model_value,
 )
-from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    provider_identity_key,
+    split_custom_endpoint_id,
+)
 
 
 # ADR-095 amendment 2026-09-26 (D3, TASK-33004.1): the quick default mask. The
@@ -230,6 +233,78 @@ def remember_model_draft(
     else:
         drafts.append(remembered)
     return replace(state, model_drafts=tuple(drafts))
+
+
+def rebased_endpoint(
+    state: ConsoleSettingsDraftState,
+    source: ConsoleSettingsDraftState | ConsoleModelDraft,
+    *,
+    provider_id: str,
+    config_key: str,
+    default_base_url: str | None,
+    preserve_snapshot: bool,
+    full_surface: bool,
+) -> tuple[str | None, ConsoleEndpointDraft | None]:
+    """Return the base URL and endpoint draft a provider/model rebase lands on.
+
+    A kept pair (the current one, or a remembered target) keeps its own
+    endpoint. An unseen pair takes the endpoint of the latest draft on its
+    provider: the current one, else the last remembered one. So a pick on the
+    chat's own provider keeps the chat's Endpoint, after a detour through
+    another provider too, and a pick onto another provider never carries it
+    (TASK-35190). An unset URL there means the configured one, not "no
+    endpoint", so the target's default chain applies, as it does for a
+    registry entry, whose own URL is its endpoint. Only the full surface
+    carries an endpoint edit.
+
+    Args:
+        state: The draft being rebased.
+        source: The kept pair's draft (``state`` or the remembered target),
+            else ``state``.
+        provider_id: The target's provider identity.
+        config_key: The target's provider configuration key.
+        default_base_url: The base URL of the target's default chain.
+        preserve_snapshot: Whether the target is the current or a
+            remembered pair.
+        full_surface: Whether the caller exposes every field (Chat settings).
+
+    Returns:
+        The base URL, and the endpoint draft (None when there is none).
+    """
+    peer = (
+        source
+        if preserve_snapshot
+        or provider_identity_key(state.settings.provider) == provider_id
+        else next(
+            (
+                draft
+                for draft in reversed(state.model_drafts)
+                if draft.provider == provider_id
+            ),
+            None,
+        )
+    )
+    endpoint = peer.endpoint_draft if peer is not None else None
+    bound = endpoint is not None and endpoint.bound_provider_config_key == config_key
+    if full_surface and bound and endpoint.dirty:
+        return endpoint.value or None, endpoint
+    base_url = default_base_url
+    if (
+        peer is not None
+        and (endpoint is None or (bound and not endpoint.dirty))
+        and (
+            preserve_snapshot
+            or (
+                peer.settings.base_url and split_custom_endpoint_id(provider_id) is None
+            )
+        )
+    ):
+        base_url = peer.settings.base_url
+    if base_url is None or (preserve_snapshot and endpoint is None):
+        return base_url, None
+    return base_url, ConsoleEndpointDraft(
+        value=base_url, bound_provider_config_key=config_key, dirty=False, checked=False
+    )
 
 
 def quick_blank_field_default(

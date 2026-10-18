@@ -583,10 +583,14 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   the only way to change the model: it opens **Switch model** (below) in pick
   mode over Chat settings, listing the same provider·model pairs, plus the
   models a listing here found that a pick would keep on the **Endpoint** that
-  listed them. A pick can move the Endpoint, back to the provider's configured
-  URL or to the one you last typed for that model, so a model whose pick
-  would move it is not listed, and changing the Endpoint drops the old
-  listing. **Enter**
+  listed them. A pick of another model on the chat's provider keeps the
+  Endpoint (this chat's own server, also after a pick of another provider in
+  between); a pick of a model already picked in this draft brings back the
+  Endpoint it had, and a pick onto another provider takes that provider's own
+  endpoint. A model whose pick would move the Endpoint is not listed, and
+  changing the Endpoint drops the old listing. On the chat's provider, a
+  listing here is that provider's rows: neither the configured server's
+  listing nor a saved model the listing left out is offered. **Enter**
   picks a pair and returns to Chat settings with the draft moved to that
   exact provider and model; nothing is applied until **Apply**. **Esc** returns
   with nothing changed and focus on Change. Pick mode shows no values or
@@ -873,7 +877,11 @@ status at once, under the open list. Once a server's model listing has
 answered (this check, or **Test connection** of the same connection), that
 server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
-longer offered. A listing is read up to 100 models, and
+longer offered. A pick on this chat's own provider keeps this chat's
+endpoint, so while the chat runs on a server other than the configured one,
+the configured server's listing is not that provider's rows: they are the
+models a listing in Chat settings found on this chat's endpoint, else the
+saved and cached models. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
 stay after the listed ones; this chat's own model stays listed first.
 Until then (not checked yet, refused or timed out) the rows are the saved

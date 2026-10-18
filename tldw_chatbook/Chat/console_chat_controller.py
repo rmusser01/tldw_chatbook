@@ -297,11 +297,11 @@ from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
-    ConsoleEndpointDraft,
     ConsoleSettingsDraftState,
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
     quick_blank_field_default,
+    rebased_endpoint,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -13939,7 +13939,8 @@ class ConsoleChatController:
         The current or remembered exact target retains its conversation snapshot,
         including fields hidden by the calling surface. An unseen target starts
         from its established default chain and carries only supported dirty
-        fields. Explicit Inherit edits resolve current lower-precedence defaults.
+        fields; ``rebased_endpoint`` decides its endpoint (TASK-35190).
+        Explicit Inherit edits resolve current lower-precedence defaults.
 
         Args:
             state: The draft being switched away from; never mutated.
@@ -13992,21 +13993,8 @@ class ConsoleChatController:
             current_key != target_key and remembered_target is not None
         )
         preserve_snapshot = current_key == target_key or restoring_remembered_target
-        source_settings = (
-            remembered_target.settings
-            if restoring_remembered_target
-            else state.settings
-        )
-        source_fields = (
-            remembered_target.field_drafts
-            if restoring_remembered_target
-            else state.field_drafts
-        )
-        source_endpoint = (
-            remembered_target.endpoint_draft
-            if restoring_remembered_target
-            else state.endpoint_draft
-        )
+        source = remembered_target if restoring_remembered_target else state
+        source_settings, source_fields = source.settings, source.field_drafts
 
         quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS
         inherited_dirty_fields = (
@@ -14122,35 +14110,15 @@ class ConsoleChatController:
             **field_values,
         }
 
-        endpoint_draft: ConsoleEndpointDraft | None = None
-        target_base_url = target_defaults.base_url
-        if preserve_snapshot and (
-            source_endpoint is None
-            or (
-                not source_endpoint.dirty
-                and source_endpoint.bound_provider_config_key
-                == provider_config_key(target_provider)
-            )
-        ):
-            target_base_url = source_settings.base_url
-        if (
-            exposed_fields == FULL_MODEL_DEFAULT_FIELDS
-            and source_endpoint is not None
-            and source_endpoint.dirty
-            and source_endpoint.bound_provider_config_key
-            == provider_config_key(target_provider)
-        ):
-            endpoint_draft = source_endpoint
-            target_base_url = source_endpoint.value or None
-        elif target_base_url is not None and not (
-            preserve_snapshot and source_endpoint is None
-        ):
-            endpoint_draft = ConsoleEndpointDraft(
-                value=target_base_url,
-                bound_provider_config_key=provider_config_key(target_provider),
-                dirty=False,
-                checked=False,
-            )
+        target_base_url, endpoint_draft = rebased_endpoint(
+            state,
+            source,
+            provider_id=target_provider_id,
+            config_key=provider_config_key(target_provider),
+            default_base_url=target_defaults.base_url,
+            preserve_snapshot=preserve_snapshot,
+            full_surface=exposed_fields == FULL_MODEL_DEFAULT_FIELDS,
+        )
         settings_changes["base_url"] = target_base_url
 
         return replace(
