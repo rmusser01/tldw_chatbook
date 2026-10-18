@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-18 10:10
-updated_date: 2026-10-18 22:09
+updated_date: 2026-10-18 23:05
 labels:
 - tests
 - flaky
@@ -43,9 +43,11 @@ Data: every completed attempt of the pull_request runs of derived-artifacts.yml 
 
 Cause (product): every transcript sync calls ConsoleTranscriptRegion.sync_recovery on the UI loop, which reads three display builders: the trace-call recovery state (ConsoleSessionController._console_trace_recovery_state) and the provider-continuation message and replay availability (lambdas in ChatScreen._build_console_center). All three called _ensure_console_chat_controller(), and every such call runs _sync_console_chat_core_state() -> _build_console_provider_selection() -> _provider_readiness_app_config() -> load_settings(). Right after a config save or rebuild the settings cache is cold, so load_settings() takes its guarded path and waits for config's rebuild lock (config_participants.operation(), its lock.acquire(timeout=0.05) loop) on the UI loop. The test holds that lock on purpose; when Stop's transcript sync reached this read during the hold, the loop waited past the test's 1 s. The stack's first builder is the trace-call one; fixing only it would move the wait to the next builder.
 
-Fix: the three display reads take the live controller as it is (the session controller's existing _current_chat_controller_accessor; the screen's _console_chat_controller) and show nothing when there is none, since a paused preparation or a recoverable message only exists on a controller. The recovery actions still ensure the controller.
+Fix: the three display reads take the live controller as it is (the session controller's existing _current_chat_controller_accessor; the screen's _console_chat_controller), and ensure one only when there is none yet, so the first open still creates it as before (review of #3163: a recoverable message restored into the store would otherwise stay hidden until something else created the controller). Only ensuring a live controller re-read config on every call; that is what waited. The recovery actions are unchanged.
 
-Evidence: Tests/UI/test_console_response_rules.py::test_recovery_sync_never_waits_for_a_config_rebuild invalidates the config caches under the rebuild lock and syncs the mounted recovery placeholder. Without the fix it fails with 'recovery sync waited 2.032s for the config rebuild'; with it, it passes. It is appended to scripts/ui_pr_gate_census.txt (shard 4); the floor goes 323 -> 324. Tests/UI/test_console_recovery_live_bindings.py now gives the state read a live controller and fails if it ensures one. Locally the four phase cases, the new test and the live-bindings test pass. AC2 is measured after merge.
+Not covered: a full UI sync that starts while a rebuild holds the lock still reads config at its start (_sync_console_chat_core_state in _sync_native_console_chat_ui). None of the five failures stopped there: each blocked sync had already passed that read without waiting.
+
+Evidence: Tests/UI/test_console_response_rules.py::test_recovery_sync_never_waits_for_a_config_rebuild invalidates the config caches under the rebuild lock and syncs the mounted recovery placeholder. Without the fix it fails with 'recovery sync waited 2.032s for the config rebuild'; with it, it passes. It is appended to scripts/ui_pr_gate_census.txt (shard 4); the floor goes 323 -> 324. Tests/UI/test_console_recovery_live_bindings.py now gives the state read a live controller and fails if it ensures a live one, and checks that it ensures one when there is none. Locally the four phase cases, the new test and the live-bindings test pass. AC2 is measured after merge.
 
 Files: tldw_chatbook/UI/Console_Modules/session.py, tldw_chatbook/UI/Screens/chat_screen.py, Tests/UI/test_console_response_rules.py, Tests/UI/test_console_recovery_live_bindings.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

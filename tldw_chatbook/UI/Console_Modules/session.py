@@ -6841,17 +6841,16 @@ class ConsoleSessionController:
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers.
 
-        A display read: it takes the live controller as it is (TASK-35444).
-        Ensuring one re-reads config on the UI loop, which waits out any
-        config rebuild; with no controller there is no pause to show.
+        A display read: it ensures the controller only when there is none
+        yet (TASK-35444). Ensuring a live one re-reads config on the UI loop,
+        which waits out any config rebuild.
         """
 
-        controller = self._current_chat_controller_accessor()
-        preparation = (
-            controller.trace_call_recovery_preparation()
-            if controller is not None
-            else None
+        controller = (
+            self._current_chat_controller_accessor()
+            or self._ensure_console_chat_controller()
         )
+        preparation = controller.trace_call_recovery_preparation()
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(
