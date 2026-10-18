@@ -153,7 +153,7 @@ async def _drive_affected_routes(
     pane = mcp._tools_hub_pane()
     assert pane is not None
     assert pane.workbench is not None
-    mcp.action_settings_tools_mode(mcp_mode)
+    pane.action_tools_mode(mcp_mode)
     await pilot.pause()
     assert pane.workbench.active_mode == mcp_mode
     _assert_removed_root_state_absent(app)

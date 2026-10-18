@@ -6,17 +6,35 @@ bounded initial view state -- hosted inside the Settings screen instead of a
 standalone destination. DOM ids (#mcp-mode-strip, mcp-mode-* chips,
 #mcp-hub-workbench) are kept so the app-bundle CSS and ported tests are
 unchanged.
+
+The module also hosts the Settings-side tools-domain support code the ratchet
+offset (spec amendment A2) moved out of ``settings_screen.py``: the deep-link
+context validation, the category summary/ownership records, the MCP-service
+accessors, and the Tool Pack failure copy. Tools-domain only (ADR-237) --
+nothing unrelated to agent tools lives here.
 """
 
-from typing import Any
+import logging
+import os
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
-from textual.message import Message
 from textual.widgets import Button, Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
+from .settings_config_models import (
+    SettingsCategorySummary,
+    SettingsCategoryId,
+    SettingsOwnershipRecord,
+)
+
+if TYPE_CHECKING:
+    from ...Tool_Packs.contracts import ToolPackError
+
+logger = logging.getLogger(__name__)
 
 _MODE_BY_BUTTON_ID = {spec["button_id"]: mode for mode, spec in MCP_HUB_MODES.items()}
 
@@ -43,6 +61,206 @@ TOOLS_HUB_MODE_SHORTCUTS: dict[str, tuple[tuple[str, str], ...]] = {
     "audit": _COMMON_SHORTCUTS,
 }
 
+TOOLS_HUB_CATEGORY_SUMMARY = SettingsCategorySummary(
+    SettingsCategoryId.TOOLS,
+    "Tools & MCP",
+    "Agent tools, MCP servers, permissions, and audit.",
+    "Immediate actions",
+)
+
+TOOLS_HUB_OWNERSHIP_RECORD = SettingsOwnershipRecord(
+    category=SettingsCategoryId.TOOLS,
+    owns_config_sections=(
+        "MCP permission-store Tool policy",
+        "[mcp] enable/expose controls",
+    ),
+    reads_runtime_state_from=(
+        "Unified MCP panel",
+        "MCP configured server target store",
+    ),
+    writes_allowed=True,
+    runtime_owner="MCP workbench (immediate reviewed actions)",
+    boundary_copy=(
+        "Tools & MCP owns servers, tools, permissions, and audit "
+        "in place; Tool Profiles next door owns profile lifecycle."
+    ),
+    recovery_copy=(
+        "Re-open the category or press r to force a workbench reload."
+    ),
+)
+
+# The sibling tools-boundary record: Tool Profiles' every row is about the
+# MCP permission store and portable tool packs (ADR-237 keeps the category
+# itself next door; only the record's home moved, ratchet offset A2).
+TOOL_PROFILES_OWNERSHIP_RECORD = SettingsOwnershipRecord(
+    category=SettingsCategoryId.TOOL_PROFILES,
+    owns_config_sections=(
+        "MCP permission-store Tool profiles",
+        "portable Tool Pack import receipts",
+    ),
+    reads_runtime_state_from=(
+        "ToolPackService lifecycle",
+        "workspace profile references",
+        "MCP permission inventory",
+    ),
+    writes_allowed=True,
+    runtime_owner="ToolPackService (immediate reviewed actions)",
+    boundary_copy=(
+        "Settings manages profile lifecycle; MCP Permissions owns policy editing. "
+        "Tool Packs never install tools."
+    ),
+    recovery_copy=(
+        "Re-inspect stale imports and remove only profiles with no active or "
+        "archived workspace references."
+    ),
+)
+
+
+def tools_footer_hints(pane: "ToolsHubPanel | None") -> tuple[tuple[str, str], ...]:
+    """The mounted pane's active-mode hint set (servers default off-pane)."""
+    mode = pane.active_mode if pane is not None else "servers"
+    return TOOLS_HUB_MODE_SHORTCUTS.get(mode, ())
+
+
+def parse_tools_navigation_context(
+    context: dict[str, object],
+) -> dict[str, object] | None:
+    """Validate one Tools & MCP navigation context (ADR-237 deep links).
+
+    Same bounds the retired MCP destination's apply_navigation_context
+    enforced: known keys only, a mode from ``MCP_HUB_MODES``, and a profile
+    deep-link triple of a non-empty id (<= 128 chars), a revision that is
+    None or >= 1, and a digest of exactly 64 hex chars.
+
+    Args:
+        context: The navigation-context payload addressed to the TOOLS
+            category.
+
+    Returns:
+        The hub pane's initial view state; ``{}`` when the context carries
+        nothing to apply; ``None`` when the context is unsafe, invalid, or
+        malformed and must be ignored outright.
+    """
+    allowed_keys = {
+        "category",
+        "mode",
+        "tool_policy_profile_id",
+        "profile_revision",
+        "profile_policy_digest",
+    }
+    if not set(context).issubset(allowed_keys):
+        logger.debug("Ignoring unsafe Tools Settings navigation context")
+        return None
+    view_state: dict[str, object] | None = None
+    mode = context.get("mode")
+    if mode is not None:
+        if not isinstance(mode, str) or mode not in MCP_HUB_MODES:
+            logger.debug("Ignoring invalid Tools Settings mode: %r", mode)
+            return None
+        view_state = {"mode": mode}
+    profile_id = context.get("tool_policy_profile_id")
+    if profile_id is not None:
+        revision = context.get("profile_revision")
+        digest = context.get("profile_policy_digest")
+        if (
+            type(profile_id) is not str
+            or not profile_id
+            or len(profile_id) > 128
+            or (
+                revision is not None
+                and (type(revision) is not int or revision < 1)
+            )
+            or (
+                type(digest) is not str
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            )
+        ):
+            logger.debug("Ignoring malformed Tools profile deep-link context")
+            return None
+        view_state = {
+            "mode": "permissions",
+            "tool_policy_profile_id": profile_id,
+            "profile_revision": revision,
+            "profile_policy_digest": digest,
+        }
+    return view_state if view_state is not None else {}
+
+
+def mcp_permission_store(app_instance: Any) -> Any:
+    """The unified MCP service's permission store, or None (guarded)."""
+    service = getattr(app_instance, "unified_mcp_service", None)
+    return getattr(service, "permission_store", None)
+
+
+def builtin_hub_tool_names(app_instance: Any) -> list[str]:
+    """Built-in hub tool names for the posture preview (guarded).
+
+    Reads the unified service's local inventory — the same builtin
+    catalog source the MCP workbench's hub list uses. Any missing seam
+    yields an empty list, which the preview renders as its single
+    "Tool catalog unavailable" degrade line.
+    """
+    service = getattr(app_instance, "unified_mcp_service", None)
+    local_service = getattr(service, "local_service", None)
+    get_inventory = getattr(local_service, "get_inventory", None)
+    if not callable(get_inventory):
+        return []
+    try:
+        inventory = get_inventory()
+    except Exception:  # noqa: BLE001 -- preview degrades, never blocks
+        return []
+    from ...MCP.hub_tool_catalog import builtin_tools_from_inventory
+
+    return [tool.name for tool in builtin_tools_from_inventory(inventory or {})]
+
+
+def tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
+    """Return bounded recovery copy for one stable Tool Pack error."""
+    if operation == "export" and error.category == "cancelled":
+        return "Export cancelled before publication."
+    if operation == "export" and error.category == "destination_changed":
+        return "Export destination changed. Choose a new filename."
+    if operation == "import" and error.category == "activation_uncertain":
+        return (
+            "Import outcome uncertain. Check the current profile state "
+            "before retrying."
+        )
+    if operation == "export" and error.category == "durability_uncertain":
+        return (
+            "Export outcome uncertain. Check the chosen destination "
+            "before retrying."
+        )
+    if operation == "remove":
+        return {
+            "outcome_uncertain": (
+                "Removal outcome uncertain. Check the current profile state "
+                "before retrying."
+            ),
+            "stale": "Profile changed. Review its current details before removing it.",
+            "in_use": (
+                "Profile is in use. Finish its active run, then reopen Tool Profiles."
+            ),
+            "referenced": (
+                "Profile is referenced by a workspace. Update its active and "
+                "archived workspace defaults first."
+            ),
+            "non_removable": "Profile cannot be removed. Review its current details.",
+        }.get(
+            error.category, "Removal unavailable. Check the current profile state."
+        )
+    if operation == "export" and error.category == "publication_unsupported":
+        if os.name == "nt":
+            return (
+                "Export unavailable · publication_unsupported. Native Windows "
+                "Tool Pack publication is not supported yet."
+            )
+        return (
+            "Export unavailable · publication_unsupported. Required safe "
+            "publication primitives are unavailable on this platform."
+        )
+    return f"{operation.title()} failed · {error.category}"
+
 # Shared reload-worker identity so a manual refresh, a runtime-triggered
 # reload, and repeats of either serialize against each other.
 _RELOAD_WORKER_GROUP = "settings-tools-hub-reload"
@@ -50,6 +268,21 @@ _RELOAD_WORKER_GROUP = "settings-tools-hub-reload"
 
 class ToolsHubPanel(Vertical):
     """Hosts the MCP workbench for the Settings Tools & MCP category."""
+
+    # Ported verbatim from the retired MCP destination's BINDINGS (ADR-237).
+    # show=False: the surfaced contract is the per-mode footer hint set
+    # (TOOLS_HUB_MODE_SHORTCUTS, F-055), not the binding list. Pane-held
+    # bindings fire when focus is inside the pane, so the keys are scoped
+    # to the Tools & MCP surface itself.
+    BINDINGS = [
+        Binding("1", "tools_mode('servers')", "Servers", show=False),
+        Binding("2", "tools_mode('tools')", "Tools", show=False),
+        Binding("3", "tools_mode('permissions')", "Permissions", show=False),
+        Binding("4", "tools_mode('audit')", "Audit", show=False),
+        Binding("a", "tools_add_server", "Add server", show=False),
+        Binding("r", "tools_refresh", "Refresh", show=False),
+        Binding("t", "tools_test_tool", "Test tool", show=False),
+    ]
 
     DEFAULT_CSS = """
     Button.mcp-mode-chip {
@@ -87,13 +320,6 @@ class ToolsHubPanel(Vertical):
         outline: none;
     }
     """
-
-    class ModeChanged(Message):
-        """The workbench switched mode; Settings re-renders footer hints."""
-
-        def __init__(self, mode: str) -> None:
-            super().__init__()
-            self.mode = mode
 
     def __init__(
         self,
@@ -199,6 +425,43 @@ class ToolsHubPanel(Vertical):
                 exclusive=True,
             )
 
+    def suspend_recovery_review(self) -> None:
+        """Invalidate an accepted recovery review's UI receipt (ADR-237 port).
+
+        The workbench method is the single owner of that semantics; this
+        proxy exists so Settings' suspend path needs no workbench knowledge.
+        """
+        if self.workbench is not None:
+            self.workbench.suspend_recovery_review()
+
+    def register_footer_hints(self) -> None:
+        """(Re-)assert this pane's per-mode hint set on the footer slot.
+
+        The screen's own "settings" footer source shares one slot with this
+        "settings-tools" source (last writer wins), so every re-registration
+        of the former must be followed by one of these -- focus changes,
+        resume, and category swaps all funnel back here.
+        """
+        register = getattr(self.screen, "register_footer_shortcuts", None)
+        if callable(register):
+            register(source="settings-tools", shortcuts=tools_footer_hints(self))
+
+    def action_tools_mode(self, mode: str) -> None:
+        """1-4 -- switch the hub's mode."""
+        self.activate_mode(mode)
+
+    def action_tools_add_server(self) -> None:
+        """a -- open the Add-server form."""
+        self.add_server()
+
+    def action_tools_refresh(self) -> None:
+        """r -- force-reload the workbench."""
+        self.refresh_now()
+
+    def action_tools_test_tool(self) -> None:
+        """t -- open the Test Tool panel for the selected tool."""
+        self.test_selected_tool()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         mode = _MODE_BY_BUTTON_ID.get(event.button.id or "")
         if mode is None:
@@ -209,5 +472,5 @@ class ToolsHubPanel(Vertical):
     def on_mcp_workbench_mode_changed(self, event: MCPWorkbench.ModeChanged) -> None:
         event.stop()
         self._sync_mode_chips(event.mode)
-        # F-055: Settings re-registers per-mode footer hints off this message.
-        self.post_message(self.ModeChanged(event.mode))
+        # F-055: re-assert the per-mode footer hints for the new mode.
+        self.register_footer_hints()

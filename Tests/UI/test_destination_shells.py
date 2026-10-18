@@ -3062,30 +3062,37 @@ def test_tools_hub_runtime_refresh_uses_exclusive_worker(monkeypatch):
 
 
 def test_tools_hub_keys_dispatch_per_category_and_hints_are_per_mode():
-    """T13/T8 port (ADR-237): the retired screen's `a`/`r`/`t` BINDINGS now
-    live on SettingsScreen and self-dispatch per category (a = add server,
-    r = force reload, t = test tool inside TOOLS; their RAG/personal-context
-    meanings elsewhere); the 1-4 mode keys self-guard to TOOLS. The per-mode
-    hint set (`TOOLS_HUB_MODE_SHORTCUTS`, F-055) documents where each key
-    actually works -- the footer hint, not the binding list, is the surfaced
-    contract now."""
+    """T13/T8 port (ADR-237): the retired screen's `1-4`/`a`/`r`/`t`
+    BINDINGS live on ToolsHubPanel itself (ratchet offset: pane-held keys
+    fire when focus is inside the pane, strictly better scoping than the
+    screen-level category guard they replaced). The screen keeps its
+    a/r/t bindings for their RAG/personal-context/revert/test meanings
+    outside the pane. The per-mode hint set (`TOOLS_HUB_MODE_SHORTCUTS`,
+    F-055) documents where each key actually works -- the footer hint, not
+    the binding list, is the surfaced contract now."""
     # SettingsScreen.BINDINGS mixes Binding objects and (key, action, label)
     # tuples; normalize to key -> action.
-    actions = {
+    screen_actions = {
         (entry.key if isinstance(entry, Binding) else entry[0]): (
             entry.action if isinstance(entry, Binding) else entry[1]
         )
         for entry in SettingsScreen.BINDINGS
     }
-    assert actions["a"] == "settings_rag_set_active"
-    assert actions["r"] == "settings_revert_category"
-    assert actions["t"] == "settings_test_category"
-    assert [actions[str(digit)] for digit in (1, 2, 3, 4)] == [
-        "settings_tools_mode('servers')",
-        "settings_tools_mode('tools')",
-        "settings_tools_mode('permissions')",
-        "settings_tools_mode('audit')",
+    assert screen_actions["a"] == "settings_rag_set_active"
+    assert screen_actions["r"] == "settings_revert_category"
+    assert screen_actions["t"] == "settings_test_category"
+    assert not any(key in screen_actions for key in ("1", "2", "3", "4"))
+    pane_actions = {entry.key: entry.action for entry in ToolsHubPanel.BINDINGS}
+    assert [pane_actions[str(digit)] for digit in (1, 2, 3, 4)] == [
+        "tools_mode('servers')",
+        "tools_mode('tools')",
+        "tools_mode('permissions')",
+        "tools_mode('audit')",
     ]
+    assert pane_actions["a"] == "tools_add_server"
+    assert pane_actions["r"] == "tools_refresh"
+    assert pane_actions["t"] == "tools_test_tool"
+    assert all(entry.show is False for entry in ToolsHubPanel.BINDINGS)
     common = (("1-4", "mode"), ("a", "add server"), ("r", "refresh"))
     assert TOOLS_HUB_MODE_SHORTCUTS["servers"] == common
     assert TOOLS_HUB_MODE_SHORTCUTS["tools"] == common + (("t", "test tool"),)
@@ -3353,21 +3360,22 @@ async def test_tools_hub_footer_shortcuts_follow_mode(request):
                 f"{footer.shortcut_text}"
             )
 
-        screen.action_settings_tools_mode("tools")
+        pane = screen.query_one("#settings-tools-hub", ToolsHubPanel)
+        pane.action_tools_mode("tools")
         await pilot.pause()
         assert footer.shortcut_text == f"{common} | t test tool{globals_suffix}"
 
-        screen.action_settings_tools_mode("permissions")
+        pane.action_tools_mode("permissions")
         await pilot.pause()
         assert (
             footer.shortcut_text == f"{common} | space cycle permission{globals_suffix}"
         )
 
-        screen.action_settings_tools_mode("audit")
+        pane.action_tools_mode("audit")
         await pilot.pause()
         assert footer.shortcut_text == f"{common}{globals_suffix}"
 
-        screen.action_settings_tools_mode("servers")
+        pane.action_tools_mode("servers")
         await pilot.pause()
         assert footer.shortcut_text == f"{common}{globals_suffix}"
 

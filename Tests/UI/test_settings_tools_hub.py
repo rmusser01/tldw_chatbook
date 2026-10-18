@@ -123,9 +123,13 @@ async def test_mode_keys_and_verb_keys_dispatch_only_in_tools_category():
         called: list[str] = []
         pane.activate_mode = lambda mode: called.append(mode)  # type: ignore[assignment]
         pane.test_selected_tool = lambda: called.append("test")  # type: ignore[assignment]
-        settings.action_settings_tools_mode("audit")
+        # The 1-4/a/r/t keys are pane-held BINDINGS (ADR-237 ratchet offset:
+        # strictly better scoping than the category guard -- they fire when
+        # focus is inside the pane, and keep their pre-branch Settings
+        # meanings outside it).
+        pane.action_tools_mode("audit")
         assert called == ["audit"]
-        settings.action_settings_test_category()
+        pane.action_tools_test_tool()
         assert called == ["audit", "test"]
 
 
@@ -163,6 +167,46 @@ def _valid_profile_context() -> dict[str, object]:
         "profile_revision": 3,
         "profile_policy_digest": "a" * 64,
     }
+
+
+def test_parse_tools_navigation_context_accepts_mode_and_profile_links():
+    from tldw_chatbook.UI.Screens.settings_tools_hub import (
+        parse_tools_navigation_context,
+    )
+
+    assert parse_tools_navigation_context({}) == {}
+    assert parse_tools_navigation_context({"category": "tools"}) == {}
+    assert parse_tools_navigation_context({"category": "tools", "mode": "audit"}) == {
+        "mode": "audit"
+    }
+    assert parse_tools_navigation_context(_valid_profile_context()) == {
+        "mode": "permissions",
+        "tool_policy_profile_id": "research",
+        "profile_revision": 3,
+        "profile_policy_digest": "a" * 64,
+    }
+
+
+def test_parse_tools_navigation_context_rejects_unsafe_or_malformed_payloads():
+    from tldw_chatbook.UI.Screens.settings_tools_hub import (
+        parse_tools_navigation_context,
+    )
+
+    # Retired MCP-destination bounds, re-pinned on the extracted helper.
+    assert parse_tools_navigation_context({"extra": True}) is None
+    assert parse_tools_navigation_context({"mode": "nope"}) is None
+    bad_digest = _valid_profile_context()
+    bad_digest["profile_policy_digest"] = "zz"
+    assert parse_tools_navigation_context(bad_digest) is None
+    missing_digest = _valid_profile_context()
+    missing_digest["profile_policy_digest"] = None
+    assert parse_tools_navigation_context(missing_digest) is None
+    long_id = _valid_profile_context()
+    long_id["tool_policy_profile_id"] = "x" * 129
+    assert parse_tools_navigation_context(long_id) is None
+    bad_revision = _valid_profile_context()
+    bad_revision["profile_revision"] = 0
+    assert parse_tools_navigation_context(bad_revision) is None
 
 
 @pytest.mark.asyncio

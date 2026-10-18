@@ -236,7 +236,7 @@ async def _exercise_route(route: str, screen: object, pilot: Any) -> None:
         pane = screen._tools_hub_pane()
         assert pane is not None
         assert pane.workbench is not None
-        screen.action_settings_tools_mode("permissions")
+        pane.action_tools_mode("permissions")
         await pilot.pause()
         assert pane.workbench.active_mode == "permissions"
     elif route == "evals":
