@@ -1,7 +1,7 @@
 # ADR-237: Kanban board — ported from backlog-md-py, owned by LocalKanbanService
 
 Date: 2026-10-18
-Status: Proposed (implemented with TASK-18934)
+Status: Accepted (implemented with TASK-18934)
 Supersedes: none (the task originally named an "ADR-075" path; 075 was taken
 by durable-character-emote-metadata, so this decision takes the next free
 number, 237)

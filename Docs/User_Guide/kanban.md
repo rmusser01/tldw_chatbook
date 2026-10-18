@@ -45,6 +45,12 @@ one action: `n` creates your first board — **Personal**, with **To Do /
 Doing / Done** columns — and you build from there. That is the only
 seeding the app ever does, and only when you ask for it.
 
+**v1 column scope.** Columns come from the board's lists, and this first
+version ships no in-app column management: the bootstrap's To Do / Doing /
+Done are the columns you get (lists can still be created through the
+Kanban service layer). Duplicate list names are disambiguated on display
+("Doing", "Doing (2)") rather than collapsing.
+
 Governance: the board's architecture, data ownership, and keybindings are
 decided in
 [ADR-237](../../backlog/decisions/237-kanban-board-port-and-data-ownership.md)
