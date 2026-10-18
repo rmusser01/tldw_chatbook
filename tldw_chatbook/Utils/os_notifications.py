@@ -38,8 +38,9 @@ OSNotificationKind = Literal["run_finished", "run_failed", "needs_approval"]
 OS_NOTIFICATION_APP_NAME = "tldw Chatbook"
 
 #: Hard wall-clock bound on the notification subprocess. The sender also
-#: kills its process group via ``start_new_session`` + timeout, mirroring
-#: the Console run-hooks discipline (ADR-148).
+#: starts the child in its own session (``start_new_session``), isolating
+#: it from this process's groups, mirroring the Console run-hooks
+#: discipline (ADR-148).
 OS_NOTIFICATION_TIMEOUT_S = 3.0
 
 #: Outcome categories this channel knows about. This map is the single
