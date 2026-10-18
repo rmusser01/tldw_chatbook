@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import inspect
-from pathlib import Path
 import sqlite3
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -1419,7 +1419,9 @@ def test_index_authority_fence_checks_exact_scope_and_blocks_other_process(tmp_p
     registry.remove_runtime_binding("binding-1")
     assert reader(key) is None
     db.close()
-def test_archive_snapshot_checks_revision_name_and_noop_retains_episode(tmp_path):
+def test_archive_snapshot_checks_revision_name_and_noop_retains_episode(
+    build_test_registry, tmp_path
+):
     from tldw_chatbook.Workspaces.registry_service import WorkspaceArchiveConflict
 
     registry = build_test_registry(tmp_path)
@@ -1464,7 +1466,9 @@ def test_archive_snapshot_checks_revision_name_and_noop_retains_episode(tmp_path
         registry.db.close()
 
 
-def test_default_repair_advances_only_real_archive_transition(tmp_path):
+def test_default_repair_advances_only_real_archive_transition(
+    build_test_registry, tmp_path
+):
     registry = build_test_registry(tmp_path)
     try:
         registry.ensure_default_workspace()

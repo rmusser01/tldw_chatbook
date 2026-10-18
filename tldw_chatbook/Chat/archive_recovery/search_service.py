@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import asdict, replace
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.conversation_archive_queries import normalized_archive_time
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
@@ -78,10 +79,17 @@ class ArchiveSearchService:
         # The registry owns this thread-local connection. Install interruption
         # around its existing enumeration, including bounded per-row snapshot projection.
         try:
-            with self.workspace_registry.db.connection(
-                operation_deadline=time.monotonic()
-                + max(0.0, deadline - self.monotonic())
-            ) as conn:
+            with (
+                operation_owned_connection(
+                    self.workspace_registry.db,
+                    operation_deadline=time.monotonic()
+                    + max(0.0, deadline - self.monotonic()),
+                ),
+                self.workspace_registry.db.connection(
+                    operation_deadline=time.monotonic()
+                    + max(0.0, deadline - self.monotonic())
+                ) as conn,
+            ):
                 self._check_deadline(deadline)
                 old_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
                 conn.execute(
@@ -200,13 +208,18 @@ class ArchiveSearchService:
             )
         data = request.model_dump(mode="json")
         try:
-            raw = self.chat_service.query_archive_recovery_page(
-                data,
-                workspace_rows,
-                after=after,
-                deadline=deadline,
-                monotonic=self.monotonic,
-            )
+            with operation_owned_connection(
+                self.chat_service.db,
+                operation_deadline=time.monotonic()
+                + max(0.0, deadline - self.monotonic()),
+            ):
+                raw = self.chat_service.query_archive_recovery_page(
+                    data,
+                    workspace_rows,
+                    after=after,
+                    deadline=deadline,
+                    monotonic=self.monotonic,
+                )
         except TimeoutError as exc:
             raise ArchiveRecoveryError(
                 "search_incomplete", "Archive search was interrupted; refine or retry."

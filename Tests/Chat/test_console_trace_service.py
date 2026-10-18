@@ -7,7 +7,6 @@ from dataclasses import dataclass, fields, replace
 import inspect
 import json
 import sqlite3
-import threading
 from typing import cast
 
 import pytest
@@ -58,11 +57,9 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
-    TransactionContextManager,
 )
 from tldw_chatbook.DB.transaction_observer import (
     active_managed_transaction_count,
-    begin_managed_transaction,
     current_managed_transaction,
     register_transaction_completion,
 )
@@ -2609,37 +2606,38 @@ def test_repeated_same_head_requests_keep_one_parent_capability(
 
 @pytest.mark.parametrize("commit_fails", [False, True])
 def test_failed_rollback_releases_observers_and_reports_ambiguous_outcome(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
     commit_fails: bool,
 ) -> None:
-    class FailingConnection:
-        def commit(self) -> None:
-            if commit_fails:
-                raise sqlite3.OperationalError("commit failed")
+    def fail_commit() -> None:
+        raise sqlite3.OperationalError("commit failed")
 
-        def rollback(self) -> None:
-            raise sqlite3.OperationalError("rollback failed")
+    def fail_rollback() -> None:
+        raise sqlite3.OperationalError("rollback failed")
 
-    class FakeDB:
-        def __init__(self) -> None:
-            self._local = threading.local()
-            self._local.transaction_depth = 1
-
-    connection = cast(sqlite3.Connection, FailingConnection())
-    manager = TransactionContextManager(cast(CharactersRAGDB, FakeDB()))
-    manager.conn = connection
-    manager.is_outermost_transaction = True
-    token = begin_managed_transaction(connection)
-    manager.transaction_observer_token = token
+    connection = db.get_connection()
     outcomes: list[bool | None] = []
-    register_transaction_completion(connection, token, outcomes.append)
-
-    if commit_fails:
-        with pytest.raises(CharactersRAGDBError, match="Commit failed"):
-            manager.__exit__(None, None, None)
-    else:
-        failure = RuntimeError("block failed")
-        with pytest.raises(CharactersRAGDBError, match="Rollback failed"):
-            manager.__exit__(RuntimeError, failure, failure.__traceback__)
+    try:
+        with (
+            monkeypatch.context() as fault,
+            pytest.raises(
+                CharactersRAGDBError,
+                match="Commit failed" if commit_fails else "Rollback failed",
+            ),
+            db.transaction(),
+        ):
+            token = current_managed_transaction(connection)
+            assert token is not None
+            register_transaction_completion(connection, token, outcomes.append)
+            fault.setattr(connection, "rollback", fail_rollback)
+            if commit_fails:
+                fault.setattr(connection, "commit", fail_commit)
+            else:
+                raise RuntimeError("block failed")
+        assert connection.in_transaction
+    finally:
+        connection.rollback()
 
     assert outcomes == [None]
     assert active_managed_transaction_count() == 0

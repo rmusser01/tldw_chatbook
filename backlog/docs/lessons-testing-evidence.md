@@ -10837,6 +10837,17 @@ writer has drained. A `with connection` block, a successful transaction, and del
 fixture garbage collection establish different properties. Keep writer exclusion
 and deliberately drained snapshot setup as separate behavioral tests.
 
+**Follow-up incident (TASK35584, PR3162).** A passing storage cohort retained295
+file descriptors after GC: test-created Workspace owners were never closed, and
+five correctly rolled-back Workspace migration failures left the constructor's
+held native connection reachable through custody leases. Finite archive reads
+also needed owning-thread retirement. Probe after complete fixture teardown,
+identify actual files and native owners, and close at those owners; raising the
+warning threshold or relying on GC would conceal these defects. Include cleanup
+in operation deadlines: a0.5s archive read completed SQL in0.052s but its ordinary
+WAL checkpoint then waited1.175s on another reader. Preserve borrowed handles,
+timeouts and transactions when bounding only the departing operation-owned handle.
+
 ## A consumed fixed-name sidecar is not owned by the previous writer (TASK-31993)
 
 **Incident.** Raw service lifetime integration added finally-cleanup around the
@@ -20860,6 +20871,16 @@ its four stores on their creating UI thread made the four-case census stable and
 left no SQLite file records. The final 181-case run passed without warnings and
 with total session growth of three descriptors. Keep the owner's close routes and
 leak sentinel; GC cannot retire these retained native handles.
+
+**Follow-up incident (TASK35584, PR3162).** Direct runtime disposal left the
+runtime attached to the backing factory app; its later factory finalizer disposed
+it again and reopened chat SQLite after quiescence. Use the existing disposal
+helper that also detaches the completed owner. This harness also queued receipt
+render callbacks on the unmounted backing app. Routing only `call_later` through
+the actual mounted host let the real view/generation acknowledgement retire the
+unseen mark. Wait for that acknowledgement before testing hidden-source feedback;
+turn custody completion alone does not establish rendered-receipt completion.
+Keep notification/navigation spies and acknowledgement checks intact.
 
 ## TASK-32108: read the recorded human acceptance before reopening UAT
 

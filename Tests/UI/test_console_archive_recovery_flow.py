@@ -1,6 +1,7 @@
 """Real Console producer, runtime, catalog and native recovery interaction."""
 
 import asyncio
+import sqlite3
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime
@@ -18,7 +19,7 @@ from Tests.Chat.test_console_turn_library_authority import (
     _destination,
     _execution_configuration,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, drain_created_runtimes
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_library_conversation_recovery_flow import wait_until
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -34,7 +35,10 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
-from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+from tldw_chatbook.Chat.console_runtime import (
+    dispose_console_runtime,
+    ensure_console_runtime,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
 
@@ -174,6 +178,8 @@ async def mounted_recovery(
     recovery = owner.ensure_archive_recovery()
     controller._archive_recovery_runtime = recovery
     host = ConsoleHarness(app)
+    # The unmounted runtime owner schedules UI callbacks on the mounted host.
+    monkeypatch.setattr(app, "call_later", host.call_later)
     try:
         async with host.run_test(size=size) as pilot:
             await wait_until(
@@ -263,7 +269,7 @@ async def mounted_recovery(
                 turn=turn,
             )
     finally:
-        await owner.dispose()
+        await dispose_console_runtime(app)
         runs_db.close()
 
 
@@ -369,6 +375,22 @@ async def test_production_recovery_keeps_exact_history_and_active_draft(
         assert "selected scope was restored" in text
         await rig.pilot.click(rig.console.query_one("#recovery-confirm"))
         assert len(rig.recovery.coordinator.receipts(rig.source.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_mounted_runtime_cleanup_does_not_reopen_retired_chat_database(
+    recovery_stores, tmp_path, monkeypatch
+):
+    async with mounted_recovery(recovery_stores, tmp_path, monkeypatch) as rig:
+        connection = rig.db.get_connection()
+
+    with rig.db.quiesce_connections(timeout_seconds=2.0):
+        pass
+    await drain_created_runtimes()
+
+    assert rig.db.registered_connection_count() == 0
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
 
 
 @pytest.mark.asyncio
@@ -1505,6 +1527,9 @@ async def test_receipt_refresh_refusal_keeps_native_source_safe(
         monkeypatch,
         search_arguments={"workspace_id": "project"},
     ) as rig:
+        # Wait for the setup turn's rendered receipt before changing visibility.
+        marks = rig.owner._console_local_marks_service()
+        await wait_until(rig.pilot, lambda: marks.list_console_unseen_marks() == ())
         rig.db.update_conversation(
             rig.target_id,
             {"title": "Changed"},
@@ -1584,6 +1609,9 @@ async def test_admitted_restore_delivers_app_completion_when_source_cannot_recei
     import threading
 
     async with mounted_recovery(recovery_stores, tmp_path, monkeypatch) as rig:
+        # Wait for the setup turn's rendered receipt before changing visibility.
+        marks = rig.owner._console_local_marks_service()
+        await wait_until(rig.pilot, lambda: marks.list_console_unseen_marks() == ())
         card = await request_manual(rig)
         sends = rig.gateway.stream_calls
         feedback = []

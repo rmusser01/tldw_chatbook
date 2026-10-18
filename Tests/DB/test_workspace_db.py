@@ -1,10 +1,37 @@
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("schema failure"), KeyboardInterrupt()]
+)
+def test_failed_workspace_initialization_closes_owned_native_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    connections: list[sqlite3.Connection] = []
+
+    def fail_schema(db: WorkspaceDB) -> None:
+        with db.connection() as connection:
+            connections.append(connection)
+        raise failure
+
+    monkeypatch.setattr(WorkspaceDB, "_initialize_schema", fail_schema)
+    try:
+        with pytest.raises(type(failure)) as raised:
+            WorkspaceDB(tmp_path / "failed-initialization.sqlite")
+        assert raised.value is failure
+        assert len(connections) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connections[0].execute("SELECT 1")
+    finally:
+        for connection in connections:
+            connection.close()
 
 
 def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path):
@@ -30,7 +57,7 @@ def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path
     db.close()
     with pytest.raises(sqlite3.IntegrityError, match="version failure"):
         WorkspaceDB(path)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert (
             connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
             == 7
@@ -952,7 +979,7 @@ def test_v10_archive_chronology_migrates_unknown_history_and_rolls_back(tmp_path
     db.close()
     with pytest.raises(sqlite3.IntegrityError, match="version failure"):
         WorkspaceDB(path)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         assert (
             conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 9
         )
