@@ -337,7 +337,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # settings' Test connection, appended last (1-2 s each), each 3 of 3 serial.
 # TASK-35413 raised it by 1, to 323: the project-instruction status row's
 # sync-before-compose pin, appended last (no app; well under 1 s).
-MINIMUM_FILES = 323
+# TASK-35444 raised it by 1, to 324: the recovery sync's no-wait-on-config-
+# rebuild pin, appended last (one mounted Console, about 3 s).
+MINIMUM_FILES = 324
 
 
 def read_census(path: Path) -> list[str]:

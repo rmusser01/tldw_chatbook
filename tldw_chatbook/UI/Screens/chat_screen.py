@@ -14701,17 +14701,17 @@ class ChatScreen(BaseAppScreen):
             if workspace is None:
                 raise RuntimeError("terminal workspace opened before resolution")
             return workspace
+        # Display reads take the live controller; ensuring waits (TASK-35444).
         return ConsoleTranscriptRegion(
             session_surface_builder=lambda: self._ensure_console_session_surface(),
-            recovery_message_builder=(
-                lambda: (
-                    self._ensure_console_chat_controller().provider_continuation_recovery_message()
-                )
+            recovery_message_builder=lambda: (
+                None
+                if (controller := self._console_chat_controller) is None
+                else controller.provider_continuation_recovery_message()
             ),
-            recovery_replay_available_builder=(
-                lambda: (
-                    self._ensure_console_chat_controller().provider_continuation_replay_available()
-                )
+            recovery_replay_available_builder=lambda: (
+                (controller := self._console_chat_controller) is not None
+                and controller.provider_continuation_replay_available()
             ),
             on_recovery_action=(
                 lambda action, message_id, version: (

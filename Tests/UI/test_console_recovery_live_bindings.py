@@ -103,4 +103,13 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         return state
 
     monkeypatch.setattr(chat_screen, "trace_call_recovery_state", project)
+    # TASK-35444: the state read takes the live controller; it never ensures one.
+    monkeypatch.setattr(
+        chat_screen.ChatScreen,
+        "_console_chat_controller",
+        property(lambda _screen: controller),
+    )
+    screen._ensure_console_chat_controller = lambda: pytest.fail(
+        "the recovery state read ensured the controller"
+    )
     assert state_callback() is state

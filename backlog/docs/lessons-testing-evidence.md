@@ -1,5 +1,21 @@
 # Lessons: what counts as evidence a change works
 
+## A held-lock test's blocked stack names the product read to fix (TASK-35444, 2026-10-18)
+
+**Incident.** The response-rules phase test holds config's rebuild lock and fails
+if the UI loop waits for it. Two earlier fixes (TASK-34950, TASK-34406.5) changed
+its setup and waits, and it kept failing: 5 of 25 PR runs on 2026-10-18, two on
+backlog-only branches. Each failure printed a "Blocked UI stack". All five showed
+the same product path: the transcript's recovery sync read its display state
+through `_ensure_console_chat_controller()`, which re-reads config on every call.
+Local reruns had not reproduced it.
+
+**What to do.** When a timing test prints where the loop was blocked, read that
+stack in the CI log before rerunning or adding waits. If it names a product read
+on the UI loop, fix the read and pin it deterministically (hold the lock, call
+the read, assert it returns). Check the stack's siblings too: here three display
+builders made the same call, and fixing only the first would have moved the wait.
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule
