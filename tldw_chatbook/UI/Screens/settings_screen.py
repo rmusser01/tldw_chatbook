@@ -14336,15 +14336,16 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
-        if key != "provider":
+        original = draft.originals.get(key, current.get(key))  # before the pin
+        if key == "provider":  # the model's original, before the provider moves
+            draft.originals.setdefault("model", current.get("model"))  # 33001.8
+        else:
             self._pin_provider_draft_selection(draft, current)
         if key == "api_key":
             provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
             original = self._provider_api_key_value(provider)
-        else:
-            original = draft.originals.get(key, current.get(key))
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
@@ -14354,7 +14355,6 @@ class SettingsScreen(BaseAppScreen):
         self,
     ) -> _VllmDefaultPresentationSnapshot:
         """Capture the full mounted provider presentation before staging."""
-
         card = self.query_one("#settings-providers-models-card", Vertical)
         inputs = tuple(
             (
