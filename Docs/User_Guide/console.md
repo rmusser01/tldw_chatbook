@@ -811,8 +811,8 @@ For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
 provider·model pairs; every row is a pair, so you never pick a provider
 without a model. Model ids are never shortened: on a very long id, the
 row's notes and readiness words give way first. Provider names show whole
-while the list has room for the whole row; only in a narrower window is a
-long one shortened in the middle, as "Custom OpenAI-co… #2". The Provider and Model chips, the rail's **Change  Alt+M**,
+while the list has room for the whole row; only in a narrower window, or
+beside a very long model id, is a long one shortened in the middle, as "Custom OpenAI-co… #2". The Provider and Model chips, the rail's **Change  Alt+M**,
 the palette's "Console: Switch model…" and `/model` open it too. `/model
 <query>` (for example `/model son`) opens it with the query already in
 **Find** and the best match highlighted; nothing applies until you press
