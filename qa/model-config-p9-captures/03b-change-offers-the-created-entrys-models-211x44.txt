@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ───────────────────────────────── ╭─ Switch model · now: llama.cpp · model-a ────────────────────────────────────────────────────────────────────────────────────────────────╮                         │
+ Workspaces                    ▸   │ Find type to search 6 models in 2 providers · Enter picks                                                                                │                         │
+ ────────────────╭─────────────────│ RECENT · your last 50 chats                                                                                                              │─────────────────╮       │
+ Conversations   │  Chat settings ·│ ▶ model-a                      llama.cpp                     ?  Ready · reachable 10:06      ● CURRENT                                   │                 │       │
+        Archive t│                 │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                 │       │
+          Archive│  ● Model and gen│   model-b                      llama.cpp                     ?  Ready · reachable 10:06                                                  │                 │       │
+        Search al│ Applies to this │   served-y                     llama.cpp                     ?  Ready · reachable 10:06                                                  │                 │       │
+   Chat 1        │ Thinking budget │   model-a                      GPU box                       ?  Ready · not tested                                                       │                 │       │
+                 │  ▶ Sampling · hi│   gpu-x                        GPU box                       ?  Ready · not tested                                                       │                 │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│  ▼ Connection · │   gpu-y                        GPU box                       ?  Ready · not tested                                                       │                 │       │
+  ▊  Filter visib│ Endpoint        │ NEEDS SETUP · set up in Settings first                                                                                                   │               ▅ │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│                 │   (any model)                  Anthropic                        Not ready · no key                                                       │                 │       │
+                 │ Tests this endpo│   (any model)                  Arcee AI                         Not ready · no key                                                       │                 │       │◂ Inspect
+   New conversati│ Ready · not test│   (any model)                  Azure OpenAI                     Not ready · no key                                                       │                 │       │
+  Chats          │ A send attempt i│   (any model)                  Baidu Qianfan                    Not ready · no key                                                       │                 │       │
+    Today        │ Credential · Not│   (any model)                  Baseten                          Not ready · no key                                                       │                 │       │
+                 │ Endpoint · Not t│   (any model)                  ByteDance Seed (BytePlus)        Not ready · no key                                                       │                 │       │
+ ────────────────│ Model · Selected│   (any model)                  Cerebras                         Not ready · no key                                                       │               ▆ │       │
+ Character · No c│ Generation · Not│   (any model)                  Cloudflare Workers AI            Not ready · no key                                                       │                 │       │
+ ────────────────│ ▼ more — scroll │     … 39 more providers need setup · type a name to find one                                                                             │                 │       │
+ Model           │                 │ NOT RUNNING · local servers never set up · rechecked on open                                                                             │se these values. │       │
+ ────────────────│                 │   Aphrodite Engine · Ollama · TabbyAPI · vLLM · Custom OpenAI-compatible · Custom OpenAI-compatible #2                                   │                 │       │
+ Agent           │                 │   MLX-LM (Apple silicon) (not checked)                                                                                                   │at (Ctrl+Enter)  │       │
+ ────────────────╰─────────────────│ Enter picks · Esc cancel                                                                                                                 │─────────────────╯       │
+ Details                       ▸   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                         │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent access off     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Ctx 0% · Now $0.00
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
+ Conversations   │                                                                                                                                                                              │       │
+        Archive t│                                                                                                                                                                              │       │
+          Archive│                                                                                                                                                                              │       │
+        Search al│                                                                                                                                                                              │       │
+   Chat 1        │                                                                                                                                                                              │       │
+                 │                                                                                                                                                                              │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│                                                                                                                                                                              │       │
+  ▊  Filter visib│                                                                                                                                                                              │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│   1 unsaved edit to this chat: Temperature.                                                                                                                                  │       │
+                 │   Enter apply · d discard · Esc keep editing                                                                                                                                 │       │◂ Inspect
+   New conversati│                                                              Apply to this chat     Discard       Keep editing                                                               │       │
+  Chats          │                                                                                                                                                                              │       │
+    Today        │                                                                                                                                                                              │       │
+   Chat 1        │                                                                                                                                                                              │       │
+                 │                                                                                                                                                                              │       │
+ ────────────────│                                                                                                                                                                              │       │
+ Character · No c│                                                                                                                                                                              │       │
+ ────────────────│                                                                                                                                                                              │       │
+ Model           │                                                                                                                                                                              │       │
+ ────────────────│                                                                                                                                                                              │       │
+ Agent           ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Details                       ▸    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                ╭──────────────────────────────────────────────────────────╮
+                                    │                                                                                                                │                                                          │
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ GPU box is saved. Pick its model with Change (Alt+M).    │──
+ Status ▾   Library · Auto off · Agent access off     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Source│                                                          │
+                                                                                                                                                     ╰──────────────────────────────────────────────────────────╯
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit
