@@ -84,7 +84,7 @@ jobs:
           from pathlib import Path
           checkout = Path.cwd().resolve()
           sys.path.insert(0, str(checkout))
-          from Tests.hooks_v2_process_support import bootstrap
+          from Tests import network_guard, real_profile_guard
           from Tests.windows_private_fixture_runner import user_fixture_default_owner
           allowed = ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
                      "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
@@ -94,7 +94,16 @@ jobs:
           with user_fixture_default_owner():
               os.environ.clear()
               os.environ.update(environment)
-              bootstrap(str(checkout), environment, environment["QUALIFICATION_DATA_ROOT"])
+              real_profile_guard.install()
+              network_guard.install()
+              import keyring
+              import tldw_chatbook
+              from tldw_chatbook.config import get_user_data_dir
+              assert Path(tldw_chatbook.__file__).resolve() == checkout / "tldw_chatbook/__init__.py"
+              assert type(keyring.get_keyring()).__module__ == "keyring.backends.null"
+              data_root = Path(environment["QUALIFICATION_DATA_ROOT"])
+              assert data_root.is_dir()
+              assert get_user_data_dir().resolve() == data_root
               sys.argv = ["pytest",
                   'Tests/Plugins/test_plugin_end_to_end.py',
                   'Tests/Plugins/test_owned_hook_acceptance.py',
