@@ -1336,12 +1336,12 @@ async def test_a_list_reopened_from_settings_never_highlights_another_providers_
 
         find = switcher.query_one("#console-popover-find", Input)
         # The user's own query, exactly the provider's name: its own row, else
-        # Find's best match. Rewritten on purpose for TASK-33641.9, which lists
-        # OpenAI's rows (or its line) first: the aggregator's row was
+        # nothing, as the reopen. Rewritten on purpose for TASK-33641.9, which
+        # lists OpenAI's rows (or its line) first: the aggregator's row was
         # highlighted in all three cases.
         find.value = "OpenAI"
         await pilot.pause()
-        assert highlight(switcher) == (highlighted or ("pair", *_AGGREGATOR_ROW))
+        assert highlight(switcher) == highlighted
         assert says_no_models(switcher) == (highlighted is None)
         find.value = "OpenAI "
         await pilot.pause()
@@ -1388,35 +1388,46 @@ _AGGREGATOR_IDS = [f"openai/gpt-{index}" for index in range(35)]
 
 
 @pytest.mark.parametrize(
-    "own, own_models, own_rows",
+    "own, own_models, own_rows, pick_only",
     [
         # Unsaved: its NEEDS SETUP row, which Azure OpenAI's and Custom
         # OpenAI-compatible's rows (their names hold the text) preceded.
-        (NO_KEY, [], [("setup", "openai", None)]),
+        (NO_KEY, [], [("setup", "openai", None)], False),
+        # Picking: the same row, which cannot be picked.
+        (NO_KEY, [], [("setup", "openai", None)], True),
         # Saved with no model chosen or listed: also NEEDS SETUP.
-        (NO_MODEL, [], [("setup", "openai", None)]),
+        (NO_MODEL, [], [("setup", "openai", None)], False),
         # Saved and ready, listing nothing: no row, its own line instead.
-        (READY, [], []),
+        (READY, [], [], False),
         # Ready with models: they were the last of 30 matches, or cut.
         (
             READY,
             ["gpt-a", "gpt-b"],
             [("pair", "openai", "gpt-a"), ("pair", "openai", "gpt-b")],
+            False,
         ),
     ],
-    ids=["empty-unsaved", "empty-saved", "empty-saved-ready", "listed"],
+    ids=[
+        "empty-unsaved",
+        "empty-unsaved-pick",
+        "empty-saved",
+        "empty-saved-ready",
+        "listed",
+    ],
 )
 async def test_find_with_exactly_a_providers_name_lists_its_rows_first(
-    own, own_models, own_rows
+    own, own_models, own_rows, pick_only
 ) -> None:
     """TASK-33641.9: Find ranked by text alone, so a ready aggregator whose
     ids start with a provider's name (OpenRouter's "openai/...") outranked
     that provider's own rows: typing "openai" highlighted openrouter ·
     openai/gpt-0, and one Enter applied another provider's model. When
     Find's text is exactly a provider's name or id, its rows are listed
-    first in their group and its first row is highlighted; a ready provider
-    that lists nothing leads READY PROVIDERS with its own line. One more or
-    one less letter ranks as before."""
+    first in their group and its first row is highlighted, or nothing when
+    it has no row to choose (it lists nothing, or a pick cannot take its
+    NEEDS SETUP row), so Enter applies no other provider's model; a ready
+    provider that lists nothing leads READY PROVIDERS with its own line. One
+    more or one less letter ranks as before."""
     recorder = _OwnReadiness(own)
     app = SwitcherHarness()
     providers_models = {
@@ -1443,7 +1454,11 @@ async def test_find_with_exactly_a_providers_name_lists_its_rows_first(
 
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
-            app, pilot, build_switcher(recorder, providers_models=providers_models)
+            app,
+            pilot,
+            build_switcher(
+                recorder, providers_models=providers_models, pick_only=pick_only
+            ),
         )
         await pilot.press(*"openai")
         await _settle(app, pilot)
@@ -1457,12 +1472,18 @@ async def test_find_with_exactly_a_providers_name_lists_its_rows_first(
         else:
             line = "OpenAI · no models reported · type its name and an id"
             assert ready[0] == ("info", "", line), ready
-        expected = own_rows[0] if own_rows else ("pair", "openrouter", "openai/gpt-0")
+        # Rewritten on purpose (round-1 review): with no row of its own to
+        # choose, the aggregator's openai/gpt-0 was highlighted.
+        expected = own_rows[0] if own_rows and not pick_only else None
         assert highlight(switcher) == expected
         # The painted list says the same: OpenAI's first row is highlighted.
-        if own_rows:
+        if expected:
             painted = line_with(list_lines(app, switcher), HIGHLIGHT_GLYPH)
             assert "OpenAI" in painted and "OpenRouter" not in painted
+        else:
+            await pilot.press("enter")  # nothing applied by accident
+            await pilot.pause()
+            assert app.screen is switcher and recorder.submissions == []
 
         await pilot.press("backspace")  # "opena": not a name, ranks as before
         await _settle(app, pilot)

@@ -1738,12 +1738,23 @@ class ConsoleModelPopover(
                 return min(own, key=lambda index: self._rows[index].kind != "setup")
             if reopened:
                 return None
-        if self._query.strip():
+        if query := self._query.strip().casefold():
+            named = {
+                key for key in self._visible_providers() if self._names(query, key)
+            }
+            if named and not any(
+                provider_key(self._rows[index].provider) in named
+                for index in selectable
+            ):
+                # Find is exactly a provider's name and it has no row to
+                # choose: nothing, as on a reopen, never another provider's
+                # match that starts with the name (TASK-33641.9).
+                return None
             ranked = [index for index in selectable if self._rows[index].kind != "more"]
             if ranked:
                 return min(ranked, key=lambda index: (self._rows[index].score, index))
         previous = self._previous
-        if previous is not None and not self._query.strip():
+        if previous is not None and not query:
             for index in selectable:
                 row = self._rows[index]
                 if (provider_key(row.provider), row.model) == (

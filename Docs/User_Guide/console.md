@@ -884,7 +884,7 @@ that provider's own rows first in their group and highlights the first of
 them, ahead of an aggregator's ids that start with the name (OpenRouter's
 "openai/..."). A ready provider that lists no models has no row to
 highlight: READY PROVIDERS opens with its own "no models reported" line,
-and the highlight stays on Find's best match. A model id that no list has
+and nothing is highlighted. A model id that no list has
 appears under **TYPED MODEL ID** for this chat's provider; type a
 provider's name first ("Ollama qwen3:32b") to pair the id with that
 provider. That row is the last in the list, and
