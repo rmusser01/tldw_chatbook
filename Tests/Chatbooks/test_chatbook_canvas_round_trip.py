@@ -329,11 +329,20 @@ def test_tied_graph_export_import_reexport_and_idempotent_restore(
 @pytest.mark.parametrize(
     "version,extension,tied,accepted",
     [
+        ("1.0", "1.0", False, False),
+        ("1.0", "2.0", False, False),
+        ("2.0", "1.0", False, False),
+        ("2.0", "2.0", False, False),
+        ("1.0.0", "1.0", False, False),
+        ("1.0.0", "2.0", False, False),
+        ("1.1.0", "1.0", False, False),
+        ("1.1.0", "2.0", False, False),
         ("3.0", "1.0", False, True),
         ("3.0", "1.0", True, False),
         ("3.0", "2.0", False, False),
         ("4.0", "1.0", False, False),
         ("4.0", "9.0", False, False),
+        ("4.0", "2.0", True, True),
     ],
 )
 def test_archive_version_pairing_is_checked_before_target_mutation(
@@ -378,6 +387,51 @@ def test_archive_version_pairing_is_checked_before_target_mutation(
         assert "database access" not in reason
         assert list(importer.temp_dir.iterdir()) == []
         assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("version", ["1.0", "2.0", "1.0.0", "1.1.0"])
+def test_no_canvas_legacy_archive_still_imports_conversation(tmp_path, version):
+    source = tmp_path / "ordinary-source.sqlite"
+    db = CharactersRAGDB(source, client_id="ordinary-source")
+    try:
+        owner = db.add_conversation({"title": "Ordinary conversation"})
+        db.add_message(
+            {"conversation_id": owner, "sender": "user", "content": "ordinary content"}
+        )
+    finally:
+        db.close()
+    original = tmp_path / "ordinary.zip"
+    assert ChatbookCreator({"ChaChaNotes": str(source)}).create_chatbook(
+        name="Ordinary",
+        description="No Canvas",
+        content_selections={ContentType.CONVERSATION: [owner]},
+        output_path=original,
+    )[0]
+
+    def change(name, payload):
+        if name == "manifest.json":
+            manifest = json.loads(payload)
+            assert manifest["version"] == "2.0"
+            assert "canvas" not in manifest
+            manifest["version"] = version
+            payload = json.dumps(manifest).encode()
+        return name, payload
+
+    archive = tmp_path / "ordinary-version.zip"
+    _rewrite_archive(original, archive, change)
+    target = tmp_path / "ordinary-target.sqlite"
+    success, reason = ChatbookImporter({"ChaChaNotes": str(target)}).import_chatbook(
+        archive
+    )
+    assert success, reason
+    db = CharactersRAGDB(target, client_id="ordinary-verify")
+    try:
+        assert (
+            db.get_connection().execute("SELECT content FROM messages").fetchall()[0][0]
+            == "ordinary content"
+        )
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize("profiles", _PROFILE_ROWS)

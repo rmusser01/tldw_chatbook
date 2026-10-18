@@ -497,9 +497,7 @@ def test_v1_and_v2_manifest_serialization_remains_exactly_unchanged() -> None:
         assert ChatbookManifest.from_dict(encoded).to_dict() == encoded
 
 
-def test_v3_requires_canvas_records_and_old_versions_ignore_unknown_canvas_key() -> (
-    None
-):
+def test_v3_requires_canvas_records() -> None:
     with pytest.raises(ValueError, match="Canvas records"):
         ChatbookManifest(
             version=ChatbookVersion.V3,
@@ -507,13 +505,17 @@ def test_v3_requires_canvas_records_and_old_versions_ignore_unknown_canvas_key()
             description="No Canvas",
         )
 
+
+@pytest.mark.parametrize("version", ["1.0", "2.0", "1.0.0", "1.1.0"])
+@pytest.mark.parametrize("canvas", [None, {}, {"future": "unsupported"}])
+def test_old_container_rejects_any_present_canvas_member(version, canvas):
     legacy = ChatbookManifest(
-        version=ChatbookVersion.V2,
-        name="Legacy",
-        description="Compatibility",
+        version=ChatbookVersion.V2, name="Legacy", description="Compatibility"
     ).to_dict()
-    legacy["canvas"] = {"future": "ignored exactly as before"}
-    assert ChatbookManifest.from_dict(legacy).canvas_archive is None
+    legacy["version"] = version
+    legacy["canvas"] = canvas
+    with pytest.raises(CanvasArchiveValidationError):
+        ChatbookManifest.from_dict(legacy)
 
 
 def test_raw_manifest_lists_are_bounded_before_child_record_parsing() -> None:

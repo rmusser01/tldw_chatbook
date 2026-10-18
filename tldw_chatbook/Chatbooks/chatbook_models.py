@@ -640,6 +640,8 @@ class ChatbookManifest:
             if "canvas" not in data:
                 raise ValueError(f"Chatbook {version.value} requires Canvas records")
             canvas_archive = CanvasArchiveManifest.from_dict(data["canvas"])
+        elif "canvas" in data:
+            raise CanvasArchiveValidationError("unsupported_container_version")
         manifest = cls(
             version=version,
             name=data["name"],

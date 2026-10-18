@@ -57,3 +57,21 @@ Raw local evidence and built artifacts: /private/tmp/chatbook-canvas-sync-founda
 The full implementation handoff lives in the plan's local SDD task-1-report.md.
 No host-profile migration, full test sweep, external network, dependency install,
 server qualification, renderer change, push or merge was performed.
+
+## Review correction I1
+
+The independent review found that the inherited V1/V2 parser ignored a present
+Canvas member, allowing import to drop Canvas. The parsing boundary now rejects
+any such member before extraction/database access, including null/malformed
+members and normalized V1 aliases 1.0.0/1.1.0. Only 3.0/1.0 and 4.0/2.0 pairings
+are admitted. Ordinary no-Canvas V1/V2/alias conversation imports remain valid.
+
+Fix-round RED: 20 failed / six passed against 0cba3e2831 (eight real ZIP pairings
+reached the database-access tripwire, twelve key-presence model cases silently
+parsed). Four ordinary no-Canvas conversation imports passed before the fix.
+GREEN: 103 model/archive tests passed without warnings using an owned Hypothesis
+store; seven fresh package/installed checks passed. Both direct and sdist-built
+installed parsers passed sixteen refusal and four no-Canvas controls each.
+The final model bytes match the fresh sdist and both wheels; package manifest
+validation, scoped Ruff, formatter and whitespace checks passed. New evidence is
+under the original evidence root's fix1-* paths; earlier receipts are retained.
