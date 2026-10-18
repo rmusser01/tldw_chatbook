@@ -437,7 +437,8 @@ class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted. Writes
     #: take BEGIN IMMEDIATE up front because the MCP server opens
-    #: this same file in its own process (see transaction()).
+    #: this same file in its own process; the kernel transaction()'s
+    #: immediate default serves exactly that.
     _kernel_sqlite_owner = "db.base"
 
     # task-28240 (schema v4): Library review sets -- an ordered, pinned snapshot
