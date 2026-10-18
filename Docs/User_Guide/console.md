@@ -872,9 +872,15 @@ status at once, under the open list. A server on a carrier-grade NAT address
 any endpoint that would send a key are never contacted automatically.
 Typing filters every provider's saved and cached models in memory and
 highlights the best match; it never starts a model listing or a network
-call. A model id that no list has appears under **TYPED MODEL ID**
-for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
-to pair the id with that provider. That row is the last in the list, and
+call. Typing exactly a provider's name or id (`OpenAI`, `llama_cpp`) lists
+that provider's own rows first in their group and highlights the first of
+them, ahead of an aggregator's ids that start with the name (OpenRouter's
+"openai/..."). A ready provider that lists no models has no row to
+highlight: READY PROVIDERS opens with its own "no models reported" line,
+and the highlight stays on Find's best match. A model id that no list has
+appears under **TYPED MODEL ID** for this chat's provider; type a
+provider's name first ("Ollama qwen3:32b") to pair the id with that
+provider. That row is the last in the list, and
 any listed row that holds every word you typed, in its model id or its
 provider's name, is highlighted ahead of it, so **Down** may be needed to
 reach it. A provider whose list is still loading,

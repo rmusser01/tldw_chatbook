@@ -1099,10 +1099,14 @@ class ConsoleModelPopover(
     ) -> int | None:
         """Match rank, lower is better; None when a token is missing.
 
-        Every token must appear in the model id or the provider's name.
+        Every token must appear in the model id or the provider's name. Find
+        that is exactly the provider's name or id ranks all its rows first
+        (-1), before an aggregator's ids that start with it (TASK-33641.9).
         """
         if not tokens:
             return 99
+        if self._names(query, provider):
+            return -1
         folded = model.casefold()
         text = f"{folded} {self._display(provider).casefold()}"
         if not all(token in text for token in tokens):
@@ -1112,6 +1116,11 @@ class ConsoleModelPopover(
         if folded.startswith(query):
             return 1
         return 2 if query in folded else 3
+
+    def _names(self, query: str, provider: str) -> bool:
+        """Whether the casefolded ``query`` is exactly ``provider``'s name or id."""
+        key = provider_key(provider)
+        return query in (self._display(key).casefold(), key.casefold())
 
     def _leads(self, row: SwitcherRow) -> bool:
         """Whether ``row`` is the highlight pair's, while Find is as it opened."""
@@ -1142,13 +1151,14 @@ class ConsoleModelPopover(
 
         The list opened on that pair, so past the cut its row takes the last
         place: left out, Enter acted on Find's best match instead, which can
-        be another provider's model (an aggregator id that starts with the
-        provider's name outranks the provider's own models).
+        be another provider's model.
 
         A list reopened from Settings with no row for the pair (the row named
         no model, or the catalog dropped it) keeps that provider's first row
         the same way when the cut leaves none of its rows: the highlight is
         that row or nothing, and the list said nothing about the provider.
+        Since TASK-33641.9 a query that is exactly the provider's name lists
+        its rows first, so this keep acts only under a query that is not.
         """
         late = next((row for row in rows[cap:] if self._leads(row)), None)
         if late is None and self._returned_to(self._reopened):
@@ -1313,7 +1323,9 @@ class ConsoleModelPopover(
                         if score is not None and (key, model) not in shown:
                             row = self._pair_row("pair", key, model, score=score)
                             matches.append((score, rank, index, row))
-                    if not models and self._returned_to(key):
+                    if not models and (
+                        self._returned_to(key) or self._names(query, key)
+                    ):
                         # Its key is saved and it lists nothing: no row to
                         # highlight, so its own line says what to type.
                         returned = self._catalog_status_rows(key, False)
@@ -1351,13 +1363,16 @@ class ConsoleModelPopover(
                 and not any(map(self._leads, setup))
                 # A return that names no model has no pair to lead with.
                 and not self._returned_to(key)
+                and not self._names(query, key)
             ):
                 setup_extra += 1
                 continue
             setup_rows.extend(setup)
         if tokens:
+            setup_rows.sort(key=lambda row: row.score >= 0)  # named by Find first
             matches.sort(key=lambda match: match[:3])
-            # The returned provider's line leads: 30 matches would hide it.
+            # The returned (or named) provider's line leads: 30 matches would
+            # hide it.
             ready_rows = returned + self._capped(
                 [match[3] for match in matches], _MATCH_ROWS
             )
@@ -1371,8 +1386,8 @@ class ConsoleModelPopover(
                 row
                 for key in self._catalog_state
                 if self._catalog_state[key] == "loading"
-                and not (returned and key == self._reopened)
                 for row in self._catalog_status_rows(key, False)
+                if row not in returned
             )
         if setup_extra:
             # Capture fix 3 finding 2: one more is counted in the singular.
@@ -1508,8 +1523,8 @@ class ConsoleModelPopover(
             return []
         folded = query.casefold()
         providers = (*self._provider_order, *sorted(self._used_provider_keys()))
-        if any(self._display(key).casefold() == folded for key in providers):
-            return []  # a provider's name is a search, not a model id
+        if any(self._names(folded, key) for key in providers):
+            return []  # a provider's name or id is a search, not a model id
         named = [
             key
             for key in providers
