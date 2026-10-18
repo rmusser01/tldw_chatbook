@@ -20,7 +20,7 @@ import time
 import pytest
 from rich.cells import cell_len
 from textual.containers import ScrollableContainer
-from textual.widgets import Button, Collapsible, Static
+from textual.widgets import Button, Collapsible, Select, Static
 from textual.widgets._collapsible import CollapsibleTitle
 
 from Tests.private_profile import private_profile_test
@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     console_generation_control_support,
+    reasoning_effort_values_sent,
     supported_generation_fields,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
@@ -46,6 +47,8 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     SAMPLING_DISCLOSURE_ID,
     SAMPLING_FIELDS,
     SAMPLING_HIDDEN_LIST_ID,
+    UNSENT_CHOICE_COPY,
+    UNSENT_CHOICE_SUFFIX,
     field_control_id,
     generation_field_support,
     hidden_fields_line,
@@ -527,6 +530,102 @@ async def test_a_provider_without_a_request_map_says_its_samplers_are_unverified
             text = str(help_line.content)
             assert text.startswith(GENERATION_CONTROL_UNKNOWN_COPY), (name, text)
             assert MODEL_CONFIG_FIELDS[name].help in text, name
+
+
+#: Every Reasoning effort level, in display order.
+_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def _reasoning_options(modal) -> list[tuple[str, str]]:
+    select = modal.query_one(f"#{field_control_id('reasoning_effort')}", Select)
+    return [(str(label), value) for label, value in select._options[1:]]
+
+
+@pytest.mark.parametrize(
+    ("provider", "offered"),
+    [
+        ("llama_cpp", ("none", "low", "medium", "high", "xhigh")),
+        ("custom-ep:gpu-box", ("none", "low", "medium", "high", "xhigh")),
+        ("openai", _LEVELS),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reasoning_effort_offers_only_the_levels_the_request_sends(
+    provider, offered
+) -> None:
+    """TASK-33002.7 AC#1: a strict local template's request drops "minimal"
+    (``build_local_thinking_payload_fields``), so Chat settings does not
+    offer it, decided by ``reasoning_effort_values_sent`` as Settings'
+    model-default list is; a llama.cpp registry entry follows its family."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(provider, "model-a", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert offered == reasoning_effort_values_sent(
+            provider, _LEVELS, app.app_config
+        )
+        assert [value for _label, value in _reasoning_options(modal)] == list(offered)
+
+
+@pytest.mark.asyncio
+async def test_a_saved_level_the_request_drops_stays_selected_and_says_so() -> None:
+    """TASK-33002.7 AC#2: a "minimal" saved before stays selected, listed as
+    not supported, and its row says why, rather than being cleared; Apply
+    keeps it. A deliberate pick of a sent level clears the note."""
+    app = CoreFirstHarness()
+    settings = _settings("llama_cpp", "model-a", reasoning_effort="minimal")
+    modal = _modal(app, settings)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        select = modal.query_one("#console-settings-reasoning-effort", Select)
+        assert select.value == "minimal"
+        assert _reasoning_options(modal)[-1] == (
+            f"Minimal {UNSENT_CHOICE_SUFFIX}",
+            "minimal",
+        )
+        note = UNSENT_CHOICE_COPY.format(level="Minimal")
+        help_line = modal.query_one("#console-settings-reasoning-effort-help", Static)
+        assert str(help_line.content) == note
+        row = modal.query_one("#console-settings-reasoning-effort-row")
+        assert note in _painted(app.screen)[row.region.y]
+        assert modal._build_draft().reasoning_effort == "minimal"
+
+        select.value = "low"
+        for _ in range(3):
+            await pilot.pause()
+        assert str(help_line.content) == MODEL_CONFIG_FIELDS["reasoning_effort"].help
+
+
+@pytest.mark.asyncio
+async def test_a_pick_re_lists_reasoning_effort_for_the_new_provider() -> None:
+    """TASK-33002.7: the list follows the pair a pick lands on. A "minimal"
+    picked on OpenAI and carried to llama.cpp stays, labelled; back on OpenAI
+    it is an ordinary level again."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings("openai", "gpt-4o"), draft_rebaser=_real_rebase)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        select = modal.query_one("#console-settings-reasoning-effort", Select)
+        select.value = "minimal"
+        for _ in range(3):
+            await pilot.pause()
+
+        modal._model_picked(("llama_cpp", "model-a"))
+        for _ in range(3):
+            await pilot.pause()
+        assert select.value == "minimal"
+        assert [value for _label, value in _reasoning_options(modal)] == [
+            "none", "low", "medium", "high", "xhigh", "minimal"
+        ]
+        assert str(
+            modal.query_one("#console-settings-reasoning-effort-help", Static).content
+        ) == UNSENT_CHOICE_COPY.format(level="Minimal")
+
+        modal._model_picked(("openai", "gpt-4o"))
+        for _ in range(3):
+            await pilot.pause()
+        assert [value for _label, value in _reasoning_options(modal)] == list(_LEVELS)
+        assert UNSENT_CHOICE_SUFFIX not in str(_reasoning_options(modal))
 
 
 @pytest.mark.asyncio

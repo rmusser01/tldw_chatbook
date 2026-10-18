@@ -1527,7 +1527,7 @@ class ConsoleSettingsModal(
             else Select.NULL
         )
         select = ConsoleSettingsSelect(
-            [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
+            self._choice_options(control_id, selected),
             prompt=BLANK_CHOICE_PROMPT,
             value=selected,
             allow_blank=True,
@@ -1551,7 +1551,7 @@ class ConsoleSettingsModal(
         """Return inline recovery copy for an obsolete restored enum value."""
         if control_id not in self._invalid_generation_choice_drafts:
             return ""
-        values = ", ".join(_PROVIDER_CHOICE_VALUES[control_id])
+        values = ", ".join(v for _l, v in self._choice_options(control_id, Select.NULL))
         return f"Saved value is unavailable. Choose one of: {values}."
 
     @on(Button.Pressed, "#console-settings-response-rules")
@@ -2309,7 +2309,7 @@ class ConsoleSettingsModal(
                             control.value = Select.NULL
                         elif normalized in _PROVIDER_CHOICE_VALUES[control_id]:
                             self._invalid_generation_choice_drafts.pop(control_id, None)
-                            control.value = normalized
+                            self._show_choice(control, normalized)
                         else:
                             self._invalid_generation_choice_drafts[control_id] = value
                             control.value = Select.NULL
@@ -4273,11 +4273,9 @@ class ConsoleSettingsModal(
             if hint is not None:
                 return " / ".join(sorted(hint)) + " (consumed by this model)"
         # An unsupported choice is hidden and named on the Sampling line
-        # (TASK-33006.2), so its tooltip only lists the accepted values.
-        for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
-            if choice_input_id == input_id:
-                return placeholder
-        return ""
+        # (TASK-33006.2), so its tooltip lists only the values it sends.
+        sent = self._choice_options(input_id, Select.NULL)
+        return ", ".join(value for _label, value in sent)
 
     def _sync_provider_choice_placeholders(self) -> None:
         """Refresh constrained-choice help after the provider changes."""
@@ -4488,7 +4486,7 @@ class ConsoleSettingsModal(
                 else:
                     self._invalid_generation_choice_drafts.pop(control_id, None)
                     selected = normalized or Select.NULL
-                self.query_one(f"#{control_id}", Select).value = selected
+                self._show_choice(self.query_one(f"#{control_id}", Select), selected)
                 self._sync_generation_choice_validation(control_id)
             streaming = self._draft_field("streaming")
             self._streaming_effective_fallback = bool(state.settings.streaming)

@@ -664,7 +664,12 @@ this model is not known stays visible, and its help line starts with "Support
 not verified for this model." For **ONNX Runtime (local)** and
 **Transformers (local)**, whose requests have no parameter map, no field's
 support is known, so every field stays visible and each help line starts
-that way.
+that way. For llama.cpp and other strict local templates the **Reasoning
+effort** list leaves out the levels the request would drop, such as
+**Minimal**, as Settings' model defaults do. A level saved before stays
+selected as "Minimal (not supported here)" and its row says "Minimal is not
+supported here, so it is not sent." until you pick another; it is not
+cleared.
 
 Focus opens on **Temperature**, or, for a model that does not take it, on
 the next core field shown (**Change** when none is). **Tab** walks the core fields, the four

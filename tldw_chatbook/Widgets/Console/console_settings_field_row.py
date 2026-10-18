@@ -48,6 +48,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     MODEL_FIELD_LABELS,
     console_generation_control_support,
     provider_request_keys,
+    reasoning_effort_values_sent,
     supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -154,6 +155,10 @@ BLANK_FIELD_HELP = "the provider decides"
 #: A control whose support is unknown stays visible and says so in its help
 #: line (TASK-30012 AC#3).
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
+#: A saved level the provider's request drops stays selected, labelled as
+#: Settings labels it, and its row says why (TASK-33002.7).
+UNSENT_CHOICE_SUFFIX = "(not supported here)"
+UNSENT_CHOICE_COPY = "{level} is not supported here, so it is not sent."
 #: Ends the Sampling line that names the hidden fields (TASK-33006.2).
 HIDDEN_FIELDS_REASON = "(this provider does not accept them)"
 #: Ends the Sampling line that counts them when the names do not fit.
@@ -201,6 +206,11 @@ def field_control_id(name: str) -> str:
         The id, e.g. ``"console-settings-max-tokens"``.
     """
     return "console-settings-" + name.replace("_", "-")
+
+
+def _choice_label(choice: str) -> str:
+    """Return a choice's option label: "X-High" for xhigh, else title case."""
+    return choice.replace("xhigh", "x-high").title()
 
 
 def field_row_names(row: Widget) -> tuple[str, str]:
@@ -956,6 +966,50 @@ class ConsoleSettingsFieldRowsMixin:
         with self.prevent(Select.Changed):
             select.value = self._streaming_select_value()
 
+    def _choice_options(self, control_id: str, value: object) -> list[tuple[str, str]]:
+        """Return a choice Select's options for the draft's provider.
+
+        Reasoning effort offers only the levels the provider's request sends,
+        decided by ``reasoning_effort_values_sent`` as Settings decides its
+        model-default list; a saved level the request drops stays listed,
+        labelled with ``UNSENT_CHOICE_SUFFIX``, rather than cleared
+        (TASK-33002.7).
+
+        Args:
+            control_id: The choice Select's id.
+            value: The value the Select is to show.
+
+        Returns:
+            ``(label, value)`` pairs in display order, the blank excluded.
+        """
+        from .console_settings_modal import _PROVIDER_CHOICE_VALUES
+
+        domain = _PROVIDER_CHOICE_VALUES[control_id]
+        offered = domain
+        if control_id == field_control_id("reasoning_effort"):
+            offered = reasoning_effort_values_sent(
+                self._active_provider, domain, self._app_config
+            )
+        options = [(_choice_label(choice), choice) for choice in offered]
+        if value in domain and value not in offered:
+            options.append((f"{_choice_label(value)} {UNSENT_CHOICE_SUFFIX}", value))
+        return options
+
+    def _show_choice(self, select: Select, value: object) -> None:
+        """Show ``value`` in a choice Select, re-listing its options first.
+
+        ``set_options`` resets the value, so the options are replaced only
+        when the provider or a dropped saved level changes them.
+
+        Args:
+            select: A provider-choice Select.
+            value: A choice, or ``Select.NULL``.
+        """
+        options = self._choice_options(str(select.id), value)
+        if select._options[1:] != options:  # the first option is the blank
+            select.set_options(options)
+        select.value = value
+
     def _field_help(self, name: str, control: Widget) -> str:
         """Return one row's help line, saying what a blank field sends.
 
@@ -966,9 +1020,15 @@ class ConsoleSettingsFieldRowsMixin:
         Returns:
             The field table's help, prefixed for a blank optional field; a
             blank required field names its valid range instead. A field
-            whose support is unknown leads with the neutral copy.
+            whose support is unknown leads with the neutral copy, and a
+            selected level the request drops says so instead.
         """
         field = MODEL_CONFIG_FIELDS[name]
+        if isinstance(control, Select) and any(
+            choice == control.value and str(label).endswith(UNSENT_CHOICE_SUFFIX)
+            for label, choice in control._options
+        ):
+            return UNSENT_CHOICE_COPY.format(level=_choice_label(str(control.value)))
         if not _is_blank(control):
             text = field.help
         elif name == "temperature":  # the provider's own range (finding 11)

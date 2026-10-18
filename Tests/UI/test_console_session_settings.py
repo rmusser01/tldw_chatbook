@@ -12229,9 +12229,11 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
         )
         await pilot.pause()
         # llama.cpp is a local thinking provider: only the reasoning-effort
-        # level is consumed; the other choice rows are hidden.
+        # level is consumed; the other choice rows are hidden. Rewritten on
+        # purpose by TASK-33002.7: its strict template drops "minimal", so
+        # the list and the tooltip leave it out.
         placeholders = {
-            "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
+            "console-settings-reasoning-effort": "none, low, medium, high, xhigh",
             "console-settings-reasoning-summary": "auto, concise, detailed, none",
             "console-settings-verbosity": "low, medium, high",
             "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
