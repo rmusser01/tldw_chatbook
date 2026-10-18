@@ -3774,7 +3774,11 @@ class MCPWorkbench(Container):
         if not callable(report_getter):
             return
         try:
-            report = await report_getter()
+            # task-32804.7 discipline: the report read is a JSONL log read
+            # plus a store load -- run it off the event loop like every
+            # other permission read this canvas triggers. The getter is an
+            # async service method, so it gets its own loop on the thread.
+            report = await asyncio.to_thread(lambda: asyncio.run(report_getter()))
             dismissals: dict[str, str] = {}
             if callable(list_dismissals):
                 dismissals = dict(await asyncio.to_thread(list_dismissals))
@@ -3803,8 +3807,13 @@ class MCPWorkbench(Container):
         if not callable(apply_suggestion):
             return
         try:
-            recommendation = await apply_suggestion(
-                event.server_key, event.tool_name
+            # task-32804.7: the apply path ends in a store write (~13 ms of
+            # locked fsync JSON); offload the whole coroutine like the
+            # sibling dismissal handlers, not just its tail.
+            recommendation = await asyncio.to_thread(
+                lambda: asyncio.run(
+                    apply_suggestion(event.server_key, event.tool_name)
+                )
             )
         except KeyError:
             self.app.notify(
