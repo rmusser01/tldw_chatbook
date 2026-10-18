@@ -474,7 +474,9 @@ def test_settings_category_ids_include_theme_and_splash():
     assert SettingsCategoryId.SPLASH_SCREEN.value == "splash_screen"
 
 
-def test_theme_and_splash_appear_in_settings_sidebar():
+@pytest.mark.asyncio
+@private_profile_test
+def test_theme_and_splash_appear_in_settings_sidebar(request):
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
     values = {s.category.value for s in summaries}
@@ -522,13 +524,25 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
     Gen (video-generation-foundation) brought it to 25; Agents
     (supervisor-fleet PR-1 task 6) brought it to 26; Web Search (TASK-32189)
-    brought it to 27. This pins the literal
+    brought it to 27; the Dreams and Guardian surfaces brought the current
+    total from 31 to 33. This pins the literal
     count so the next addition must touch this assertion deliberately, and
     cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 31
+    assert {
+        summary.category: (summary.title, summary.status)
+        for summary in summaries
+        if summary.category in {SettingsCategoryId.DREAMS, SettingsCategoryId.GUARDIAN}
+    } == {
+        SettingsCategoryId.DREAMS: ("Dreams", "Immediate actions"),
+        SettingsCategoryId.GUARDIAN: ("Guardian", "Immediate actions"),
+    }
+    assert {SettingsCategoryId.DREAMS, SettingsCategoryId.GUARDIAN} <= set(
+        dict(screen._category_groups())["Domain Defaults"]
+    )
+    assert len(summaries) == len(list(SettingsCategoryId)) == 33
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -580,7 +594,8 @@ def test_inspector_guidance_covers_every_settings_category():
 
 
 @pytest.mark.asyncio
-async def test_theme_category_opens_without_crashing():
+@private_profile_test
+async def test_theme_category_opens_without_crashing(request):
     """Selecting the Theme category mounts its picker without crashing compose.
 
     The pane mounting is the regression signal: the original bug raised
@@ -602,7 +617,8 @@ async def test_theme_category_opens_without_crashing():
 
 
 @pytest.mark.asyncio
-async def test_splash_screen_category_opens_without_crashing():
+@private_profile_test
+async def test_splash_screen_category_opens_without_crashing(request):
     """Selecting the Splash Screen category mounts its viewer without crashing compose."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1041,7 +1057,7 @@ def test_failure_status_text_keeps_type_name_only_copy_unchanged() -> None:
         next_step="Check the endpoint.",
     ) == (
         "Model discovery failed (ValueError). Check the endpoint. "
-        "Details are in Logs (F8)."
+        "Details are in Logs (F3)."
     )
 
 
@@ -1153,7 +1169,9 @@ def test_settings_console_default_max_tokens_rejects_raw_zero(request):
         screen._normalise_console_default_max_tokens(0)
 
 
-def test_settings_optional_int_defaults_load_invalid_values_as_blank():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_optional_int_defaults_load_invalid_values_as_blank(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"seed": "not-an-int", "top_k": "not-an-int"}
     screen = SettingsScreen(app)
@@ -1313,7 +1331,9 @@ def test_settings_server_sync_workspace_source_contracts_are_explicit():
     )
 
 
-def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_domain_category_contracts_are_explicit_about_mutation_scope(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
     contracts = {
@@ -1387,16 +1407,17 @@ def _painted_settings_widget(screen, widget) -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(180, 50), (100, 30)])
+@private_profile_test
 async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
-    monkeypatch, tmp_path, size
+    request, monkeypatch, tmp_path, size
 ):
     """F4 Settings owns the global gate at normal and compact sizes."""
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text(
         "[scheduling]\nbriefing_schedules_enabled = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
     app.apply_briefing_schedules_enabled(False)
@@ -1453,16 +1474,17 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """A replaced config is reported as saved even when live publish fails."""
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text(
         "[scheduling]\nbriefing_schedules_enabled = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
     assert (
         config_module.get_cli_setting("scheduling", "briefing_schedules_enabled", True)
         is False
@@ -1519,16 +1541,17 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """A restart-required gate cannot be inverted by a second press."""
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text(
         "[scheduling]\nbriefing_schedules_enabled = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
     app.apply_briefing_schedules_enabled(False)
@@ -1606,7 +1629,10 @@ def test_settings_domain_category_ids_are_derived_from_contract_mapping():
 
 
 @pytest.mark.asyncio
-async def test_video_generation_category_is_final_domain_default_and_count_matches_rail():
+@private_profile_test
+async def test_video_generation_category_is_final_domain_default_and_count_matches_rail(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -1633,7 +1659,10 @@ async def test_video_generation_category_is_final_domain_default_and_count_match
 
 
 @pytest.mark.asyncio
-async def test_video_gen_filter_exposes_category_and_enter_opens_existing_panel():
+@private_profile_test
+async def test_video_gen_filter_exposes_category_and_enter_opens_existing_panel(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -1695,7 +1724,9 @@ def test_settings_domain_contract_mapping_rejects_duplicate_categories():
         settings_screen_module._build_domain_contract_by_category((contract, contract))
 
 
-def test_settings_domain_categories_are_grouped_and_have_ownership_records():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_domain_categories_are_grouped_and_have_ownership_records(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
     domain_categories = {
@@ -1754,8 +1785,9 @@ def _wire_rag_profile_adapter(monkeypatch, tmp_path, *, active_id=None):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_library_rag_renders_guided_defaults_and_validates(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
     search = profile.rag_config.search
@@ -1846,8 +1878,9 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_library_rag_inspector_uses_shortened_terse_guidance(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """UX review item 9 (Scope Inspector clipping): the guidance rows were
     shortened so the "Citations" sentence (the row that clipped mid-word at
@@ -1874,8 +1907,9 @@ async def test_settings_library_rag_inspector_uses_shortened_terse_guidance(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_library_rag_reranker_warning_shown_for_a_warning_triggering_draft(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """task-3 review Finding 1(c): the reranker top-k vs default-results
     advisory becomes visible once a draft triggers it and clears once it no
@@ -1926,8 +1960,9 @@ async def test_settings_library_rag_reranker_warning_shown_for_a_warning_trigger
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_library_rag_sync_clamps_invalid_select_values(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
     profile.rag_config.search.default_search_mode = "not-a-mode"
@@ -1969,7 +2004,10 @@ def test_settings_library_rag_save_uses_exclusive_thread_worker():
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_renders_guided_defaults_and_validates(monkeypatch):
+@private_profile_test
+async def test_settings_appearance_renders_guided_defaults_and_validates(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["general"] = {
         "default_theme": "textual-dark",
@@ -2084,13 +2122,14 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     original = "[appearance]\nascii_glyphs = true\n"
     config_path.write_text(original, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
 
@@ -2124,13 +2163,14 @@ async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     original = ""
     config_path.write_text(original, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
 
@@ -2152,7 +2192,10 @@ async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_save_signals_live_console_refresh(monkeypatch):
+@private_profile_test
+async def test_settings_appearance_save_signals_live_console_refresh(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["appearance"] = {"console_transcript_style": "neutral"}
     saved = []
@@ -2193,7 +2236,9 @@ async def test_settings_appearance_save_signals_live_console_refresh(monkeypatch
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_appearance_library_reader_controls_round_trip_all_destinations(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -2395,7 +2440,9 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_keeps_dormant_library_width_through_resize_mode_and_generation(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -2478,7 +2525,8 @@ async def test_settings_keeps_dormant_library_width_through_resize_mode_and_gene
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_revert_restores_loaded_values():
+@private_profile_test
+async def test_settings_appearance_revert_restores_loaded_values(request):
     app = _build_test_app()
     app.app_config["general"] = {"palette_theme_limit": 1}
     app.app_config["web_server"] = {"font_size": 12}
@@ -2521,7 +2569,9 @@ async def test_settings_appearance_revert_restores_loaded_values():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_appearance_preview_checks_draft_without_theme_or_save(
+    request,
     monkeypatch,
 ):
     """TASK-32948: Preview no longer sets app.theme (the picker's Try does)."""
@@ -2557,7 +2607,8 @@ async def test_settings_appearance_preview_checks_draft_without_theme_or_save(
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_focused_input_keeps_typed_text_visible():
+@private_profile_test
+async def test_settings_appearance_focused_input_keeps_typed_text_visible(request):
     app = _build_test_app()
     app.app_config["general"] = {"palette_theme_limit": 1}
     host = DestinationHarness(app, "settings")
@@ -2870,8 +2921,9 @@ def test_settings_storage_save_uses_exclusive_thread_worker():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_library_rag_save_does_not_touch_app_config_and_persists_profile(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """Regression guard for the dead-writes bug this task retires.
 
@@ -2923,7 +2975,8 @@ async def test_settings_library_rag_save_does_not_touch_app_config_and_persists_
 
 
 @pytest.mark.asyncio
-async def test_settings_domain_category_renders_read_only_owner_contract():
+@private_profile_test
+async def test_settings_domain_category_renders_read_only_owner_contract(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -3178,7 +3231,10 @@ def test_settings_manual_sync_rows_block_without_control_service():
 
 
 @pytest.mark.asyncio
-async def test_settings_manual_sync_run_requires_confirmation_with_pending_counts():
+@private_profile_test
+async def test_settings_manual_sync_run_requires_confirmation_with_pending_counts(
+    request,
+):
     """task-1367: Run manual sync pushes pending Notes/Chat to a server, so
     it must ask first (seeded with the preview's pending counts) and only
     run the sync on confirm."""
@@ -3418,7 +3474,10 @@ async def test_settings_notes_adoption_controls_resolve_and_resume_enrollment(
 
 
 @pytest.mark.asyncio
-async def test_settings_mixed_conflicts_display_and_resolve_same_adoption_review():
+@private_profile_test
+async def test_settings_mixed_conflicts_display_and_resolve_same_adoption_review(
+    request,
+):
     resolve_calls = []
 
     class FakeManualSyncControl:
@@ -3622,7 +3681,9 @@ async def test_settings_overview_renders_server_sync_workspace_contracts_in_diag
         assert "handoff" not in text.lower()
 
 
-def test_settings_ownership_record_falls_back_without_crashing():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_ownership_record_falls_back_without_crashing(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen._ownership_by_category_cache = {}
@@ -3818,7 +3879,8 @@ async def test_settings_provider_test_toast_states_failure_reason(monkeypatch, r
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_toast_states_success():
+@private_profile_test
+async def test_settings_provider_test_toast_states_success(request):
     # task-15270: this must use a NON-url-based provider. Ollama is in
     # URL_BASED_PROVIDER_KEYS, so once the harness stopped booting with an
     # empty config it acquired a real endpoint, and a passing readiness test
@@ -3856,7 +3918,8 @@ async def test_settings_provider_test_toast_states_success():
 
 
 @pytest.mark.asyncio
-async def test_settings_inspector_has_no_write_blocked_contradiction():
+@private_profile_test
+async def test_settings_inspector_has_no_write_blocked_contradiction(request):
     """task-181: no panel claims writes are both allowed and blocked."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -3923,7 +3986,10 @@ async def test_settings_overview_renders_primary_user_tasks_before_diagnostics(r
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key():
+@private_profile_test
+async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -3986,7 +4052,10 @@ def _provider_picker_option_index(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for_drafts():
+@private_profile_test
+async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for_drafts(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4021,7 +4090,10 @@ async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_initial_unknown_provider_is_selected_exactly():
+@private_profile_test
+async def test_settings_provider_picker_initial_unknown_provider_is_selected_exactly(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "Exact_Custom-ID",
@@ -4043,7 +4115,8 @@ async def test_settings_provider_picker_initial_unknown_provider_is_selected_exa
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop():
+@private_profile_test
+async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "Exact_Custom-ID",
@@ -4092,7 +4165,10 @@ async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop()
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_filter_clear_restores_current_highlight():
+@private_profile_test
+async def test_settings_provider_picker_filter_clear_restores_current_highlight(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4122,7 +4198,10 @@ async def test_settings_provider_picker_filter_clear_restores_current_highlight(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_filtered_selection_uses_provider_lifecycle():
+@private_profile_test
+async def test_settings_provider_picker_filtered_selection_uses_provider_lifecycle(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4155,7 +4234,8 @@ async def test_settings_provider_picker_filtered_selection_uses_provider_lifecyc
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_no_match_is_honest_with_manual_action():
+@private_profile_test
+async def test_settings_provider_picker_no_match_is_honest_with_manual_action(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -4176,7 +4256,9 @@ async def test_settings_provider_picker_no_match_is_honest_with_manual_action():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved_provider", ["OpenAI", "Exact_Custom-ID"])
+@private_profile_test
 async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
+    request,
     saved_provider,
 ):
     app = _build_test_app()
@@ -4202,7 +4284,10 @@ async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_rejects_unsupported_manual_id_without_losing_drafts():
+@private_profile_test
+async def test_settings_provider_picker_rejects_unsupported_manual_id_without_losing_drafts(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4245,7 +4330,10 @@ async def test_settings_provider_picker_rejects_unsupported_manual_id_without_lo
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_supported_manual_alias_uses_catalog_lifecycle():
+@private_profile_test
+async def test_settings_provider_picker_supported_manual_alias_uses_catalog_lifecycle(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4276,7 +4364,9 @@ async def test_settings_provider_picker_supported_manual_alias_uses_catalog_life
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+@private_profile_test
 async def test_settings_provider_picker_persistence_alias_uses_catalog_lifecycle(
+    request,
     alias,
     canonical_provider,
 ):
@@ -4310,7 +4400,9 @@ async def test_settings_provider_picker_persistence_alias_uses_catalog_lifecycle
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+@private_profile_test
 async def test_settings_provider_picker_persistence_alias_saves_canonical_provider(
+    request,
     monkeypatch,
     alias,
     canonical_provider,
@@ -4405,7 +4497,9 @@ async def test_settings_picker_legacy_alias_row_selects_saves_and_reloads(reques
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+@private_profile_test
 async def test_settings_provider_picker_current_alias_preserves_connection_drafts(
+    request,
     alias,
     canonical_provider,
 ):
@@ -4441,7 +4535,9 @@ async def test_settings_provider_picker_current_alias_preserves_connection_draft
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(180, 50), (80, 24)])
+@private_profile_test
 async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
+    request,
     terminal_size,
 ):
     """TASK-33007.2, rewritten on purpose: the provider list no longer sits
@@ -4475,7 +4571,8 @@ async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_api_key_focus_style_has_no_underline():
+@private_profile_test
+async def test_settings_provider_api_key_focus_style_has_no_underline(request):
     """task-185 in passing: focused inputs must not underline placeholder copy."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -4529,7 +4626,8 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy(req
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_connect_block_precedes_open_model_defaults():
+@private_profile_test
+async def test_settings_provider_connect_block_precedes_open_model_defaults(request):
     """task-189: Connect (provider/model/endpoint/credentials/test) leads the
     category. TASK-33007.5, rewritten on purpose (was
     ``test_settings_provider_connect_block_precedes_collapsed_generation_defaults``):
@@ -5153,6 +5251,7 @@ async def test_settings_provider_test_lists_endpoint_before_a_model_is_chosen(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
     seen_urls = []
 
@@ -5179,7 +5278,10 @@ async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
 
 
 @pytest.mark.asyncio
-async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when_disabled():
+@private_profile_test
+async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when_disabled(
+    request,
+):
     """A disabled Folder Files width search lands on its enabling control."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -5229,6 +5331,7 @@ async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when
         (httpx.RemoteProtocolError("bad response"), "unreachable: connection error"),
     ),
 )
+@pytest.mark.bootstrap_profile
 async def test_probe_settings_endpoint_maps_transport_failures(
     failure, expected_summary
 ):
@@ -5249,6 +5352,7 @@ async def test_probe_settings_endpoint_maps_transport_failures(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_probe_settings_endpoint_reports_http_status_and_invalid_url():
     def handler(request):
         return httpx.Response(404)
@@ -5273,7 +5377,9 @@ async def test_probe_settings_endpoint_reports_http_status_and_invalid_url():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -5330,7 +5436,8 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
 
 
 @pytest.mark.asyncio
-async def test_settings_category_selection_updates_detail_and_inspector():
+@private_profile_test
+async def test_settings_category_selection_updates_detail_and_inspector(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5374,7 +5481,8 @@ async def test_settings_console_behavior_inspector_explains_visible_controls(req
 
 
 @pytest.mark.asyncio
-async def test_settings_category_navigation_is_grouped_for_scan():
+@private_profile_test
+async def test_settings_category_navigation_is_grouped_for_scan(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5394,7 +5502,8 @@ async def test_settings_category_navigation_is_grouped_for_scan():
 
 
 @pytest.mark.asyncio
-async def test_settings_active_category_uses_explicit_nav_marker():
+@private_profile_test
+async def test_settings_active_category_uses_explicit_nav_marker(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5670,7 +5779,8 @@ def test_settings_invalid_compact_fields_keep_focused_text_readable():
 
 
 @pytest.mark.asyncio
-async def test_settings_detail_shows_state_banner_and_structured_rows():
+@private_profile_test
+async def test_settings_detail_shows_state_banner_and_structured_rows(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5686,7 +5796,10 @@ async def test_settings_detail_shows_state_banner_and_structured_rows():
 
 
 @pytest.mark.asyncio
-async def test_settings_long_detail_and_inspector_panes_are_scrollable_containers():
+@private_profile_test
+async def test_settings_long_detail_and_inspector_panes_are_scrollable_containers(
+    request,
+):
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
 
@@ -5744,7 +5857,8 @@ def _assert_field_guide_row_painted(host, widget) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
+@private_profile_test
+async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide(request):
     """Fleet-UX expert review F6 (task-1234): focusing "Max parallel" must
     scroll the Scope Inspector so the Focused field guide's first row
     (Purpose) is actually PAINTED, not merely present somewhere below the
@@ -5795,7 +5909,10 @@ async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_starts_flush_with_bottom_fold():
+@private_profile_test
+async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_starts_flush_with_bottom_fold(
+    request,
+):
     """Qodo PR #1074 finding 2 (task-1230/1234 external review): the F6 fix
     above only ever targeted the guide's FIRST row. ``scroll_to_widget``
     no-ops once its target is already fully inside the viewport, so a
@@ -5917,7 +6034,8 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
 
 
 @pytest.mark.asyncio
-async def test_settings_inspector_uses_category_specific_guidance():
+@private_profile_test
+async def test_settings_inspector_uses_category_specific_guidance(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5938,7 +6056,10 @@ async def test_settings_inspector_uses_category_specific_guidance():
 
 
 @pytest.mark.asyncio
-async def test_settings_inspector_boundary_is_structured_without_duplicate_copy():
+@private_profile_test
+async def test_settings_inspector_boundary_is_structured_without_duplicate_copy(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5953,7 +6074,8 @@ async def test_settings_inspector_boundary_is_structured_without_duplicate_copy(
 
 
 @pytest.mark.asyncio
-async def test_settings_tab_focus_and_enter_select_categories():
+@private_profile_test
+async def test_settings_tab_focus_and_enter_select_categories(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5967,7 +6089,8 @@ async def test_settings_tab_focus_and_enter_select_categories():
 
 
 @pytest.mark.asyncio
-async def test_settings_keyboard_category_focus_survives_selection_recompose():
+@private_profile_test
+async def test_settings_keyboard_category_focus_survives_selection_recompose(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6235,7 +6358,8 @@ async def test_settings_focus_help_line_never_describes_the_nav_bar(request):
 
 
 @pytest.mark.asyncio
-async def test_settings_category_rail_renders_no_hidden_status_rows():
+@private_profile_test
+async def test_settings_category_rail_renders_no_hidden_status_rows(request):
     """task-1377: the dead per-category Status: rows are gone from the rail."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -6256,7 +6380,8 @@ async def test_settings_category_rail_renders_no_hidden_status_rows():
 
 
 @pytest.mark.asyncio
-async def test_settings_category_search_filters_and_enter_opens_first_match():
+@private_profile_test
+async def test_settings_category_search_filters_and_enter_opens_first_match(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6288,7 +6413,10 @@ async def test_settings_category_search_filters_and_enter_opens_first_match():
 
 
 @pytest.mark.asyncio
-async def test_settings_category_search_reports_ranked_matches_and_enter_target():
+@private_profile_test
+async def test_settings_category_search_reports_ranked_matches_and_enter_target(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6318,7 +6446,8 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
 
 
 @pytest.mark.asyncio
-async def test_settings_category_search_uses_plain_standard_input_widgets():
+@private_profile_test
+async def test_settings_category_search_uses_plain_standard_input_widgets(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6340,7 +6469,9 @@ async def test_settings_category_search_uses_plain_standard_input_widgets():
         )._render_markup
 
 
-def test_settings_category_search_normalizes_oversized_control_input():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_category_search_normalizes_oversized_control_input(request):
     screen = SettingsScreen(_build_test_app())
 
     normalized = screen._sanitize_category_search_query("[" + ("x" * 120) + "\x00")
@@ -6350,7 +6481,9 @@ def test_settings_category_search_normalizes_oversized_control_input():
     assert "\x00" not in normalized
 
 
-def test_settings_state_round_trip_preserves_active_work_without_aliasing():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_state_round_trip_preserves_active_work_without_aliasing(request):
     original = SettingsScreen(_build_test_app())
     original.active_category = SettingsCategoryId.CONSOLE_BEHAVIOR.value
     original.category_search_query = "console"
@@ -6402,7 +6535,9 @@ def test_settings_state_round_trip_preserves_active_work_without_aliasing():
         },
     ),
 )
-def test_settings_restore_state_ignores_malformed_values(malformed_state):
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_restore_state_ignores_malformed_values(request, malformed_state):
     screen = SettingsScreen(_build_test_app())
 
     screen.restore_state(malformed_state)
@@ -6415,7 +6550,8 @@ def test_settings_restore_state_ignores_malformed_values(malformed_state):
 
 
 @pytest.mark.asyncio
-async def test_settings_category_search_escape_clears_filter():
+@private_profile_test
+async def test_settings_category_search_escape_clears_filter(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6460,7 +6596,8 @@ async def test_settings_category_search_escape_clears_filter():
 
 
 @pytest.mark.asyncio
-async def test_settings_domain_defaults_group_toggle_expands_and_collapses():
+@private_profile_test
+async def test_settings_domain_defaults_group_toggle_expands_and_collapses(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6499,7 +6636,8 @@ async def test_settings_domain_defaults_group_toggle_expands_and_collapses():
 
 
 @pytest.mark.asyncio
-async def test_settings_domain_group_expands_when_restored_to_domain_category():
+@private_profile_test
+async def test_settings_domain_group_expands_when_restored_to_domain_category(request):
     app = _build_test_app()
     host = DestinationHarness(
         app, "settings", restored_state={"active_category": "personas"}
@@ -6515,7 +6653,8 @@ async def test_settings_domain_group_expands_when_restored_to_domain_category():
 
 
 @pytest.mark.asyncio
-async def test_settings_category_search_reveals_domain_matches():
+@private_profile_test
+async def test_settings_category_search_reveals_domain_matches(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6576,7 +6715,10 @@ async def test_settings_overview_paste_summary_updates_after_toggle(
 
 
 @pytest.mark.asyncio
-async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
+@private_profile_test
+async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
@@ -6611,7 +6753,10 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_clean_state_does_not_show_staged_feedback():
+@private_profile_test
+async def test_settings_console_behavior_clean_state_does_not_show_staged_feedback(
+    request,
+):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     host = DestinationHarness(app, "settings")
@@ -6626,7 +6771,10 @@ async def test_settings_console_behavior_clean_state_does_not_show_staged_feedba
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_default_undo_does_not_show_staged_feedback():
+@private_profile_test
+async def test_settings_console_behavior_default_undo_does_not_show_staged_feedback(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"temperature": 0.7}
     host = DestinationHarness(app, "settings")
@@ -6653,7 +6801,10 @@ async def test_settings_console_behavior_default_undo_does_not_show_staged_feedb
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_warning():
+@private_profile_test
+async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_warning(
+    request,
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "background_effects": {
@@ -6685,7 +6836,8 @@ async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_w
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_stages_save_and_revert(request, monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     saved = []
@@ -6716,7 +6868,8 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_saves_paste_threshold(request, monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {
         "collapse_large_pastes": True,
@@ -6754,7 +6907,8 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_saves_max_parallel_runs(request, monkeypatch):
     app = _build_test_app()
     saved = []
 
@@ -6804,7 +6958,9 @@ async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_console_behavior_rejects_invalid_tool_result_display_chars(
+    request,
     monkeypatch,
 ):
     """Review finding G (PR #1082, ruling DECLINE the bespoke-Pydantic ask):
@@ -6909,7 +7065,8 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_renders_global_default_controls():
+@private_profile_test
+async def test_settings_console_behavior_renders_global_default_controls(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "user_display_name": "Rowan",
@@ -7029,7 +7186,8 @@ async def test_settings_console_behavior_renders_global_default_controls():
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_renders_background_effect_controls():
+@private_profile_test
+async def test_settings_console_behavior_renders_background_effect_controls(request):
     app = _build_test_app()
     app.app_config["console"] = {
         "background_effects": {
@@ -7054,7 +7212,9 @@ async def test_settings_console_behavior_renders_background_effect_controls():
         assert "Transcript (recommended)" in _visible_text(screen)
 
 
-def test_settings_console_behavior_owns_background_effect_settings():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_console_behavior_owns_background_effect_settings(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
     ownership = screen._ownership_record(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -7063,7 +7223,10 @@ def test_settings_console_behavior_owns_background_effect_settings():
 
 
 @pytest.mark.asyncio
-async def test_settings_console_background_effects_save_nested_config(monkeypatch):
+@private_profile_test
+async def test_settings_console_background_effects_save_nested_config(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "collapse_large_pastes": True,
@@ -7122,7 +7285,10 @@ async def test_settings_console_background_effects_save_nested_config(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_settings_console_background_fps_rejects_out_of_range_save(monkeypatch):
+@private_profile_test
+async def test_settings_console_background_fps_rejects_out_of_range_save(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "background_effects": {
@@ -7172,7 +7338,9 @@ async def test_settings_console_background_fps_rejects_out_of_range_save(monkeyp
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_console_background_workbench_scope_falls_back_to_transcript(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -7220,7 +7388,9 @@ async def test_settings_console_background_workbench_scope_falls_back_to_transcr
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_console_background_workbench_loaded_scope_save_shows_fallback(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -7265,7 +7435,9 @@ async def test_settings_console_background_workbench_loaded_scope_save_shows_fal
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_console_background_workbench_loaded_scope_unrelated_save_falls_back(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -7314,7 +7486,11 @@ async def test_settings_console_background_workbench_loaded_scope_unrelated_save
     assert app.app_config["console"]["background_effects"]["scope"] == "transcript"
 
 
-def test_settings_console_background_workbench_raw_scope_unrelated_save_includes_fallback():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_console_background_workbench_raw_scope_unrelated_save_includes_fallback(
+    request,
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "paste_collapse_threshold": 50,
@@ -7354,7 +7530,9 @@ def test_settings_console_background_workbench_raw_scope_unrelated_save_includes
     assert workbench_scope_fallback is True
 
 
-def test_settings_on_key_treats_detached_screen_focus_as_absent():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_on_key_treats_detached_screen_focus_as_absent(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
 
@@ -7364,7 +7542,10 @@ def test_settings_on_key_treats_detached_screen_focus_as_absent():
 
 
 @pytest.mark.asyncio
-async def test_settings_console_background_workbench_loaded_scope_mounts_as_transcript():
+@private_profile_test
+async def test_settings_console_background_workbench_loaded_scope_mounts_as_transcript(
+    request,
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "background_effects": {
@@ -7391,7 +7572,8 @@ async def test_settings_console_background_workbench_loaded_scope_mounts_as_tran
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_saves_global_defaults(request, monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "streaming": True,
@@ -7580,7 +7762,9 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_console_behavior_rejects_overwide_cjk_display_name_atomically(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -7615,7 +7799,10 @@ async def test_settings_console_behavior_rejects_overwide_cjk_display_name_atomi
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_display_name_revert_restores_loaded_value():
+@private_profile_test
+async def test_settings_console_behavior_display_name_revert_restores_loaded_value(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"user_display_name": "Rowan"}
     host = DestinationHarness(app, "settings")
@@ -7642,7 +7829,10 @@ async def test_settings_console_behavior_display_name_revert_restores_loaded_val
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_uses_batched_save_adapter(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "collapse_large_pastes": True,
@@ -7798,7 +7988,10 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_revert_restores_global_defaults(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_revert_restores_global_defaults(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "streaming": True,
@@ -7858,7 +8051,9 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_console_behavior_revert_button_works_with_input_focus(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -7908,7 +8103,8 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_revert_discards_draft(request, monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     saved = []
@@ -7984,7 +8180,8 @@ async def test_settings_read_only_overview_hides_actions_and_clean_privacy_disab
 
 
 @pytest.mark.asyncio
-async def test_settings_console_guided_save_revert_enable_only_when_dirty():
+@private_profile_test
+async def test_settings_console_guided_save_revert_enable_only_when_dirty(request):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     host = DestinationHarness(app, "settings")
@@ -8007,7 +8204,8 @@ async def test_settings_console_guided_save_revert_enable_only_when_dirty():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_uses_effective_console_source():
+@private_profile_test
+async def test_settings_provider_category_uses_effective_console_source(request):
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
@@ -8032,7 +8230,10 @@ async def test_settings_provider_category_uses_effective_console_source():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_renders_catalog_select_with_visible_value():
+@private_profile_test
+async def test_settings_provider_category_renders_catalog_select_with_visible_value(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -8071,7 +8272,10 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_navigation_context_uses_one_presentation_identity():
+@private_profile_test
+async def test_settings_provider_navigation_context_uses_one_presentation_identity(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     app.app_config["api_settings"] = {
@@ -8116,7 +8320,9 @@ async def test_settings_provider_navigation_context_uses_one_presentation_identi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lifecycle", ["category_departure", "recompose"])
+@private_profile_test
 async def test_settings_provider_route_echoes_do_not_survive_widget_lifecycle(
+    request,
     lifecycle,
 ):
     app = _build_test_app()
@@ -8178,7 +8384,10 @@ async def test_settings_provider_route_echoes_do_not_survive_widget_lifecycle(
 
 
 @pytest.mark.asyncio
-async def test_settings_navigation_context_can_preselect_provider_category_target():
+@private_profile_test
+async def test_settings_navigation_context_can_preselect_provider_category_target(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -8220,7 +8429,8 @@ async def test_settings_navigation_context_can_preselect_provider_category_targe
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_navigation_context_focuses_api_key_field():
+@private_profile_test
+async def test_settings_provider_navigation_context_focuses_api_key_field(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
@@ -8271,7 +8481,10 @@ def _stage_conversation_settings_return_intent(app, *, provider: str = "openai")
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_clean_deep_link_focuses_exact_provider_credential():
+@private_profile_test
+async def test_conversation_settings_return_clean_deep_link_focuses_exact_provider_credential(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {
@@ -8304,7 +8517,10 @@ async def test_conversation_settings_return_clean_deep_link_focuses_exact_provid
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_preserves_explicit_unselected_model():
+@private_profile_test
+async def test_conversation_settings_return_preserves_explicit_unselected_model(
+    request,
+):
     """A first-run ``model=None`` target must not inherit a configured default."""
 
     app = _build_test_app()
@@ -8349,7 +8565,10 @@ async def test_conversation_settings_return_preserves_explicit_unselected_model(
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_preserves_same_provider_draft_and_discloses_fields():
+@private_profile_test
+async def test_conversation_settings_return_preserves_same_provider_draft_and_discloses_fields(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
@@ -8382,7 +8601,8 @@ async def test_conversation_settings_return_preserves_same_provider_draft_and_di
 
 
 @pytest.mark.asyncio
-async def test_provider_navigation_conflict_requires_review_discard_or_return():
+@private_profile_test
+async def test_provider_navigation_conflict_requires_review_discard_or_return(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {
@@ -8447,7 +8667,10 @@ async def test_provider_navigation_conflict_requires_review_discard_or_return():
 
 
 @pytest.mark.asyncio
-async def test_provider_navigation_conflict_discard_explicitly_applies_staged_target():
+@private_profile_test
+async def test_provider_navigation_conflict_discard_explicitly_applies_staged_target(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {
@@ -8505,7 +8728,9 @@ async def test_provider_navigation_conflict_discard_explicitly_applies_staged_ta
         ),
     ),
 )
+@private_profile_test
 async def test_conversation_settings_return_save_shows_typed_continuation(
+    request,
     monkeypatch,
     changed_selector,
     changed_value,
@@ -8562,7 +8787,9 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces(
+    request,
     monkeypatch,
     caplog: pytest.LogCaptureFixture,
 ):
@@ -8787,7 +9014,9 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_conversation_settings_return_is_single_flight_and_retries_after_failed_navigation(
+    request,
     monkeypatch,
 ):
     """Queued duplicate Return events cannot release and repost the handoff."""
@@ -8842,7 +9071,9 @@ async def test_conversation_settings_return_is_single_flight_and_retries_after_f
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_conversation_settings_return_continuation_survives_fresh_settings_screen(
+    request,
     monkeypatch,
 ):
     """Ordinary Settings replacement retains only the typed safe continuation."""
@@ -8895,7 +9126,9 @@ async def test_conversation_settings_return_continuation_survives_fresh_settings
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_conversation_settings_save_focuses_primary_return_above_compact_fold(
+    request,
     monkeypatch,
 ):
     """Successful save makes the exact return action immediately actionable."""
@@ -8940,7 +9173,9 @@ async def test_conversation_settings_save_focuses_primary_return_above_compact_f
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_conversation_settings_return_save_failure_retains_draft_and_handoff(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -8978,7 +9213,10 @@ async def test_conversation_settings_return_save_failure_retains_draft_and_hando
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_without_saving_is_single_flight_on_confirm():
+@private_profile_test
+async def test_conversation_settings_return_without_saving_is_single_flight_on_confirm(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {"openai": {}}
@@ -9041,7 +9279,8 @@ async def test_conversation_settings_return_without_saving_is_single_flight_on_c
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_without_saving_cancel_allows_retry():
+@private_profile_test
+async def test_conversation_settings_return_without_saving_cancel_allows_retry(request):
     """Cancel clears the pre-dialog fence so one later return can proceed."""
 
     app = _build_test_app()
@@ -9097,7 +9336,10 @@ async def test_conversation_settings_return_without_saving_cancel_allows_retry()
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypatch):
+@private_profile_test
+async def test_conversation_settings_return_stay_settles_exact_handoff(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {"openai": {}}
@@ -9141,7 +9383,8 @@ async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
+@private_profile_test
+async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field(request):
     """task-290: a sync-rows landing used to recompose the screen between a
     navigation focus intent and its deferred set_focus processing,
     destroying the target and dropping focus. The pending-intent mechanism
@@ -9178,7 +9421,10 @@ async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
 
 
 @pytest.mark.asyncio
-async def test_settings_navigation_context_preselection_does_not_create_provider_draft():
+@private_profile_test
+async def test_settings_navigation_context_preselection_does_not_create_provider_draft(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -9221,7 +9467,10 @@ async def test_settings_navigation_context_preselection_does_not_create_provider
 
 
 @pytest.mark.asyncio
-async def test_settings_navigation_context_preserves_existing_provider_draft_values():
+@private_profile_test
+async def test_settings_navigation_context_preserves_existing_provider_draft_values(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -9252,7 +9501,9 @@ async def test_settings_navigation_context_preserves_existing_provider_draft_val
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_navigation_provider_context_tolerates_missing_provider_values(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -9295,7 +9546,10 @@ async def test_settings_navigation_provider_context_tolerates_missing_provider_v
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_keyless_local_provider_does_not_report_missing_env_var():
+@private_profile_test
+async def test_settings_provider_keyless_local_provider_does_not_report_missing_env_var(
+    request,
+):
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
@@ -9327,7 +9581,10 @@ async def test_settings_provider_keyless_local_provider_does_not_report_missing_
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_openai_endpoint_placeholder_uses_provider_context():
+@private_profile_test
+async def test_settings_provider_openai_endpoint_placeholder_uses_provider_context(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
@@ -9370,7 +9627,8 @@ def test_settings_endpoint_display_index_maps_url_break_boundaries_to_visible_co
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values():
+@private_profile_test
+async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "local_llm", "model": "local-model"}
     app.app_config["api_settings"] = {
@@ -9388,7 +9646,8 @@ async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
+@private_profile_test
+async def test_settings_provider_guided_save_revert_enable_only_when_dirty(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -9560,8 +9819,9 @@ async def test_settings_provider_category_saves_selected_model_profile(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["mistral", "mistralai"])
+@private_profile_test
 async def test_settings_saves_each_mistral_entry_to_its_distinct_owner(
-    monkeypatch, provider
+    request, monkeypatch, provider
 ):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
@@ -9686,7 +9946,9 @@ async def test_settings_provider_category_saves_openai_generation_profile(
     }
 
 
-def test_settings_enum_select_value_takes_only_an_exact_option():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_enum_select_value_takes_only_an_exact_option(request):
     screen = SettingsScreen(_build_test_app())
 
     # Task 7 review round 4: a hand-edited "High" is no option. A new chat
@@ -9720,7 +9982,8 @@ def test_settings_enum_select_value_takes_only_an_exact_option():
 
 
 @pytest.mark.asyncio
-async def test_settings_profile_enum_select_shows_only_exact_saved_values():
+@private_profile_test
+async def test_settings_profile_enum_select_shows_only_exact_saved_values(request):
     """Task 7 review round 4: neither hand edit is an option, so both Selects
     are blank and both rows name the value a new chat still takes."""
     app = _build_test_app()
@@ -9747,14 +10010,18 @@ async def test_settings_profile_enum_select_shows_only_exact_saved_values():
             ) == ("model default", f"saved '{saved}' is not a choice")
 
 
-def test_settings_generation_controls_allow_openai_none_reasoning_effort():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_generation_controls_allow_openai_none_reasoning_effort(request):
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_reasoning_effort("none") == "none"
     assert "none" in settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
 
 
-def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_generation_controls_allow_anthropic_max_thinking_effort(request):
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_thinking_effort("max") == "max"
@@ -9907,7 +10174,9 @@ async def test_settings_provider_category_saves_moonshot_and_zai_reasoning_effor
         ("#settings-model-profile-top-p", "1.1", "Top P must be between 0.0 and 1.0."),
     ),
 )
+@private_profile_test
 async def test_settings_provider_category_rejects_out_of_range_model_profile(
+    request,
     monkeypatch,
     field_id,
     value,
@@ -9933,7 +10202,9 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_streaming_and_enums_prevent_invalid_input(
+    request,
     monkeypatch,
 ):
     """task-1344: streaming and closed-enum profile fields are Select widgets
@@ -10012,7 +10283,8 @@ async def test_settings_provider_streaming_and_enums_prevent_invalid_input(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_switch_loads_selected_model_profile():
+@private_profile_test
+async def test_settings_provider_model_switch_loads_selected_model_profile(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -10049,7 +10321,10 @@ async def test_settings_provider_model_switch_loads_selected_model_profile():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_profile_none_values_render_as_blank_inputs():
+@private_profile_test
+async def test_settings_provider_model_profile_none_values_render_as_blank_inputs(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -10076,7 +10351,9 @@ async def test_settings_provider_model_profile_none_values_render_as_blank_input
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_model_switch_does_not_save_unedited_profile(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10111,7 +10388,9 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_category_does_not_save_unedited_effective_defaults(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10130,7 +10409,10 @@ async def test_settings_provider_category_does_not_save_unedited_effective_defau
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_exact_provider_model_pair(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_exact_provider_model_pair(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10163,7 +10445,8 @@ async def test_settings_provider_category_saves_exact_provider_model_pair(monkey
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_llamacpp_endpoint(request, monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "llama_cpp",
@@ -10202,7 +10485,10 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_preserves_existing_endpoint_key(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_preserves_existing_endpoint_key(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10238,7 +10524,9 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_save_button_works_with_endpoint_input_focus(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10280,7 +10568,10 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_credential_env_var(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10314,7 +10605,10 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_renders_local_api_key_setup_without_revealing_secret():
+@private_profile_test
+async def test_settings_provider_category_renders_local_api_key_setup_without_revealing_secret(
+    request,
+):
     app = _build_test_app()
     fake_key = "sk-test-visible-redaction-source"
     app.app_config["chat_defaults"] = {
@@ -10341,7 +10635,10 @@ async def test_settings_provider_category_renders_local_api_key_setup_without_re
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_and_clears_local_api_key(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_and_clears_local_api_key(
+    request, monkeypatch
+):
     from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
         API_KEY_CLEAR_KEY,
     )
@@ -10401,7 +10698,9 @@ def test_settings_provider_api_key_validation_rejects_placeholder_values():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_category_rejects_invalid_credential_env_var(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10436,7 +10735,9 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_category_updates_existing_non_normalized_provider_section(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10704,7 +11005,10 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch):
+@private_profile_test
+async def test_settings_provider_endpoint_validation_blocks_bad_url(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "llama_cpp",
@@ -10738,7 +11042,10 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch):
+@private_profile_test
+async def test_settings_provider_endpoint_save_blocks_blank_provider(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "",
@@ -10776,7 +11083,9 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_category_blocks_empty_manual_provider_save(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10812,7 +11121,8 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_blank_select_value_is_not_treated_as_provider():
+@private_profile_test
+async def test_settings_provider_blank_select_value_is_not_treated_as_provider(request):
     """task-565: ``Select.NULL`` is the real blank sentinel a blank Select
     delivers on this Textual version -- ``Select.BLANK`` doesn't exist, it
     silently resolves to the unrelated ``Widget.BLANK`` (``False``), so a
@@ -10835,7 +11145,10 @@ async def test_settings_provider_blank_select_value_is_not_treated_as_provider()
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_revert_restores_provider_dependent_placeholders():
+@private_profile_test
+async def test_settings_provider_revert_restores_provider_dependent_placeholders(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -10873,7 +11186,8 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_repopulation_is_not_a_user_edit(monkeypatch):
+@private_profile_test
+async def test_settings_provider_repopulation_is_not_a_user_edit(request, monkeypatch):
     """task-15740/15673: the app rewriting its own widgets must not stage edits.
 
     The bug class: `Input.Changed`/`Select.Changed` are POSTED messages, so
@@ -10925,7 +11239,10 @@ async def test_settings_provider_repopulation_is_not_a_user_edit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_user_emptied_context_window_still_refuses_the_save(monkeypatch):
+@private_profile_test
+async def test_settings_user_emptied_context_window_still_refuses_the_save(
+    request, monkeypatch
+):
     """task-15740 AC#3: the guard is narrowed, not removed.
 
     Repopulation blanking the field must no longer abort the save -- but a user
@@ -11136,7 +11453,8 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_switch_updates_inspector_readiness():
+@private_profile_test
+async def test_settings_provider_switch_updates_inspector_readiness(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
     app.app_config["api_settings"] = {
@@ -11166,7 +11484,8 @@ async def test_settings_provider_switch_updates_inspector_readiness():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_switch_selects_provider_default_model():
+@private_profile_test
+async def test_settings_provider_switch_selects_provider_default_model(request):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
@@ -11201,7 +11520,10 @@ async def test_settings_provider_switch_selects_provider_default_model():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_switch_resets_staged_model_for_each_provider_transition():
+@private_profile_test
+async def test_settings_provider_switch_resets_staged_model_for_each_provider_transition(
+    request,
+):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
@@ -11346,7 +11668,10 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_custom_value_uses_manual_field_for_unknown_provider():
+@private_profile_test
+async def test_settings_provider_custom_value_uses_manual_field_for_unknown_provider(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
     app.app_config["api_settings"] = {}
@@ -11371,7 +11696,10 @@ async def test_settings_provider_custom_value_uses_manual_field_for_unknown_prov
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog_select():
+@private_profile_test
+async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog_select(
+    request,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
     app.app_config["api_settings"] = {}
@@ -11455,7 +11783,10 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_controls_render_for_eligible_provider():
+@private_profile_test
+async def test_settings_provider_model_discovery_controls_render_for_eligible_provider(
+    request,
+):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11501,7 +11832,8 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_saves_selected_runtime_models():
+@private_profile_test
+async def test_settings_provider_model_discovery_saves_selected_runtime_models(request):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11594,7 +11926,10 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_discovery_shows_ambiguous_provider_recovery():
+@private_profile_test
+async def test_settings_provider_model_discovery_shows_ambiguous_provider_recovery(
+    request,
+):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"], "openai": ["gpt-4.1-mini"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11656,7 +11991,10 @@ class ExplodingDiscoveryScope:
 
 
 @pytest.mark.asyncio
-async def test_model_discovery_crash_status_is_plain_language_without_raw_exception():
+@private_profile_test
+async def test_model_discovery_crash_status_is_plain_language_without_raw_exception(
+    request,
+):
     """TASK-23108: an unexpected discovery failure must not hand the raw
     exception repr to the user -- plain summary, next step, type name only."""
     app = _build_test_app()
@@ -11677,7 +12015,8 @@ async def test_model_discovery_crash_status_is_plain_language_without_raw_except
 
 
 @pytest.mark.asyncio
-async def test_discovered_model_save_crash_status_is_plain_language():
+@private_profile_test
+async def test_discovered_model_save_crash_status_is_plain_language(request):
     """TASK-23108: same contract for the persistence path."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -11701,7 +12040,7 @@ def test_failure_status_text_never_carries_raw_exception_text():
     exc = ValueError("token=sk-live-1234 leaked into the message")
     text = failure_status_text("Something failed", exc, next_step="Try again.")
     assert text == (
-        "Something failed (ValueError). Try again. Details are in Logs (F8)."
+        "Something failed (ValueError). Try again. Details are in Logs (F3)."
     )
     assert "sk-live-1234" not in text
 
@@ -11945,7 +12284,10 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_security_recovery_actions_navigate_to_existing_categories():
+@private_profile_test
+async def test_settings_privacy_security_recovery_actions_navigate_to_existing_categories(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -11962,7 +12304,8 @@ async def test_settings_privacy_security_recovery_actions_navigate_to_existing_c
 
 
 @pytest.mark.asyncio
-async def test_settings_diagnostics_validate_and_reload_config_actions():
+@private_profile_test
+async def test_settings_diagnostics_validate_and_reload_config_actions(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -11978,7 +12321,8 @@ async def test_settings_diagnostics_validate_and_reload_config_actions():
 
 
 @pytest.mark.asyncio
-async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload():
+@private_profile_test
+async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -11994,7 +12338,11 @@ async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload():
         assert "No test action is available" not in text
 
 
-def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_diagnostics_combined_helper_validates_once(
+    request, monkeypatch, tmp_path
+):
     class FakeAdapter:
         validate_calls = 0
         load_calls = 0
@@ -12007,12 +12355,12 @@ def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_pa
             FakeAdapter.load_calls += 1
             return {"chat_defaults": {"provider": "OpenAI"}}
 
-    config_path = tmp_path / "config.toml"
+    app = _build_test_app()
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text('[chat_defaults]\nprovider = "OpenAI"\n', encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 
-    screen = SettingsScreen(_build_test_app())
+    screen = SettingsScreen(app)
     validation_result, reload_result, loaded_config = (
         screen._diagnostics_validation_and_reload_results()
     )
@@ -12026,8 +12374,10 @@ def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_pa
     assert loaded_config == {"chat_defaults": {"provider": "OpenAI"}}
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     class FakeAdapter:
         validate_calls = 0
@@ -12041,12 +12391,12 @@ def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(
             FakeAdapter.load_calls += 1
             return {"chat_defaults": {"provider": "OpenAI"}}
 
-    config_path = tmp_path / "config.toml"
+    app = _build_test_app()
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text('[chat_defaults\nprovider = "OpenAI"\n', encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 
-    screen = SettingsScreen(_build_test_app())
+    screen = SettingsScreen(app)
     validation_result, reload_result, loaded_config = (
         screen._diagnostics_validation_and_reload_results()
     )
@@ -12060,7 +12410,10 @@ def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(
     assert loaded_config is None
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_settings_diagnostics_results_include_config_source_and_redact_errors(
+    request,
     monkeypatch,
     tmp_path,
 ):
@@ -12074,12 +12427,12 @@ def test_settings_diagnostics_results_include_config_source_and_redact_errors(
         def load(self, *, force_reload: bool = False):
             raise AssertionError("invalid config must not reload")
 
-    config_path = tmp_path / "config.toml"
+    app = _build_test_app()
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text("OPENAI_API_KEY='raw'\n[broken", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 
-    screen = SettingsScreen(_build_test_app())
+    screen = SettingsScreen(app)
     validation_result, reload_result, loaded_config = (
         screen._diagnostics_validation_and_reload_results()
     )
@@ -12093,7 +12446,10 @@ def test_settings_diagnostics_results_include_config_source_and_redact_errors(
     assert loaded_config is None
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_settings_diagnostics_invalid_config_source_does_not_duplicate_error(
+    request,
     monkeypatch,
 ):
     screen = SettingsScreen(_build_test_app())
@@ -12116,7 +12472,10 @@ def test_settings_diagnostics_invalid_config_source_does_not_duplicate_error(
     assert loaded_config is None
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_settings_diagnostics_unexpected_config_path_errors_are_not_masked(
+    request,
     monkeypatch,
 ):
     screen = SettingsScreen(_build_test_app())
@@ -12130,11 +12489,14 @@ def test_settings_diagnostics_unexpected_config_path_errors_are_not_masked(
         screen._diagnostics_validation_and_reload_results()
 
 
-def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
-    config_path = tmp_path / "config.toml"
-    config_path.write_text('[chat_defaults\nprovider = "OpenAI"\n', encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_diagnostics_strictly_reports_corrupt_toml(
+    request, monkeypatch, tmp_path
+):
     app = _build_test_app()
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    config_path.write_text('[chat_defaults\nprovider = "OpenAI"\n', encoding="utf-8")
     screen = SettingsScreen(app)
 
     assert "Config validation: invalid" in screen._validate_current_config()
@@ -12398,7 +12760,10 @@ async def test_settings_storage_test_shortcut_runs_safety_check(
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkeypatch):
+@private_profile_test
+async def test_settings_privacy_security_test_shortcut_runs_privacy_check(
+    request, monkeypatch
+):
     app = _build_test_app()
     # task-15270: see `_strip_sensitive_config_sections` -- the asserted count
     # is over the whole config, not just the section arranged below.
@@ -12434,7 +12799,10 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker():
+@private_profile_test
+async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker(
+    request,
+):
     app = _build_test_app()
     app.app_config["api_settings"] = {
         "openai": {
@@ -12466,7 +12834,9 @@ async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker
         )
 
 
-def test_settings_config_path_validates_env_override(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_config_path_validates_env_override(request, monkeypatch):
     app = _build_test_app()
     screen = SettingsScreen(app)
     monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
@@ -12475,7 +12845,11 @@ def test_settings_config_path_validates_env_override(monkeypatch):
         screen._config_path()
 
 
-def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_config_path_delegates_to_shared_accessor(
+    request, monkeypatch, tmp_path
+):
     """Regression test for task-851 review finding 5.
 
     ``SettingsScreen._config_path()`` used to re-spell
@@ -12589,15 +12963,14 @@ async def test_settings_advanced_config_uses_editor_owned_scroll_region():
 
 def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
     source = inspect.getsource(SettingsScreen.compose_content)
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
-        encoding="utf-8"
-    )
+    css = Path("tldw_chatbook/css/features/_settings.tcss").read_text(encoding="utf-8")
+    tokens = Path("tldw_chatbook/css/core/_variables.tcss").read_text(encoding="utf-8")
 
     assert ".styles.width" not in source
     for selector, expected_width in (
-        ("#settings-category-pane", "30"),
-        ("#settings-detail-pane", "6fr"),
-        ("#settings-impact-pane", "2fr"),
+        ("#settings-category-pane", "$ds-size-30"),
+        ("#settings-detail-pane", "$ds-fr-6"),
+        ("#settings-impact-pane", "$ds-fr-2"),
     ):
         marker = f"{selector} {{"
         block_start = css.index(marker)
@@ -12609,8 +12982,16 @@ def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
     card_start = css.index("#settings-advanced-config-card {")
     card_end = css.index("}", card_start)
     card_block = css[card_start:card_end]
-    assert "height: 1fr;" in card_block
-    assert "min-height: 0;" in card_block
+    assert "height: $ds-height-fill;" in card_block
+    assert "min-height: $ds-size-0;" in card_block
+    for token, value in (
+        ("$ds-size-30", "30"),
+        ("$ds-fr-6", "6fr"),
+        ("$ds-fr-2", "2fr"),
+        ("$ds-height-fill", "1fr"),
+        ("$ds-size-0", "0"),
+    ):
+        assert f"{token}: {value};" in tokens
 
 
 @pytest.mark.bootstrap_profile
@@ -12940,7 +13321,9 @@ def test_remote_images_toggle_persists_and_pokes_live_config(request, monkeypatc
 # ---- task-1564: footer bindings match reality ----
 
 
-def test_footer_entries_drop_test_hint_where_no_test_action_exists():
+@pytest.mark.asyncio
+@private_profile_test
+def test_footer_entries_drop_test_hint_where_no_test_action_exists(request):
     """Categories without a test action must not advertise "t test category"
     (the static footer used to over-promise; Image Gen answers the key with
     a "No test action" toast)."""
@@ -12954,7 +13337,9 @@ def test_footer_entries_drop_test_hint_where_no_test_action_exists():
     assert "t" not in keys
 
 
-def test_footer_entries_advertise_test_where_it_acts():
+@pytest.mark.asyncio
+@private_profile_test
+def test_footer_entries_advertise_test_where_it_acts(request):
     """Categories with a real test action keep the t hint."""
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -12965,7 +13350,9 @@ def test_footer_entries_advertise_test_where_it_acts():
     assert ("t", "test provider") in entries
 
 
-def test_filter_matches_owned_config_keys():
+@pytest.mark.asyncio
+@private_profile_test
+def test_filter_matches_owned_config_keys(request):
     """The "/" filter indexes each category's owned TOML keys: searching a
     setting name surfaces the category that owns it (task-1564 -- the
     Owns: data existed but was unsearchable, forcing a 23-category scan)."""
@@ -12983,7 +13370,8 @@ def test_filter_matches_owned_config_keys():
 
 
 @pytest.mark.asyncio
-async def test_theme_category_settles_without_recompose_storm():
+@private_profile_test
+async def test_theme_category_settles_without_recompose_storm(request):
     """Opening Theme must converge: the mounted editor instance survives.
 
     Regression (rescore P1): each freshly-mounted editor posted
@@ -13008,7 +13396,9 @@ async def test_theme_category_settles_without_recompose_storm():
         assert screen.theme_editor_modified is False
 
 
-def test_footer_entries_drop_save_revert_where_no_draft_model_exists():
+@pytest.mark.asyncio
+@private_profile_test
+def test_footer_entries_drop_save_revert_where_no_draft_model_exists(request):
     """Categories outside the guided draft model must not advertise
     "s save category | r revert category": both keys answer with an
     informational toast there (read-only Artifacts, autosave Splash,
@@ -13028,7 +13418,9 @@ def test_footer_entries_drop_save_revert_where_no_draft_model_exists():
         assert "r" not in keys, category
 
 
-def test_footer_entries_advertise_save_revert_where_draft_model_acts():
+@pytest.mark.asyncio
+@private_profile_test
+def test_footer_entries_advertise_save_revert_where_draft_model_acts(request):
     """Every guided-mutation category keeps the s/r hints."""
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -13039,7 +13431,9 @@ def test_footer_entries_advertise_save_revert_where_draft_model_acts():
         assert ("r", "revert category") in entries, category
 
 
-def test_footer_entries_privacy_keeps_test_and_raw_cli_save_revert():
+@pytest.mark.asyncio
+@private_profile_test
+def test_footer_entries_privacy_keeps_test_and_raw_cli_save_revert(request):
     """Privacy exposes test plus bounded raw-CLI draft actions."""
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -13053,7 +13447,8 @@ def test_footer_entries_privacy_keeps_test_and_raw_cli_save_revert():
 
 
 @pytest.mark.asyncio
-async def test_theme_user_edit_does_not_remount_editor():
+@private_profile_test
+async def test_theme_user_edit_does_not_remount_editor(request):
     """A real color edit must keep the SAME editor instance mounted.
 
     Qodo review of PR #1125: with theme_editor_modified as a recompose=True
@@ -13093,7 +13488,9 @@ async def test_theme_user_edit_does_not_remount_editor():
 # ---- task-1584: filter correctness (ranking, refocus, placeholder) ----
 
 
-def test_filter_word_boundary_match_outranks_substring():
+@pytest.mark.asyncio
+@private_profile_test
+def test_filter_word_boundary_match_outranks_substring(request):
     """'rag' must surface Library/RAG first, not Storage (live-confirmed:
     the bare substring 'sto-RAG-e' tied on rank tier and won on list index).
     Word-boundary matches in the primary haystack outrank mid-word ones."""
@@ -13109,7 +13506,9 @@ def test_filter_word_boundary_match_outranks_substring():
     )
 
 
-def test_filter_rank_tiers_keep_relative_order():
+@pytest.mark.asyncio
+@private_profile_test
+def test_filter_rank_tiers_keep_relative_order(request):
     """Primary (id/title) matches still beat description matches, which beat
     owned-config-key matches, regardless of the word-boundary sub-ranking."""
     app = _build_test_app()
@@ -13127,7 +13526,8 @@ def test_filter_rank_tiers_keep_relative_order():
 
 
 @pytest.mark.asyncio
-async def test_slash_refocus_selects_existing_filter_text():
+@private_profile_test
+async def test_slash_refocus_selects_existing_filter_text(request):
     """Pressing '/' while the filter already has focus must select the stale
     text instead of inserting a literal slash, so the next keystroke starts
     a fresh query (live-confirmed trap: repeat searches concatenated)."""
@@ -13155,7 +13555,8 @@ async def test_slash_refocus_selects_existing_filter_text():
 
 
 @pytest.mark.asyncio
-async def test_filter_placeholder_names_categories():
+@private_profile_test
+async def test_filter_placeholder_names_categories(request):
     """The placeholder must promise what Enter actually does: open a
     category (the old 'Filter settings (/)' oversold field-level search)."""
     app = _build_test_app()
@@ -13196,7 +13597,9 @@ def test_fold_long_tokens_leaves_short_values_alone():
     )
 
 
-def test_detail_row_folds_long_config_keys():
+@pytest.mark.asyncio
+@private_profile_test
+def test_detail_row_folds_long_config_keys(request):
     """_detail_row values with pathological tokens gain fold points."""
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -13209,7 +13612,8 @@ def test_detail_row_folds_long_config_keys():
 
 
 @pytest.mark.asyncio
-async def test_local_scope_note_is_pinned_outside_scrollable_body():
+@private_profile_test
+async def test_local_scope_note_is_pinned_outside_scrollable_body(request):
     """The standing local-scope reassurance must live in the pinned header
     region, not as the scroll body's clip-bait last row (8 of 20 critique
     captures cut it mid-sentence: 'Nothing is sent to')."""
@@ -13282,7 +13686,8 @@ async def test_mode_line_disclaimer_only_on_overview(request):
 
 
 @pytest.mark.asyncio
-async def test_save_revert_pair_hidden_on_non_draft_categories():
+@private_profile_test
+async def test_save_revert_pair_hidden_on_non_draft_categories(request):
     """Read-only categories showed a permanently-disabled Save/Revert pair
     while Workspaces alone omitted it; the pair now renders only where the
     draft model acts (consistent with the task-1580 footer gating)."""
@@ -13301,7 +13706,8 @@ async def test_save_revert_pair_hidden_on_non_draft_categories():
 
 
 @pytest.mark.asyncio
-async def test_workspaces_unselected_card_shows_hint_not_blank():
+@private_profile_test
+async def test_workspaces_unselected_card_shows_hint_not_blank(request):
     """With no workspace selected the card area rendered nothing -- a
     near-empty center pane. An instructional hint fills the void."""
     app = _build_test_app()
@@ -13317,7 +13723,8 @@ async def test_workspaces_unselected_card_shows_hint_not_blank():
 
 
 @pytest.mark.asyncio
-async def test_disabled_save_revert_carry_text_annotation():
+@private_profile_test
+async def test_disabled_save_revert_carry_text_annotation(request):
     """Disabled Save/Revert differed from enabled only by dimming (rescore
     P2: low-vision users lose the affordance). The clean-state labels say
     why they are inert; the dirty-state labels return to the plain form."""
@@ -13369,7 +13776,8 @@ def test_compact_inputs_carry_rest_edge_and_focus_edge():
 
 
 @pytest.mark.asyncio
-async def test_compact_input_edge_renders_under_real_bundle():
+@private_profile_test
+async def test_compact_input_edge_renders_under_real_bundle(request):
     """Computed-style check: the rest edge actually applies under the real
     CSS bundle (the pytest plain harness cannot see bundle interference)."""
     app = _build_test_app()
@@ -13388,7 +13796,9 @@ async def test_compact_input_edge_renders_under_real_bundle():
 # ---- critique round-3 batch: tasks 1623-1625 and 1711-1713 ----
 
 
-def test_state_banner_leads_with_persistence_badge():
+@pytest.mark.asyncio
+@private_profile_test
+def test_state_banner_leads_with_persistence_badge(request):
     """Five save models coexist on this screen; the badge names the active
     category's model in the same State-bar position everywhere (task-1717),
     so the footer keys' coming and going stops reading as inconsistency."""
@@ -13410,7 +13820,9 @@ def test_state_banner_leads_with_persistence_badge():
         assert text.startswith(f"State: {badge} | "), (category, text)
 
 
-def test_state_banner_text_has_exactly_one_state_segment():
+@pytest.mark.asyncio
+@private_profile_test
+def test_state_banner_text_has_exactly_one_state_segment(request):
     """TASK-23104: scope strings used to embed their own "State: ..." on top
     of the badge prefix, so domain categories and Overview rendered
     "State: Read-only here | State: Active | ..." -- two contracts colliding
@@ -13465,7 +13877,9 @@ async def test_speech_tts_dirty_banner_names_leave_resolution(request):
     assert "switching categories keeps this draft" not in text
 
 
-def test_workspaces_banner_names_reversal_paths():
+@pytest.mark.asyncio
+@private_profile_test
+def test_workspaces_banner_names_reversal_paths(request):
     """Workspaces applies immediately; the banner says how each action is
     walked back instead of leaving 'no draft' unexplained (task-1717)."""
     app = _build_test_app()
@@ -13475,7 +13889,8 @@ def test_workspaces_banner_names_reversal_paths():
 
 
 @pytest.mark.asyncio
-async def test_filter_clears_after_opening_a_match():
+@private_profile_test
+async def test_filter_clears_after_opening_a_match(request):
     """Enter-open used to leave the query behind, pruning the rail to the
     last search's matches for the rest of the session (task-1712)."""
     app = _build_test_app()
@@ -13503,7 +13918,9 @@ def test_fold_prefers_slash_boundaries_over_extension_dots():
     assert not any(line.endswith("config.") for line in lines)
 
 
-def test_threshold_field_has_focused_guidance():
+@pytest.mark.asyncio
+@private_profile_test
+def test_threshold_field_has_focused_guidance(request):
     """The inspector promised setting-specific guidance on focus; the
     Threshold field answered with the empty fallback (task-1713)."""
     app = _build_test_app()
@@ -13514,7 +13931,9 @@ def test_threshold_field_has_focused_guidance():
     assert all("No field-specific guidance" not in value for _, value in rows)
 
 
-def test_model_thinking_visibility_has_search_guidance_and_device_ownership():
+@pytest.mark.asyncio
+@private_profile_test
+def test_model_thinking_visibility_has_search_guidance_and_device_ownership(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen._active_settings_field_id = "settings-console-show-model-thinking"
@@ -13532,7 +13951,8 @@ def test_model_thinking_visibility_has_search_guidance_and_device_ownership():
 
 
 @pytest.mark.asyncio
-async def test_numeric_labels_carry_units():
+@private_profile_test
+async def test_numeric_labels_carry_units(request):
     """'Threshold 50' and friends were unit-less mystery numerics; the
     widened label column carries the unit (task-1713)."""
     app = _build_test_app()
@@ -13546,7 +13966,8 @@ async def test_numeric_labels_carry_units():
 
 
 @pytest.mark.asyncio
-async def test_inspector_overflow_hint_matches_body_overflow():
+@private_profile_test
+async def test_inspector_overflow_hint_matches_body_overflow(request):
     """The reserved fold-indicator row shows exactly when the inspector
     body has more content than its viewport (task-1623)."""
     app = _build_test_app()
@@ -13564,7 +13985,8 @@ async def test_inspector_overflow_hint_matches_body_overflow():
 
 
 @pytest.mark.asyncio
-async def test_every_category_renders_the_state_banner():
+@private_profile_test
+async def test_every_category_renders_the_state_banner(request):
     """task-1717 AC: the persistence badge appears in the same State-bar
     position on EVERY category -- the four own-persistence categories
     (Theme, Splash, Internal Prompts, Image Gen) and Workspaces previously
@@ -13599,7 +14021,9 @@ async def test_every_category_renders_the_state_banner():
 # ---- critique round-4 batch: tasks 1644 and 1714-1716 ----
 
 
-def test_field_search_surfaces_category_and_names_the_field():
+@pytest.mark.asyncio
+@private_profile_test
+def test_field_search_surfaces_category_and_names_the_field(request):
     """Field search surfaces the owning category and names the field.
 
     task-1715: typing a setting's visible name ("threshold") must surface
@@ -13616,7 +14040,8 @@ def test_field_search_surfaces_category_and_names_the_field():
 
 
 @pytest.mark.asyncio
-async def test_field_search_enter_focuses_the_field():
+@private_profile_test
+async def test_field_search_enter_focuses_the_field(request):
     """Enter on a field match focuses that field.
 
     task-1715: opening the category is not enough -- landing focus on the
@@ -13637,7 +14062,9 @@ async def test_field_search_enter_focuses_the_field():
         ), f"focused={focused!r}"
 
 
-def test_search_finds_reduce_motion_with_scope_text():
+@pytest.mark.asyncio
+@private_profile_test
+def test_search_finds_reduce_motion_with_scope_text(request):
     """TASK-23109: 'reduce motion' (the critique's unfindable setting) must
     surface Appearance, and the echo line must carry category and group."""
     app = _build_test_app()
@@ -13650,7 +14077,9 @@ def test_search_finds_reduce_motion_with_scope_text():
     assert "Appearance › Reduce motion (Interface)" in status
 
 
-def test_search_ambiguous_theme_disambiguates_with_scope():
+@pytest.mark.asyncio
+@private_profile_test
+def test_search_ambiguous_theme_disambiguates_with_scope(request):
     """TASK-23109: 'theme' hits the Theme category and Appearance's Theme
     setting; the results line names both with their scopes instead of a
     bare-title coin flip."""
@@ -13666,7 +14095,8 @@ def test_search_ambiguous_theme_disambiguates_with_scope():
 
 
 @pytest.mark.asyncio
-async def test_search_enter_focuses_reduce_motion():
+@private_profile_test
+async def test_search_enter_focuses_reduce_motion(request):
     """TASK-23109 journey: Enter on 'reduce motion' opens Appearance with
     the Reduce motion control focused."""
     app = _build_test_app()
@@ -13685,7 +14115,8 @@ async def test_search_enter_focuses_reduce_motion():
 
 
 @pytest.mark.asyncio
-async def test_search_description_tier_match_still_lands_on_the_field():
+@private_profile_test
+async def test_search_description_tier_match_still_lands_on_the_field(request):
     """Review finding 2 (TASK-23109): a description-tier category match with
     a matching field keeps task-1715's field landing -- only own-TITLE
     matches open the category plainly."""
@@ -13705,7 +14136,8 @@ async def test_search_description_tier_match_still_lands_on_the_field():
 
 
 @pytest.mark.asyncio
-async def test_search_token_keeps_its_pre_existing_intra_category_landing():
+@private_profile_test
+async def test_search_token_keeps_its_pre_existing_intra_category_landing(request):
     """Review finding 13 (TASK-23109): completing the index appends rows, so
     the intra-category winner must stay order-stable -- '/token' lands on
     'Conversation max tokens', not the swept-in 'Token budget (per run)'."""
@@ -13725,7 +14157,8 @@ async def test_search_token_keeps_its_pre_existing_intra_category_landing():
 
 
 @pytest.mark.asyncio
-async def test_search_landing_expands_enclosing_collapsibles():
+@private_profile_test
+async def test_search_landing_expands_enclosing_collapsibles(request):
     """Review finding 3a (TASK-23109): a field inside Collapsible(collapsed)
     must be expanded and focused, not given focus at zero region."""
     from textual.widgets import Collapsible
@@ -13750,7 +14183,8 @@ async def test_search_landing_expands_enclosing_collapsibles():
 
 
 @pytest.mark.asyncio
-async def test_search_next_segment_is_dropped_on_short_terminals():
+@private_profile_test
+async def test_search_next_segment_is_dropped_on_short_terminals(request):
     """Review finding 15 (TASK-23109): at 24 rows the fully scoped status
     line wrapped to ~5 rail rows, pushing matches below the fold -- the
     '| Next:' segment is dropped below the height threshold and kept on
@@ -13773,7 +14207,8 @@ async def test_search_next_segment_is_dropped_on_short_terminals():
 
 
 @pytest.mark.asyncio
-async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
+@private_profile_test
+async def test_search_landing_on_disabled_field_explains_instead_of_no_op(request):
     """Review finding 3b (TASK-23109): .focus() is a silent no-op on a
     disabled widget -- the landing must open the category and say why in
     the status line instead."""
@@ -13857,8 +14292,9 @@ async def test_search_landing_on_a_row_hidden_for_the_provider_says_so(
         ),
     ),
 )
+@private_profile_test
 async def test_field_search_finds_and_focuses_folder_files_tree_controls(
-    query, field_id
+    request, query, field_id
 ):
     """Folder Files controls are searchable and receive landing focus."""
     app = _build_test_app()
@@ -13882,7 +14318,8 @@ async def test_field_search_finds_and_focuses_folder_files_tree_controls(
 
 
 @pytest.mark.asyncio
-async def test_state_banner_is_pinned_outside_detail_scroll():
+@private_profile_test
+async def test_state_banner_is_pinned_outside_detail_scroll(request):
     """The State banner is pinned outside the detail scroll body.
 
     task-1716: the persistence badge is the save-contract carrier, so it
@@ -13899,7 +14336,9 @@ async def test_state_banner_is_pinned_outside_detail_scroll():
         assert body not in banner.ancestors, "State banner is inside the scroll body"
 
 
-def test_t_hint_uses_each_categorys_real_verb():
+@pytest.mark.asyncio
+@private_profile_test
+def test_t_hint_uses_each_categorys_real_verb(request):
     """The t hint names each category's real verb.
 
     task-1714: "t test category" named an abstraction while the on-page
@@ -14208,7 +14647,8 @@ async def test_settings_overview_open_category_buttons_switch_category(request):
 
 
 @pytest.mark.asyncio
-async def test_settings_invalid_input_keeps_error_tint_while_focused():
+@private_profile_test
+async def test_settings_invalid_input_keeps_error_tint_while_focused(request):
     """task-1369: .settings-invalid-input:focus used to restyle to the normal
     surface, hiding the error marker exactly while the user edits the field."""
     app = _build_test_app()
@@ -14238,7 +14678,10 @@ async def test_settings_invalid_input_keeps_error_tint_while_focused():
 
 
 @pytest.mark.asyncio
-async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloaded():
+@private_profile_test
+async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloaded(
+    request,
+):
     """task-1369: the confirm dialog must not interpolate 'Loading'/'unknown'
     into its copy when the preview counts have not loaded."""
     app = _build_test_app()

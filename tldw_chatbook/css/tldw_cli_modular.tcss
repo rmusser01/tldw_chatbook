@@ -95,6 +95,10 @@ $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
 $ds-workflow-navigator-width: 27;
+$ds-workflow-dialog-max-width: 100;
+$ds-setup-voice-wide-share: 21fr;
+$ds-setup-voice-medium-share: 14fr;
+$ds-setup-voice-narrow-share: 11fr;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -3622,7 +3626,7 @@ Button.mcp-callout {
 
 .mcp-compact #mcp-detail-toolbar .console-action-primary,
 .mcp-compact #mcp-detail-toolbar .console-action-secondary {
-  width: 1fr;
+  width: $ds-width-fill;
   min-width: $ds-size-0;
 }
 
@@ -5400,7 +5404,7 @@ StatCard:hover {
 }
 #settings-theme-list-column,
 #settings-theme-card-column {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 #settings-theme-list {
     height: auto;
@@ -5533,7 +5537,7 @@ StatCard:hover {
 }
 #settings-theme-editor-palette-column,
 #settings-theme-editor-preview-column {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 #settings-theme-editor.-stacked #settings-theme-editor-columns {
     layout: vertical;
@@ -16000,31 +16004,31 @@ SmartContentTree Tree > .selected-node {
 
 
 #setup-voice-preset-none {
-    width: 21fr;
+    width: $ds-setup-voice-wide-share;
 }
 
 #setup-voice-preset-pocket,
 #setup-voice-preset-omnivoice {
-    width: 14fr;
+    width: $ds-setup-voice-medium-share;
 }
 
 #setup-voice-preset-official,
 #setup-voice-preset-custom {
-    width: 11fr;
+    width: $ds-setup-voice-narrow-share;
 }
 
 
 #setup-voice-preset.-stacked {
     layout: grid;
     grid-size: 3 2;
-    grid-columns: 21fr 14fr 11fr;
+    grid-columns: $ds-setup-voice-wide-share $ds-setup-voice-medium-share $ds-setup-voice-narrow-share;
     grid-rows: $ds-size-1;
     height: $ds-size-4;
     min-height: $ds-size-4;
 }
 
 #setup-voice-preset.-stacked SetupRadioButton {
-    width: 1fr;
+    width: $ds-width-fill;
     height: $ds-size-1;
 }
 
@@ -19735,9 +19739,9 @@ WorkflowsScreen WorkflowEditor TextArea.form-textarea.workflow-expanded { height
 
 
 WorkflowRunPanel { height: auto; padding: $ds-space-0 $ds-space-inset; }
-WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-space-0; border: none; }
-WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }
-WorkflowRunPanel TextArea { height: 6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
+WorkflowRunPanel Collapsible { height: $ds-height-fill; padding: $ds-space-0; margin: $ds-space-0; border: none; }
+WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: $ds-height-fill; }
+WorkflowRunPanel TextArea { height: $ds-size-6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
 WorkflowRunSetup, WorkflowRunConfirmation { align: center middle; background: $background $ds-opacity-dim; }
 
 /* ===== MODULE: features/_roleplay.tcss ===== */

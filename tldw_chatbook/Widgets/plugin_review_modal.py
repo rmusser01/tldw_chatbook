@@ -531,6 +531,8 @@ class PluginStatusModal(ModalScreen):
         await self._load()
 
     async def _load(self):
+        self.review = None
+        self.query_one("#plugin-status-confirm", Button).disabled = True
         try:
             if self.candidates:
                 self.rows = await self.sources.list_persisted_candidates(

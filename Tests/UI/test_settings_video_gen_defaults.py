@@ -154,7 +154,8 @@ def test_validate_disabled_backends_warns_not_blocks():
 
 
 @pytest.mark.asyncio
-async def test_panel_compose_covers_all_sections():
+@private_profile_test
+async def test_panel_compose_covers_all_sections(request):
     from textual.screen import Screen
     from textual.widgets import Checkbox, Collapsible, Select, Static
 
