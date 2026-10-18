@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
+
+from Tests.private_profile import private_profile_test
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/plugin-qualification.yml"
 
 
-def test_plugin_workflow_preserves_owned_loopback_and_asyncio(tmp_path):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_plugin_workflow_preserves_owned_loopback_and_asyncio(request, tmp_path):
     from tldw_chatbook.config import get_user_data_dir
 
     workflow = yaml.safe_load(WORKFLOW.read_text())
@@ -70,7 +76,8 @@ print("WORKFLOW_GUARD_CONTROLS_PASSED")
         "CACHE_ROOT", repr(str(tmp_path / "nested-cache"))
     )
     child = prefix + textwrap.indent(suffix, "    ")
-    result = subprocess.run(
+    result = await asyncio.to_thread(
+        subprocess.run,
         [sys.executable, "-I", "-B", "-c", child],
         cwd=ROOT,
         env=environment,

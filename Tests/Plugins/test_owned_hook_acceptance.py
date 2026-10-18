@@ -463,6 +463,9 @@ async def _owned_peer(
     schema=None,
 ):
     """One reviewed owned profile over the existing inert transport fixtures."""
+    from Tests.Plugins.platform_support import require_managed_runtime
+
+    require_managed_runtime()
     import os
     import sys
 

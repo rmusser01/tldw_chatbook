@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins import platform_support
 from tldw_chatbook.Plugins.inspection import inspect_package
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
+@platform_support.package_capture
 def test_cursor_inventory_matches_independent_expected_fixture(interop_package):
     root = interop_package("cursor")
     expected = json.loads(
@@ -28,6 +30,7 @@ def test_cursor_inventory_matches_independent_expected_fixture(interop_package):
     assert all(row.evidence[0].level == "parsed" for row in result.inventory.values())
 
 
+@platform_support.package_capture
 def test_cursor_explicit_empty_skills_preserves_deliberate_exclusion(interop_package):
     root = interop_package("cursor")
     path = root / ".cursor-plugin/plugin.json"
@@ -40,6 +43,7 @@ def test_cursor_explicit_empty_skills_preserves_deliberate_exclusion(interop_pac
     assert "command:note" in result.inventory
 
 
+@platform_support.package_capture
 def test_root_skill_exception_and_agent_limits_do_not_inherit(tmp_path):
     root = tmp_path / "single"
     (root / ".cursor-plugin").mkdir(parents=True)
@@ -62,6 +66,7 @@ def test_root_skill_exception_and_agent_limits_do_not_inherit(tmp_path):
     assert not result.inventory["skill:review"].activation_blockers
 
 
+@platform_support.package_capture
 def test_retained_catalog_overlay_participates_in_review_and_executable_digest(
     interop_package,
 ):
@@ -124,6 +129,7 @@ async def test_cursor_command_and_always_rule_use_actual_reviewed_console_user_l
     assert "CURSOR_CONDITIONAL_RULE_BODY" not in str(rows)
 
 
+@platform_support.package_capture
 def test_explicit_missing_mcp_file_is_not_an_empty_definition(interop_package):
     root = interop_package("cursor")
     path = root / ".cursor-plugin/plugin.json"
@@ -183,6 +189,7 @@ def test_reviewed_dialect_and_catalog_survive_source_and_registry_loss(
     } == set(selection)
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize(
     "dialect,directory", [("cursor", "picked"), ("codex", "custom")]
 )
@@ -218,7 +225,6 @@ def test_bad_vendor_skill_metadata_keeps_valid_siblings(
 
 import pytest
 
-from Tests.Plugins import platform_support
 from Tests.Plugins.test_codex_adapter import UPSTREAM, write_json, write_skill
 
 

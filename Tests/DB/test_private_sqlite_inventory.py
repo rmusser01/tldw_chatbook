@@ -1550,6 +1550,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
     )
     expected_calls.update({
         ("tldw_chatbook/DB/recovery_dreams_guardian", "_GuardianAdapter.capture", "copy_private_sqlite"): 1,
+        ("tldw_chatbook/DB/recovery_dreams_guardian", "_DreamsAdapter.capture", "copy_private_sqlite"): 1,
         ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
