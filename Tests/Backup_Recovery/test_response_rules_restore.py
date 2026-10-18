@@ -262,12 +262,9 @@ def test_restricted_historical_restore_migrates_only_disposable_copy(
     assert validate_candidate(owner, candidate, Event(), migrate=True) == ()
     prepare_imported_candidate(candidate, Event())
     with closing(sqlite3.connect(candidate)) as connection:
-        assert (
-            connection.execute(
-                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-            ).fetchone()[0]
-            == 81
-        )
+        assert connection.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+        ).fetchone()[0] == max(owner.schema_policy().versions)
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM console_response_rule_bindings"
@@ -278,15 +275,12 @@ def test_restricted_historical_restore_migrates_only_disposable_copy(
 
 
 @pytest.mark.parametrize("lineage", range(4))
-def test_every_accepted_v80_catalog_migrates_to_its_exact_v81_variant(
+def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
     tmp_path, lineage
 ):
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
     from tldw_chatbook.DB.recovery_core import core_adapters
-    from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V80_SCHEMAS,
-        CHACHANOTES_V81_SCHEMAS,
-    )
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V80_SCHEMAS
 
     path = tmp_path / "retained-lineage.sqlite"
     with closing(sqlite3.connect(path)) as connection, connection:
@@ -323,6 +317,11 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_v81_variant(
         )
     path.chmod(0o600)
     owner = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")
+    policy = owner.schema_policy()
+    current_version = max(policy.versions)
+    current_schemas = tuple(
+        schema for version, schema in policy.schema_sql if version == current_version
+    )
     assert validate_candidate(owner, path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as connection:
         catalog = tuple(
@@ -331,7 +330,10 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_v81_variant(
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-        assert catalog == CHACHANOTES_V81_SCHEMAS[lineage]
+        assert catalog == current_schemas[lineage]
+        assert connection.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+        ).fetchone() == (current_version,)
         assert connection.execute(
             "SELECT title FROM conversations WHERE id='retained'"
         ).fetchone() == ("saved lineage",)
@@ -347,12 +349,14 @@ def test_response_rule_candidate_refusal_never_rewrites_rejected_input(
     from tldw_chatbook.DB.recovery_core import core_adapters
 
     _, db, _ = rule_store
+    owner = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")
     path = tmp_path / "rejected.sqlite"
     copy_private_sqlite("recovery.core.chachanotes", db.db_path, path)
     with closing(sqlite3.connect(path)) as connection, connection:
         if damage == "future":
             connection.execute(
-                "UPDATE db_schema_version SET version=82 WHERE schema_name='rag_char_chat_schema'"
+                "UPDATE db_schema_version SET version=? WHERE schema_name='rag_char_chat_schema'",
+                (max(owner.schema_policy().versions) + 1,),
             )
         elif damage == "hybrid":
             connection.execute("DROP INDEX idx_response_rule_drafts_scope")
@@ -362,7 +366,6 @@ def test_response_rule_candidate_refusal_never_rewrites_rejected_input(
                 "CREATE INDEX idx_response_rule_drafts_scope ON console_response_rule_drafts(scope_id,scope_kind)"
             )
     before = path.read_bytes()
-    owner = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")
     expected = (
         "unsupported_schema_version" if damage == "future" else "unsupported_schema"
     )

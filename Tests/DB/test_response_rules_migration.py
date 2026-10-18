@@ -28,7 +28,7 @@ def test_installed_response_rules_are_local_only(chachanotes_template_db, tmp_pa
                 "console_response_rule_assessments",
                 "console_machine_followup_receipts",
             } <= names
-            assert db._CURRENT_SCHEMA_VERSION == 81
+            assert db._get_db_version(db.get_connection()) == db._CURRENT_SCHEMA_VERSION
             assert cursor.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         db.close()
@@ -39,7 +39,7 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
     tmp_path, version
 ):
     from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
-    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V81_SCHEMAS
+    from tldw_chatbook.DB.recovery_core import core_adapters
 
     path = tmp_path / "historical.sqlite"
     with chachanotes_db_at_version(path, version) as predecessor:
@@ -54,7 +54,7 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
         )
     db = CharactersRAGDB(path, "rules-migration")
     try:
-        assert db._get_db_version(db.get_connection()) == 81
+        assert db._get_db_version(db.get_connection()) == db._CURRENT_SCHEMA_VERSION
         with db.transaction() as cursor:
             assert (
                 cursor.execute(
@@ -68,7 +68,14 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
                     "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
                 )
             )
-            assert catalog in CHACHANOTES_V81_SCHEMAS
+            owner = next(
+                a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
+            )
+            assert catalog in tuple(
+                schema
+                for version, schema in owner.schema_policy().schema_sql
+                if version == db._CURRENT_SCHEMA_VERSION
+            )
             assert (
                 cursor.execute(
                     "SELECT COUNT(*) FROM console_response_rule_bindings"
@@ -80,7 +87,10 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
         db.close()
     reopened = CharactersRAGDB(path, "rules-reopen")
     try:
-        assert reopened._get_db_version(reopened.get_connection()) == 81
+        assert (
+            reopened._get_db_version(reopened.get_connection())
+            == reopened._CURRENT_SCHEMA_VERSION
+        )
     finally:
         reopened.close()
 

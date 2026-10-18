@@ -8813,6 +8813,19 @@ the database has migrated to the current schema; using it to populate an older
 fixture makes an unrelated future column addition break the fixture before the
 migration under test can run.
 
+**Recurrence (TASK-35376, PR #3153, 2026-10-18).** Canvas schema 82 correctly
+upgraded response-rule databases, but the required Console P0 step still
+expected the installed endpoint and frozen catalog to be v81 (five hosted
+failures). Running both response-rule migration/recovery modules exposed 16
+stale-pin failures, including a "future" refusal fixture now stamped with the
+valid current version. Compare runtime endpoints with the installed current
+version, keep exact ordered frozen-catalog comparisons for each historical
+lineage, and stamp refusal fixtures above the maximum supported version.
+The repair passed 223 focused checks. Independent review also caught a third
+CI selector registry missed when the endpoint-named test was renamed; its real
+contract failed until that reference moved too. Search every selector consumer,
+not just the workflow and the first matching registry.
+
 ## Removing a widget's border box activates the global focus outline on it (task-17651, 2026-08-17)
 
 **What happened.** Flattening the Console composer to a one-row dense-form bar
