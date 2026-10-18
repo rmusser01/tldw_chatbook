@@ -993,6 +993,7 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_auto_open_does_not_evict_focused_context() -> None:
     """Crossing 117-to-118 keeps focused Context instead of auto-swapping rails."""
     host = _ready_console_host()
@@ -1014,6 +1015,7 @@ async def test_resize_auto_open_does_not_evict_focused_context() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_consecutive_resize_preserves_focused_context_when_auto_open_is_suppressed() -> (
     None
 ):
@@ -1043,6 +1045,7 @@ async def test_consecutive_resize_preserves_focused_context_when_auto_open_is_su
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_priority_hands_inspector_focus_to_reveal_button() -> None:
     """Crossing 128-to-129 hides focused Inspector and focuses its handle."""
     host = _ready_console_host()

@@ -21557,17 +21557,17 @@ class ChatScreen(BaseAppScreen):
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:
             return
-        self._last_console_workspace_width_band = band
-        self._request_console_control_bar_sync()  # The header word is band-sized.
         try:
             self.query_one("#console-workspace-grid")
+            left_rail = self.query_one("#console-left-rail")
+            right_rail = self.query_one("#console-right-rail")
+            left_handle = self.query_one("#console-context-rail-handle")
+            right_handle = self.query_one("#console-inspector-rail-handle")
         except QueryError:
             return
+        self._last_console_workspace_width_band = band
+        self._request_console_control_bar_sync()  # The header word is band-sized.
         focused = self.app.focused
-        left_rail = self.query_one("#console-left-rail")
-        right_rail = self.query_one("#console-right-rail")
-        left_handle = self.query_one("#console-context-rail-handle")
-        right_handle = self.query_one("#console-inspector-rail-handle")
         focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
         focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
         focused_in_left_handle = self._is_descendant_or_self(focused, left_handle)

@@ -212,6 +212,7 @@ ADMISSION_TARGETS = (
     "Tests/DB/test_chachanotes_connection_quiescence.py",
     "Tests/DB/test_operation_owned_connection_retirement.py",
     "Tests/UI/test_console_runtime_ownership.py",
+    "Tests/UI/test_console_partial_resize.py",
     "Tests/Chat/test_console_viewless_hooks.py",
     "Tests/Agents/test_install_skill_runtime_tool.py",
     "Tests/Chat/test_console_chat_create_integration.py",
