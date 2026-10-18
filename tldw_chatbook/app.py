@@ -5680,6 +5680,16 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# Stock Console preparation callbacks (no IO); must precede the main block (TASK-35302).
+_CONSOLE_SKILL_APP_SOURCE = (
+    TldwCli,
+    globals(),
+    TldwCli._create_deferred_startup_task,
+    TldwCli._create_deferred_startup_task.__code__,
+    ConsoleRuntime,
+)
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # ``python -m tldw_chatbook.app``. app_entry imports ``TldwCli`` from
@@ -5698,13 +5708,3 @@ if __name__ == "__main__":
 #
 # End of app.py
 #######################################################################################################################
-
-
-# Defining callbacks for checked stock Console preparation; no IO.
-_CONSOLE_SKILL_APP_SOURCE = (
-    TldwCli,
-    globals(),
-    TldwCli._create_deferred_startup_task,
-    TldwCli._create_deferred_startup_task.__code__,
-    ConsoleRuntime,
-)
