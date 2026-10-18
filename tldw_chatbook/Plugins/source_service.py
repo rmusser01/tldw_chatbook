@@ -7,12 +7,13 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from pydantic import Field, field_validator
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from .acquisition import (
     acquire_snapshot,
@@ -490,7 +491,7 @@ class SourceService:
                     reference,
                     source_id,
                     binding.catalog_path,
-                    fetched_at=datetime.now(UTC).isoformat(),
+                    fetched_at=utc_now_iso(),
                 )
                 updated = binding.model_copy(
                     update={"current": reference, "catalog_path": path}
@@ -1259,7 +1260,7 @@ class SourceService:
                     current,
                     source_id,
                     candidate.catalog_path,
-                    fetched_at=datetime.now(UTC).isoformat(),
+                    fetched_at=utc_now_iso(),
                 )
                 self._write(binding, copied)
                 sources.append(source_id)

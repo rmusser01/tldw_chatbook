@@ -7,6 +7,7 @@ displayed plain text; single-row only (spec 2026-08-14 §1).
 
 from __future__ import annotations
 
+import difflib
 from dataclasses import dataclass
 
 SELECTION_QUOTE_CAP = 4000
@@ -261,3 +262,118 @@ def prev_line_offset(text: str, offset: int) -> int:
     column = i - start
     pstart = line_start_offset(text, start - 1)
     return min(pstart + column, line_end_offset(text, pstart))
+
+
+def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Snap ``[start, end)`` outward to whole ``'\\n'``-delimited lines.
+
+    Console selection phase 1 (task G): markdown-row granularity is the whole
+    source line, so a character range grows to cover every line it touches.
+    The trailing newline of the last touched line is excluded, so the quoted
+    text is exactly the selected lines.
+    """
+    start, end = sorted((start, end))
+    start = max(0, min(start, len(text)))
+    end = max(0, min(end, len(text)))
+    line_start = text.rfind("\n", 0, start) + 1
+    newline = text.find("\n", end)
+    line_end = len(text) if newline == -1 else newline
+    return line_start, line_end
+
+
+def _markdown_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
+    """Map a markdown-body-local cell to a source-line character offset.
+
+    Console selection phase 1 (task G). The ``Markdown`` widget does not
+    expose which rendered line belongs to which SOURCE line (blocks re-flow,
+    wrap, and pad internally), so the body-local ``cell_y`` is distributed
+    evenly across the source lines and clamped to the nearest line -- the
+    recorded phase-1 approximation (ADR-068). ``set_selection_range`` then
+    snaps outward to whole lines, which bounds the damage of a coarse y map:
+    the quoted text is always whole lines regardless.
+
+    Two clamp details keep drags useful when the render COLLAPSES source
+    lines (soft-wrapped paragraphs render several source lines as one row,
+    so ``height < line count``): cells above the body map to the first line,
+    and the LAST rendered row maps to the last source line -- otherwise a
+    drag that ends on the bottom row could never reach the final lines.
+    ``cell_x`` maps within the target line via ``offset_for_cell``.
+
+    Args:
+        text: The row's markdown source text -- the selection domain.
+        height: The Markdown widget's rendered height (cells).
+        cell_x: Body-local column of the pointer.
+        cell_y: Body-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    lines = text.split("\n")
+    if height <= 0 or len(lines) <= 1:
+        # Not laid out (or a single source line): monotone single-line map.
+        return offset_for_cell(text, cell_x)
+    if cell_y < 0:
+        line_index = 0
+    elif cell_y >= height:
+        return len(text)
+    elif cell_y == height - 1:
+        line_index = len(lines) - 1
+    else:
+        line_index = min(int(cell_y * len(lines) / height), len(lines) - 1)
+    line_start = sum(len(line) + 1 for line in lines[:line_index])
+    return line_start + offset_for_cell(lines[line_index], cell_x)
+
+
+def _tool_diff_display_text(diff: tuple[str, str, str]) -> str:
+    """Deterministic plain-text projection of a tool diff (selection domain).
+
+    Console selection phase 3, task 1. The selection domain of a
+    ``ConsoleToolDiffRow`` is the unified diff of its immutable
+    ``(path, old, new)`` contents, built with ``keepends=True`` so offsets
+    are line-anchored, and ``fromfile=tofile=path`` so the header names the
+    file. Pure function on the tuple -- unit-testable without a widget.
+
+    Args:
+        diff: ``(file_path, old_content, new_content)`` as captured at the
+            provider's strip seam.
+
+    Returns:
+        The joined unified-diff text (the row's selection domain).
+    """
+    path, old_content, new_content = diff
+    return "".join(
+        difflib.unified_diff(
+            old_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+        )
+    )
+
+
+def _diff_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
+    """Map a DiffView-local cell to a diff-projection character offset.
+
+    Console selection phase 3, task 1. ``DiffView`` renders line-number
+    gutters, hunk headers, and (in split mode) paired +/- columns, so its
+    rows do not map 1:1 onto any exposed text -- exactly like the Markdown
+    rows (task G), the body-local ``cell_y`` is distributed evenly across
+    the projection's lines and clamped to the nearest line, and
+    ``set_selection_range`` then snaps outward to whole diff lines, which
+    bounds the damage of a coarse y map: the quoted text is always whole
+    diff lines regardless. ``wrap=False`` (the diff-widgets default) keeps
+    long diff lines unwrapped (they scroll horizontally), so ``cell_x``
+    maps monotonically within the target line.
+
+    Args:
+        text: The row's unified-diff projection -- the selection domain.
+        height: The DiffView's rendered height (cells).
+        cell_x: Diff-view-local column of the pointer.
+        cell_y: Diff-view-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    return _markdown_cell_to_offset(text, height, cell_x, cell_y)

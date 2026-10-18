@@ -64,6 +64,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: path -> max line count. LOWER these when a module shrinks. Never raise
 #: them to silence a failure — see the module docstring.
 _BUDGETS: dict[str, int] = {
+    # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
+    "tldw_chatbook/Utils/app_shutdown.py": 776,
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 811,
+    "tldw_chatbook/Chat/console_display_state.py": 2831,
+    "tldw_chatbook/Widgets/Console/console_selection.py": 379,
+    "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1398,
+    "tldw_chatbook/tldw_api/exceptions.py": 139,
+    "tldw_chatbook/tldw_api/utils.py": 175,
+    "tldw_chatbook/UI/LLM_Management/vllm_setup_view.py": 1861,
+    "tldw_chatbook/UI/Console_Modules/character_avatar_layout.py": 244,
     # TASK-33011 decomposition: lowered as each extraction PR lands
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
     # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; task-33081 on dev
@@ -116,7 +127,7 @@ _BUDGETS: dict[str, int] = {
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
-    "tldw_chatbook/app_lifecycle.py": 2134,
+    "tldw_chatbook/app_lifecycle.py": 2132,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -486,7 +497,7 @@ _BUDGETS: dict[str, int] = {
     # `_request(...)` -> `Model.model_validate` shape, so the honest
     # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
     # the precedent already in the package.
-    "tldw_chatbook/tldw_api/client.py": 16687,
+    "tldw_chatbook/tldw_api/client.py": 16678,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14283,

@@ -113,7 +113,10 @@ from ..LLM_Management.vllm_setup import (
     run_vllm_profile_repair_check,
     semantic_fingerprint,
 )
-from ..LLM_Management.vllm_setup_view import VllmSetupView
+from ..LLM_Management.vllm_setup_view import (
+    VllmSetupView,
+    _classify_vllm_profile_validation,
+)
 from ..LLM_Management_Window import LLMManagementWindow
 from ..Navigation.audio_cpp_model_handoff import (
     AudioCppModelInstallOperation,
@@ -150,51 +153,6 @@ if TYPE_CHECKING:
         PreflightReport,
     )
     from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
-
-
-def _classify_vllm_profile_validation(
-    error: VllmProfileValidationError,
-) -> tuple[str, str]:
-    """Map private profile validation text to bounded adjacent UI recovery."""
-
-    message = str(error)
-    if "profile names must be unique" in message:
-        return "name", "duplicate_name"
-    field_rules = (
-        ("python_environment", "python_environment", "invalid_python_environment"),
-        ("model_value", "model_value", "invalid_model_value"),
-        ("model_source", "model_source", "invalid_model_source"),
-        ("bind_address", "bind_address", "invalid_bind_address"),
-        (
-            "tensor_parallel_size",
-            "tensor_parallel_size",
-            "invalid_tensor_parallel_size",
-        ),
-        (
-            "maximum_model_length",
-            "maximum_model_length",
-            "invalid_maximum_model_length",
-        ),
-        (
-            "gpu_memory_utilization",
-            "gpu_memory_utilization",
-            "invalid_gpu_memory_utilization",
-        ),
-        ("trust_remote_code", "trust_remote_code", "invalid_trust_remote_code"),
-        ("dtype", "dtype", "invalid_dtype"),
-        ("port", "port", "invalid_port"),
-        ("name", "name", "invalid_name"),
-    )
-    for marker, field, classification in field_rules:
-        if marker in message:
-            return field, classification
-    if "only local launch drafts" in message:
-        return "mode", "local_profiles_only"
-    if "profile store is capped" in message:
-        return "profile", "profile_cap"
-    if "profile is unavailable" in message:
-        return "profile", "profile_unavailable"
-    return "profile", "profile_invalid"
 
 
 class _AudioCppConsentDeclined(Exception):

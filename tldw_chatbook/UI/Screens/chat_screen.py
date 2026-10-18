@@ -108,6 +108,11 @@ from ..Console_Modules.status_row import (
 # that defines it (`..Console_Modules.dictation` and friends) rather than
 # through this module's namespace -- see task-3023, which repointed them.
 from ..Console_Modules.character_avatar_layout import (
+    CHARACTER_AVATAR_COLS as CHARACTER_AVATAR_COLS,  # noqa: PLC0414 -- retain the original module export.
+    CHARACTER_AVATAR_LINES as CHARACTER_AVATAR_LINES,  # noqa: PLC0414 -- retain the original module export.
+    CHARACTER_AVATAR_MAX_COLS as CHARACTER_AVATAR_MAX_COLS,  # noqa: PLC0414 -- retain the original module export.
+    CHARACTER_AVATAR_MAX_LINES as CHARACTER_AVATAR_MAX_LINES,  # noqa: PLC0414 -- retain the original module export.
+    character_avatar_box as character_avatar_box,  # noqa: PLC0414 -- retain the original module export.
     CharacterAvatarPrerender,
     build_character_avatar_prerender_job,
     fit_character_avatar_cell_box,
@@ -142,7 +147,7 @@ from ..Console_Modules.left_rail import (
     rail_focus_shortcuts,
 )
 from ..Console_Modules.workspace import (
-    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,  # noqa: PLC0414 -- retain the original module export.
 )
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -818,15 +823,6 @@ CONSOLE_CAPTION_PROMPT = (
     "alt-text line under 125 characters."
 )
 
-CHARACTER_AVATAR_COLS = 16
-CHARACTER_AVATAR_LINES = 8
-#: task-1661: the rail avatar used to paint into the fixed box above no
-#: matter how wide the rail was, leaving a ~50-column rail showing a
-#: 16-column portrait pinned to the corner of an unsized (1fr) holder.
-#: The box is now derived from the rail's live width, clamped so a very
-#: tall portrait cannot swallow the whole rail.
-CHARACTER_AVATAR_MAX_COLS = 44
-CHARACTER_AVATAR_MAX_LINES = 22
 # task-1537: remote inline images. Only the most recent assistant replies are
 # scanned for image links (older history never triggers fetches), and one
 # fetched body is capped well below the render cache's decode ceiling.
@@ -1408,29 +1404,6 @@ def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
     )
 
 
-def character_avatar_box(available_cols: int) -> tuple[int, int]:
-    """Avatar box (cols, lines) for a rail of ``available_cols`` width.
-
-    task-1661: keeps the portrait proportional to the rail instead of a
-    fixed 16x8 corner thumb, while clamping so a tall image cannot claim
-    the entire rail. Lines are half the columns because terminal cells are
-    roughly twice as tall as wide, which keeps the box near-square on
-    screen.
-
-    Args:
-        available_cols: The holder's usable width in columns; values below
-            the historical minimum fall back to it (layout not settled).
-
-    Returns:
-        ``(cols, lines)`` for `fit_image_cell_size`.
-    """
-    cols = max(CHARACTER_AVATAR_COLS, min(CHARACTER_AVATAR_MAX_COLS, available_cols))
-    lines = max(
-        CHARACTER_AVATAR_LINES, min(CHARACTER_AVATAR_MAX_LINES, round(cols / 2))
-    )
-    return cols, lines
-
-
 def _character_avatar_fallback_renderable(
     pil: Any,
     *,
@@ -1594,10 +1567,6 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
         or getattr(screen, "_closed", False)
         or isinstance(runtime_shutdown, asyncio.Task)
     )
-
-
-
-
 
 
 class _ControllerState:
@@ -6149,7 +6118,6 @@ class ChatScreen(BaseAppScreen):
             return None
         return estimate_tokens(text, "", "")
 
-
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).
 
@@ -7354,7 +7322,6 @@ class ChatScreen(BaseAppScreen):
     #: it already estimated on the previous tick. Also a CLASS attribute
     #: default, for the same `__new__()`-fixture reason.
 
-
     @contextmanager
     def _console_derivation_scope(self):
         """Memoize repeated provider lookups for one derivation pass.
@@ -7682,13 +7649,6 @@ class ChatScreen(BaseAppScreen):
             (provider_config_key(provider), model_id),
             "",
         )
-
-
-
-
-
-
-
 
     @property
     def _console_environment(self) -> "ConsoleEnvironmentController":
@@ -8568,7 +8528,6 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_settings_summary(self) -> None:
         """Refresh through the current Screen presentation entry."""
         self._context_spend._refresh_settings_summary()
-
 
     def _request_console_agent_fleet_sync(self) -> None:
         """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
@@ -10681,12 +10640,9 @@ class ChatScreen(BaseAppScreen):
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
         )
 
-
     def _sync_console_cost_chip(self) -> None:
         """Refresh through the current Screen presentation entry."""
         self._context_spend._refresh_cost_chip()
-
-
 
     def _stop_console_environment_poll_timer(self) -> None:
         """Stop the Environment panel's local-tier poll timer, if running."""
@@ -10775,7 +10731,6 @@ class ChatScreen(BaseAppScreen):
                 )
             else:
                 sync()
-
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""
@@ -11030,7 +10985,6 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._context_spend._open_console_cost_breakdown()
 
-
     def _push_console_inspector(
         self,
         *,
@@ -11148,7 +11102,6 @@ class ChatScreen(BaseAppScreen):
         )
         capture_policy_wiring.bind_inspector(inspector)
         self.app.push_screen(inspector)
-
 
     def _open_console_library_search(self) -> None:
         """Open one-shot Library search from the retrieval controller."""
@@ -17455,7 +17408,6 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         status_chips.sync_rate_chip(visible, copy, tooltip)
-
 
     def _console_sync_maintenance_close_admission(self) -> None:
         """Defer new UI sync passes while an admitted pass finishes naturally."""

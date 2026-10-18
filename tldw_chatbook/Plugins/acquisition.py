@@ -28,6 +28,7 @@ from tldw_chatbook.Utils.private_paths import (
     open_private_binary,
     unlink_private_file,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from . import package_files, retention
 from .authority_store import _directory, _write
@@ -230,7 +231,7 @@ def _reserve(owner, authority, operation_id, destination, *, purpose=None):
         "session": owner.session_id,
         "name": destination.parent.name,
         "output": "snapshot",
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": utc_now_iso(),
         "boot": boot_identity(),
         "root": _physical(owner.root),
         "anchor": _physical(anchor),
