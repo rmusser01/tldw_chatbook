@@ -111,32 +111,36 @@ async def _mount_models(
     assert app.CSS_PATH == TldwCli.CSS_PATH
     context = app.run_test(size=size)
     pilot = await context.__aenter__()
-    screen = LLMScreen(app)
-    await app.push_screen(screen)
-    for _ in range(4):
-        await pilot.pause()
-    window = screen.query_one(LLMManagementWindow)
-    await _settle_pilot_until(
-        pilot,
-        lambda: (
-            window.active_view == "llama-cpp"
-            and len(window.query("#llm-view-remote")) == 1
-        ),
-        message="deferred model views did not finish mounting",
-    )
-    # Most of this module compares both GGUF providers. Under the lazy-once
-    # lifecycle, visit llamafile once so those comparison tests retain their
-    # original two-pane fixture while the dedicated deferral tests cover the
-    # true first-arrival shape.
-    if mount_llamafile:
-        window.active_view = "llamafile"
+    try:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(4):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
-            message="llamafile pane did not populate on first selection",
+            lambda: (
+                window.active_view == "llama-cpp"
+                and len(window.query("#llm-view-remote")) == 1
+            ),
+            message="deferred model views did not finish mounting",
         )
-        window.active_view = "llama-cpp"
-        await pilot.pause()
+        # Most of this module compares both GGUF providers. Under the lazy-once
+        # lifecycle, visit llamafile once so those comparison tests retain their
+        # original two-pane fixture while the dedicated deferral tests cover the
+        # true first-arrival shape.
+        if mount_llamafile:
+            window.active_view = "llamafile"
+            await _settle_pilot_until(
+                pilot,
+                lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
+                message="llamafile pane did not populate on first selection",
+            )
+            window.active_view = "llama-cpp"
+            await pilot.pause()
+    except BaseException:
+        await _close_context(context)
+        raise
     return app, pilot, context, screen, window, inventory_service
 
 
