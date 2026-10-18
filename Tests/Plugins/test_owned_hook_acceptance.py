@@ -780,7 +780,7 @@ async def test_installed_mcp_hook_normalization(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["live", "published_refused", "worker_refused"])
+@pytest.mark.parametrize("mode", ["current", "published_refused", "worker_refused"])
 async def test_owned_mcp_currentness_uses_actual_worker_and_effect_lanes(
     native_package, tmp_path, monkeypatch, mode
 ):
@@ -846,16 +846,16 @@ async def test_owned_mcp_currentness_uses_actual_worker_and_effect_lanes(
         before = len(case.unified.execution_log.read_recent())
         try:
             result = await lifecycle.initialize(token)
-            assert result.succeeded is (mode == "live"), result
+            assert result.succeeded is (mode == "current"), result
             assert ("worker", "admission") in lanes and ("worker", "launch") in lanes
             if mode != "worker_refused":
                 assert ("published", "launch") in lanes
-            if mode == "live":
+            if mode == "current":
                 assert ("worker", "accept") in lanes
             else:
                 assert not result.allowed and not result.accepted
             assert len(case.unified.execution_log.read_recent()) == before + (
-                mode == "live"
+                mode == "current"
             )
             assert case.ownership.is_connected(
                 case.profile_id, "owned-case:workspace-a"
@@ -1428,9 +1428,9 @@ async def _installed_compaction_case(
                     "hooks",
                 ]
                 assessment, execution, reservation = automatic_observations
-                assert assessment[3]["compactable_units"] == 0
-                assert execution[3]["compactable_units"] > 0
-                assert execution[1].value == "automatic"
+                assert assessment[1].value == execution[1].value == "automatic"
+                assert assessment[2:] == execution[2:]
+                assert assessment[3]["compactable_units"] == 4
                 assert reservation[1] == (None, None, session.id)
                 assert payloads and controller.provider_gateway.calls == 1
                 assert controller.run_state_for(session.id).is_send_allowed

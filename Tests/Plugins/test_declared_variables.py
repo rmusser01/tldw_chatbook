@@ -844,24 +844,25 @@ async def test_runtime_keeps_refusal_engine_when_all_native_rows_are_removed(
     assert maximum["_plugin_requirement_ceiling"]
     configuration = replace(configuration, skill_context_maximum=maximum)
     async with _runtime(rig) as runtime:
-        engine = await runtime.prepare_hooks_v2(
-            rig.session.id, configuration=configuration
-        )
-        assert engine is not None and engine.native_plugins.unavailable
-        assert all(
-            handler.id in engine.native_plugins.unavailable
-            for handler in engine.definitions
-        )
-        source = tool_event(provider="local")
-        matching = source.model_copy(
-            update={"data": dict(source.data, operation="file.write")}
-        )
-        nonmatching = source.model_copy(
-            update={"data": dict(source.data, operation="file.read")}
-        )
-        assert (await engine.fire_async(nonmatching)).allowed
-        assert not (await engine.fire_async(matching)).allowed
-        assert not rig.gateway.payloads and not rig.service.live_runs()
+        async with rig.controller.plugin_test_admission(configuration) as lifecycle:
+            engine = lifecycle.engine
+            assert engine is runtime.get_hooks_v2(rig.session.id)
+            assert engine.native_plugins.unavailable
+            assert all(
+                handler.id in engine.native_plugins.unavailable
+                for handler in engine.definitions
+            )
+            source = tool_event(provider="local")
+            matching = lifecycle.event(
+                "PreToolUse", data=dict(source.data, operation="file.write")
+            )
+            nonmatching = lifecycle.event(
+                "PreToolUse", data=dict(source.data, operation="file.read")
+            )
+            assert (await engine.fire_async(nonmatching)).allowed
+            assert not (await engine.fire_async(matching)).allowed
+            assert not rig.gateway.payloads and not rig.service.live_runs()
+        assert asyncio.current_task() not in rig.controller._hooks_v2_submissions
 
 
 @pytest.mark.asyncio
