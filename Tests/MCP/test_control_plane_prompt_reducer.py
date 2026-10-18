@@ -267,12 +267,20 @@ async def test_existing_suggestions_do_not_change_runtime_resolution(tmp_path):
 
 
 def test_high_risk_exclusion_is_shared_with_the_approval_card_badge():
-    """TASK-18928 AC#4 drift guard: both the reducer's exclusion and the
-    approval card's "(high risk)" badge key off the SAME
-    ``EffectiveToolState.risk_floored`` flag -- no parallel list."""
+    """TASK-18928 AC#4 drift guard: the reducer's exclusion consumes the
+    SAME constants and the SAME resolved flag the permission store's
+    resolution (and thereby the approval card's "(high risk)" badge)
+    uses -- no parallel list anywhere."""
+    import tldw_chatbook.MCP.permission_prompt_reducer as reducer_module
+    import tldw_chatbook.MCP.permission_store as store_module
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         format_approval_reason,
     )
+
+    # The reducer imports the class constants BY REFERENCE from the store:
+    # redefining either there cannot leave the reducer behind.
+    assert reducer_module.HIGH_RISK_TAGS is store_module.HIGH_RISK_TAGS
+    assert reducer_module.ALWAYS_ASK_TOOLS is store_module.ALWAYS_ASK_TOOLS
 
     state = EffectiveToolState(
         state="ask", origin="global_default", risk_floored=True
@@ -281,6 +289,43 @@ def test_high_risk_exclusion_is_shared_with_the_approval_card_badge():
     # The card renders the badge from the resolved state's risk_floored
     # flag; the reducer excludes on the same flag -- one source, no drift.
     assert "high risk" in format_approval_reason({"reason": "risk_floored"}).lower()
+
+    # And the flag is not the only guard: a high-risk-tagged tool at plain
+    # ask (risk_floored=False) is still refused by the class check.
+    tool = HubTool(
+        server_key="local:docs",
+        server_label="docs",
+        source="local",
+        name="process",
+        description="process description",
+        input_schema={"type": "object"},
+        tags=("process",),
+        stale=False,
+        executable=True,
+    )
+    records = [
+        {
+            "ts": "2026-08-01T20:00:00+00:00",
+            "server_key": "local:docs",
+            "tool_name": "process",
+            "initiator": "agent",
+            "decision": "approved",
+            "ok": True,
+        },
+        {
+            "ts": "2026-08-01T20:01:00+00:00",
+            "server_key": "local:docs",
+            "tool_name": "process",
+            "initiator": "agent",
+            "decision": "approved",
+            "ok": True,
+        },
+    ]
+
+    report = build_permission_prompt_report(records, [tool], {("local:docs", "process"): state})
+
+    assert report.recommendations == []
+    assert report.excluded[("local:docs", "process")] == "high-risk-floor"
 
     tool = HubTool(
         server_key="local:docs",

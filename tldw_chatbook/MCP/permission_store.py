@@ -1521,9 +1521,10 @@ class MCPPermissionStore:
             if not _is_dismissal_map(dismissals):
                 dismissals = {}
                 payload[SUGGESTION_DISMISSALS_KEY] = dismissals
-            if dismissals.get(tool_id) and dismissals[tool_id] == _iso_utc_now():
+            stamp = _iso_utc_now()
+            if dismissals.get(tool_id) == stamp:
                 return False
-            dismissals[tool_id] = _iso_utc_now()
+            dismissals[tool_id] = stamp
             return True
 
         self._mutate_locked(change)

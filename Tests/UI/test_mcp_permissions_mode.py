@@ -174,6 +174,20 @@ class PermissionsModeApp(ConsolidatedCSSApp):
     def on_mcp_permissions_mode_kill_switch_toggled(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_permissions_mode_suggestion_accept_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_dismiss_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_restore_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_dismissals_clear_requested(
+        self, event
+    ) -> None:
+        self.events.append(event)
+
     def on_mcp_permissions_mode_row_selected(self, event) -> None:
         self.events.append(event)
 
@@ -1929,3 +1943,61 @@ async def test_suggestion_keys_do_not_fire_from_the_matrix_and_vice_versa(reques
         finally:
             canvas.post_message = original_post_message
         assert messages == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_real_keypresses_route_suggestion_actions_by_focus(request):
+    """The a/d/r/c bindings fire only from the suggestions table's focus,
+    and Space never cycles the matrix while it holds focus -- proven with
+    real key presses, not direct action calls."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.populate_suggestions(
+            [_recommendation(), _recommendation(tool_name="purge", approved_count=2)],
+            {"local:docs::erase": "2026-08-02T10:00:00Z"},
+        )
+        # Seed the matrix with one tool row so a stray Space cycle would be
+        # observable (it would post StateCycleRequested).
+        await canvas.update_matrix(
+            [
+                _row(
+                    kind="tool",
+                    server_key="local:docs",
+                    server_label="docs",
+                    tool_name="search",
+                    state_label="Ask",
+                    cycle_current="ask",
+                )
+            ],
+            kill_switch=False,
+            preview="",
+        )
+        await pilot.pause()
+        events: list[object] = []
+        app.events = events
+
+        # Focus the suggestions table: a posts accept for the cursor row.
+        table = app.query_one("#mcp-perm-suggestions-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert [type(e).__name__ for e in events] == ["SuggestionAcceptRequested"]
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+        # Focus the MATRIX instead: the same key is inert (no suggestion
+        # event fires), and Space posts the matrix's own cycle instead of
+        # touching suggestions.
+        events.clear()
+        matrix = app.query_one("#mcp-perm-table", DataTable)
+        matrix.focus()
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert events == []
+        await pilot.press("space")
+        await pilot.pause()
+        assert [type(e).__name__ for e in events] == ["StateCycleRequested"]

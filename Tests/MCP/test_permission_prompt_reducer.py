@@ -15,6 +15,7 @@ def _tool(
     *,
     executable: bool = True,
     stale: bool = False,
+    tags: tuple[str, ...] = (),
 ) -> HubTool:
     return HubTool(
         server_key=server_key,
@@ -23,7 +24,7 @@ def _tool(
         name=name,
         description=f"{name} description",
         input_schema={"type": "object"},
-        tags=(),
+        tags=tags,
         stale=stale,
         executable=executable,
     )
@@ -306,3 +307,40 @@ def test_format_report_summarizes_all_exclusion_reasons():
         "permission state unavailable (1)",
     ):
         assert explanation in rendered
+
+
+def test_excludes_high_risk_tagged_tools_even_when_plainly_ask_gated():
+    """TASK-18928 AC#4: "never suggested" is a CLASS guarantee, not only the
+    rug-pull/downgrade flag. ``resolve_effective_state`` floors an
+    INHERITED allow to ask (risk_floored=True), but a high-risk-tagged tool
+    sitting at plain ask under the global default resolves
+    risk_floored=False -- the reducer must still refuse to suggest it,
+    because accepting would write exactly the tool-level allow the risk
+    floor deliberately spares that origin from."""
+    tool = _tool("local:docs", "write_file", tags=("mutates",))
+    records = [
+        _record("local:docs", "write_file", "approved"),
+        _record("local:docs", "write_file", "approved"),
+    ]
+    states = {("local:docs", "write_file"): _state("ask")}
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert report.recommendations == []
+    assert report.excluded[("local:docs", "write_file")] == "high-risk-floor"
+
+
+def test_excludes_always_ask_tools_by_identity():
+    """The code-owned ALWAYS_ASK set (floors even explicit allows) is shared
+    with the reducer: its members are never suggested either."""
+    tool = _tool("local:__local__", "character_save")
+    records = [
+        _record("local:__local__", "character_save", "approved"),
+        _record("local:__local__", "character_save", "approved"),
+    ]
+    states = {("local:__local__", "character_save"): _state("ask")}
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert report.recommendations == []
+    assert report.excluded[("local:__local__", "character_save")] == "high-risk-floor"
