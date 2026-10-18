@@ -1544,6 +1544,8 @@ async def test_declared_value_keyboard_mask_review_and_revoke(
             button = app.screen.query_one(selector, Button)
             button.focus()
             await pilot.pause()
+            button.scroll_visible(animate=False, immediate=True)
+            await pilot.pause()
             assert button in app.screen._compositor.visible_widgets
             await pilot.press("enter")
             await pilot.pause()

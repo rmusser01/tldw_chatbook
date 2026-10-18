@@ -551,13 +551,16 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
     assert len(fresh_ids) == 1 and original_maximum["plugin_run_id"] not in fresh_ids
     for maximum, run_id in admitted_maxima:
         assert maximum["plugin_run_id"] == run_id
-        assert {
-            key: value for key, value in maximum.items() if key != "plugin_run_id"
-        } == {
-            key: value
-            for key, value in original_maximum.items()
-            if key != "plugin_run_id"
-        }
+        assert (
+            maximum["_plugin_requirement_ceiling"]
+            is original_maximum["_plugin_requirement_ceiling"]
+        )
+    first_maximum = admitted_maxima[0][0]
+    assert {
+        key: value for key, value in first_maximum.items() if key != "plugin_run_id"
+    } == {
+        key: value for key, value in original_maximum.items() if key != "plugin_run_id"
+    }
     if disable:
         assert not resumed.accepted and not rig.gateway.payloads
         assert reads == ["evidence.txt"]
@@ -649,13 +652,18 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
         )
         for maximum, run_id in admitted_maxima:
             assert maximum["plugin_run_id"] == run_id
-            assert {
-                key: value for key, value in maximum.items() if key != "plugin_run_id"
-            } == {
-                key: value
-                for key, value in original_maximum.items()
-                if key != "plugin_run_id"
-            }
+            assert (
+                maximum["_plugin_requirement_ceiling"]
+                is original_maximum["_plugin_requirement_ceiling"]
+            )
+        first_maximum = admitted_maxima[0][0]
+        assert {
+            key: value for key, value in first_maximum.items() if key != "plugin_run_id"
+        } == {
+            key: value
+            for key, value in original_maximum.items()
+            if key != "plugin_run_id"
+        }
     assert sent.accepted
     payload = rig.gateway.payloads[-1]
     text = "\n".join(

@@ -498,6 +498,8 @@ async def test_vendor_transform_runs_once_then_native_final_guard(tmp_path):
     )
     if definition.operation is not None:
         original["data"]["operation"] = definition.operation
+    else:
+        original["data"].pop("operation", None)
     try:
         with pytest.raises(HookPreparationError):
             await prepare_tool(parse_event(original), engine, definition=definition)
