@@ -481,7 +481,7 @@ def _switcher_sources(
         probe and the controller's rebaser.
     """
     from ...Chat.console_settings_apply import pick_base_url
-    from .connection_probe import switcher_connection_prober
+    from .connection_probe import SWITCHER_PROBES_IN_FLIGHT, switcher_connection_prober
 
     store = screen._ensure_console_chat_store()
     providers_models = screen._providers_models()
@@ -496,11 +496,13 @@ def _switcher_sources(
             if url:
                 key = provider_config_key(provider)
                 landing = with_provider_endpoint(landing, key, url)
-    probes = [switcher_connection_prober(screen.app, landing)]
+    # One gate for both probers, so an open keeps its in-flight cap.
+    gate = asyncio.Semaphore(SWITCHER_PROBES_IN_FLIGHT)
+    probes = [switcher_connection_prober(screen.app, landing, gate=gate)]
     if landing is not app_config:
         readiness = partial(readiness, app_config=landing)
         if not full_surface:
-            probes.append(switcher_connection_prober(screen.app, app_config))
+            probes.append(switcher_connection_prober(screen.app, app_config, gate=gate))
 
     async def connection_prober(
         targets: Mapping[str, str | None], settled: Callable[[str], None]

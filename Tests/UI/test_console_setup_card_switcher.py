@@ -206,10 +206,10 @@ async def test_detected_stub_server_second_model_is_saved_by_the_real_writer(
 
         app.console_local_server_discovery = discover
 
-        def stub_only(running_app, config):
+        def stub_only(running_app, config, **gate):
             # Tests/conftest.py shuts this seam; open it for the detected
             # server alone, so no other local port on this machine is probed.
-            probe = switcher_connection_prober(running_app, config)
+            probe = switcher_connection_prober(running_app, config, **gate)
 
             async def only_llama_cpp(targets, settled):
                 await probe(

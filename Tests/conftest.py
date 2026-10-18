@@ -940,7 +940,7 @@ def _no_local_server_probes(
     monkeypatch.setattr(
         connection_probe,
         "switcher_connection_prober",
-        lambda _app, _app_config: _no_switcher_probe,
+        lambda _app, _app_config, **_gate: _no_switcher_probe,
     )
 
 

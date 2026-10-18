@@ -7,10 +7,13 @@ builder over a shared evidence owner; only the network under
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import inspect
 import threading
 from copy import deepcopy
+from dataclasses import replace
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -43,6 +46,7 @@ from tldw_chatbook.UI.Console_Modules.connection_probe import (
     SWITCHER_PROBES_IN_FLIGHT,
     switcher_connection_prober,
 )
+from tldw_chatbook.UI.Console_Modules.model_switcher import _switcher_sources
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
 pytestmark = pytest.mark.asyncio
@@ -331,6 +335,59 @@ async def test_one_open_keeps_a_small_fixed_number_of_probes_in_flight(servers):
         await _settle(app, pilot)
 
     assert sorted(servers.ports) == list(ports)
+    assert servers.max_in_flight == SWITCHER_PROBES_IN_FLIGHT
+
+
+async def test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap(
+    servers, monkeypatch
+):
+    """AC#2 with TASK-35190's second prober (review round 3): a llama.cpp chat
+    on :8200 probes it and the configured :8101, beside two other local
+    servers; Switch model's own prober keeps the four under one cap."""
+    monkeypatch.setattr(  # Tests/conftest.py shuts this seam.
+        connection_probe, "switcher_connection_prober", switcher_connection_prober
+    )
+    config = {
+        "api_settings": {
+            provider: {"api_url": f"http://127.0.0.1:{port}"}
+            for provider, port in (
+                ("llama_cpp", 8101),
+                ("ollama", 8102),
+                ("koboldcpp", 8103),
+            )
+        }
+    }
+    draft = _draft()
+    draft = replace(
+        draft, settings=replace(draft.settings, base_url="http://127.0.0.1:8200")
+    )
+    servers.hold = threading.Event()
+    app = _harness()
+    screen = SimpleNamespace(
+        app=app,
+        is_attached=False,
+        _ensure_console_chat_store=lambda: None,
+        _providers_models=lambda: PROVIDERS_MODELS,
+        _console_default_readiness=lambda *_args, **_kwargs: None,  # Never read.
+        _ensure_console_chat_controller=lambda: SimpleNamespace(
+            rebase_console_settings_draft=_rebase
+        ),
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        sources = _switcher_sources(
+            screen, "session-a", ("llama_cpp", "model-a"), config, draft=draft
+        )
+        targets = dict.fromkeys(config["api_settings"])
+        probing = asyncio.ensure_future(
+            sources["connection_prober"](targets, lambda _provider: None)
+        )
+        await _wait(pilot, lambda: len(servers.requests) >= SWITCHER_PROBES_IN_FLIGHT)
+        await pilot.pause(0.2)
+        assert len(servers.requests) == SWITCHER_PROBES_IN_FLIGHT
+        servers.hold.set()
+        await probing
+
+    assert sorted(servers.ports) == [8101, 8102, 8103, 8200]
     assert servers.max_in_flight == SWITCHER_PROBES_IN_FLIGHT
 
 

@@ -404,8 +404,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # latest endpoint, pick mode reads the session endpoint, and a Settings
 # round trip keeps it (TASK-35190): 361. Its review round 2 appends one
 # node id, 3 of 3 serial: Ctrl+N reads the configured endpoint, never
-# probed on a public host (TASK-35190): 362.
-MINIMUM_FILES = 362
+# probed on a public host (TASK-35190): 362. Its review round 3 appends one
+# node id, 3 of 3 serial: an open's two probers share one in-flight cap
+# (TASK-35190): 363.
+MINIMUM_FILES = 363
 
 
 def read_census(path: Path) -> list[str]:
