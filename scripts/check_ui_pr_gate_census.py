@@ -411,8 +411,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (TASK-33641.4): 364; and one more, 3 of 3 serial: every Send disabled
 # reason fits its strip whole (TASK-33005.7): 365; and one more, 3 of 3
 # serial: both generation panels' backend editors are whole and Save is
-# reachable (TASK-33641.3): 366.
-MINIMUM_FILES = 366
+# reachable (TASK-33641.3): 366. Its review round 1 moves the eleven
+# bootstrap_profile node ids Phase 9 appended (TASK-33006.19's three,
+# TASK-33006.25's, TASK-33005.12's two, TASK-35190's three, TASK-33641.4's
+# and TASK-33641.3's) to the PR Fast Lane's admission-sensitive step, ledger
+# R11's rule (TASK-32873: their keep_bootstrap_profile enrollment can poison
+# sandboxed suites sharing a process). Each still runs in one PR lane: 355.
+MINIMUM_FILES = 355
 
 
 def read_census(path: Path) -> list[str]:

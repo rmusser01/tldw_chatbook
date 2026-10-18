@@ -611,17 +611,6 @@ Tests/UI/test_console_switcher_local_probe.py::test_find_filters_not_running_by_
 Tests/UI/test_settings_configuration_hub.py::test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick
 # TASK-33002.9 (review round 1): a Test that probes nothing toasts its summary with markup=False (6 s, private profile).
 Tests/UI/test_settings_provider_test_draft.py::test_a_test_that_probes_nothing_toasts_its_summary_literally
-# Phase 9 Task 6 (2026-10-17) appends its Tests/UI tests that no lane ran, each
-# a node id (test_console_endpoint_discovery.py holds a red that is not this
-# task's), each 3 of 3 serial alone.
-# TASK-33006.19: pick mode offers a listing only for the endpoint that listed it (5 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it
-# TASK-33006.19 (review round 1): a listing is not offered once a pick of it restores another endpoint (5 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint
-# TASK-33006.19 (review round 1): a listing is offered only while a pick of it keeps the listed endpoint (4 s); since TASK-35190 a pick keeps this chat's session endpoint, so it is offered there without retyping.
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint
-# TASK-33006.25: a new entry listed under the close guard says how to pick its model (5 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it
 # Phase 9 Task 7 (2026-10-17), each 3 of 3 serial. TASK-33002.10 and .11: F1 help says a category switch keeps the draft, and Image/Video Gen count fields, not draft keys (whole file, ~38 s).
 Tests/UI/test_settings_state_line_unsaved_count.py
 # TASK-33003.14: '/fallback <label>' lands on each Console Behavior generation fallback; bare labels still land on Providers & Models (whole file, ~10 s, private profile).
@@ -660,20 +649,10 @@ Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keep
 # Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
 # TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
-# TASK-33005.12 (Wave 6 integration review), renamed by TASK-35190: on this chat's endpoint a Chat settings listing, not the configured server's, is the provider's rows, also after a pick of OpenAI (4 cases, 3 of 3 serial, ~7 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers
-# TASK-33005.12 (Wave 6 integration review round 2), renamed by TASK-35190: on this chat's endpoint a Chat settings listing replaces a loaded catalog (3 of 3 serial, ~2 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog
-# Phase 9 Task 18 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial.
-# TASK-35190 AC#1/#3: a pick on the chat's own provider keeps its session endpoint, after a pick of another provider too, which takes its own (3 cases, ~5 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint
-# TASK-35190: the rebaser keeps the chat's URL for an unseen model on its provider, but a registry entry keeps its own (2 cases, <1 s).
-Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry
+# Phase 9 Task 18 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial; its two bootstrap_profile nodes run in the PR Fast Lane's admission-sensitive step since the capture fix wave's review (ledger R11).
 # TASK-35190 AC#4: Switch model's real probe and readiness read the session endpoint while the configured one is down, a pick keeps it, and (review round 2) the open's probe of the configured one makes Ctrl+N refuse, naming it (~6 s, private profile).
 Tests/UI/test_console_endpoint_discovery.py::test_switch_model_keeps_the_chats_session_endpoint_and_saves_none
-# Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial.
-# TASK-35190: an unseen pick takes the endpoint its provider's drafts had most recently, after a detour too (2 cases, ~12 s).
-Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last
+# Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial; its bootstrap_profile node runs in the admission-sensitive step (ledger R11).
 # TASK-35190: Chat settings' pick mode reads the session endpoint while the configured one is down, and its pick keeps it (~7 s, private profile).
 Tests/UI/test_console_endpoint_discovery.py::test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down
 # TASK-35190: after a Settings round trip a pick on the chat's provider still keeps the session endpoint (~10 s, private profile).
@@ -684,10 +663,6 @@ Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_rea
 # Phase 9 Task 18 review round 3 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
 # TASK-35190: an open on a moved endpoint runs two probers under one in-flight cap, four local servers at most SWITCHER_PROBES_IN_FLIGHT at a time (~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap
-# Phase 9 capture fix wave (2026-10-18) appends entries no lane ran, each 3 of 3 serial.
-# TASK-33641.4 AC#1: a dispatched weekly reminder's painted queue row holds its relative next run at 211x44 and 235x52 (2 cases, ~8 s).
-Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run
+# Phase 9 capture fix wave (2026-10-18) appends entries no lane ran, each 3 of 3 serial; its two bootstrap_profile nodes run in the admission-sensitive step (ledger R11).
 # TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
 Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole
-# TASK-33641.3: Image Gen's and Video Gen's backend editors are as tall as their content and Save is reachable, at 211x44 and 235x52 (4 cases, ~10 s).
-Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable

@@ -301,6 +301,22 @@ ADMISSION_TARGETS = (
     # bootstrap_profile, so they run here (12 cases, ~20 s, 3 of 3 serial).
     "Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column",
     "Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row",
+    # Phase 9 capture fix wave, review round 1 (ledger R11): the bootstrap_profile
+    # node ids this phase had put in the UI census run here instead: the Video
+    # Gen editor (TASK-33641.3, 4 cases), the endpoint discovery nodes
+    # (TASK-33006.19, TASK-33006.25, TASK-33005.12, TASK-35190; 16 cases) and
+    # the weekly queue row (TASK-33641.4, 2 cases). 22 cases, ~80 s serial.
+    "Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint",
+    "Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last",
+    "Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
