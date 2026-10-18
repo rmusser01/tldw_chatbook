@@ -1,11 +1,11 @@
 ---
 id: TASK-32695
 title: Qualify plugin lifecycle interoperability and authoring examples
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 16:17'
+updated_date: '2026-10-18 16:21'
 labels:
   - plugins
   - implementation
@@ -45,7 +45,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #16 Candidate-discard confirmation is invalidated before paging or refreshing its list, including a failed reload; a fresh exact review is required before reference release.
 - [x] #17 Previously unqualified Settings cases have current-source targeted execution evidence; diagnosed fixture or production blockers are repaired without weakening profile, permission or persistence guards.
 - [x] #18 The remaining relevant module-size and CSS-dimension gates pass without increasing ratchet ceilings, formatting compression, blanket exclusions or changed visual values.
-- [ ] #19 Relevant affected regression, static and integration checks pass on the repaired source; remaining limits and review disposition are documented and the existing draft PR is updated safely.
+- [x] #19 Relevant affected regression, static and integration checks pass on the repaired source; remaining limits and review disposition are documented and the existing draft PR is updated safely.
 - [x] #20 Observed published-head CI bootstrap, plugin timestamp, diagnostic-inventory and worker/markup gate blockers are repaired or explicitly bounded by native platform evidence, preserving guards and currentness rather than suppressing checks.
 <!-- AC:END -->
 
@@ -269,6 +269,8 @@ One fresh independent requesting-code-review on141369945f reported0Critical/0Imp
 The reviewed source141369945f was published with exact original7b4d5c501b lease and remote head verified before checking AC15. Docs/QA/managed-plugins-pr3148-rebase-2026-10-18.md contains current evidence, review coverage, remaining limits and all38rulings with reasons/costs. This supersedes earlier unfinished checkpoint notes only for this integration outcome. Existing14historical criteria stay historical; no blanket feature/suite or merge-readiness claim. Final documentation/task closeout has exact unchanged product/test applicability and its own verified publication.
 
 PR3148 follow-up local qualification completed at reviewed code/census510ba3b52fbd48c8d749fa21dab6159f4e94e2dc. Fixed P3 confirmation invalidation and actual retired-screen worker publication, current Settings/profile/UI test contracts, bounded existing-owner module moves/equal-value CSS, canonical timestamp writers, reviewed diagnostic/markup/worker metadata and CI profile bootstrap. Exact selected latest accounting648passes/1genuineWindows-onlyskip, including Settings286/286 and all11actualprune regressions; original failures remain preserved. All four direct static gates return0, relevant size/CSS/startup/semantic controls pass, no raised caps/guard relaxation. Independent requesting-code-review0Critical/0Important/0Minor; P3resolved; reporta98fc2c7d8ce7dde2a466cd9e7839e12923470a42341a16bcdfa6c5d76e46f73. QA: Docs/QA/managed-plugins-pr3148-blockers-2026-10-18.md; previous38rulings retained. Existing ADR097/150/161/162/163/173 apply, no newADR. Added actual Textual-prune lesson. Native Linux/Windows, full suite, realkeychain/reboot/vendorhosts/races/customdata projection/realresetundoidle remain unqualified; actualDarwinCIbootstrap+3collectionnodes only. PublicationAC19 staysopen until observed-head lease update and remote verification; draft/autooff retained.
+
+Follow-up publication verified: reviewed fixes/QA published to existing draftPR3148 at1ed9c4345eab7f2b4ae0f82cd7b7fe4dcd8c47e9 using exact lease661856c9e2d2745921de0fd662c3c863a4c61ac6. Direct GitHub ref and REST PR confirm head; updated validation description preserves bot suffix, drafttrue/auto-mergeoff/open. Original immediate stale GraphQL response retained; no blind repush. All59reviewed product/test/CSS/workflow/census hashes remain exact. AC19 now complete; final task-only status/AC closeout preserves all reviewed code and existing native/full-suite/remoteCI limits. Evidence publication-first-verified.json; QA Docs/QA/managed-plugins-pr3148-blockers-2026-10-18.md. No merge performed.
 <!-- SECTION:NOTES:END -->
 
 <!-- SECTION:PLAN:END -->
