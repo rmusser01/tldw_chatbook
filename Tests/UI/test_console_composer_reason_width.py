@@ -209,7 +209,6 @@ def _disabled_reason_literals() -> list[tuple[str, bool]]:
     return literals
 
 
-@pytest.mark.bootstrap_profile
 def test_every_disabled_reason_fits_the_strip_whole():
     """The capture phase painted "Send blocked — key rejected; update the
     API key t…": a reason fits only when its cells, the setup chevron and
