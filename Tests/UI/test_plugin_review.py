@@ -578,6 +578,100 @@ async def test_mounted_exact_reviews_cover_installed_lifecycle(
 
 @private_profile_test
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reload_action", ["refresh", "next", "failed-refresh"])
+async def test_candidate_reload_requires_fresh_discard_review(
+    request, native_console, native_package, monkeypatch, reload_action
+):
+    from pathlib import Path
+
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginStatusModal
+
+    rig = native_console
+    package = native_package()
+    snapshots = {}
+    for index in range(51 if reload_action == "next" else 2):
+        identity = f"discard-reload-{index:02d}"
+        snapshots[identity] = await rig.service.acquire_snapshot(
+            select_local_source(package),
+            identity,
+            await rig.service.acquisition_destination(identity),
+        )
+
+    app = BrowseApp(rig)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settled(pilot, app.screen)
+        sources = app.plugin_source_service
+        await app.push_screen(PluginStatusModal(sources, candidates=True))
+        modal = app.screen
+        await pilot.pause()
+
+        async def press(identity):
+            button = modal.query_one(identity, Button)
+            for _ in range(100):
+                await pilot.pause(0.02)
+                if not button.disabled and not button.has_class("-active"):
+                    break
+            assert not button.disabled
+            button.focus()
+            button.scroll_visible(animate=False, immediate=True)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+        modal.query_one(OptionList).highlighted = 0
+        original_id = modal.rows[0]["operation_id"]
+        await press("#plugin-status-review")
+        assert modal.review is not None
+        confirm = modal.query_one("#plugin-status-confirm", Button)
+        assert not confirm.disabled
+
+        original_listing = sources.list_persisted_candidates
+        if reload_action == "failed-refresh":
+
+            async def unavailable(**kwargs):
+                raise OSError("candidate inventory temporarily unavailable")
+
+            monkeypatch.setattr(sources, "list_persisted_candidates", unavailable)
+
+        await press(
+            "#plugin-status-next"
+            if reload_action == "next"
+            else "#plugin-status-refresh"
+        )
+        assert confirm.disabled, "reloading must invalidate the visible confirmation"
+        assert modal.review is None
+
+        if reload_action == "failed-refresh":
+            monkeypatch.setattr(sources, "list_persisted_candidates", original_listing)
+            await press("#plugin-status-refresh")
+
+        before = await original_listing(limit=50)
+        assert (
+            next(row for row in before if row["operation_id"] == original_id)["reason"]
+            is None
+        )
+        selected = next(
+            index
+            for index, row in enumerate(modal.rows)
+            if row["operation_id"] != original_id
+        )
+        modal.query_one(OptionList).highlighted = selected
+        fresh_id = modal.rows[selected]["operation_id"]
+        await press("#plugin-status-review")
+        await press("#plugin-status-confirm")
+        after = await original_listing(offset=modal.page * 50, limit=50)
+        assert (
+            next(row for row in after if row["operation_id"] == fresh_id)["reason"]
+            == "reference_already_released"
+        )
+        assert all(
+            Path(row.materialized_identity).is_dir() for row in snapshots.values()
+        )
+
+
+@private_profile_test
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_uninstall_retained_data_status_and_history_cleanup(
     request, native_console, size
