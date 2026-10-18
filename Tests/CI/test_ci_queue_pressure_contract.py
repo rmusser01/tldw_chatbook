@@ -24,6 +24,7 @@ LANES = (
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
+    "Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection",
     "Tests/MCP/test_approval_timeout_policy.py",
     "Tests/MCP/test_control_plane_bridge.py",
     "Tests/MCP/test_live_server_request_wiring.py",

@@ -55,6 +55,9 @@ _KEEP = "Tests/UI/test_app_keep_alive_dead_screen.py::"
 
 #: P0 task -> the gated regression tests (a file, or one test's node id).
 P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
+    "TASK-35552": (
+        "Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection",
+    ),
     "TASK-35520": ("Tests/UI/test_console_partial_resize.py",),
     "TASK-34807": (
         'Tests/Chat/test_response_rules_preparation_custody.py',

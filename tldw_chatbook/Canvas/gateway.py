@@ -1924,6 +1924,14 @@ class CanvasGateway:
             return _error_response("selection_changed", 409)
         except (TypeError, ValueError):
             return _error_response("navigation_refused", 409)
+        # A live parent reconciliation supersedes the original command's result.
+        if (
+            session.selection_epoch != value["selection_epoch"]
+            and session.scope.conversation_session_id
+            == captured.conversation_session_id
+            and self._session_is_current(session, session.scope)
+        ):
+            return _error_response("selection_changed", 409)
         if (
             not self._session_is_current(session, captured)
             or not isinstance(navigation, CanvasGatewayNavigation)
