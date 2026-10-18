@@ -839,7 +839,7 @@ Depends on: Task 6 (TASK-33006.19, integrated in Wave 4)
 - The rebase onto Phase 8's final head is done (Phase 8 merged as #3144 at 111f8e48fc, 2026-10-17); Wave 3 starts.
 - Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together) (done 2026-10-17, reviewed clean at fc9f3ec375).
 - Wave 4: Tasks 6, 7, 8 (done 2026-10-17, integrated at 0499159640). The three tasks add 10 UI PR census entries (332 -> 342). Filed during its reviews: TASK-35190 (from TASK-33006.19; planned as Task 18, Wave 7) and TASK-35020.1 (a red speech-form source pin under TASK-35020, outside this phase).
-- Wave 5: Tasks 12, 14, 17.
+- Wave 5: Tasks 12, 14, 17 (done 2026-10-17, integrated at 414b0880c1). The three tasks add 9 UI PR census entries (342 -> 351: Task 12's four, Task 14's five; Task 14 also widens the provider save-scope node to its whole file in place). Filed during its reviews: TASK-35339 (the shared scratch_config fixture, from TASK-33002.17), TASK-35227 (the Realtime, TTS, MCP and RAG key readers, from TASK-33641.11) and TASK-35369 (Moonshot and Z.ai readiness under an environment source, from TASK-33001.14).
 - Wave 6: Tasks 15, 16.
 - Wave 7: Task 18 alone (added by the controller 2026-10-17; it shares files with Task 12 in Wave 5 and with Tasks 15 and 16 in Wave 6).
 
