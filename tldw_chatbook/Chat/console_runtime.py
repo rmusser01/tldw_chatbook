@@ -919,6 +919,26 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "controller",
         why="Inert view projection; app-owned rule work and status survive detachment.",
     ),
+    ConsoleViewHookSlot(
+        "present_results",
+        "archive_recovery",
+        why="Typed results remain app-owned for remount; absent projection is inert.",
+    ),
+    ConsoleViewHookSlot(
+        "present_confirmation",
+        "archive_recovery",
+        why="Coordinator fails closed when no mounted confirmation is answerable.",
+    ),
+    ConsoleViewHookSlot(
+        "is_answerable",
+        "archive_recovery",
+        why="No view cannot authorize a new recovery effect.",
+    ),
+    ConsoleViewHookSlot(
+        "on_settled",
+        "archive_recovery",
+        why="Typed receipts remain app-owned when their view detaches.",
+    ),
     # Only disposable screen projections belong here. Domain dependencies
     # are frozen into custody or resolved through app-owned services before
     # a turn task starts.
@@ -1174,6 +1194,7 @@ class ConsoleRuntime:
         #: it already holds afterwards and builds nothing new -- see
         #: `dispose` for why a rebuild during quit is the hazard.
         self._disposed: bool = False
+        self._archive_recovery = None
         self._start_canvas_policy_watcher()
         self.authority_token = str(uuid4())
         database = getattr(app, "chachanotes_db", None)
@@ -2637,6 +2658,10 @@ class ConsoleRuntime:
                 else:
                     reservations.pop(record.archive_conversation_id, None)
                 record.archive_conversation_id = None
+            if self._archive_recovery is not None and record.request is not None:
+                self._archive_recovery.release_user_proof(
+                    record.request.configuration.recovery_user_origin
+                )
             record.request = None
             record.inputs.attachments = ()
             record.inputs.staged_evidence_revision = None
@@ -2708,6 +2733,12 @@ class ConsoleRuntime:
             finally:
                 store.release_received_turn(claim)
             raise
+        if self._archive_recovery is not None:
+            self._archive_recovery.accept_user_proof(
+                request.configuration.recovery_user_origin,
+                request.session_id,
+                request.turn_id,
+            )
         coroutine = self._run_custodied_turn(
             record,
             origin=origin,
@@ -2862,6 +2893,12 @@ class ConsoleRuntime:
             self._require_received_custody_current(record, controller)
 
         require_received()
+        if self._archive_recovery is not None and record.received_intent is not None:
+            self._archive_recovery.accept_user_proof(
+                request.configuration.recovery_user_origin,
+                request.session_id,
+                request.turn_id,
+            )
         if record.archive_conversation_id:
             from tldw_chatbook.Chat.conversation_archive_actions import (
                 conversation_send_refusal,
@@ -4661,7 +4698,16 @@ class ConsoleRuntime:
         self._consume_task_outcome(task)
         return cancelled
 
+    def ensure_archive_recovery(self) -> Any:
+        """Return the app-owned coordinator shared by agent and manual recovery."""
+        if self._archive_recovery is None and not self._disposed:
+            from tldw_chatbook.Chat.archive_recovery.runtime import (
+                ArchiveRecoveryRuntime,
+            )
 
+            self._archive_recovery = ArchiveRecoveryRuntime(self._app)
+            self._bind_view_hooks()
+        return self._archive_recovery
 
     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
         """Return the Console chat controller, creating it lazily.
@@ -4744,6 +4790,7 @@ class ConsoleRuntime:
             getattr(raw_cli_runtime, "cancel_session", None),
         )
         self.set_chat_controller(ConsoleChatController(**kwargs))
+        self._chat_controller._archive_recovery_runtime = self.ensure_archive_recovery()
         self._chat_controller.prompt_history = self.ensure_prompt_history()
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
@@ -5209,6 +5256,8 @@ class ConsoleRuntime:
 
     def _hook_target(self, kind: str) -> Any | None:
         """Resolve one slot's owning object, or `None` if unbuilt."""
+        if kind == "archive_recovery":
+            return self._archive_recovery
         if kind == "controller":
             return self._chat_controller
         if kind == "store":
@@ -5682,6 +5731,12 @@ class ConsoleRuntime:
         self._seal_hooks_v2(session_id)
         if self._worktree_recovery is not None:
             self._worktree_recovery.cancel_session(session_id)
+        recovery_close_cancelled = False
+        if self._archive_recovery is not None:
+            try:
+                await self._archive_recovery.close_session(session_id)
+            except asyncio.CancelledError:
+                recovery_close_cancelled = True
 
         # The exact close ticket makes this owner's fence irreversible. Keep
         # recoveries on a refused/provisional close, but not through its drain.
@@ -5726,7 +5781,7 @@ class ConsoleRuntime:
             self._bounded_wait(tasks, timeout_seconds=timeout_seconds),
             name=f"console-close-drain-{ticket.close_id[:8]}",
         )
-        cancel_requested = False
+        cancel_requested = recovery_close_cancelled
         while True:
             try:
                 pending = await asyncio.shield(drain_task)
@@ -6000,6 +6055,12 @@ class ConsoleRuntime:
         )
         if callable(begin_progress_close):
             begin_progress_close()
+        recovery_shutdown_cancelled = False
+        if self._archive_recovery is not None:
+            try:
+                await self._archive_recovery.shutdown()
+            except asyncio.CancelledError:
+                recovery_shutdown_cancelled = True
         with self._run_hooks_lock:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
@@ -6185,7 +6246,7 @@ class ConsoleRuntime:
             self._bounded_wait(drain_tasks, timeout_seconds=remaining_seconds()),
             name="console-dispose-drain",
         )
-        cancel_requested = False
+        cancel_requested = recovery_shutdown_cancelled
         while True:
             try:
                 pending = await asyncio.shield(drain)

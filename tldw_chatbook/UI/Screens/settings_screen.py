@@ -27526,7 +27526,10 @@ class SettingsScreen(BaseAppScreen):
             async def _complete_archive() -> None:
                 try:
                     archived = await storage_call(
-                        registry, "archive_workspace", workspace_id
+                        registry,
+                        "archive_workspace",
+                        workspace_id,
+                        expected_archive_revision=record.archive_revision,
                     )
                 except WorkspaceRegistryServiceError as exc:
                     _failed(str(exc))
@@ -27699,7 +27702,11 @@ class SettingsScreen(BaseAppScreen):
             # exclusive worker cancels its predecessor's await.
             try:
                 restored = await storage_call(
-                    registry, "unarchive_workspace", receipt.workspace_id
+                    registry,
+                    "unarchive_workspace",
+                    receipt.workspace_id,
+                    expected_archive_revision=receipt.archive_revision,
+                    expected_name=receipt.name,
                 )
             except WorkspaceRegistryServiceError as exc:
                 if _owns_receipt() and _visible():

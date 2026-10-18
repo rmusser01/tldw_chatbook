@@ -116,6 +116,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     _register_core_connection,
 )
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
+from .private_sqlite_process import HelperTimeoutError
 from .base_db import (
     _QuiescentSQLiteConnection,
     _SemanticMutationAuthorization,
@@ -809,7 +810,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 82  # ADR-239 immutable Canvas sibling sequences.
+    _CURRENT_SCHEMA_VERSION = 83  # Local archive chronology (ADR-166).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2999,7 +3000,9 @@ DELETE FROM keywords
 
     # --- Connection Management ---
     @_core_getter
-    def _get_thread_connection(self) -> sqlite3.Connection:
+    def _get_thread_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """
         Retrieves or creates a thread-local SQLite connection.
 
@@ -3026,10 +3029,13 @@ DELETE FROM keywords
         from tldw_chatbook.Backup_Recovery.participants import _core_access
 
         _core_access(self)
+        if operation_deadline is not None and time.monotonic() >= operation_deadline:
+            raise TimeoutError("Conversation connection budget exhausted")
         try:
             self._connection_quiescence.begin_acquisition()
         except RuntimeError as exc:
             raise CharactersRAGDBError(str(exc)) from exc
+        opened_here = False
         try:
             conn = _core_cached_connection(self, getattr(self._local, "conn", None))
             if conn is not None and not self._connection_quiescence.is_registered(conn):
@@ -3046,10 +3052,44 @@ DELETE FROM keywords
                     >= self._LIVENESS_PING_IDLE_SECONDS
                 ):
                     try:
-                        conn.execute("SELECT 1")  # Check if connection is still alive
-                    except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                        # Reopen only when SQLite proves the handle is closed;
-                        # an uncertain borrower keeps both maintenance pins.
+                        if operation_deadline is None:
+                            conn.execute("SELECT 1")
+                        else:
+                            old_timeout = conn.execute(
+                                "PRAGMA busy_timeout"
+                            ).fetchone()[0]
+                            try:
+                                remaining = operation_deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise TimeoutError(
+                                        "Conversation connection budget exhausted"
+                                    )
+                                conn.execute(
+                                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                                )
+                                conn.set_progress_handler(
+                                    lambda: int(time.monotonic() >= operation_deadline),
+                                    100,
+                                )
+                                conn.execute("SELECT 1")
+                            finally:
+                                conn.set_progress_handler(None, 0)
+                                conn.execute(f"PRAGMA busy_timeout = {old_timeout}")
+                    except (sqlite3.ProgrammingError, sqlite3.OperationalError) as exc:
+                        if (
+                            operation_deadline is not None
+                            and isinstance(exc, sqlite3.OperationalError)
+                            and (
+                                time.monotonic() >= operation_deadline
+                                or any(
+                                    word in str(exc).lower()
+                                    for word in ("locked", "busy", "interrupt")
+                                )
+                            )
+                        ):
+                            raise TimeoutError(
+                                "Conversation connection probe timed out"
+                            ) from exc
                         try:
                             sqlite3.Connection.in_transaction.__get__(conn)
                         except sqlite3.ProgrammingError:
@@ -3066,26 +3106,51 @@ DELETE FROM keywords
                         self.db_path_str,
                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                         check_same_thread=False,  # Required for threading.local approach
-                        timeout=15,  # Maybe slightly increase timeout?
+                        timeout=15
+                        if operation_deadline is None
+                        else max(0.0, operation_deadline - time.monotonic()),
+                        **(
+                            {"operation_deadline": operation_deadline}
+                            if operation_deadline is not None
+                            else {}
+                        ),
                         factory=_QuiescentSQLiteConnection,
                     )
+                    opened_here = True
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
                     _register_core_connection(self, conn)
                     _core_access(self)
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
+
+                    def execute_setup(sql: str) -> None:
+                        if operation_deadline is not None:
+                            remaining = operation_deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError(
+                                    "Conversation connection budget exhausted"
+                                )
+                            conn.execute(
+                                f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                            )
+                        conn.execute(sql)
+
+                    if operation_deadline is not None:
+                        conn.set_progress_handler(
+                            lambda: int(time.monotonic() >= operation_deadline), 100
+                        )
                     if not self.is_memory_db:
-                        conn.execute("PRAGMA journal_mode=WAL;")
+                        execute_setup("PRAGMA journal_mode=WAL;")
                     # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                     # crash can lose the last commit or two, acceptable for this
                     # local cache) and avoids an fsync on every commit -- the
                     # default FULL was fsyncing the WAL on every commit despite
                     # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
                     # 57-61 for the original template (task-15465).
-                    conn.execute("PRAGMA synchronous=NORMAL;")
+                    execute_setup("PRAGMA synchronous=NORMAL;")
 
-                    conn.execute("PRAGMA foreign_keys = ON;")
+                    execute_setup("PRAGMA foreign_keys = ON;")
                     # task-22224: a HELD connection needs true autocommit (see
                     # Library_Ingest_Jobs_DB.py's module docstring -- the store
                     # template -- for the rule). Under the legacy default, one
@@ -3122,6 +3187,13 @@ DELETE FROM keywords
                         canvas_deletion_authorization
                     )
                     _core_access(self)
+                    if operation_deadline is not None:
+                        if time.monotonic() >= operation_deadline:
+                            raise TimeoutError(
+                                "Conversation connection budget exhausted"
+                            )
+                        conn.set_progress_handler(None, 0)
+                        conn.execute("PRAGMA busy_timeout = 15000")
                     self._connection_quiescence.register(conn)
                     self._local.conn = conn
                     logger.debug(
@@ -3146,6 +3218,20 @@ DELETE FROM keywords
                             self._local.semantic_mutation_authorization = None
                             self._local.voice_trace_import_authorization = None
                             self._local.canvas_revision_deletion_authorization = None
+                    if operation_deadline is not None and (
+                        isinstance(exc, (TimeoutError, HelperTimeoutError))
+                        or isinstance(exc, sqlite3.OperationalError)
+                        and (
+                            time.monotonic() >= operation_deadline
+                            or any(
+                                word in str(exc).lower()
+                                for word in ("locked", "busy", "interrupt")
+                            )
+                        )
+                    ):
+                        raise TimeoutError(
+                            "Conversation connection setup timed out"
+                        ) from exc
                     logger.error(
                         f"Failed to connect to database "
                         f"db_sha256={self._db_diagnostic_ref} "
@@ -3157,21 +3243,39 @@ DELETE FROM keywords
                             f"Failed to connect to database '{self.db_path_str}': {exc}"
                         ) from exc
                     raise
+            if (
+                operation_deadline is not None
+                and time.monotonic() >= operation_deadline
+            ):
+                if opened_here:
+                    self.close_connection()
+                raise TimeoutError("Conversation connection budget exhausted")
             self._local.conn_last_used = time.monotonic()
             return self._local.conn
         finally:
             self._connection_quiescence.finish_acquisition()
 
-    def get_connection(self) -> sqlite3.Connection:
+    def get_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """
         Public method to get the current thread's database connection.
 
         This is a convenience wrapper around `_get_thread_connection`.
 
+        Args:
+            operation_deadline: Optional absolute time.monotonic deadline covering
+                private admission, cold setup and liveness probing. Default callers
+                retain existing timeout and quiescence ownership behavior.
+
         Returns:
             The active sqlite3.Connection for the current thread.
         """
-        return self._get_thread_connection()
+        return (
+            self._get_thread_connection()
+            if operation_deadline is None
+            else self._get_thread_connection(operation_deadline=operation_deadline)
+        )
 
     def registered_connection_count(self) -> int:
         """Return the number of live same-file thread-owned handles.
@@ -8050,6 +8154,36 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
+        """Add local archive chronology while retaining shared sync events."""
+        self._require_migration_entry_version(conn, 82, "V82→V83")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v82_to_v83_archive_chronology.sql"
+        )
+        try:
+            with self.transaction(immediate=True) as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V82→V83"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 83 "
+                    "WHERE schema_name = ? AND version = 82",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError(
+                        "Archive chronology migration version update failed"
+                    )
+            if self._get_db_version(conn) != 83:
+                raise SchemaError("Archive chronology migration version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V82 to V83 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
         """Retain machine continuation dedup independently of checkpoints."""
         self._require_migration_entry_version(conn, 74, "V74→V75")
@@ -8529,6 +8663,7 @@ DELETE FROM keywords
                     79: self._migrate_from_v79_to_v80,
                     80: self._migrate_from_v80_to_v81,
                     81: self._migrate_from_v81_to_v82,
+                    82: self._migrate_from_v82_to_v83,
                 }
 
                 if current_db_version == 0:
@@ -11092,6 +11227,22 @@ DELETE FROM keywords
             archive_scope
         ]
 
+    def query_archive_recovery_page(
+        self,
+        request_data: Mapping[str, object],
+        workspace_rows: tuple[Mapping[str, object], ...],
+        *,
+        after: tuple[int, str, str] | None,
+        deadline: float,
+        monotonic: Callable[[], float],
+    ) -> dict[str, object]:
+        """Delegate bounded storage-side archive discovery (ADR-166)."""
+        from .conversation_archive_queries import query_archive_recovery_page
+
+        return query_archive_recovery_page(
+            self, request_data, workspace_rows, after=after, deadline=deadline, monotonic=monotonic
+        )
+
     def get_conversation_archive_states(
         self, conversation_ids: Iterable[str]
     ) -> dict[str, bool]:
@@ -11146,11 +11297,12 @@ DELETE FROM keywords
                         failures[cid] = "missing_version"
                         continue
                     cursor = conn.execute(
-                        "UPDATE conversations SET archived = ?, version = version + 1, "
+                        "UPDATE conversations SET archived = ?, archived_at = ?, version = version + 1, "
                         "last_modified = ? WHERE id = ? AND deleted = 0 "
                         "AND version = ? AND archived != ?",
                         (
                             int(archived),
+                            self._get_current_utc_timestamp_iso() if archived else None,
                             self._get_current_utc_timestamp_iso(),
                             cid,
                             version,
@@ -19263,6 +19415,7 @@ DELETE FROM keywords
             "last_modified": row["last_modified"],
             "version": row["version"],
             "archived": bool(row["archived"]),
+            "archived_at": row["archived_at"],
             "workspace_id": row["workspace_id"],
             "scope_type": row["scope_type"],
             "state": row["state"],
@@ -19300,7 +19453,7 @@ DELETE FROM keywords
                 ).fetchone()["count"]
                 cursor = conn.execute(
                     f"""
-                    SELECT id, title, created_at, last_modified, version, archived, workspace_id, scope_type, state
+                    SELECT id, title, created_at, last_modified, version, archived, archived_at, workspace_id, scope_type, state
                     FROM conversations
                     WHERE deleted = 0 AND {archive_clause}
                     ORDER BY last_modified DESC, rowid DESC
@@ -19403,7 +19556,7 @@ DELETE FROM keywords
                 "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
             ),
             page_columns=(
-                "id, title, created_at, last_modified, version, archived, "
+                "id, title, created_at, last_modified, version, archived, archived_at, "
                 "workspace_id, scope_type, state"
             ),
             tiebreaker="rowid DESC",

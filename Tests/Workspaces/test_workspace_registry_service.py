@@ -1146,32 +1146,40 @@ def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
+    from tldw_chatbook.Workspaces.registry_service import WorkspaceArchiveConflict
+
     winner = build_test_registry(tmp_path)
     winner.create_workspace(workspace_id="old", name="Original")
-    winner.archive_workspace("old")
+    receipt = winner.archive_workspace("old")
     loser = build_test_registry(tmp_path)
-    read_archived = Event()
+    write_ready = Event()
     winner_committed = Event()
-    get_workspace = loser.get_workspace
+    transaction = loser.db.transaction
 
-    def pause_after_initial_read(workspace_id):
-        record = get_workspace(workspace_id)
-        if record is not None and record.archived:
-            read_archived.set()
-            assert winner_committed.wait(5)
-        return record
+    @contextmanager
+    def pause_before_write(*, immediate=False):
+        write_ready.set()
+        assert winner_committed.wait(5)
+        with transaction(immediate=immediate) as conn:
+            yield conn
 
-    monkeypatch.setattr(loser, "get_workspace", pause_after_initial_read)
+    monkeypatch.setattr(loser.db, "transaction", pause_before_write)
     generation = loser.mutation_generation
     with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(loser.unarchive_workspace, "old", name="Losing choice")
+        pending = pool.submit(
+            loser.unarchive_workspace,
+            "old",
+            name="Losing choice",
+            expected_archive_revision=receipt.archive_revision,
+            expected_name=receipt.name,
+        )
         try:
-            assert read_archived.wait(5)
+            assert write_ready.wait(5)
             restored = winner.unarchive_workspace("old", name="Winning choice")
             assert restored.name == "Winning choice"
         finally:
             winner_committed.set()
-        with pytest.raises(WorkspaceNotFound):
+        with pytest.raises(WorkspaceArchiveConflict):
             pending.result(timeout=5)
     assert winner.get_workspace("old").name == "Winning choice"
     assert loser.mutation_generation == generation
@@ -1218,3 +1226,68 @@ def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
     assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
     first.db.close()
     second.db.close()
+
+
+def test_archive_snapshot_checks_revision_name_and_noop_retains_episode(tmp_path):
+    from tldw_chatbook.Workspaces.registry_service import WorkspaceArchiveConflict
+
+    registry = build_test_registry(tmp_path)
+    try:
+        created = registry.create_workspace(workspace_id="w", name="Workspace")
+        with pytest.raises(WorkspaceArchiveConflict):
+            registry.archive_workspace("w", expected_archive_revision=1)
+        archived = registry.archive_workspace(
+            "w", expected_archive_revision=created.archive_revision
+        )
+        with pytest.raises(WorkspaceNotFound):
+            registry.archive_workspace("w")
+        assert registry.get_workspace("w") == archived
+        with pytest.raises(WorkspaceArchiveConflict):
+            registry.unarchive_workspace(
+                "w",
+                expected_archive_revision=archived.archive_revision,
+                expected_name="Different",
+            )
+        registry.create_workspace(workspace_id="other", name="Workspace")
+        with pytest.raises(WorkspaceRegistryServiceError):
+            registry.unarchive_workspace(
+                "w",
+                expected_archive_revision=archived.archive_revision,
+                expected_name=archived.name,
+            )
+        assert registry.get_workspace("w") == archived
+        restored = registry.unarchive_workspace(
+            "w",
+            name="Recovered",
+            expected_archive_revision=archived.archive_revision,
+            expected_name=archived.name,
+        )
+        assert (
+            restored.archived_at is None
+            and restored.archive_revision == archived.archive_revision + 1
+        )
+        with pytest.raises(WorkspaceNotFound):
+            registry.unarchive_workspace("w")
+        assert registry.get_workspace("w") == restored
+    finally:
+        registry.db.close()
+
+
+def test_default_repair_advances_only_real_archive_transition(tmp_path):
+    registry = build_test_registry(tmp_path)
+    try:
+        registry.ensure_default_workspace()
+        with registry.db.transaction() as conn:
+            conn.execute(
+                "UPDATE workspace_records SET archived=1, archived_at='2026-09-20T12:00:00+00:00' WHERE workspace_id=?",
+                (DEFAULT_WORKSPACE_ID,),
+            )
+        repaired = registry.ensure_default_workspace()
+        assert (
+            not repaired.archived
+            and repaired.archived_at is None
+            and repaired.archive_revision == 1
+        )
+        assert registry.ensure_default_workspace().archive_revision == 1
+    finally:
+        registry.db.close()

@@ -270,3 +270,30 @@ def test_workspace_explicit_immediate_wins_over_deferred_default(tmp_path) -> No
         pass
     assert any(s.strip().upper().startswith("BEGIN IMMEDIATE") for s in statements)
     store.close()
+
+
+def test_expired_acquisition_keeps_borrowed_transaction_and_handle(tmp_path):
+    import time
+
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    store = WorkspaceDB(tmp_path / "deadline.sqlite")
+    try:
+        with store.transaction() as borrowed:
+            borrowed.execute("CREATE TABLE deadline_probe (value TEXT)")
+            borrowed.execute("INSERT INTO deadline_probe VALUES ('retained')")
+            with (
+                pytest.raises(TimeoutError),
+                store.connection(operation_deadline=time.monotonic() - 1),
+            ):
+                pytest.fail("Expired acquisition yielded a connection")
+            assert store._thread_local.conn is borrowed
+            assert borrowed.in_transaction
+        with store.connection(operation_deadline=time.monotonic() + 5) as current:
+            assert current is borrowed
+            assert (
+                current.execute("SELECT value FROM deadline_probe").fetchone()[0]
+                == "retained"
+            )
+    finally:
+        store.close()

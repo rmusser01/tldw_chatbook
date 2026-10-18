@@ -27,6 +27,7 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
+from .private_sqlite_process import HelperTimeoutError
 from tldw_chatbook.Utils.private_paths import lexical_path
 
 from .private_sqlite import connect_private_sqlite
@@ -1025,7 +1026,9 @@ class BaseDB(ABC):
         """
         pass
 
-    def _get_connection(self, **connect_kwargs: Any) -> sqlite3.Connection:
+    def _get_connection(
+        self, *, operation_deadline: float | None = None, **connect_kwargs: Any
+    ) -> sqlite3.Connection:
         """
         Get a database connection with row factory.
         Can be overridden by subclasses for custom connection handling.
@@ -1037,8 +1040,21 @@ class BaseDB(ABC):
                 ``check_same_thread=False``). The connection is still
                 opened HERE, under this module's ``db.base`` owner.
         """
-        conn = connect_private_sqlite(
-            "db.base", self.db_path_str, **connect_kwargs)
+        if operation_deadline is None:
+            conn = connect_private_sqlite("db.base", self.db_path_str, **connect_kwargs)
+        else:
+            remaining = operation_deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Database connection budget exhausted")
+            try:
+                conn = connect_private_sqlite(
+                    "db.base",
+                    self.db_path_str,
+                    operation_deadline=operation_deadline,
+                    **{"timeout": remaining, **connect_kwargs},
+                )
+            except HelperTimeoutError as exc:
+                raise TimeoutError("Database connection admission timed out") from exc
         conn.row_factory = sqlite3.Row
         return conn
 

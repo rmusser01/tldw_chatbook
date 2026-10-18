@@ -15,6 +15,7 @@ from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
 from tldw_chatbook.Chat.console_semantic_revision import (
+    local_thinking_response_source_formats,
     project_semantic_revision_provider_continuations,
     project_semantic_revision_provider_message,
     project_semantic_revision_provider_messages,
@@ -5422,7 +5423,7 @@ class ConsoleTraceService:
                 None
                 if artifact is None
                 else (
-                    cast(ProviderArtifactTraceProvenance, descriptor).source.value,
+                    _artifact_component_kind(descriptor),
                     "artifact",
                     artifact.artifact_id,
                 )
@@ -5440,7 +5441,11 @@ class ConsoleTraceService:
             return (
                 None
                 if artifact is None
-                else (derived.artifact.source.value, "artifact", artifact.artifact_id)
+                else (
+                    _artifact_component_kind(derived),
+                    "artifact",
+                    artifact.artifact_id,
+                )
             )
         saved_inputs = _saved_inputs(derived)
         if len(saved_inputs) == 1:
@@ -5482,7 +5487,7 @@ class ConsoleTraceService:
         )
         if artifact is not None:
             if (
-                durable_key[:2] != (artifact.source.value, "artifact")
+                durable_key[:2] != (_artifact_component_kind(descriptor), "artifact")
                 or durable_key not in durable_values
             ):
                 return False
@@ -5570,7 +5575,7 @@ class ConsoleTraceService:
             )
         if type(descriptor) is ProviderArtifactTraceProvenance:
             artifact = cast(ProviderArtifactTraceProvenance, descriptor)
-            return artifact.source.value, self._store_artifact(
+            return _artifact_component_kind(artifact), self._store_artifact(
                 cursor,
                 value,
                 policy=artifact.policy,
@@ -5578,7 +5583,7 @@ class ConsoleTraceService:
         if type(descriptor) is DerivedTraceProvenance:
             derived = cast(DerivedTraceProvenance, descriptor)
             if derived.artifact is not None:
-                return derived.artifact.source.value, self._store_artifact(
+                return _artifact_component_kind(derived), self._store_artifact(
                     cursor,
                     value,
                     policy=derived.artifact.policy,
@@ -5630,7 +5635,7 @@ class ConsoleTraceService:
             return self._artifact_node_matches(
                 cursor,
                 node,
-                component_kind=artifact.source.value,
+                component_kind=_artifact_component_kind(artifact),
                 value=value,
                 policy=artifact.policy,
             )
@@ -5641,7 +5646,7 @@ class ConsoleTraceService:
             return self._artifact_node_matches(
                 cursor,
                 node,
-                component_kind=derived.artifact.source.value,
+                component_kind=_artifact_component_kind(derived),
                 value=value,
                 policy=derived.artifact.policy,
             )
@@ -6366,35 +6371,31 @@ def _response_projection_profile(resolution: object | None) -> dict[str, object]
     ):
         return None
     from tldw_chatbook.Chat.console_provider_gateway import (
-        _DISPLAYABLE_THINKING_EXECUTION_KEYS,
         _thinking_protocol,
         resolve_finish_policy,
     )
 
     execution_key = getattr(resolution, "execution_key", "")
     disposition = getattr(resolution, "thinking_stream_disposition", None)
-    # Qodo round: resolve through the ADR-179 generic entry so engine-driven
-    # hosted presets (Fireworks, Together, Cerebras...) resolve their
-    # proprietary policies instead of missing the static hand-written map.
-    hosted_policy = resolve_finish_policy(execution_key)
-    if (
-        execution_key not in _DISPLAYABLE_THINKING_EXECUTION_KEYS
-        if disposition == "displayable"
-        else hosted_policy is None
-        or hosted_policy.reasoning_disposition != "proprietary"
-    ):
-        return None
-    return {
+    model = getattr(resolution, "model", None)
+    profile = {
         "version": 1,
         "thinking_stream_disposition": disposition,
         "thinking_round_trip_version": 1,
         "provider": execution_key,
-        "model": getattr(resolution, "model", None),
+        "model": model,
         "protocol": _thinking_protocol(resolution),
-        "source_format": "start_anchored_think"
-        if disposition == "displayable"
-        else "reasoning_content",
     }
+    if disposition == "displayable":
+        source_formats = local_thinking_response_source_formats(execution_key, model)
+        if source_formats is None:
+            return None
+        return {**profile, "version": 2, "source_formats": source_formats}
+    # Resolve through dev's generic engine/preset seam, preserving hosted policies.
+    hosted_policy = resolve_finish_policy(execution_key)
+    if hosted_policy is None or hosted_policy.reasoning_disposition != "proprietary":
+        return None
+    return {**profile, "source_format": "reasoning_content"}
 
 
 def _saved_reference_key(
@@ -6432,6 +6433,22 @@ def _saved_inputs(
         elif type(item) is DerivedTraceProvenance:
             result.extend(_saved_inputs(cast(DerivedTraceProvenance, item)))
     return tuple(result)
+
+
+def _artifact_component_kind(descriptor: TraceProvenance) -> str:
+    """Keep a typed thinking rewrite's original tool-call surface identity."""
+    if type(descriptor) is ProviderArtifactTraceProvenance:
+        return descriptor.source.value
+    derived = cast(DerivedTraceProvenance, descriptor)
+    assert derived.artifact is not None
+    if (
+        derived.transform is TraceTransformKind.MESSAGE_REWRITE
+        and derived.artifact.source is TraceProvenanceSource.THINKING
+        and type(derived.inputs[0]) is ProviderArtifactTraceProvenance
+        and derived.inputs[0].source is TraceProvenanceSource.TOOL_CALL
+    ):
+        return TraceProvenanceSource.TOOL_CALL.value
+    return derived.artifact.source.value
 
 
 def _saved_revision_component_kind(descriptor: DerivedTraceProvenance) -> str:

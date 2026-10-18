@@ -1,0 +1,8 @@
+2026-09-28 08:27:03 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=5c02ff820c7c4df5a47245c4f32e99f7 component=console duration_ms=20282 phase=trace_dispatch_commit status=entered
+2026-09-28 08:27:03 [INFO    ] tldw_chatbook.Chat.Chat_Functions:463 - Chat API Call - Routing to endpoint: llama_cpp
+2026-09-28 08:27:03 [ERROR   ] tldw_chatbook.Chat.Chat_Functions:463 - Unexpected internal error in chat_api_call for llama_cpp; error_type=RuntimeError
+2026-09-28 08:27:03 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=5c02ff820c7c4df5a47245c4f32e99f7 component=console duration_ms=20454 phase=provider_entry status=entered
+2026-09-28 08:27:03 [INFO    ] tldw_chatbook.Chat.console_agent_bridge:463 - agent run step
+2026-09-28 08:27:03 [INFO    ] tldw_chatbook.Chat.console_agent_bridge:463 - console agent bridge run_reply end
+2026-09-28 08:27:03 [INFO    ] tldw_chatbook.Chat.console_chat_controller:463 - console agent reply end
+2026-09-28 08:27:03 [ERROR   ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage app_version=0.2.1 attempt_id=5c02ff820c7c4df5a47245c4f32e99f7 capture_enabled=true component=console duration_ms=20504 phase=controller_submit python_version=3.12.11 sqlite_version=3.49.1 status=failed

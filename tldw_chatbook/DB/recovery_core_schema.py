@@ -1033,3 +1033,34 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_CANVAS_V81_TO_V82_SQL = (
     "UPDATE db_schema_version SET version=82 WHERE schema_name='rag_char_chat_schema' AND version=81",
 )
+
+
+# ADR-166: exact successors of every shipped v82 lineage; predecessors stay frozen.
+CHACHANOTES_ARCHIVE_INDEX_SQL = 'CREATE INDEX idx_conversations_archive_chronology\n    ON conversations(deleted, archived, archived_at DESC, id)'
+CHACHANOTES_ARCHIVE_UPDATE_SQL = "CREATE TRIGGER conversations_sync_update\nAFTER UPDATE ON conversations\nWHEN OLD.deleted = NEW.deleted AND (\n     OLD.title IS NOT NEW.title OR\n     OLD.rating IS NOT NEW.rating OR\n     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR\n     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR\n     OLD.character_id IS NOT NEW.character_id OR\n     OLD.assistant_kind IS NOT NEW.assistant_kind OR\n     OLD.assistant_id IS NOT NEW.assistant_id OR\n     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR\n     OLD.scope_type IS NOT NEW.scope_type OR\n     OLD.workspace_id IS NOT NEW.workspace_id OR\n     OLD.state IS NOT NEW.state OR\n     OLD.topic_label IS NOT NEW.topic_label OR\n     OLD.topic_label_source IS NOT NEW.topic_label_source OR\n     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR\n     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR\n     OLD.cluster_id IS NOT NEW.cluster_id OR\n     OLD.source IS NOT NEW.source OR\n     OLD.external_ref IS NOT NEW.external_ref OR\n     OLD.runtime_backend IS NOT NEW.runtime_backend OR\n     OLD.discovery_owner IS NOT NEW.discovery_owner OR\n     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR\n     OLD.system_prompt IS NOT NEW.system_prompt OR\n     OLD.metadata IS NOT NEW.metadata OR\n     OLD.thinking_history_policy IS NOT NEW.thinking_history_policy OR\n     OLD.root_id IS NOT NEW.root_id OR\n     OLD.created_at IS NOT NEW.created_at OR\n     OLD.client_id IS NOT NEW.client_id OR\n     (OLD.archived IS NEW.archived AND OLD.archived_at IS NEW.archived_at AND (\n         OLD.last_modified IS NOT NEW.last_modified OR\n         OLD.version IS NOT NEW.version)))\nBEGIN\n  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)\n  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,\n         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,\n                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,\n                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,\n                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,\n                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,\n                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,\n                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,\n                     'source',NEW.source,'external_ref',NEW.external_ref,\n                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,\n                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,\n                     'metadata',NEW.metadata,'thinking_history_policy',NEW.thinking_history_policy,\n                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,\n                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));\nEND"
+CHACHANOTES_ARCHIVE_PRUNE_SQL = "CREATE TRIGGER sync_log_prune_conversations\nAFTER INSERT ON sync_log\nWHEN NEW.entity = 'conversations'\nBEGIN\n  DELETE FROM sync_log\n   WHERE entity = 'conversations'\n     AND entity_id = NEW.entity_id\n     AND version < (\n         SELECT MAX(frontier.version) FROM sync_log AS frontier\n          WHERE frontier.entity = 'conversations'\n            AND frontier.entity_id = NEW.entity_id);\nEND"
+CHACHANOTES_V83_SCHEMAS = tuple(
+    tuple(sorted(
+        tuple(
+            sql[:-1] + ", archived_at TEXT)"
+            if sql.startswith("CREATE TABLE conversations(")
+            else CHACHANOTES_ARCHIVE_UPDATE_SQL
+            if sql.startswith("CREATE TRIGGER conversations_sync_update\n")
+            else CHACHANOTES_ARCHIVE_PRUNE_SQL
+            if sql.startswith("CREATE TRIGGER sync_log_prune_conversations\n")
+            else sql
+            for sql in schema
+        ) + (CHACHANOTES_ARCHIVE_INDEX_SQL,),
+        key=_installed_schema_order,
+    ))
+    for schema in CHACHANOTES_V82_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V83_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 83, CHACHANOTES_V83_SCHEMAS[0])
+    if owner == "db.chachanotes.primary" else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_ARCHIVE_V82_TO_V83_SQL = (
+    "UPDATE db_schema_version SET version=83 WHERE schema_name='rag_char_chat_schema' AND version=82",
+)

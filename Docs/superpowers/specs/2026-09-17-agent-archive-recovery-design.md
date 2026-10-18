@@ -194,3 +194,10 @@ ADR path: `backlog/decisions/166-agent-assisted-archive-recovery.md`
 Reason: new Console agent contracts, a narrow amendment to Library authority/retrieval selection, archive chronology in two stores, and confirmation/operation ownership across UI and runtime.
 
 The user approved this written design before planning. The linked implementation plan defines atomic delivery tasks and targeted checks. No application code or schema migration is implemented by this design task.
+
+## Approved clarification 2026-10-18: fenced-tool follow-ups
+
+The user approved the bounded existing-handoff repair for the already-admitted fenced-tool protocol. Known supported Console execution providers may carry the same live previously observed result-reference metadata through either the native function-call or fenced text protocol selected by the existing bridge. Use the existing supported execution-key set; unknown keys remain refused. The existing native_tool_calls_enabled configuration floor and every Library/Persona/ask/kill/source/destination/lifetime/confirmation gate remain. Actual provider native_tools facts stay unchanged, including false for the current endpoint. No native/replay/template override, parser or wire-schema change, new metadata field, old capture reinterpretation or extra authority. See ADR166's 2026-10-18 clarification and Task5 in the existing Capture-On plan.
+
+
+The same approved fenced recovery path uses the existing runtime dispatch correlation when a valid fenced call has no provider call_id. Reuse that app-owned proposal/guard/review/trace identity at restore dispatch; do not change the wire call or parser, generate a second identity, or relax the recovery identity/confirmation checks. This is the narrow Task5 implementation ruling recorded in ADR166 and the Capture-On plan.

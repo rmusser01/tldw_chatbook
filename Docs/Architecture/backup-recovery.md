@@ -74,3 +74,7 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 - [database-layer.md](./database-layer.md) — the stores being captured
 - [server-sync.md](./server-sync.md) — the separate server-sync account/key recovery
 - [notes-sync.md](./notes-sync.md) — the notes-sync recovery executor
+
+## Archive chronology schema integration (ADR166)
+
+Core recovery retains the frozen predecessor catalogs and appends exact schema83 successors to the schema81/82 lineages and installed shared Subscriptions layouts. Canvas payload validation remains limited to those exact catalogs. Restricted backup migration admits only the fixed chat82→83 chronology step and its declared column/index/trigger effects. Workspace backup validation likewise retains schema8 and admits only the fixed8→9 chronology step before exact successor qualification. Existing source, quiescence, payload and native-handle guards remain binding.

@@ -476,6 +476,8 @@ class _CoreAdapter:
             CHACHANOTES_V81_SCHEMAS,
             CHACHANOTES_V82_SCHEMAS,
             CHACHANOTES_CANVAS_V81_TO_V82_SQL,
+            CHACHANOTES_V83_SCHEMAS,
+            CHACHANOTES_ARCHIVE_V82_TO_V83_SQL,
             CHACHANOTES_V80_SCHEMAS,
             CORE_SCHEMAS,
             COLLECTIONS_V4_SCHEMA,
@@ -514,8 +516,9 @@ class _CoreAdapter:
             # under the v80 head (head + dictionary cover V80[0]/[1]).
             schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS)
             schemas += tuple((81, schema) for schema in CHACHANOTES_V81_SCHEMAS)
-            schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS[2:])
-            versions += (81, 80, 79, 78, 77, 76, 75)
+            schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS)
+            schemas += tuple((83, schema) for schema in CHACHANOTES_V83_SCHEMAS[2:])
+            versions += (82, 81, 80, 79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
@@ -523,6 +526,7 @@ class _CoreAdapter:
                 (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
                 (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
                 (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
+                (82, 83, CHACHANOTES_ARCHIVE_V82_TO_V83_SQL),
             )
         elif self.owner_id == "db.library_collections":
             versions = (5, 4)

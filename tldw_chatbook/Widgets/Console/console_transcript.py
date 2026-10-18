@@ -3397,6 +3397,9 @@ class ConsoleTranscript(VerticalScroll):
                 id="console-voice-preview",
             )
             yield self._voice_preview_widget
+        recovery = Vertical(id="console-archive-recovery")
+        recovery.display = False
+        yield recovery
         # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
         # `sync_jump_indicator` shows it while the reader is scrolled up.
         pill = ConsoleTranscriptJumpPill(

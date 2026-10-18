@@ -1,0 +1,17 @@
+{
+  "baseline_ruff_count": 191,
+  "current_ruff_count": 191,
+  "signatures_equal": true,
+  "changed_protected_block_lines": [
+    26573,
+    26626
+  ],
+  "formatter_pending_changed_blocks": [],
+  "reseal_await_line": 26619,
+  "cleanup_try_line": 26573,
+  "cleanup_finally_release_lines": [
+    26886
+  ],
+  "source_sha256": "0652d3fe258d974c06680889f558a2a993de75ed8da7300cba970d471d932a7a",
+  "test_sha256": "c2f69ace650aa9d2d8c2efce697dac223de54fb41f29963b166bd258cbcdffe5"
+}

@@ -1,0 +1,92 @@
+[
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-red.log",
+    "path": "red.log",
+    "bytes": 156330,
+    "sha256": "95c425d3f27ecf40deacd5df7cf706b485854d56a484feca311d5c6b053f8418"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-red2.log",
+    "path": "red2.log",
+    "bytes": 67114,
+    "sha256": "d06e3ea76fe21cf91b7ce0b14370dcf097e19e1211e4b8e213eeb522c4a15e0f"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-green.log",
+    "path": "green.log",
+    "bytes": 490,
+    "sha256": "4ccc120a6718fec56c55e6c4128539cbbbb1cd9611b8ca5923d61e2530ceee05"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-final.log",
+    "path": "final.log",
+    "bytes": 1035,
+    "sha256": "c36c347af1eadb73ee2e0f1fe12db6aea48104431f0afa075877c304283ffae0"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-ruff-test.log",
+    "path": "ruff-test.log",
+    "bytes": 19,
+    "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-format-test.log",
+    "path": "format-test.log",
+    "bytes": 526,
+    "sha256": "1e533fdf65fadcbfb22dde7fbf1598a90c18ba9b35c0ce149fabb5bafe8bedbf"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-ruff-controller.json",
+    "path": "ruff-controller.json",
+    "bytes": 152563,
+    "sha256": "04b89371bd6f57ae2abbdd5b7fec1ff032dfe391342a1192f581122dc9692045"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-ruff-test-final.log",
+    "path": "ruff-test-final.log",
+    "bytes": 19,
+    "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-format-test-final.log",
+    "path": "format-test-final.log",
+    "bytes": 25,
+    "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-format-controller.log",
+    "path": "format-controller.log",
+    "bytes": 64977,
+    "sha256": "6c1a5b98c195c25c6bb0f70b85eb9ebe18cdc7f558385fbbd76831c2b622b0c3"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-ruff-controller-final.json",
+    "path": "ruff-controller-final.json",
+    "bytes": 151233,
+    "sha256": "ea2c4d4b813ac473d9b503d1d757c86d6b846e330b046272343d54a5aa531ad0"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-static.json",
+    "path": "static.json",
+    "bytes": 255,
+    "sha256": "25c95441d37efce0591174b9c3a2e516752899f6ec64562d3e26087f74a2018d"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-static-final.json",
+    "path": "static-final.json",
+    "bytes": 478,
+    "sha256": "527cac8e8ee56412c2fbcd215a82ec806120f981c2b936927c70fdf21d6f7871"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task1-fix1-verification.json",
+    "path": "verification.json",
+    "bytes": 751,
+    "sha256": "f7420e0cf5bb8c094394e905349a390d84d30e8970c5a7e2c4ace916de684c91"
+  },
+  {
+    "source": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/.superpowers/sdd/2026-09-27-agent-archive-recovery-capture-on/task-1-review.md",
+    "path": "review.md",
+    "bytes": 13354,
+    "sha256": "ba68d4b214509df814efc7d6b3b4bb8a45466a06a6371a44a21e759fd7d9d238"
+  }
+]

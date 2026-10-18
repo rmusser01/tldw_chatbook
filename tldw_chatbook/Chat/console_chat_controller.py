@@ -248,6 +248,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PERSISTED_MESSAGE_ID_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
+    freeze_json,
     tagged_memory_message,
     tagged_visual_memory_message,
 )
@@ -264,6 +265,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     admit_message_provenance,
     compaction_transform_provenance,
+    current_turn_source_revision_id,
     frozen_policy_from_provenance,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
@@ -284,6 +286,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
 # off the UI-ready module census (ADR-097): task-31384 spends that slot on
 # `Chat.console_interrupt_rounds`, which the controller constructs at boot.
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSessionSettings,
     configured_provider_model,
     console_provider_settings,
@@ -2767,6 +2770,8 @@ def build_tool_review_hook(
     workspace_id: str | None = None,
     kill_switch: Callable[[], bool] | None = None,
     library_provider: Any | None = None,
+    recovery_provider_reader: Callable[[], Any] | None = None,
+    recovery_persona_rules: tuple[Mapping[str, Any], ...] = (),
 ) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Forward to the documented console_interrupt_rounds implementation."""
     from tldw_chatbook.Chat.console_interrupt_rounds import (
@@ -2781,6 +2786,8 @@ def build_tool_review_hook(
         workspace_id=workspace_id,
         kill_switch=kill_switch,
         library_provider=library_provider,
+        recovery_provider_reader=recovery_provider_reader,
+        recovery_persona_rules=recovery_persona_rules,
         read_global_AGENT_LESSON_APPROVAL_REQUIRED=lambda: (
             AGENT_LESSON_APPROVAL_REQUIRED
         ),
@@ -11994,6 +12001,94 @@ class ConsoleChatController:
             ):
                 return False
         return True
+
+    def _reseal_archive_followup_trace_request(
+        self,
+        request: PreparedConsoleRequest,
+        before: list[dict[str, Any]],
+        after: list[dict[str, Any]],
+        current_user_id: str | None,
+    ) -> PreparedConsoleRequest:
+        """Bind authorized selection text to its exact admitted current source."""
+        try:
+            if (
+                type(request) is not PreparedConsoleRequest
+                or request.provenance is None
+                or len(request.active_request) != 1
+                or not before
+                or len(before) != len(after)
+                or before[:-1] != after[:-1]
+                or not self._is_current_user_text_transform(before[-1], after[-1])
+            ):
+                raise ValueError("archive_trace_current_text")
+            # Native owner annotations are not provider values. Keep them
+            # unchanged above, then compare the same shape admission froze.
+            owner_keys = {
+                NATIVE_MESSAGE_ID_KEY,
+                PERSISTED_MESSAGE_ID_KEY,
+                PERSISTED_CONVERSATION_ID_KEY,
+            }
+            visible = tuple(
+                {key: value for key, value in row.items() if key not in owner_keys}
+                for row in before
+            )
+            admitted = tuple(
+                {key: value for key, value in row.items() if key not in owner_keys}
+                for row in _flatten_preflight_messages(request)
+            )
+            if admitted and admitted[0].get("role") == "system":
+                admitted = admitted[1:]
+            if freeze_json(visible) != freeze_json(admitted):
+                raise ValueError("archive_trace_admitted_rows")
+            descriptor = request.provenance.active_request[0]
+            source_id = current_turn_source_revision_id(descriptor)
+            if source_id is None or current_user_id is None:
+                raise ValueError("archive_trace_source")
+            current = self.store.get_message(current_user_id)
+            session_id = self.store.session_id_for_message(current_user_id)
+            session = next(
+                item for item in self.store.sessions() if item.id == session_id
+            )
+            persistence = self.store.persistence
+            with persistence.db.transaction() as cursor:
+                source = persistence.console_trace_repository.get_semantic_revision(
+                    cursor, source_id
+                )
+            if (
+                current.role is not ConsoleMessageRole.USER
+                or source is None
+                or source.normalized_role != "user"
+                or source.source_message_id != current.persisted_message_id
+                or source.source_conversation_id != session.persisted_conversation_id
+            ):
+                raise ValueError("archive_trace_source_owner")
+            saved = (
+                descriptor
+                if type(descriptor) is SavedRevisionTraceProvenance
+                else descriptor.inputs[0]
+            )
+            transformed = DerivedTraceProvenance(
+                TraceTransformKind.CURRENT_TURN_TEXT,
+                inputs=(saved,),
+                artifact=ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST,
+                    request.provenance.capture_policy,
+                ),
+            )
+            row = {
+                key: value for key, value in after[-1].items() if key not in owner_keys
+            }
+            return replace(
+                request,
+                active_request=(row,),
+                provenance=replace(request.provenance, active_request=(transformed,)),
+            )
+        except Exception:  # noqa: BLE001 - failed source proof must refuse capture
+            # This seam precedes the bridge's first trace reservation. Use the
+            # ordinary controlled capture recovery path, never an unowned send.
+            raise TraceCallPersistenceError(
+                reservation_status="not_established"
+            ) from None
 
     @staticmethod
     def _provider_messages_with_prefill(
@@ -26781,6 +26876,8 @@ class ConsoleChatController:
                 # no switch to honor (None), matching `_compose_mcp_provider`.
                 kill_switch=self._console_tool_kill_switch_reader(),
                 library_provider=library_provider,
+                recovery_provider_reader=lambda: recovery_provider,
+                recovery_persona_rules=turn_context.persona_policy_rules,
             )
 
             # Local tools (ADR-032): same per-run composition point. Both
@@ -26950,7 +27047,64 @@ class ConsoleChatController:
                     disabled_reader=self._canvas_disabled_reader,
                 )
                 canvas_authority = canvas_provider.issue_registration_authority()
+        recovery_runtime = getattr(self, "_archive_recovery_runtime", None)
+        recovery_provider = (
+            recovery_runtime.admit(turn_context, session)
+            if recovery_runtime is not None and session is not None
+            and work_origin is WorkOrigin.MANUAL and not resume_provider_continuation
+            else None
+        )
         try:
+            # Admission owns the rider/reseal step as well as bridge dispatch.
+            if recovery_provider is not None:
+                from tldw_chatbook.Agents.archive_recovery_tool_provider import (
+                    SEARCH_ARCHIVED_CONVERSATIONS,
+                )
+                from tldw_chatbook.Agents.persona_policy import (
+                    evaluate_tool_policy,
+                    parse_persona_policy_from_rules,
+                )
+
+                verdict = evaluate_tool_policy(
+                    parse_persona_policy_from_rules(turn_context.persona_policy_rules),
+                    rule_kind="mcp_tool",
+                    tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+                )
+                kill_reader = self._console_tool_kill_switch_reader()
+                try:
+                    killed = bool(kill_reader and kill_reader())
+                except Exception:  # noqa: BLE001 - unreadable kill switch fails closed
+                    killed = True
+                if (
+                    not killed
+                    and verdict.advertised
+                    and not verdict.requires_confirmation
+                    and turn_context.tool_configuration.get(
+                        "native_tool_calls_enabled", True
+                    )
+                    and (
+                        getattr(resolution, "execution_key", None)
+                        or resolution.provider
+                    )
+                    in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+                ):
+                    context = recovery_runtime.followup_context(
+                        recovery_provider.authority
+                    )
+                    if context:
+                        # Before the bridge's shared first-request fitting/counting.
+                        transformed_messages = self._prepend_evidence_context(
+                            agent_messages, context
+                        )
+                        if trace_request is not None:
+                            trace_request = await self._run_durable_db_call(
+                                self._reseal_archive_followup_trace_request,
+                                trace_request,
+                                agent_messages,
+                                transformed_messages,
+                                trusted_profile_user_message_id,
+                            )
+                        agent_messages = transformed_messages
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
@@ -27003,6 +27157,7 @@ class ConsoleChatController:
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
+                recovery_provider=recovery_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
                 managed_skill_promotion_gate=managed_skill_promotion_gate,
@@ -27233,6 +27388,8 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
+            if recovery_provider is not None:
+                await recovery_runtime.release(recovery_provider.authority)
             # Task 3b: this finally intentionally pops NONE of the three
             # per-session entries (stream task, assistant message id,
             # cancel event) -- `_finalize_agent_reply` below (and, through

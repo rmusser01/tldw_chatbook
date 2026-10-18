@@ -1,0 +1,44 @@
+{
+  "persona": {
+    "id": "local-persona-archive-recovery-check",
+    "name": "Archive Recovery Assistant",
+    "mode": "session_scoped",
+    "system_prompt": "",
+    "is_active": true,
+    "personality_traits": "",
+    "use_persona_state_context_default": false,
+    "voice_defaults": {
+      "voice_chat_trigger_phrases": []
+    },
+    "setup": {
+      "status": "not_started",
+      "version": 1,
+      "current_step": "persona",
+      "completed_steps": []
+    },
+    "policy_rules": [
+      {
+        "rule_kind": "mcp_tool",
+        "rule_name": "search_archived_conversations",
+        "allowed": true,
+        "require_confirmation": false,
+        "max_calls_per_turn": null
+      },
+      {
+        "rule_kind": "mcp_tool",
+        "rule_name": "request_conversation_restore",
+        "allowed": true,
+        "require_confirmation": false,
+        "max_calls_per_turn": null
+      }
+    ],
+    "created_at": "2026-10-18T15:40:33.168657+00:00",
+    "last_modified": "2026-10-18T15:40:33.168657+00:00",
+    "version": 1,
+    "deleted": false,
+    "backend": "local",
+    "record_id": "local:persona_profile:local-persona-archive-recovery-check"
+  },
+  "workspace_id": "recovery-check",
+  "note": "Existing product narrowing policy, no tool or confirmation gate bypass."
+}

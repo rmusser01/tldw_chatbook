@@ -543,6 +543,8 @@ def receive_console_visible_intent(
         return ""
     inputs = store.session_input_snapshot(session_id)
     launch, revision, _notice = runtime.snapshot_console_staged_evidence()
+    if config.current_config_identity() != config_identity:
+        raise RuntimeError("Console configuration changed; Send again.")
     intent = ConsoleReceivedTurnIntent(
         str(uuid4()),
         session_id,
@@ -552,9 +554,10 @@ def receive_console_visible_intent(
         revision,
         runtime._attached_generation or 0,
         queue_revision,
+        recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
+            session_id
+        ),
     )
-    if config.current_config_identity() != config_identity:
-        raise RuntimeError("Console configuration changed; Send again.")
     return runtime.accept_received_intent(
         intent, _configuration_preparation=preparation
     )
@@ -569,6 +572,8 @@ def _raw_cli_run_log_root() -> Path:
 
 def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> str:
     """Freeze view inputs and synchronously transfer one turn to the runtime."""
+    from dataclasses import replace
+
     from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
 
     record_send_stage("ui_submit")
@@ -582,8 +587,9 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
             turn_id=str(uuid4()),
             session_id=session_id,
             draft=draft,
-            configuration=screen._session._build_console_turn_execution_context(
-                session_id
+            configuration=replace(
+                screen._session._build_console_turn_execution_context(session_id),
+                recovery_user_origin=screen._console_runtime().ensure_archive_recovery().issue_user_proof(session_id),
             ),
             attachment_ids=tuple(
                 attachment.attachment_id

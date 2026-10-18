@@ -23,6 +23,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 30), (160, 44)])
+@pytest.mark.bootstrap_profile
 async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
     size, tmp_path
 ):
@@ -188,6 +189,7 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("workspace_collision", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_restore_resume_then_send_retains_original_history_and_unrelated_draft(
     tmp_path, workspace_collision, monkeypatch
 ):
@@ -369,3 +371,109 @@ async def test_restore_resume_then_send_retains_original_history_and_unrelated_d
             assert store.session_draft(keeper) == "Unrelated unfinished draft"
     finally:
         db.close_connection()
+
+
+def test_exact_resume_dispatches_on_the_already_current_production_console(tmp_path):
+    """A same-screen Open must consume its ID without relying on ScreenResume."""
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    script = textwrap.dedent(
+        r"""
+        import asyncio
+        import os
+        from pathlib import Path
+        import sys
+
+        root = Path(sys.argv[1])
+        for name, leaf in {
+            "HOME": "home", "XDG_CONFIG_HOME": "config",
+            "XDG_DATA_HOME": "xdg-data", "XDG_CACHE_HOME": "cache",
+        }.items():
+            location = root / leaf
+            location.mkdir()
+            os.environ[name] = str(location)
+        (root / "data").mkdir()
+        os.environ["TLDW_CONFIG_PATH"] = str(root / "config.toml")
+        os.environ["TLDW_TEST_MODE"] = "1"
+        (root / "config.toml").write_text(f'''[first_run]\nsetup_completed = true\n[splash_screen]\nenabled = false\n[general]\ndefault_tab = "chat"\n[paths]\ndata_dir = "{root / 'data'}"\n[model_catalog]\nauto_refresh_enabled = false\n[API]\ndefault_api = "llama_cpp"\n[chat_defaults]\nprovider = "llama_cpp"\nmodel = "no-send"\n[api_settings.llama_cpp]\napi_url = "http://127.0.0.1:1"\nmodel = "no-send"\n''')
+        from tldw_chatbook.app import TldwCli
+        from tldw_chatbook.UI.Console_Modules.archive import request_conversation_resume
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+        from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        async def settle(pilot, predicate):
+            for _ in range(150):
+                await pilot.pause(0.03)
+                if predicate():
+                    return
+            assert predicate(), "exact conversation resume did not reach its mounted destination"
+
+        async def exercise():
+            app = TldwCli()
+            assert Path(app.chachanotes_db.db_path).is_relative_to(root)
+            async with app.run_test(size=(160, 44)) as pilot:
+                await settle(pilot, lambda: isinstance(app.screen, ChatScreen)
+                    and app.screen._console_attach_reconciled)
+                console = app.screen
+                await pilot.pause(0.3)
+                store = console._ensure_console_chat_store()
+                source_id = store.active_session_id
+                console._console_composer_or_none().load_draft("Unrelated unfinished draft")
+                console._session._sync_console_session_draft()
+                db = app.chachanotes_db
+                target_id = db.add_conversation({"title": "Original target"})
+                leaf = db.add_message({"conversation_id": target_id,
+                    "sender": "user", "content": "Original active branch"})
+                db.add_message({"conversation_id": target_id,
+                    "sender": "user", "content": "Inactive sibling branch"})
+                db.set_conversation_active_leaf(target_id, leaf)
+                app.chat_api_provider_value = "llama_cpp"
+                app.chat_api_model_value = "no-send"
+
+                # Real App dispatch and reusable switch_screen; no manual consumer.
+                await request_conversation_resume(app, target_id)
+                channel = HandoffChannel.CONSOLE_CONVERSATION_RESUME
+                await settle(pilot, lambda: app.pending_handoffs.exact_revision_status(channel, 1) == "settled"
+                    and any(item.id == store.active_session_id
+                        and item.persisted_conversation_id == target_id
+                        for item in store.sessions()))
+                assert app.screen is console
+                active = store.switch_session(store.active_session_id)
+                assert active.persisted_conversation_id == target_id
+                assert store.messages_for_session(active.id)[-1].persisted_message_id == leaf
+                assert db.get_conversation_active_leaf(target_id) == leaf
+                assert store.session_draft(source_id) == "Unrelated unfinished draft"
+                assert console._console_composer_or_none().draft_text() == ""
+
+                # Normal cross-screen navigation still consumes through ScreenResume.
+                app.post_message(NavigateToScreen("home"))
+                await settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
+                await request_conversation_resume(app, target_id)
+                await settle(pilot, lambda: app.screen is console
+                    and app.pending_handoffs.exact_revision_status(channel, 2) == "settled")
+                assert store.switch_session(store.active_session_id).persisted_conversation_id == target_id
+                assert db.get_conversation_active_leaf(target_id) == leaf
+                assert store.session_draft(source_id) == "Unrelated unfinished draft"
+                assert len(db.get_messages_for_conversation(target_id)) == 2
+                runs = console._console_runtime()._agent_runs_db
+                if runs is not None:
+                    with runs.connection() as connection:
+                        assert connection.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0] == 0
+                        assert connection.execute("SELECT COUNT(*) FROM agent_run_steps").fetchone()[0] == 0
+
+        asyncio.run(asyncio.wait_for(exercise(), timeout=75))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -51,6 +51,7 @@ class ConsoleReceivedTurnIntent:
     staged_evidence_revision: int
     view_attachment_generation: int
     queue_revision: int | None = None
+    recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from .console_configuration_preparation import ConsoleTurnCaptureSelection

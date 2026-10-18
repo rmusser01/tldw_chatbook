@@ -104,6 +104,7 @@ class _Restrictions:
         self.browse_order_migration = False
         self.response_rules_migration = False
         self.canvas_sibling_migration = False
+        self.archive_chronology_migration = False
         self.preparing_response_rules = False
         self.sargable_migration = False
         self.canvas_schema = False
@@ -327,6 +328,10 @@ class _Restrictions:
                 and first == "quick_check" and second == "collection_capture_items"
             )
             permitted |= (
+                self.migrating and self.migration_owner == "db.workspaces"
+                and first == "quick_check" and second == "workspace_records"
+            )
+            permitted |= (
                 self.migrating and self.migration_owner == "db.guardian"
                 and first == "quick_check" and second == "guardian_alerts"
             )
@@ -362,6 +367,26 @@ class _Restrictions:
                     and database == "main"
                     and source is None
                 )
+                if self.archive_chronology_migration and source is None:
+                    allowed |= (
+                        action == sqlite3.SQLITE_ALTER_TABLE
+                        and (first, second, database) == ("main", "conversations", None)
+                        or database == "main" and (
+                            action in {sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_DROP_TRIGGER}
+                            and (first, second) in {
+                                ("conversations_sync_update", "conversations"),
+                                ("sync_log_prune_conversations", "sync_log"),
+                            }
+                            or action == sqlite3.SQLITE_CREATE_INDEX
+                            and (first, second) == ("idx_conversations_archive_chronology", "conversations")
+                            or action == sqlite3.SQLITE_REINDEX
+                            and first == "idx_conversations_archive_chronology"
+                            or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                            and first == "sqlite_master"
+                            or action == sqlite3.SQLITE_UPDATE and first == "sqlite_master"
+                            and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        )
+                    )
                 if self.response_rules_migration and database == "main" and source is None:
                     tables = {
                         "console_response_rule_revisions", "console_response_rule_bindings",
@@ -527,6 +552,18 @@ class _Restrictions:
                     )
                 )
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
+            if self.migration_owner == "db.workspaces" and source is None:
+                allowed = (
+                    action == sqlite3.SQLITE_ALTER_TABLE
+                    and (first, second, database) == ("main", "workspace_records", None)
+                    or database == "main" and (
+                        action == sqlite3.SQLITE_INSERT and first in {"schema_version", "sqlite_master"}
+                        or action == sqlite3.SQLITE_UPDATE and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
             # Fixed Dreams predecessor migrations only; candidate catalog matched
             # before this gate. No writes to story/profile payloads outside copy.
             if self.migration_owner == "db.dreams":
@@ -810,6 +847,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V80_SCHEMAS,
         CHACHANOTES_V81_SCHEMAS,
         CHACHANOTES_V82_SCHEMAS,
+        CHACHANOTES_V83_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -833,6 +871,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V80_SCHEMAS,
         *CHACHANOTES_V81_SCHEMAS,
         *CHACHANOTES_V82_SCHEMAS,
+        *CHACHANOTES_V83_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1060,6 +1099,7 @@ def _validate_candidate(
                         CHACHANOTES_V79_SCHEMAS,
                         CHACHANOTES_V80_SCHEMAS,
                         CHACHANOTES_V81_SCHEMAS,
+                        CHACHANOTES_V82_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1080,6 +1120,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V80_SCHEMAS
                         or version == 81
                         and actual_sql in CHACHANOTES_V81_SCHEMAS
+                        or version == 82
+                        and actual_sql in CHACHANOTES_V82_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1099,14 +1141,16 @@ def _validate_candidate(
                         if (
                             shipped_checkpoint and version == 76
                             or installed.owner_id == "db.chachanotes.primary"
-                            and version in (77, 78, 79, 80, 81)
+                            and version in (77, 78, 79, 80, 81, 82)
                         ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
                                 / "DB"
                                 / "migrations"
                                 / (
-                                    "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
+                                    "chachanotes_v82_to_v83_archive_chronology.sql"
+                                    if version == 82
+                                    else "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
                                     if version == 81
                                     else "chachanotes_v77_to_v78_fleet_progress.sql"
                                     if version == 77
@@ -1125,6 +1169,7 @@ def _validate_candidate(
                             restrictions.browse_order_migration = version == 79
                             restrictions.response_rules_migration = version == 80
                             restrictions.canvas_sibling_migration = version == 81
+                            restrictions.archive_chronology_migration = version == 82
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -1159,6 +1204,7 @@ def _validate_candidate(
                                 restrictions.browse_order_migration = False
                                 restrictions.response_rules_migration = False
                                 restrictions.canvas_sibling_migration = False
+                                restrictions.archive_chronology_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError
