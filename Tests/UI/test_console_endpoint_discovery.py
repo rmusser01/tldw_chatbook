@@ -34,11 +34,6 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     provider_connection_evidence,
 )
 from tldw_chatbook.UI.Console_Modules import connection_probe
-
-# Bound at import: Tests/conftest.py's ``_no_switcher_probe`` replaces the
-# module attribute for every test, so a test that runs the switcher's own
-# probe sets this back (as Tests/UI/test_console_switcher_local_probe.py does).
-_REAL_SWITCHER_PROBER = connection_probe.switcher_connection_prober
 from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
@@ -49,6 +44,11 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CREATED_ENTRY_PICK_LATER_COPY,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+
+# Bound at import: Tests/conftest.py's ``_no_switcher_probe`` replaces the
+# module attribute for every test, so a test that runs the switcher's own
+# probe sets this back (as Tests/UI/test_console_switcher_local_probe.py does).
+_REAL_SWITCHER_PROBER = connection_probe.switcher_connection_prober
 
 
 @pytest.fixture(autouse=True)
