@@ -3041,6 +3041,8 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
             for _ in range(400):
                 completed = await console._sync_native_console_chat_ui()
                 if completed is True:
+                    # The fixture changes presentation without a store revision.
+                    await console._sync_native_console_transcript(force=True)
                     return
                 await pilot.pause(0.01)
             assert completed is True, "Console transcript sync did not complete"
