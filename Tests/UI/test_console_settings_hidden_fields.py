@@ -32,6 +32,7 @@ from Tests.UI.test_console_settings_core_first import (
     _settings,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     console_generation_control_support,
     supported_generation_fields,
@@ -454,6 +455,9 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
             # starts with a capital ("… for this model. The provider decides").
             rest = str(help_line.content)[len(GENERATION_CONTROL_UNKNOWN_COPY) :]
             assert rest[1:2].isupper(), (name, rest)
+            # TASK-33006.12: at 211x44 the marker leaves the field's own help
+            # painted whole beside it, not cut off by the row's ellipsis.
+            assert MODEL_CONFIG_FIELDS[name].help in painted[row.region.y], name
         # Known support keeps the field table's plain help.
         temperature_help = modal.query_one("#console-settings-temperature-help", Static)
         assert GENERATION_CONTROL_UNKNOWN_COPY not in str(temperature_help.content)
