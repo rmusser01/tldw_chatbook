@@ -2859,9 +2859,11 @@ def test_remote_fs_mkdir_request_normalizes_and_carries_exclusions(
     executor = _remote_executor()
 
     request = executor._build_request(
-        "fs_mkdir", {"path": "deploy/v2"}, intent="write"
+        "fs_mkdir", {"path": "./deploy//v2"}, intent="write"
     )
 
+    # The denormalized input ("./", doubled separator) is collapsed to the
+    # canonical root-relative form the worker pins against.
     assert request.arguments["path"] == "deploy/v2"
     assert request.arguments["sensitive_exclusions"] == [
         {"kind": "subtree", "value": "secrets"},

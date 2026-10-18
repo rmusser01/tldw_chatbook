@@ -363,6 +363,51 @@ def test_fs_mkdir_refused_on_read_only_alias_mixed_roots(tmp_path):
     assert read_executor.calls == []
 
 
+def test_fs_mkdir_preflight_maps_directory_target_and_consults_the_chain_guard(
+    tmp_path, monkeypatch
+):
+    """TASK-35081 review follow-up: the preflight never promises a target
+    the executor would refuse, and classifies the target as a directory.
+
+    The chain guard itself is denylist-driven and environment-dependent;
+    this test pins the preflight's WIRING — the guard is consulted and a
+    refusal surfaces as a model-actionable LocalToolError — by
+    monkeypatching the guard predicate (the provider imports it
+    function-locally, so patching the defining module takes effect).
+    """
+    import tldw_chatbook.Utils.sensitive_paths as sensitive_paths_module
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path,
+                allow_write=True,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+
+    targets = provider.path_targets("local:fs_mkdir", {"path": "a/b"})
+
+    assert [(target.path, target.kind) for target in targets] == [
+        (tmp_path.resolve() / "a" / "b", "directory")
+    ]
+
+    monkeypatch.setattr(
+        sensitive_paths_module, "refuses_new_directory_chain", lambda *a, **k: True
+    )
+    # The raw-arg form ("creating 'c/d'") is unique to the provider's
+    # branch; the resolve choke point's write-chain refusal echoes the
+    # ABSOLUTE path, so this match pins which raise fired (review Minor
+    # on #3154: a future function-local import in local_tool_impls must
+    # not silently shift the exercised path).
+    with pytest.raises(LocalToolError, match=r"creating 'c/d' would collide"):
+        provider.path_targets("local:fs_mkdir", {"path": "c/d"})
+
+
 def test_admitted_root_guard_revokes_before_executor(tmp_path):
     executor = RecordingWorkspaceExecutor()
     provider = make_provider(
