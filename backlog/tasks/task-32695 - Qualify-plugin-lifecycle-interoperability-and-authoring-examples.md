@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 16:08'
+updated_date: '2026-10-18 16:11'
 labels:
   - plugins
   - implementation
@@ -240,6 +240,8 @@ Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and 
 96. Fixed-source phase51 reaches the real snapshot-error worker terminal/no-cancel/retired-DOM assertions, then fails only the new test outer error-code literal: public management_snapshot wraps the inner plugin_service_closed as plugin_management_unavailable. Bind public-error-oracle-repair/accepted.json exact before source and canonical childXML before mutation. Correct only this branch outer expected code and explicitly assert its original inner __cause__ is plugin_service_closed, preserving every other assertion/call and production behavior. No new ADR, product/guard/timeout/census change. Renew exact snapshot-error node plus workspace-success control on new frozen source; all original RED remains.
 
 97. Phase52 has6passes including both real operation-import failures/coordinator/three controls, but exact banner remains1==0 after outer True. Source and independent review establish the transcript six-field cheap gate returns before selector/reconciliation when the test only mutates its private current_effective callback; outer True is not proof the pipeline ran. Bind banner-idle-refresh-repair/accepted.json exact current test and actual childXML. Add only the documented _sync_native_console_transcript(force=True) call when the existing local helper obtains real True, matching this fixture direct presentation mutation without a store revision. Preserve all12 original counts/identity/text/session assertions,400/.01 bound and real full-sync calls; no token/cache manipulation or production gate/performance change. Renew exact banner and existing presentation controls from stable freeze. Real reset/undo idle liveness is not exercised by this synthetic fixture and is not claimed qualified. No new ADR for test use of existing idle refresh contract.
+
+98. Actual frozen9b1c976d phase54 is4/4passed; all11 real prune regression outcomes now have passing terminal/no-cancel/retired-DOM evidence (10phase51 plus renewed snapshot-error), with all30otherphase51 outcomes and sixphase52 runtime controls accounted. Update only the bound W002 census proposal:12 individually reviewed keys/57sites, transfer the exact1site MCP old-owner row, preserve every other row and W001/W003 policies/censuses/checker bytes. Seven positive/refusal/census-note controls already passedphase53. Then run actual worker checker, bind final targeted accounting/static/review limits, update QA/lesson/task and existing draftPR safely. Original failed phases remain; no newADR/cap/exclusion/guard or platform claim.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
