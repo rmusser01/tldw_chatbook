@@ -178,12 +178,12 @@ def _server_listing(
     nothing. Only a server's own listing counts: a URL-based provider or a
     registry entry; a cloud key check's listing is no catalog.
     """
-    evidence = getattr(readiness, "evidence", None)
-    connection = getattr(readiness, "connection", None)
+    if readiness is None or readiness.endpoint != "reachable":
+        return None
+    evidence, connection = readiness.evidence, readiness.connection
     if (
         evidence is None
         or connection is None
-        or readiness.endpoint != "reachable"
         or (
             connection.custom_endpoint_id is None
             and connection.provider_key not in URL_BASED_PROVIDER_KEYS
@@ -1498,7 +1498,7 @@ class ConsoleModelPopover(
 
     def _list_width(self) -> int:
         """The pair list's text width, less the scrollbar's cells in case the
-        list starts to scroll; 0 before the first layout."""
+        list starts to scroll; at most 0 before the first layout."""
         pairs = self.query_one("#console-popover-pairs", OptionList)
         return pairs.content_region.width - pairs.styles.scrollbar_size_vertical
 
