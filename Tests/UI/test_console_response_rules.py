@@ -534,12 +534,20 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert label in _run_text(case.console)
         case.rules._project(case.session_id, phase="idle")
         assert not _run_visible(case.console)
+        # TASK-35160: pop_screen empties the DOM at every level (the
+        # screen's children AND the strip's), so no widget query can answer
+        # for a detached screen -- the chip era held a bare chip widget and
+        # read its own label. The segment equivalent of that bare-widget
+        # read is the strip's own run-segment STATE: asserting it does not
+        # move when phases project onto the detached screen is the same
+        # contract with no DOM dependency.
+        strip = case.console.query_one("#console-status-chips", ConsoleStatusChips)
+        run_state_before = strip._run_chip_state
         await case.host.pop_screen()
         await case.pilot.pause()
         assert not case.console.is_attached
         snapshot = case.console._console_credential_snapshot
         case.console._poll_console_credential_readiness()
         assert case.console._console_credential_snapshot == snapshot
-        before = _run_text(case.console)
         case.rules._project(case.session_id, phase="checking")
-        assert _run_text(case.console) == before
+        assert strip._run_chip_state == run_state_before
