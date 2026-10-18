@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     reasoning_effort_values_sent,
     supported_generation_fields,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import ENDPOINT_FAMILIES
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CORE_FIELDS,
@@ -239,13 +240,16 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
 _CHOICE_ROWS = ("reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort")
 
 
+#: One registry entry per family: (slug, name, family, family_key, shown_choices).
+_FAMILY_ROWS = (
+    ("gpu-box", "GPU box", "llama_cpp", "llama_cpp", {"reasoning_effort"}),
+    ("lab", "Lab", "ollama", "ollama", set()),
+    ("gateway", "Gateway", "openai_compatible", "custom", {"reasoning_effort"}),
+)
+
+
 @pytest.mark.parametrize(
-    ("slug", "name", "family", "family_key", "shown_choices"),
-    [
-        ("gpu-box", "GPU box", "llama_cpp", "llama_cpp", {"reasoning_effort"}),
-        ("lab", "Lab", "ollama", "ollama", set()),
-        ("gateway", "Gateway", "openai_compatible", "custom", {"reasoning_effort"}),
-    ],
+    ("slug", "name", "family", "family_key", "shown_choices"), _FAMILY_ROWS
 )
 @pytest.mark.asyncio
 async def test_a_registry_endpoint_hides_what_its_family_hides(
@@ -257,6 +261,7 @@ async def test_a_registry_endpoint_hides_what_its_family_hides(
     TASK-33003.13, owner ruling 2026-10-09: a custom endpoint shows exactly
     the provider-choice rows its registry family supports, the rule the
     request follows; pinned over every family (``ENDPOINT_FAMILIES``)."""
+    assert {row[2] for row in _FAMILY_ROWS} == ENDPOINT_FAMILIES
     app = CoreFirstHarness()
     app.app_config["custom_endpoints"].setdefault(
         slug,
