@@ -377,7 +377,10 @@ API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that
 key was refused (a 401). A 403 from any model listing, local or cloud, means
 only that the key may not list models: it reads "Ready · not tested" and
-never blocks sending. Test results last for this session only, and a test of a
+never blocks sending. When the test sent no key, Chat settings' **Test
+connection** line adds "If this server needs a key, add it in Settings ▸
+Providers & Models (F4).", since a server may answer a missing key that way.
+Test results last for this session only, and a test of a
 different endpoint or key never changes this chat's readiness.
 
 A second action, **Write a note in Library**, stays available beside it for
@@ -950,7 +953,11 @@ custom endpoint's row opens Settings too, where its own entry is edited, but
 Settings offers no way back from there, so nothing reopens for it.
 
 - **After a save.** A provider that lists models reads "Ready · not tested"
-  on each, and **Enter** applies the highlighted pair to this chat. A chat
+  on each, and **Enter** applies the highlighted pair to this chat. The save
+  itself, even of only a key, made that provider and the model Settings
+  showed the default for new chats, and Settings' line above **Return to
+  Console** said so ("New chats use …"); the scope line's "this chat only"
+  is about this pick. A chat
   that holds work keeps its own pair through the save, so this is the step
   that moves it; a chat with no messages and no edited settings already
   follows the saved pair, and the list marks it **● CURRENT**. While no

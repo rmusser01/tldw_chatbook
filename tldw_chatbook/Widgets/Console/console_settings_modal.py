@@ -128,6 +128,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
     connection_credential_revision,
     console_generation_test_availability,
+    listing_refused_without_a_key,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
@@ -221,6 +222,10 @@ GENERATION_TEST_BUTTON_ID = "console-settings-test-generation"
 GENERATION_TEST_STATUS_ID = "console-settings-generation-test-status"
 _PROVIDER_DEFAULT_IDENTITY_ENDPOINT = "https://provider-default.invalid"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
+#: After a 403 to a Test that sent no key (owner decision 2026-10-17, D2).
+KEYLESS_REFUSAL_HINT = (
+    " If this server needs a key, add it in Settings ▸ Providers & Models (F4)."
+)
 MODEL_DISCOVER_INVALID_URL_COPY = (
     "Enter a valid http(s) endpoint URL to discover models."
 )
@@ -5202,7 +5207,10 @@ class ConsoleSettingsModal(
             return
         if self._active_connection_probe_token is token:
             self._active_connection_probe_token = None
-        self._apply_connection_probe_result(discovery_identity, result)
+        evidence = self._connection_evidence_store.evidence_for(identity)
+        self._apply_connection_probe_result(
+            discovery_identity, result, listing_refused_without_a_key(evidence)
+        )
         if not malformed_return:
             self._announce_verification_result(result)
         self._sync_readiness_display()
@@ -5264,8 +5272,12 @@ class ConsoleSettingsModal(
         self,
         identity: ConsoleModelDiscoveryIdentity,
         result: ProviderProbeResult,
+        keyless_refusal: bool = False,
     ) -> None:
-        """Render one bounded endpoint result without implying generation success."""
+        """Render one bounded endpoint result without implying generation success.
+
+        ``keyless_refusal``: the listing was a 403 that sent no key.
+        """
         if result.endpoint == "reachable":
             self._apply_model_discovery_result(
                 identity,
@@ -5286,6 +5298,7 @@ class ConsoleSettingsModal(
         if result.endpoint == "model_listing_unavailable":
             self._set_model_discover_status(
                 "Connection reached; model listing unavailable. Generation not tested."
+                + (KEYLESS_REFUSAL_HINT if keyless_refusal else "")
             )
             return
         category_copy = {

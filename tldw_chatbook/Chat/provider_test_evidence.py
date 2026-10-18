@@ -141,6 +141,11 @@ _FAILURE_CATEGORIES = frozenset(
         "connection_error",
     }
 )
+#: The categories "model_listing_unavailable" may carry: none (no usable
+#: list), an HTTP status (a 404, 429, 5xx) or, since the owner's decision of
+#: 2026-10-17 (PR #3144, D2), "forbidden" -- a 403, which rejects no key (only
+#: a 401 does, owner ruling 2026-10-02) but, sent no key, may want one.
+LISTING_UNAVAILABLE_CATEGORIES = frozenset({None, "http_status", "forbidden"})
 # TASK-25833: these are read by a first-time user deciding what to do next,
 # not by the implementer. Each names what happened in plain language and the
 # one action that addresses it -- "The model listing request had a connection
@@ -284,10 +289,10 @@ class ProviderReadinessSnapshot:
             raise ValueError("Incomplete readiness cannot authenticate credentials.")
         if self.endpoint == "unreachable":
             return
-        if self.endpoint == "model_listing_unavailable" and self.category in {
-            None,
-            "http_status",
-        }:
+        if (
+            self.endpoint == "model_listing_unavailable"
+            and self.category in LISTING_UNAVAILABLE_CATEGORIES
+        ):
             return
         if self.category is not None:
             raise ValueError("Endpoint failure category conflicts with its facet.")
@@ -544,7 +549,7 @@ class ProviderTestEvidence:
             if self.model_ids:
                 raise ValueError("Unreachable evidence cannot include model IDs.")
         elif self.endpoint == "model_listing_unavailable":
-            if self.model_ids or self.category not in {None, "http_status"}:
+            if self.model_ids or self.category not in LISTING_UNAVAILABLE_CATEGORIES:
                 raise ValueError("Model-listing evidence is inconsistent.")
         elif self.model_ids or self.category is not None:
             raise ValueError("Untested evidence cannot include probe results.")
@@ -1513,8 +1518,47 @@ def _validate_probe_result(
     elif endpoint == "unreachable":
         if model_ids:
             raise ValueError("Unreachable probe result cannot include model IDs.")
-    elif model_ids or category not in {None, "http_status"}:
+    elif model_ids or category not in LISTING_UNAVAILABLE_CATEGORIES:
         raise ValueError("Model-listing probe result is inconsistent.")
+
+
+def listing_refused_without_a_key(evidence: object) -> bool:
+    """Whether a model listing that sent no key was answered 403.
+
+    The owner's decision of 2026-10-17 (PR #3144, D2): such a listing still
+    reads "model listing unavailable" and blocks nothing, but the server may
+    want a key, so a surface adds a hint naming its key field. "Sent no key"
+    is revision 0, whichever source names it (``_connection_key``'s rule): an
+    explicit "environment" naming an unset variable sends none either. A probe
+    result carries no identity, so it never qualifies.
+
+    Args:
+        evidence: A ``ProviderTestEvidence`` (or a bare probe result).
+
+    Returns:
+        True for a 403 listing whose identity sent no credential.
+    """
+    return (
+        getattr(evidence, "endpoint", None) == "model_listing_unavailable"
+        and getattr(evidence, "category", None) == "forbidden"
+        and getattr(getattr(evidence, "identity", None), "credential_revision", None)
+        == 0
+    )
+
+
+def listing_unavailable_endpoint_copy(evidence: object) -> str:
+    """Settings' Endpoint-row words for a listing that gave no usable list.
+
+    Args:
+        evidence: The stored evidence, or a settled probe, behind the row.
+
+    Returns:
+        The suffix, with the API key field named after a keyless 403.
+    """
+    copy = " · model listing unavailable; chat endpoint not tested"
+    if listing_refused_without_a_key(evidence):
+        copy += "; if this server needs a key, enter one in the API key field"
+    return copy
 
 
 def _validate_generation_result(generation: object, category: object) -> None:

@@ -101,14 +101,14 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
         return models, "available" if models else "empty", ""
     # A 403 means this key may not list models: only a 401 rejects a key
     # (owner ruling 2026-10-02, PR #2958 review; as Test and Settings read it).
-    if result.status == "unsupported" or (
-        result.error is not None
-        and (
-            result.error.kind == "unsupported_endpoint"
-            or result.error.category == "forbidden"
-        )
+    # It keeps "forbidden" for the keyless hint (owner decision 2026-10-17, D2).
+    forbidden = result.error is not None and result.error.category == "forbidden"
+    if (
+        forbidden
+        or result.status == "unsupported"
+        or (result.error is not None and result.error.kind == "unsupported_endpoint")
     ):
-        return [], "listing_unavailable", ""
+        return [], "listing_unavailable", "forbidden" if forbidden else ""
     error_kind = result.error.kind if result.error is not None else ""
     category = {
         "invalid_response": "invalid response",
@@ -141,10 +141,12 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
     if not isinstance(outcomes, Mapping) or discovery_key not in outcomes:
         return GENERIC_DISCOVERY_FAILURE_CATEGORY
     try:
-        _models, _state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
+        _models, state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
     except ValueError:
         return GENERIC_DISCOVERY_FAILURE_CATEGORY
-    return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
+    # Only a failure's category: a 403's "forbidden" names no failure.
+    failed = state == "connection_failed"
+    return category if failed else GENERIC_DISCOVERY_FAILURE_CATEGORY
 
 
 def tested_failure_category(category: object) -> str:
@@ -187,20 +189,62 @@ def subscription_cannot_list(
     subscription here too, not only in readiness (review round 2).
     """
 
-    app_config = getattr(getattr(step.wizard, "app_instance", None), "app_config", None)
-    if (
-        state != "connection_failed"
-        or category != "authentication"
-        or getattr(provider_draft, "provider", "") != "anthropic"
-        or wizard_state.discovery_sends_a_key(provider_draft)
-        or not isinstance(app_config, Mapping)
-    ):
+    return (
+        state == "connection_failed"
+        and category == "authentication"
+        and not wizard_state.discovery_sends_a_key(provider_draft)
+        and _signs_in_with_subscription(step, getattr(provider_draft, "provider", ""))
+    )
+
+
+def _signs_in_with_subscription(step: Any, provider: str) -> bool:
+    """Whether ``provider`` is Anthropic signed in with a Claude subscription."""
+
+    wizard = getattr(step, "wizard", None)
+    app_config = getattr(getattr(wizard, "app_instance", None), "app_config", None)
+    if provider != "anthropic" or not isinstance(app_config, Mapping):
         return False
     from tldw_chatbook.config import provider_settings_for_key
     from tldw_chatbook.LLM_Calls.anthropic_subscription import anthropic_auth_source
 
     settings = provider_settings_for_key(app_config.get("api_settings"), "anthropic")
     return anthropic_auth_source(settings) == "claude_subscription"
+
+
+def _with_keyless_hint(
+    step: Any, line: str, hint: str, category: object, *, key_sent: bool, provider: str
+) -> str:
+    """``line`` for a listing that cannot list, plus ``hint`` after a keyless 403.
+
+    The owner's decision of 2026-10-17 (PR #3144, D2): a 403 rejects no key
+    (only a 401 does), but a server that answered one to a check that sent no
+    key may want a key. A Claude subscription signs in without one, so it
+    never gets the hint (D3 confirmed its copy).
+    """
+
+    if (
+        category != "forbidden"
+        or key_sent
+        or _signs_in_with_subscription(step, provider)
+    ):
+        return line
+    return f"{line} {hint}"
+
+
+def model_unavailable_line(step: Any, category: object) -> str:
+    """The Model step's line for a listing that cannot list (``category`` as
+    ``_model_discovery_ui_outcome`` or a Test's evidence names it). A key is
+    judged sent as ``classify_render`` judges it, by the step's draft."""
+
+    draft = step._current_provider_draft()
+    return _with_keyless_hint(
+        step,
+        wizard_state.MODEL_LISTING_UNAVAILABLE_LINE,
+        wizard_state.MODEL_KEYLESS_REFUSAL_HINT,
+        category,
+        key_sent=wizard_state.discovery_sends_a_key(draft),
+        provider=getattr(draft, "provider", ""),
+    )
 
 
 def failed_listing(
@@ -234,7 +278,14 @@ def failed_listing(
     except Exception:  # noqa: BLE001 - unreadable readiness: the step's own copy
         unavailable = False
     if unavailable:
-        return wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE, failure
+        return _with_keyless_hint(
+            owner,
+            wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
+            wizard_state.PROVIDER_KEYLESS_REFUSAL_HINT,
+            category,
+            key_sent=wizard_state.discovery_sends_a_key(provider_draft),
+            provider=getattr(provider_draft, "provider", ""),
+        ), failure
     return owner._discovery_failure_status(display, failure), failure
 
 
@@ -323,7 +374,15 @@ def tested_evidence_detail(
         )
         note_probe_failure(owner, failure, identity)
     elif evidence.endpoint == "model_listing_unavailable":
-        detail = wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        # A key sent is read as the 401 above reads it (D2, 2026-10-17).
+        detail = _with_keyless_hint(
+            owner,
+            wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE,
+            wizard_state.PROVIDER_KEYLESS_REFUSAL_HINT,
+            evidence.category,
+            key_sent=identity.credential_source != "none",
+            provider=identity.provider_key,
+        )
     note_probe_reached(owner, identity, evidence.endpoint)
     return detail
 

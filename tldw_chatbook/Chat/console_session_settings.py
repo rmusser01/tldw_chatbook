@@ -66,6 +66,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     EndpointFacet,
     GenerationFailureCategory,
     GenerationFacet,
+    LISTING_UNAVAILABLE_CATEGORIES,
     ModelFacet,
     PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
     ProviderConnectionEvidence,
@@ -679,7 +680,7 @@ class ConsoleSettingsReadiness:
         if self.endpoint == "unreachable":
             pass
         elif self.endpoint == "model_listing_unavailable":
-            if self.endpoint_category not in {None, "http_status"}:
+            if self.endpoint_category not in LISTING_UNAVAILABLE_CATEGORIES:
                 raise ValueError("Console endpoint category conflicts with its facet.")
         elif self.endpoint_category is not None:
             raise ValueError("Console endpoint category conflicts with its facet.")

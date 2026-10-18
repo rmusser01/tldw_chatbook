@@ -136,6 +136,7 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
     connection_credential_revision,
+    listing_unavailable_endpoint_copy,
     shared_connection_evidence,
 )
 from ...Chat.sampling_params import temperature_range
@@ -17421,9 +17422,7 @@ class SettingsScreen(BaseAppScreen):
         shown += {
             "testing": " · checking the model listing",
             "reachable": " · model listing reached",
-            "model_listing_unavailable": (
-                " · model listing unavailable; chat endpoint not tested"
-            ),
+            "model_listing_unavailable": listing_unavailable_endpoint_copy(evidence),
         }.get(listing, "")
         if listing == "unreachable":
             shown += " · " + SettingsScreen._provider_listing_failure_copy(

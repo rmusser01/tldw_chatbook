@@ -221,8 +221,10 @@ class SettingsEndpointProbeOutcome:
 def _listing_not_permitted() -> ProviderProbeResult:
     """A 403 on a model listing: this credential may not LIST models, which
     says nothing about chatting, so it blocks nothing and verifies nothing.
-    Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review)."""
-    return ProviderProbeResult("model_listing_unavailable", (), "http_status")
+    Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review). It
+    keeps "forbidden": sent no key, the server may want one (owner decision
+    2026-10-17, PR #3144 D2; ``listing_refused_without_a_key``)."""
+    return ProviderProbeResult("model_listing_unavailable", (), "forbidden")
 
 
 def provider_probe_result_from_settings_outcome(

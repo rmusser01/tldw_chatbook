@@ -165,6 +165,8 @@ FAST_LANE_TARGETS = (
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_provider_tells_a_listing_that_cannot_list_as_model_does",
     # Review round 5: a 403 or a 404 to Test reads as the listing reads it.
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it",
+    # Owner decision D2 (2026-10-17): Model's keyless-403 hint, 3 of 3 serial.
+    "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_model_step_hints_at_a_key_only_after_a_keyless_403",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -248,6 +250,9 @@ ADMISSION_TARGETS = (
     "Tests/Wizards/test_first_run_setup_wizard.py::test_a_refused_key_is_told_as_checked_and_the_section_not_optional",
     "Tests/Wizards/test_first_run_setup_wizard.py::test_a_listing_that_refused_a_sent_key_makes_the_key_required",
     "Tests/Wizards/test_first_run_setup_wizard.py::test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it",
+    # Owner decision D2 (2026-10-17): a keyless 403 hints at a key on both
+    # steps, by the listing and by Test (bootstrap_profile file), 3 of 3 serial.
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_a_keyless_403_reads_as_unavailable_with_a_key_hint_on_both_steps",
     "Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word",
     "Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule",
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",

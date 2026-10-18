@@ -313,7 +313,7 @@ local provider gets a short model-listing probe, sent with the draft's API key
 when it has one (a server started with a key is tested with it, never
 without), and it is listed even before you choose a model, since the list is
 how you find one. As for a cloud provider below, only a 401 reads "key
-rejected"; a 403 means the key may not list models and blocks nothing. A cloud provider gets one model listing at the endpoint a
+rejected"; a 403 means the key may not list models and blocks nothing. When that probe sent no key, the Endpoint row of the result adds "if this server needs a key, enter one in the API key field", since a server may answer a missing key with a 403. A cloud provider gets one model listing at the endpoint a
 send would use, with the key a send would use (saved, from the env var, or
 typed and not yet saved). That listing is the key check: "Ready · verified
 14:01" with "key accepted (*N* models listed) · generation not tested", or
@@ -481,8 +481,13 @@ from the Console one way back is always there.
 
 From either place a successful save puts focus on the button, so **Esc**,
 **s**, **Enter** is save and go back; from the Console the status then reads
-"Credential saved. Return to Console to continue in “Chat 1”; provider
-acceptance is not yet verified.". Press **t** there and, once **Key check**
+"Credential saved. New chats use OpenAI · gpt-5. Return to Console to
+continue in “Chat 1”; provider acceptance is not yet verified.". Its middle
+sentence is there because a save of a provider's key, Env var, Endpoint or
+Default model for new chats also makes that provider, with the model the
+page shows, the default for new chats, even when you saved only a key: it
+names that pair. It is left out when the save leaves new chats on another
+provider (a Model defaults change for a provider that is not the default). Press **t** there and, once **Key check**
 reads "Ready · verified", the status ends "the provider accepted the key."
 instead; focus stays on the button. After a save, from either place, the button
 stays through any later edit and **Return without saving** no longer shows.

@@ -332,7 +332,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # card covered at launch runs discovery on the first return) and the two
 # discovery-on-return tests it stopped masking ran in no lane. Appended after
 # the 35, so they land on shards 8-10 of ten (5-6 s each), each 3 of 3 serial.
-MINIMUM_FILES = 320
+# The owner's decisions on its open questions (2026-10-17) raised it by 2, to
+# 322: decision D2's keyless-403 hint in Settings' Test rows and in Chat
+# settings' Test connection, appended last (1-2 s each), each 3 of 3 serial.
+MINIMUM_FILES = 322
 
 
 def read_census(path: Path) -> list[str]:
