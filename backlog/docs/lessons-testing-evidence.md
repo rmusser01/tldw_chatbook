@@ -16840,6 +16840,24 @@ draft) and test the pick after each one, not only from the state the surface
 opened with. When it reads "the latest" from a collection, check that every
 writer keeps that order: an update in place does not.
 
+## A hand-published result can stand in for a probe the product no longer runs (TASK-35190, 2026-10-18)
+
+**Incident.** TASK-35190's review round 1 pointed Switch model's background
+probe at the endpoint a pick lands on (this chat's :9200) instead of the
+configured :9099, and moved Ctrl+N's check onto the configured readiness.
+The AC#4 test proved that check by publishing a refused result for :9099 by
+hand and pressing Ctrl+N: refused, green. In the product nothing tested
+:9099 any more, so its readiness stayed "Ready · not tested" and Ctrl+N
+saved a new-chat default that could not send. Round 2's reviewer probe (the
+real prober, :9099 refused at the network, nothing published) saved it where
+the base had refused, and the test's own first Ctrl+N, before the hand
+publish, had saved while :9099 refused at the network too.
+
+**What to do.** When a fix moves a gate onto another source of evidence,
+find what produces that evidence in the product, and test the gate with only
+that producer running. A hand-published result shows that the gate reads
+evidence, not that anything still produces it.
+
 ## A first reactive read can reenter a loader before its arguments finish evaluating
 
 **TASK-32565, 2026-09-13.** The native slow-directory picker showed duplicate
