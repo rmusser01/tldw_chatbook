@@ -37,12 +37,15 @@ TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 
 
 @contextmanager
-def operation_owned_connection(database: object) -> Iterator[None]:
+def operation_owned_connection(
+    database: object, *, operation_deadline: float | None = None
+) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
     including its active transaction, remains owned by the caller unless retired
     during the operation; a newly acquired replacement is operation-owned.
+    A monotonic deadline also bounds the departing handle's checkpoint wait.
     """
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
@@ -85,7 +88,22 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     finally:
         current = getattr(local, "conn", None)
         if current is not None and (not borrowed or current is not previous):
-            close()
+            try:
+                if operation_deadline is not None:
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(current)
+                    except sqlite3.ProgrammingError:
+                        pass  # Native retirement already completed.
+                    else:
+                        timeout = current.execute("PRAGMA busy_timeout").fetchone()[0]
+                        remaining_ms = max(
+                            0, int((operation_deadline - time.monotonic()) * 1000)
+                        )
+                        current.execute(
+                            f"PRAGMA busy_timeout = {min(timeout, remaining_ms)}"
+                        )
+            finally:
+                close()
 
 
 async def run_owned_db_call[**_CallParameters, _CallResult](

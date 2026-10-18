@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -193,7 +194,7 @@ def test_v70_migration_preserves_existing_rows_and_adds_archive_index(
     assert current.get_conversation_by_id(cid)["archived"] == 0
     assert current.get_conversation_by_id(cid)["version"] == version
     assert current.get_library_conversation_messages(cid)["messages"][0]["id"] == mid
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         assert (
             conn.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
@@ -268,7 +269,7 @@ def test_migration_failure_rolls_back_column_index_and_version(tmp_path, monkeyp
 
     with pytest.raises(SchemaError):
         CharactersRAGDB(path, client_id="archive-test")
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         assert "archived" not in {
             r[1] for r in conn.execute("PRAGMA table_info(conversations)")
         }
@@ -548,7 +549,7 @@ def test_v83_chronology_upgrade_unknown_history_and_transactional_rollback(
         old.close_connection()
     with pytest.raises(SchemaError, match="V82 to V83"):
         CharactersRAGDB(path, client_id="chronology")
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         assert (
             conn.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"

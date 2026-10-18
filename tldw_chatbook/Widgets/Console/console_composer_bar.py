@@ -511,7 +511,7 @@ def _swap_size_class(widget: Widget, prefix: str, wanted: str) -> None:
     if not stale and widget.has_class(wanted):
         return
     widget.remove_class(*stale)
-    widget.set_styles(**{"width" if prefix == "w-" else "height": None})
+    setattr(widget.styles, "width" if prefix == "w-" else "height", None)
     widget.add_class(wanted)
 
 

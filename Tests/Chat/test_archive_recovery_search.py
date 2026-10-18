@@ -496,3 +496,63 @@ def test_whitespace_prefixed_private_serialization_never_matches_or_projects(
     assert search(stores, query="needle").items == ()
     assert search(stores, query="Visible title").items[0].excerpt == ""
     assert search(stores).items[0].excerpt == ""
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+@pytest.mark.parametrize("query_error", [False, True])
+def test_search_retires_only_its_worker_connections(
+    stores, monkeypatch, borrowed, query_error
+):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveRecoveryError
+
+    db, service, registry = stores
+    original_query = service.query_archive_recovery_page
+
+    def query(*args, **kwargs):
+        result = original_query(*args, **kwargs)
+        if query_error:
+            raise sqlite3.OperationalError("injected query failure")
+        return result
+
+    monkeypatch.setattr(service, "query_archive_recovery_page", query)
+
+    def worker():
+        connections = {}
+        for owner, name in ((db, "get_connection"), (registry.db, "_get_connection")):
+            original = getattr(owner, name)
+
+            def track(*args, _original=original, **kwargs):
+                conn = _original(*args, **kwargs)
+                connections[id(conn)] = conn
+                return conn
+
+            monkeypatch.setattr(owner, name, track)
+        try:
+            if borrowed:
+                db.get_connection().execute("BEGIN")
+                registry.db._held_connection().execute("BEGIN")
+            if query_error:
+                with pytest.raises(ArchiveRecoveryError) as error:
+                    search(stores)
+                assert error.value.code == "storage_error"
+            else:
+                assert search(stores).items == ()
+            assert len(connections) == 2
+            for conn in connections.values():
+                if borrowed:
+                    assert conn.in_transaction
+                    assert conn.execute("SELECT 1").fetchone()[0] == 1
+                else:
+                    with pytest.raises(
+                        sqlite3.ProgrammingError, match="closed database"
+                    ):
+                        conn.execute("SELECT 1")
+        finally:
+            db.close_connection()
+            registry.db.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(worker).result()

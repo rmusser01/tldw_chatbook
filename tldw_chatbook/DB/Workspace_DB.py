@@ -339,7 +339,11 @@ COMMIT;
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._init_store_kernel()
-        super().__init__(db_path, client_id)
+        try:
+            super().__init__(db_path, client_id)
+        except BaseException:
+            self.close()
+            raise
 
     def _open_connection(
         self, *, operation_deadline: float | None = None
