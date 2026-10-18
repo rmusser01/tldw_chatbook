@@ -543,6 +543,7 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "research": "f5",
         "meetings": "f7",
         "plugins": "f8",
+        "kanban": "f9",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     from Tests.UI.css_destination_tour import DESTINATION_BODIES
