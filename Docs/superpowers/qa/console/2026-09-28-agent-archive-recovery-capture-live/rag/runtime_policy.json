@@ -1,0 +1,10 @@
+{
+  "active_server_id": "http://127.0.0.1:8000",
+  "active_source": "local",
+  "last_known_server_label": "127.0.0.1:8000",
+  "server_auth_checked_at": null,
+  "server_auth_state": "unknown",
+  "server_configured": true,
+  "server_reachability": "unknown",
+  "server_reachability_checked_at": null
+}

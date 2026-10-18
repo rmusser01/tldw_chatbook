@@ -3564,6 +3564,29 @@ Measure all resource types after teardown, record diagnostic exit/stderr, and
 distinguish fixture lifetime from ordinary production reads; falling below the
 warning threshold is not evidence of a plateau.
 
+
+**TASK-33020, agent archive recovery qualification, 2026-09-27.** The 498-node
+scoped pass reported +729 descriptors; total attribution remains unqualified.
+A focused probe retained the explicit recovery fixture's real main and worker
+ChaChaNotesDB handles after an actual off-loop target read. Calling the fixture's
+`close_connection()` teardown left the worker handle usable. The fixture now
+uses `quiesce_connections` after recovery work settles; the matching explicit
+file-backed runtime-search test does likewise. Cached-config teardown already
+used this boundary, but explicit fixture owners were outside that cache. Test
+those exact retained handles for closure; do not attribute the aggregate warning
+or claim a process-wide plateau from a smaller passing selection.
+
+**Same incident, bounded follow-through.** One retained native recovery app ran
+five confirmed real-store cycles on two explicitly owned executor workers. OS
+FDs plateaued at 47. Strong handle observers showed current-thread teardown left
+two WorkspaceDB worker handles (six FDs) and one AgentRunsDB worker handle (four
+FDs); calling each store's `close()` on its exact creating worker reduced all
+three named stores to zero handles/FDs before GC. The observers deliberately
+retain connections, so this proves explicit-close ownership rather than natural
+release. One worker deadlocked the native agent runner awaiting marshalled storage;
+two real workers are needed for that probe topology. These bounded samples do
+not attribute the earlier +729 aggregate growth or qualify unrelated app owners.
+
 ## Capture queued UI ownership in the row, not only in the event
 
 **PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
@@ -23037,3 +23060,17 @@ The board's 13 existing tests passed, including a bootstrap/create test whose re
 
 
 PR #3157's independent review also found that direct action calls in a test named keyboard navigation missed terminal uppercase Shift keys and descendant scroll bindings. Actually pushed screens with `pilot.press()` reproduced four broken interactions, including off-screen selection and an inaccessible long inspector. Use parser-shaped key names and assert visible viewport state for keyboard promises; a selected ID alone does not prove that users can see it.
+## Bind the intended real agent bridge before mounting Console
+
+**TASK-33019, archive recovery, 2026-09-27.** A mounted native recovery test
+constructed its controller with one real `AgentRunsDB`, then let screen startup
+create a second runtime bridge before replacing it. Selection refresh timing
+could leave the controller creating the manual work chain in one database and
+native dispatch reading the other, failing with `unknown automatic work chain`.
+Binding `owner.set_agent_bridge(bridge)` before mount and asserting that the
+owner and controller retain that exact bridge removed the split; retrying the
+flow would have hidden the fixture defect.
+
+## Clean merges can reverse the canonical owner comparison (PR3162 rebase,2026-10-18)
+
+Rebasing archive recovery onto current dev combined two individually valid thinking-owner adaptations: incoming validated adapter aliases were normalized to the canonical owner key, while an older comparison renamed the admitted canonical base row back to that alias. Git reported no conflict. The exact-owner positive test failed while all seven negative controls passed; a real captured-thinking follow-up then failed completed-turn surface admission because its saved assistant had lost revision provenance. Deleting only the stale reverse rename produced9passing factory/native checks, preserving every source/value/witness guard. Compare the complete composed normalization at a shared boundary; negative refusal controls alone cannot prove a valid owner survives.

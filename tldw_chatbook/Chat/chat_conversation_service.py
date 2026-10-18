@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, cast
@@ -268,6 +269,7 @@ def normalize_conversation_row(
         "created_at": conversation_row.get("created_at"),
         "deleted": conversation_row.get("deleted"),
         "archived": bool(conversation_row.get("archived", False)),
+        "archived_at": conversation_row.get("archived_at"),
         "message_count": int(
             message_count
             if message_count is not None
@@ -853,6 +855,20 @@ class ChatConversationService:
         """Archive/restore exact local identities with version-checked receipts."""
         return self.db.set_conversations_archived(
             conversation_ids, archived=archived, expected_versions=expected_versions
+        )
+
+    def query_archive_recovery_page(
+        self,
+        request_data: Mapping[str, object],
+        workspace_rows: tuple[Mapping[str, object], ...],
+        *,
+        after: tuple[int, str, str] | None,
+        deadline: float,
+        monotonic: Callable[[], float],
+    ) -> dict[str, object]:
+        """Delegate bounded storage-side archive discovery (ADR-166)."""
+        return self.db.query_archive_recovery_page(
+            request_data, workspace_rows, after=after, deadline=deadline, monotonic=monotonic
         )
 
     def get_conversation_archive_states(

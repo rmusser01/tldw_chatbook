@@ -1406,3 +1406,41 @@ availability refusals in `Tests/test_ssh_feature_availability.py`,
 degradation/status vocabulary in `Tools/remote_binding_status.py` and the
 wire/transport/executor suites) — a code-level pass; live walkthrough
 against a real server is recorded separately on the task.*
+
+## Assistant archive recovery and Library scope
+
+**Assistant Library access** must be **Allowed** for assistant archive recovery.
+This dedicated local archive search is available with Direct tools off in
+**RAG-only** mode and needs no embedding index. It does not change the selected
+RAG sources or general Library tool mode. Blocked access still permits your
+manual Library actions; the app does not enable assistant access automatically.
+
+The result header shows **All local workspaces** unless a specific workspace
+filter was requested. Search includes Default, active and archived workspaces,
+and saved non-deleted chats whose chat or workspace is archived. It is separate
+from this Chat's selected retrieval items. A closed active chat, a remote-only
+chat or a deleted chat is outside this archive search; “not found” does not
+prove deletion. Use [manual Library search](sessions-tabs-workspaces.md#archive-find-review-and-resume-a-saved-chat)
+to inspect other saved history.
+
+Archive dates are actual recorded chat and workspace archive events, not
+creation or modification dates. Date searches use a displayed timezone-aware
+interval, including its start and excluding its end. Either applicable event
+can match: a chat archived Monday in a workspace archived Friday appears in a
+Monday search with a **chat** date match. Restoration clears that resource's
+current archive date; this is not an event-history ledger. Device clocks can
+affect dates.
+
+Older archives can have **unknown** times. Without a date filter they remain
+searchable. With a date filter, **Include unknown archive times** adds possible
+matches explicitly labeled as unknown; it does not assign a date to them. A
+known date for one resource does not prove the other's date. Search results
+include bounded title/keyword/user/visible-assistant evidence, excluding system
+prompts, hidden reasoning and tool payloads. **Preview** opens the existing
+read-only Library reader without restoring or staging context.
+
+Local storage search can return snippets to the selected model. Normal model
+destination disclosure and tool-history retention still apply; returned
+excerpts are not promised to remain on the device. See
+[agent recovery controls](agent-runs-and-tools.md#find-and-restore-an-archived-chat-with-the-assistant)
+and [ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md).

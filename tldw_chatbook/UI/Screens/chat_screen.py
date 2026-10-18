@@ -9251,6 +9251,16 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
+    def _archive_recovery_view(self):
+        """Return this disposable view adapter; runtime retains all authority."""
+        adapter = getattr(self, "_console_archive_recovery_view", None)
+        if adapter is None:
+            from ..Console_Modules.archive_recovery import ConsoleArchiveRecoveryView
+
+            adapter = ConsoleArchiveRecoveryView(self)
+            self._console_archive_recovery_view = adapter
+        return adapter
+
     def console_view_hooks(self) -> dict[str, Any]:
         """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
 
@@ -9273,6 +9283,10 @@ class ChatScreen(BaseAppScreen):
         skill = getattr(self, "_skill", None)
         return {
             "response_rules_changed": partial(refresh_rule_controls, self),
+            "present_results": self._archive_recovery_view().show_results,
+            "present_confirmation": self._archive_recovery_view().show_confirmation,
+            "is_answerable": self._archive_recovery_view().is_answerable,
+            "on_settled": self._archive_recovery_view().show_receipt,
             "set_pending_decision": self._set_console_pending_decision,
             "follow_watchlists_operations": self._follow_console_watchlists_operations,
             # ADR-236: the served child mirrors this approval hook onto the
@@ -17627,6 +17641,9 @@ class ChatScreen(BaseAppScreen):
                 if not poll_is_current():
                     return False
                 await self._sync_native_console_transcript()
+                if not poll_is_current():
+                    return False
+                await self._archive_recovery_view().sync()
                 if not poll_is_current():
                     return False
                 if not config_sync.sync_console_rail_visibility(self):

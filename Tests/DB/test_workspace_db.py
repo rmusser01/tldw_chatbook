@@ -22,6 +22,8 @@ def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path
         ).fetchall():
             connection.execute(f'DROP TRIGGER "{name}"')
         connection.execute("DROP TABLE workspace_binding_authority")
+        connection.execute("ALTER TABLE workspace_records DROP COLUMN archived_at")
+        connection.execute("ALTER TABLE workspace_records DROP COLUMN archive_revision")
         connection.execute("DELETE FROM schema_version WHERE version >= 8")
         connection.execute("""CREATE TRIGGER refuse_v8 BEFORE INSERT ON schema_version
             WHEN NEW.version = 8 BEGIN SELECT RAISE(ABORT, 'version failure'); END""")
@@ -44,7 +46,7 @@ def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path
         )
         connection.execute("DROP TRIGGER refuse_v8")
     upgraded = WorkspaceDB(path)
-    assert upgraded.get_schema_version() == 9
+    assert upgraded.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     assert (
         LocalWorkspaceRegistryService(upgraded)
         .get_workspace("prior")
@@ -906,14 +908,16 @@ def test_operation_table_rejects_invalid_raw_enum_status_and_guard_values(
 def test_v9_authority_witness_migration_rolls_back(tmp_path):
     path = tmp_path / "witness.sqlite"
     db = WorkspaceDB(path)
-    assert db.get_schema_version() == 9
+    assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     with db.transaction() as conn:
         for (name,) in conn.execute(
             "SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'workspace_binding_authority_%'"
         ).fetchall():
             conn.execute(f'DROP TRIGGER "{name}"')
         conn.execute("DROP TABLE workspace_binding_authority")
-        conn.execute("DELETE FROM schema_version WHERE version=9")
+        conn.execute("ALTER TABLE workspace_records DROP COLUMN archived_at")
+        conn.execute("ALTER TABLE workspace_records DROP COLUMN archive_revision")
+        conn.execute("DELETE FROM schema_version WHERE version>=9")
         conn.execute(
             "CREATE TRIGGER refuse_v9 BEFORE INSERT ON schema_version WHEN NEW.version=9 BEGIN SELECT RAISE(ABORT, 'version failure'); END"
         )
@@ -929,5 +933,48 @@ def test_v9_authority_witness_migration_rolls_back(tmp_path):
         ).fetchone()
         conn.execute("DROP TRIGGER refuse_v9")
     upgraded = WorkspaceDB(path)
-    assert upgraded.get_schema_version() == 9
+    assert upgraded.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     upgraded.close()
+
+
+def test_v10_archive_chronology_migrates_unknown_history_and_rolls_back(tmp_path):
+    path = tmp_path / "v9-archive.sqlite"
+    db = WorkspaceDB(path)
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="old", name="Old archive")
+    registry.archive_workspace("old")
+    with db.transaction() as conn:
+        conn.execute("ALTER TABLE workspace_records DROP COLUMN archived_at")
+        conn.execute("ALTER TABLE workspace_records DROP COLUMN archive_revision")
+        conn.execute("DELETE FROM schema_version WHERE version = 10")
+        conn.execute("""CREATE TRIGGER refuse_v10 BEFORE INSERT ON schema_version
+            WHEN NEW.version = 10 BEGIN SELECT RAISE(ABORT, 'version failure'); END""")
+    db.close()
+    with pytest.raises(sqlite3.IntegrityError, match="version failure"):
+        WorkspaceDB(path)
+    with sqlite3.connect(path) as conn:
+        assert (
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 9
+        )
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(workspace_records)")
+        }
+        assert "archived_at" not in columns and "archive_revision" not in columns
+        assert (
+            conn.execute(
+                "SELECT archived FROM workspace_records WHERE workspace_id='old'"
+            ).fetchone()[0]
+            == 1
+        )
+        conn.execute("DROP TRIGGER refuse_v10")
+    upgraded = WorkspaceDB(path)
+    try:
+        assert upgraded.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
+        old = LocalWorkspaceRegistryService(upgraded).get_workspace("old")
+        assert old.archived and old.archived_at is None and old.archive_revision == 0
+        with pytest.raises(sqlite3.IntegrityError), upgraded.transaction() as conn:
+            conn.execute(
+                "UPDATE workspace_records SET archive_revision=-1 WHERE workspace_id='old'"
+            )
+    finally:
+        upgraded.close()

@@ -384,6 +384,7 @@ class ConsoleTurnConfigurationSnapshot:
     #: gates under; ``"default"`` keeps the single-profile behavior.
     tool_policy_profile_id: str = "default"
     mcp_definition_capture: Literal["captured", "composition"] = "captured"
+    recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Detach constructor inputs even when callers bypass ``capture``."""
@@ -572,6 +573,7 @@ def _detached_configuration(
     """Copy an already-frozen configuration at the final-context boundary."""
     return ConsoleTurnConfigurationSnapshot(
         session_id=configuration.session_id,
+        recovery_user_origin=configuration.recovery_user_origin,
         provider_selection=configuration.provider_selection,
         scratch_space=configuration.scratch_space,
         session_settings=configuration.session_settings,

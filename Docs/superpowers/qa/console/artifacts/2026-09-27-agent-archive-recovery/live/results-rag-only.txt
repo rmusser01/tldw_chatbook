@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settin  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Find currently archived cha...                                                                         │
+                  Context ◂  │   Find currently arc…  ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │  │                                                                                                                │   │
+ Workspaces             ▸    │  │                                                                                                                │   │
+ ──────────────────────────  │  │                                                    Preview                                                     │   │
+ Conversations          ▾    │  │                                                                                                                │   │
+     Archive this chat       │  │                                                                                                                │   │
+      Archived chats         │  │                                                                                                                │   │
+     Search all chats…       │  │                                                    Restore                                                     │   │
+   Find currently            │  │                                                                                                                │   │
+   archived cha...           │  │                                                                                                                │   │
+                             │  │ 2. Orchid planning conversation · Atlas Research                                                               │   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  │ Chat active · Workspace archived                                                                               │   │
+  ▊  Filter      ▎           │  │ Archive events: workspace: 2026-09-27T22:38:52.033513+00:00                                                    │   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  │ Match basis: workspace                                                                                         │   │
+                             │  │ Saved reply for Orchid planning conversation                                                                   │   │
+  Chats                 ▾    │  │                                                                                                                │   │◂ Inspect
+         Find         *      │  │                                                                                                                │▅  │
+   ▢     currently           │  │                                                    Preview                                                     │   │
+         ar…                 │  │                                                                                                                │   │
+                             │  │                                                                                                                │   │
+         Find         *      │  │                                                                                                                │   │
+   ▢     recently            │  │                                                    Restore                                                     │   │
+         archived            │  │                                                                                                                │   │
+                             │  │                                                                                                                │   │
+                          ▇  │  │                                                                                                                │   │
+ ▼ more — scroll             │  │                                                    Refresh                                                     │   │
+ ──────────────────────────  │  │                                                                                                                │   │
+ Character · No chats   ▸    │  │                                                                                                                │   │
+ ──────────────────────────  │  │                                                                                                                │   │
+ Model                  ▸    │  │                                               Search in Library                                                │   │
+ ──────────────────────────▇ │  │                                                                                                                │   │
+ Agent                  ▸    │  │                                                                                                                │   │
+ ▼ Details                   │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+                             │                                                                                                                       │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▴ Status hidden
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                           Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

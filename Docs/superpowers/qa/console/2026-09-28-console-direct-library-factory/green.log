@@ -1,0 +1,9 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+4.93s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[True]
+3.98s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[False]
+1.51s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[True]
+1.20s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[False]
+
+(21 durations < 1s hidden.)
+15 passed in 14.92s

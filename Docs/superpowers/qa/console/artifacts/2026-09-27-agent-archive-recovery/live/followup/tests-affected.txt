@@ -1,0 +1,28 @@
+...............................................................          [100%]
+============================= slowest 25 durations =============================
+3.02s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_shutdown_joins_first_search_already_owned_by_session_close[True]
+2.89s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_search_publishes_typed_app_record_and_manual_refs_stay_manual
+2.42s setup    Tests/Agents/test_archive_recovery_tools.py::test_native_recovery_uses_existing_persona_call_cap
+2.13s setup    Tests/Agents/test_archive_recovery_tools.py::test_admission_cannot_be_minted_by_generic_turn_flags[overrides3]
+2.09s setup    Tests/Agents/test_archive_recovery_tools.py::test_admission_cannot_be_minted_by_generic_turn_flags[overrides2]
+2.05s setup    Tests/Agents/test_archive_recovery_tools.py::test_registration_coexists_and_pending_native_teardown_are_one_way[direct]
+2.05s setup    Tests/Agents/test_archive_recovery_tools.py::test_foreign_issuer_subclass_and_spoofed_mcp_names_fail_closed
+2.02s setup    Tests/Agents/test_archive_recovery_tools.py::test_admission_cannot_be_minted_by_generic_turn_flags[overrides1]
+2.00s setup    Tests/Agents/test_archive_recovery_tools.py::test_child_and_foreign_actor_cannot_use_activated_primary
+1.94s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-legacy]
+1.94s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_console_terminal_session_close_revokes_recovery_state
+1.93s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-None]
+1.83s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-queued_block]
+1.82s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-ask_allow]
+1.82s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-ask_allow]
+1.79s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_native_unicode_projection_fits_entire_envelope_without_skipping_rows
+1.73s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-persona]
+1.71s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-ask_no_view]
+1.69s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-ask_timeout]
+1.66s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-review_error]
+1.66s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_native_unicode_projection_fits_entire_envelope_without_skipping_rows
+1.55s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-persona]
+1.52s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-ask_timeout]
+1.35s setup    Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-ask_no_view]
+1.33s call     Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-agent_wake]
+63 passed in 89.02s (0:01:29)

@@ -965,6 +965,18 @@ class ConsolePromptQueueUIController:
             expected_revision=expected_revision,
         )
 
+    def _capture_user_configuration(self, session_id: str) -> Any:
+        """Issue actor provenance only from user queue/edit event producers."""
+        return self._with_user_origin(session_id, self._capture_configuration(session_id))
+
+    def _with_user_origin(self, session_id: str, configuration: Any) -> Any:
+        from dataclasses import replace
+
+        runtime = getattr(self._chat_controller_accessor(), "_archive_recovery_runtime", None)
+        if runtime is None or configuration is None:
+            return configuration
+        return replace(configuration, recovery_user_origin=runtime.issue_user_proof(session_id))
+
     def edit_waiting(
         self,
         session_id: str,
@@ -986,7 +998,7 @@ class ConsolePromptQueueUIController:
             entry_id=entry_id,
             text=text,
             expected_revision=expected_revision,
-            configuration=self._capture_configuration(session_id),
+            configuration=self._capture_user_configuration(session_id),
         )
 
     def move_waiting(
@@ -1131,7 +1143,7 @@ class ConsolePromptQueueUIController:
             self._capture_configuration_async is None
             or sync_callback is not self._async_capture_sync_source
         ):
-            return sync_callback(session_id)
+            return self._capture_user_configuration(session_id)
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
         controller = expected_controller or self._chat_controller_accessor()
@@ -1143,7 +1155,7 @@ class ConsolePromptQueueUIController:
             or self._capture_configuration is not sync_callback
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
-        return context
+        return self._with_user_origin(session_id, context)
 
     async def dispatch(
         self,

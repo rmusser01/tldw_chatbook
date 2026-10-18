@@ -4980,3 +4980,55 @@ including refusal detail and accepted-checkpoint identity. Do not infer decision
 from counters or bypass an expired stage to reconstruct them. Preserve the existing
 privacy boundary; use admitted report/export paths rather than adding bodies to
 durable runtime metadata. Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh43-after-haiku-outcome/.
+## Disposable HOME does not isolate the macOS Keychain
+
+**TASK-33020, archive recovery live qualification, 2026-09-27.** Native
+TldwCli ran with scratch HOME/XDG/config/data paths and real local inference.
+After Quit unmounted the UI, process 27476 still waited; its 23:33:30 UTC sample
+showed a worker in SecItemAdd→AuthorizationCopyRights. The OS authorization
+was not approved. The process exited before the guarded termination action,
+so no signal was sent. Filesystem isolation alone had not excluded an OS
+credential backend.
+
+Final synthetic-profile launches selected the installed no-op backend with
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring in that launcher only,
+verified the backend class before importing the app, and exited through native
+Ctrl+Q without leaving the private tmux server. Include the OS credential
+backend in disposable-profile isolation; do not approve an authorization or
+change normal Keychain preferences merely to qualify synthetic data.
+
+## A local-model probe can still download embeddings through a tool
+
+**TASK-33020, archive recovery, 2026-09-27.** A separate native probe intended
+to verify archive recovery with no retrieval index used only local Gemma for
+LLM transport. The model selected the generic search_library_rag tool before
+the dedicated archive search. That call initialized scratch chromadb and
+created downloaded MiniLM cache blobs under the new disposable data root;
+ten recorded LLM HTTP responses were all localhost200, but that narrower
+transport evidence did not exclude asset downloads by other tools.
+
+The probe was stopped through native Quit and excluded from no-index
+qualification. For a no-download/no-index probe, independently constrain
+embedding/index initialization as well as the LLM endpoint and starting data.
+A verbal constraint and an initially empty index do not enforce that boundary.
+
+## Count native tool discovery in a bounded model probe (TASK-33164, 2026-09-28)
+
+A Capture-On archive recovery probe reserved four remaining requests for corrected Direct mode after RAG-only qualified. Repairing the real shared Library constructor restored its full lazy catalog. The model then used two find_tools calls, one load_tools and the archive search, consuming all four requests before its post-tool reply or restore follow-up. Earlier two-request Direct search ran with the failed Library factory and was an invalid budget reference. Keep the hard cap, budget for discovery plus search/restore settlement, and report a capped walkthrough separately from a source failure. All actual requests returned200/DONE; the next request was refused locally, with a separate ERROR trace.
+
+## Match a model-request observer to the actual selected transport (TASK-33164, 2026-10-18)
+
+The fresh archive recovery probe moved from Gemma9099 to the user’s Qwen8010 server. Its copied requests.Session.post observer recorded no model events, yet the native gateway completed two HTTPX llama.cpp calls and showed archive findings. The observer was not a cap for that branch. Two COMPLETE durable call admissions/provider-entry events with no fallback route accounted for those calls; no HTTP-status/SSE-wire evidence was claimed. Before the next send, native Settings reduced the private run to two model turns and native conversation settings disabled streaming/fallback; that send then refused before reservation.
+
+Before bounded inference, verify the selected adapter and cover both generic requests and native HTTPX, including stream fallback and auxiliary calls. Exercise the observer/deny path without inference first, retain an external consumed offset across restarts, and reconcile it against durable call/admission evidence. An empty observation file proves nothing about traffic on an unobserved transport. Evidence: Docs/superpowers/qa/console/2026-10-18-archive-recovery-live.md.
+
+## Structured reasoning is separate from native tool capability (TASK-33164, 2026-10-18)
+
+Qwen8010 parsed reasoning_content and the new version2 trace profile established a live terminal revision/verified_equal. The subsequent natural restore still had no result-reference rider. Production GET-only resolution showed /health200, /props404, no override and native_tools=false; the bridge used fenced text tools while the rider required native function-call support. The earlier real-stack fake structured fixture explicitly supplied native_tools=true, so it qualified that contract rather than this endpoint. Five observed HTTPX200/SSE-DONE calls were real, but the overall follow-up failed and no restore was claimed. Evidence: Docs/superpowers/qa/console/2026-10-18-versioned-profile-live.md.
+
+Check the actual resolved protocol/capability independently of reasoning parsing and model identity. Do not infer native tool support from structured reasoning or force a flag to make qualification pass. Observe optional metadata routes before inference: the first new guard refused GET /props and spent zero model calls; the corrected closed read-only allowance was rechecked offline. Preserve the consumed offset and bound all transport attempts, including a terminal budget-summary request beyond the ordinary model-turn loop.
+
+
+### Fence calls need the runtime dispatch identity (TASK33164,2026-10-18)
+
+After the approved fenced reference handoff reached the current user, an ordinary supported no-ID tool fence still refused Native recovery call identity required: restore dispatch passed raw empty call.call_id while proposal/guard/review/trace already used turn-2-call-0. Reusing that existing app-owned correlation at only the restore callsite preserved the guard and exact keyed confirmation. Inventing a model call_id in the fixture would have hidden the bug. Real localhost8010 Direct/RAG then succeeded with no-ID fences and run-scoped turn-1-call-0, exact workspace confirmation and original-history Open. See2026-10-18-archive-fenced-live QA; native origin and native wire IDs are separate facts.

@@ -1,0 +1,62 @@
+{
+  "direct-fenced": {
+    "complete_calls": 4,
+    "terminal_revision_verified_equal": 2,
+    "exact_current_user_pins": true,
+    "predecessors_unchanged": true,
+    "original_history_identity_unchanged": true,
+    "workspace_changes": [
+      {
+        "restored_workspace": "atlas"
+      },
+      {
+        "navigation_timestamp_only": "recovery-check"
+      }
+    ],
+    "no_restore_before_confirmation": true,
+    "exact_second_result_workspace_confirmation": true,
+    "no_id_fence_dispatch_succeeded": true,
+    "explicit_open_original_history": true,
+    "source_draft_preserved": true
+  },
+  "rag-fenced": {
+    "complete_calls": 4,
+    "terminal_revision_verified_equal": 2,
+    "exact_current_user_pins": true,
+    "predecessors_unchanged": true,
+    "original_history_identity_unchanged": true,
+    "workspace_changes": [
+      {
+        "restored_workspace": "atlas"
+      },
+      {
+        "navigation_timestamp_only": "recovery-check"
+      }
+    ],
+    "no_restore_before_confirmation": true,
+    "exact_second_result_workspace_confirmation": true,
+    "no_id_fence_dispatch_succeeded": true,
+    "explicit_open_original_history": true,
+    "source_draft_preserved": true
+  },
+  "attempts": [
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30
+  ],
+  "http200_sse_done": 8,
+  "budget": {
+    "consumed": 30,
+    "authorized_total": 30,
+    "remaining": 0
+  },
+  "normal_fingerprints_equal": true,
+  "source_unchanged": true,
+  "native_apps_exit0": true,
+  "server_idle": "not measured"
+}

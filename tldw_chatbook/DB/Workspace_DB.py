@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
@@ -24,7 +25,7 @@ class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 9
+    _CURRENT_SCHEMA_VERSION = 10
     _MIGRATE_V8_TO_V9_STATEMENTS = (
         "CREATE TABLE workspace_binding_authority (binding_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0))",
         'CREATE TRIGGER workspace_binding_authority_insert AFTER INSERT ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
@@ -347,11 +348,15 @@ COMMIT;
         self._init_store_kernel()
         super().__init__(db_path, client_id)
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-228 provenance section)."""
-        return BaseDB._get_connection(self)
+        return BaseDB._get_connection(self, operation_deadline=operation_deadline)
 
-    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+    def _configure_connection(
+        self, conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Workspace per-connection policy (kernel wraps registration/gating).
 
         NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
@@ -370,11 +375,43 @@ COMMIT;
         call site in Workspaces/registry_service.py is read-only and this
         class's own sites self-commit or don't write.
         """
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.isolation_level = None
+
+        def execute(sql: str) -> None:
+            if operation_deadline is not None:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Workspace connection budget exhausted")
+                conn.execute(f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}")
+            conn.execute(sql)
+
+        if operation_deadline is not None:
+            conn.set_progress_handler(
+                lambda: int(time.monotonic() >= operation_deadline), 100
+            )
+        try:
+            execute("PRAGMA foreign_keys = ON")
+            if not self.is_memory_db:
+                execute("PRAGMA journal_mode = WAL")
+            execute("PRAGMA synchronous = NORMAL")
+            conn.isolation_level = None
+            if (
+                operation_deadline is not None
+                and time.monotonic() >= operation_deadline
+            ):
+                raise TimeoutError("Workspace connection budget exhausted")
+        except sqlite3.OperationalError as exc:
+            if operation_deadline is not None and (
+                time.monotonic() >= operation_deadline
+                or any(
+                    word in str(exc).lower() for word in ("locked", "busy", "interrupt")
+                )
+            ):
+                raise TimeoutError("Workspace connection setup timed out") from exc
+            raise
+        finally:
+            if operation_deadline is not None:
+                conn.set_progress_handler(None, 0)
+                conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
     #: Workspace's contract keeps the deferred-BEGIN default (registry
@@ -546,6 +583,12 @@ COMMIT;
                     row[1]
                     for row in read_conn.execute("PRAGMA table_info(workspace_records)")
                 }
+            needs_v10 = version < 10 or not {
+                "archived_at",
+                "archive_revision",
+            }.issubset(
+                row[1] for row in conn.execute("PRAGMA table_info(workspace_records)")
+            )
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
@@ -573,6 +616,8 @@ COMMIT;
                 self._migrate_v7_to_v8()
             if needs_v9:
                 self._migrate_v8_to_v9()
+            if needs_v10:
+                self._migrate_v9_to_v10()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -636,6 +681,8 @@ COMMIT;
             self._migrate_v7_to_v8()
         if needs_v9:
             self._migrate_v8_to_v9()
+        if needs_v10:
+            self._migrate_v9_to_v10()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -729,6 +776,19 @@ COMMIT;
                 "INSERT INTO workspace_binding_authority SELECT binding_id,1 FROM workspace_runtime_bindings"
             )
             conn.execute("INSERT INTO schema_version(version) VALUES(9)")
+
+    def _migrate_v9_to_v10(self) -> None:
+        """Add local archive chronology and monotonic lifecycle revisions (ADR-166)."""
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "workspaces_v9_to_v10_archive_chronology.sql"
+        )
+        with self.transaction(immediate=True) as conn:
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute("INSERT INTO schema_version (version) VALUES (10)")
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

@@ -57,6 +57,8 @@ def _call(
     repository: ConsoleTraceRepository,
     *,
     sequence: int = 0,
+    provider: str = "openai",
+    model: str = "gpt-test",
     state: TraceCallState = TraceCallState.DISPATCH_STARTED,
     conversation_id: str | None = None,
     response_projection: dict[str, object] | None = None,
@@ -98,8 +100,8 @@ def _call(
         )
         header = repository.create_or_reuse_request_header(
             cursor,
-            provider_name="openai",
-            model_name="gpt-test",
+            provider_name=provider,
+            model_name=model,
             route_identity="fresh",
             endpoint_identity="public-api",
             generation_parameters={},
@@ -127,8 +129,8 @@ def _call(
             call_id=call.call_id,
             surface_node_id=node.node_id,
             request_header_id=header.header_id,
-            provider_name="openai",
-            model_name="gpt-test",
+            provider_name=provider,
+            model_name=model,
             route_identity="fresh",
         )
         if state is TraceCallState.DISPATCH_STARTED:

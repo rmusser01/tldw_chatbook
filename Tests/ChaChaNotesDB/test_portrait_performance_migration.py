@@ -33,7 +33,7 @@ def test_v82_upgrade_preserves_original_artwork_and_has_no_sync_triggers(tmp_pat
             ).fetchall()
             == []
         )
-        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V84_SCHEMAS
+        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V85_SCHEMAS
 
         catalog = tuple(
             row[0]
@@ -41,7 +41,7 @@ def test_v82_upgrade_preserves_original_artwork_and_has_no_sync_triggers(tmp_pat
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-        assert catalog in CHACHANOTES_V84_SCHEMAS
+        assert catalog in CHACHANOTES_V85_SCHEMAS
     finally:
         db.close()
 

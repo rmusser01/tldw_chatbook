@@ -77,7 +77,7 @@ def test_workspace_successor_catalog_matches_fresh_schema(tmp_path):
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-    assert (9, actual) in _WORKSPACES_SCHEMA
+    assert (WorkspaceDB._CURRENT_SCHEMA_VERSION, actual) in _WORKSPACES_SCHEMA
     assert any(version == 8 for version, _ in _WORKSPACES_SCHEMA)
     db.close()
 

@@ -164,7 +164,42 @@ _WORKSPACES_SCHEMA += (
 )
 
 
+# Exact ALTER-added v10 shape, retaining the installed v9 predecessor catalog.
+_WORKSPACES_SCHEMA = (
+    tuple(
+        (
+            10,
+            tuple(
+                sql[:-1]
+                + ", archived_at TEXT, archive_revision INTEGER NOT NULL DEFAULT 0\n    CHECK (archive_revision >= 0))"
+                if sql.startswith("CREATE TABLE workspace_records (")
+                else sql
+                for sql in schema
+            ),
+        )
+        for version, schema in _WORKSPACES_SCHEMA
+        if version == 9
+    )
+    + _WORKSPACES_SCHEMA
+)
+
+
+_WORKSPACES_ARCHIVE_V9_TO_V10_SQL = (
+    "ALTER TABLE workspace_records ADD COLUMN archived_at TEXT",
+    "ALTER TABLE workspace_records ADD COLUMN archive_revision INTEGER NOT NULL DEFAULT 0\n    CHECK (archive_revision >= 0)",
+    "INSERT INTO schema_version (version) VALUES (10)",
+)
+
+
 class _WorkspacesAdapter(_SQLiteDeclaration):
+    def schema_policy(self) -> SchemaPolicy:
+        return SchemaPolicy(
+            self.owner_id,
+            self.versions,
+            self.schemas,
+            ((9, 10, _WORKSPACES_ARCHIVE_V9_TO_V10_SQL),),
+        )
+
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -1337,7 +1372,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.workspaces",
             "workspaces_db_path",
             "tldw_chatbook_workspaces.db",
-            (8, 9),
+            (10, 9, 8),
             _WORKSPACES_SCHEMA,
             (),
         ),
@@ -1468,6 +1503,12 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS:
+        return ((85,),)
+    if schema in _SUBSCRIPTIONS_REGIONS_V84_SCHEMAS:
+        return ((84,),)
+    if schema in _SUBSCRIPTIONS_PORTRAIT_V83_SCHEMAS:
+        return ((83,),)
     if schema in _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS:
         return ((82,),)
     if schema in _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS:
@@ -1626,14 +1667,23 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 )
 
 # ADR-239: compose only immutable installed declarations for the shared file.
-# Keep the v81 predecessor as well as v82, with both shipped subscription indexes.
+# Retain every predecessor and successor with both shipped subscription indexes.
 from .recovery_core_schema import (
     CHACHANOTES_V81_SCHEMAS,
     CHACHANOTES_V82_SCHEMAS,
+    CHACHANOTES_V83_SCHEMAS,
+    CHACHANOTES_V84_SCHEMAS,
+    CHACHANOTES_V85_SCHEMAS,
     _installed_schema_order,
 )
 
-_SUBSCRIPTIONS_CANVAS_V81_SCHEMAS, _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS = (
+(
+    _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS,
+    _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS,
+    _SUBSCRIPTIONS_PORTRAIT_V83_SCHEMAS,
+    _SUBSCRIPTIONS_REGIONS_V84_SCHEMAS,
+    _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS,
+) = (
     tuple(
         tuple(
             sorted(
@@ -1652,11 +1702,23 @@ _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS, _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS = (
             tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA),
         )
     )
-    for chat_schemas in (CHACHANOTES_V81_SCHEMAS, CHACHANOTES_V82_SCHEMAS)
+    for chat_schemas in (
+        CHACHANOTES_V81_SCHEMAS,
+        CHACHANOTES_V82_SCHEMAS,
+        CHACHANOTES_V83_SCHEMAS,
+        CHACHANOTES_V84_SCHEMAS,
+        CHACHANOTES_V85_SCHEMAS,
+    )
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema)
-    for schema in _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS + _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS
+    for schema in (
+        _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS
+        + _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS
+        + _SUBSCRIPTIONS_PORTRAIT_V83_SCHEMAS
+        + _SUBSCRIPTIONS_REGIONS_V84_SCHEMAS
+        + _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS
+    )
 )
 
 

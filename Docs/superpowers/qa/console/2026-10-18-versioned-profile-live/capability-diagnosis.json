@@ -1,0 +1,31 @@
+{
+  "ready": true,
+  "provider": "llama_cpp",
+  "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+  "reasoning_policy": {
+    "mode": "server_default",
+    "source": "Auto",
+    "template_family": "",
+    "supports_preserve": false,
+    "verified": false,
+    "native_tools": false
+  },
+  "native_tools_supported": false,
+  "pure_native_fact_only_control": true,
+  "native_overrides": {},
+  "get_observations": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/props",
+      "status": 404
+    }
+  ],
+  "model_requests": 0,
+  "counter_unchanged": true,
+  "control_is_detached_not_app_override": true
+}

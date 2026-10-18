@@ -1,0 +1,11 @@
+{
+  "cases": [
+    "direct-fenced",
+    "rag-fenced"
+  ],
+  "counter": 22,
+  "cap": 30,
+  "remaining": 8,
+  "native_tools_override": false,
+  "prepared_only_no_app_or_inference": true
+}

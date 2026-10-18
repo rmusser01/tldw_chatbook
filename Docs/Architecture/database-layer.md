@@ -43,6 +43,8 @@ Subscriptions catalogs; only those exact catalogs can enable the pure Canvas
 payload CHECK during bounded validation. Restricted connections relinquish that
 temporary authority before returning.
 
+Schema85 appends local conversation `archived_at` chronology and its archive lookup index after the existing schema83 portrait and schema84 region migrations. Existing immutable Canvas and semantic columns remain unchanged; archive-only timestamp writes do not enter the sync payload or bump conversation versions. Workspace schema10 follows the schema9 binding-authority migration and adds local `archived_at` and `archive_revision`, preserving unknown historical dates and compare-and-swap restoration. Archive search uses finite operation deadlines through existing BaseDB/SQLiteStoreKernel connection custody, including borrowed transactions.
+
 ### Patterns (the load-bearing conventions)
 
 - **Transactions**: `with db.transaction(*, immediate=False) as cur:` — thread-local depth counter; the outermost context issues `BEGIN`/`BEGIN IMMEDIATE`. `immediate=True` avoids SQLite's non-retryable deferred-upgrade deadlock for read-then-write flows. Nested contexts defer to the outer; a caller-owned native transaction is borrowed without committing it.

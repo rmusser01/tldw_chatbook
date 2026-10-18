@@ -5641,6 +5641,8 @@ def build_tool_review_hook(
     workspace_id: str | None,
     kill_switch: Callable[[], bool] | None,
     library_provider: Any | None,
+    recovery_provider_reader: Callable[[], Any] | None = None,
+    recovery_persona_rules: tuple[Mapping[str, Any], ...] = (),
     read_global_AGENT_LESSON_APPROVAL_REQUIRED: Callable[[], Any],
     read_global_AGENT_LESSON_DENIED: Callable[[], Any],
     read_global_AGENT_LESSON_FOREGROUND_REQUIRED: Callable[[], Any],
@@ -6012,9 +6014,61 @@ def build_tool_review_hook(
                 )
             )
 
-        all_pending = mcp_pending + builtin_pending + lesson_pending
+        recovery_pending: list[MCPPendingCall] = []
+        recovery_refusals: dict[str, str] = {}
+        if recovery_provider_reader is not None and recovery_persona_rules:
+            from tldw_chatbook.Agents.archive_recovery_tool_provider import (
+                SEARCH_ARCHIVED_CONVERSATIONS,
+                ArchiveRecoveryToolProvider,
+            )
+            from tldw_chatbook.Agents.persona_policy import (
+                evaluate_tool_policy,
+                parse_persona_policy_from_rules,
+            )
+
+            recovery_provider = recovery_provider_reader()
+            verdict = evaluate_tool_policy(
+                parse_persona_policy_from_rules(recovery_persona_rules),
+                rule_kind="mcp_tool",
+                tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+            )
+            for call in calls:
+                if call.name != SEARCH_ARCHIVED_CONVERSATIONS:
+                    continue
+                call_id = str(call.call_id or "")
+                if not verdict.advertised:
+                    recovery_refusals[call_id or call.name] = (
+                        f"Tool not permitted: {call.name}"
+                    )
+                    continue
+                if not verdict.requires_confirmation:
+                    continue
+                if (
+                    type(recovery_provider) is not ArchiveRecoveryToolProvider
+                    or not recovery_provider.can_request_review(run_id)
+                    or actor is None
+                    or actor.kind != "primary"
+                    or not call_id
+                ):
+                    recovery_refusals[call_id or call.name] = (
+                        "Recovery search approval unavailable."
+                    )
+                    continue
+                recovery_pending.append(
+                    read_global_MCPPendingCall()(
+                        llm_name=call.name,
+                        server_key="agent:archive_recovery",
+                        tool_name=call.name,
+                        server_label="Archive recovery",
+                        arguments=dict(call.args),
+                        call_id=call_id,
+                        reason="ask",
+                        options=("approve_once", "deny"),
+                    )
+                )
+        all_pending = mcp_pending + builtin_pending + lesson_pending + recovery_pending
         if not all_pending:
-            return lesson_refusals
+            return {**lesson_refusals, **recovery_refusals}
         try:
             decisions = request_approvals(all_pending)
         except BaseException:
@@ -6180,6 +6234,12 @@ def build_tool_review_hook(
             }
         )
         verdicts.update(lesson_refusals)
+        verdicts.update(recovery_refusals)
+        for row in recovery_pending:
+            verdicts[row.call_id] = (
+                "proceed" if decisions.get(row.call_id) == "approve_once"
+                else "Recovery search was not approved."
+            )
         issue_lesson_approval = getattr(
             library_provider, "issue_agent_lesson_approval", None
         )

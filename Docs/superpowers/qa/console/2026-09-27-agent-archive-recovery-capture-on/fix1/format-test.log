@@ -1,0 +1,12 @@
+unformatted: File would be reformatted
+   --> Tests/Chat/test_console_archive_recovery_followup.py:526:16
+    |
+525 |         assert rig.db.get_conversation_by_id(rig.second)["archived"] == 1
+    -         assert _captured_turn_evidence(rig.db, first_user.persisted_message_id) == previous
+526 +         assert (
+527 +             _captured_turn_evidence(rig.db, first_user.persisted_message_id) == previous
+528 +         )
+529 |         assert not isinstance(result, BaseException), result
+    |
+
+1 file would be reformatted

@@ -1,0 +1,19 @@
+import json,os,pathlib,sys
+R=pathlib.Path(__file__).parent
+for name,path in {'HOME':R/'home','XDG_CONFIG_HOME':R/'xdg-config','XDG_DATA_HOME':R/'xdg-data','XDG_CACHE_HOME':R/'xdg-cache','TLDW_CONFIG_PATH':R/'config.toml'}.items():os.environ[name]=str(path)
+os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
+sys.path.insert(0,'/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook')
+import keyring
+assert type(keyring.get_keyring()).__module__=='keyring.backends.null'
+from tldw_chatbook import config
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+assert str(config.get_user_data_dir()).startswith(str(R))
+chat=CharactersRAGDB(config.get_chachanotes_db_path(),client_id='archive-budget-live')
+cid=chat.add_conversation({'title':'Cedar budget archival notes'})
+mid=chat.add_message({'conversation_id':cid,'sender':'user','content':'Original Cedar saved history.'})
+leaf=chat.add_message({'conversation_id':cid,'sender':'assistant','content':'Original Cedar saved reply.','parent_message_id':mid})
+chat.set_conversation_active_leaf(cid,leaf)
+chat.set_conversations_archived([cid],archived=True,expected_versions={cid:1})
+(R/'fixture.json').write_text(json.dumps({'title':'Cedar budget archival notes','conversation_id':cid,'message_ids':[mid,leaf],'active_leaf':leaf,'chat_db':str(config.get_chachanotes_db_path()),'workspace_db':str(config.get_workspaces_db_path()),'user_data':str(config.get_user_data_dir())},indent=2)+'\n')
+with chat.quiesce_connections(timeout_seconds=2.0):pass
+print('Seeded one newly archived Default chat.')
