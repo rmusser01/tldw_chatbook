@@ -42,6 +42,7 @@ CRITICAL = {
         "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[canvas-denied]",
         "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot",
         "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
+        "Tests/Chat/test_console_canvas_profile_preview.py::test_preview_runtime_roster_retires_only_its_worker_connection",
     ],
     "Run admission-sensitive suites": ["Tests/UI/test_app_factory_cleanup.py"],
     "UI census": [

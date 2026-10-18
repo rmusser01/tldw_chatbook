@@ -20174,6 +20174,17 @@ whole-population retirement. The same audit found native raw-command and test
 worker acquisitions: scopes must cover the complete callback, including its
 pre-run work-chain write, while borrowed connections remain caller-owned.
 
+**Canvas closeout, TASK-34968 (2026-10-17).** All 25 existing preview bodies
+passed while an original-handle observer found each passive roster read left
+a worker AgentRunsDB connection open. The shared first-request planning helper
+called `list_agent_definitions` outside an operation scope; live parity tests
+also bypassed the production maintenance-worker wrapper. Scope the shared
+finite read with `operation_owned_connection` and use the real dispatch wrapper
+in the fixture. Do not add a test-only preview guard that masks production
+retention. Cold-owner/active-borrower RED/GREEN controls and 27 final native
+children then observed 608 original connections retired on their own threads,
+with no observer cleanup. Budget parity alone is not lifetime evidence.
+
 
 ### Runtime fixture imports can invalidate a pre-bootstrap restore test (PR2921)
 
