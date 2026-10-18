@@ -32,6 +32,7 @@ from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widgets import Markdown, Static
 from textual_diff_view import DiffView
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -646,7 +647,8 @@ def test_diff_cell_to_offset_single_line_degrades_to_monotone():
 
 
 @pytest.mark.asyncio
-async def test_transcript_resolves_diff_view_drag_to_line_selection():
+@private_profile_test
+async def test_transcript_resolves_diff_view_drag_to_line_selection(request):
     """The transcript resolves a DiffView press to its diff row (widened row
     union) and a drag arms/extends at whole-diff-line granularity."""
     app = _ToolDiffTranscriptApp()

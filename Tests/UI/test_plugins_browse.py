@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Select, Static
 
 from Tests.Plugins.conftest import native_console as _native_console
@@ -61,6 +62,53 @@ async def settled(pilot, screen):
         if not screen._loading and not screen._action_busy:
             return
     raise AssertionError("Plugins worker did not settle")
+
+
+class HeldPluginUnmount(Widget):
+    """Keep real parent pruning open after its other children detach."""
+
+    def __init__(self):
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def on_unmount(self):
+        self.entered.set()
+        await self.release.wait()
+
+
+class DelayedPluginCall:
+    """Gate timing only, retaining the original owner's result or refusal."""
+
+    def __init__(self, original):
+        self.original = original
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = []
+        self.result = None
+        self.error = None
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        self.entered.set()
+        await self.release.wait()
+        try:
+            self.result = await self.original(*args, **kwargs)
+            return self.result
+        except (OSError, ValueError, RuntimeError) as error:
+            self.error = error
+            raise
+
+
+async def wait_for_plugin_prune(parent, control, hold):
+    """Observe the installed Textual lifecycle rather than simulating flags."""
+    await asyncio.wait_for(hold.entered.wait(), 3)
+    async with asyncio.timeout(3):
+        while not control.is_detached or parent.is_running:
+            await asyncio.sleep(0.01)
+    assert control.is_detached
+    assert not parent.is_running
+    assert not hold.release.is_set()
 
 
 def paint(screen):
@@ -404,3 +452,63 @@ async def test_back_replaces_held_load_without_old_completion_clearing_new_owner
         assert "Loading" not in str(
             screen.query_one("#plugins-status", Static).render()
         )
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["workspace-success", "snapshot-error"])
+async def test_navigation_during_child_prune_settles_original_load(
+    request, native_console, monkeypatch, boundary
+):
+    from textual.screen import Screen
+
+    from tldw_chatbook.UI.Screens.plugins_screen import PluginsScreen
+
+    rig = native_console
+    installed = await rig.install(enable=False)
+    rig.registry.set_active_workspace("workspace-a")
+    app = BrowseApp(rig)
+    if boundary == "workspace-success":
+        original = PluginsScreen._workspace
+        gate = DelayedPluginCall(original)
+
+        async def held_workspace(screen):
+            return await gate(screen)
+
+        monkeypatch.setattr(PluginsScreen, "_workspace", held_workspace)
+    else:
+        gate = DelayedPluginCall(rig.service.management_snapshot)
+        monkeypatch.setattr(rig.service, "management_snapshot", gate)
+    async with app.run_test(size=(120, 35)):
+        screen = app.screen
+        hold = HeldPluginUnmount()
+        try:
+            await asyncio.wait_for(gate.entered.wait(), 3)
+            await screen.mount(hold)
+            scope = screen.query_one("#plugins-scope", Static)
+            listing = screen.query_one("#plugins-list", OptionList)
+            before = str(scope.render()), listing.option_count
+            worker = next(w for w in screen.workers if w.group == "plugins-load")
+            app.switch_screen(Screen())
+            await wait_for_plugin_prune(screen, scope, hold)
+            assert listing.is_detached
+            if boundary == "snapshot-error":
+                await rig.service.aclose()
+            gate.release.set()
+            await asyncio.wait_for(worker.wait(), 10)
+            assert (str(scope.render()), listing.option_count) == before
+            assert not worker.is_cancelled
+            if boundary == "workspace-success":
+                assert gate.result == "workspace-a"
+                assert gate.calls == [((screen,), {})]
+                rows = await rig.service.management_snapshot("workspace-a")
+                assert [row.installation_id for row in rows] == [
+                    installed.installation_id
+                ]
+            else:
+                assert isinstance(gate.error, PermissionError)
+                assert str(gate.error) == "plugin_service_closed"
+                assert gate.calls[0][0] == ("workspace-a",)
+        finally:
+            gate.release.set()
+            hold.release.set()

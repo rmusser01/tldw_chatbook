@@ -39,23 +39,30 @@ jobs:
       - name: Create private execution profile before product imports
         shell: python
         run: |
-          import json, os, tempfile
+          import json, os, sys, tempfile
           from pathlib import Path
-          profile = Path(tempfile.mkdtemp(prefix="plugin-qualification-", dir=os.environ["RUNNER_TEMP"]))
-          profile.chmod(0o700)
-          for name in ("home", "config", "data", "data/user", "cache", "tmp"):
-              (profile / name).mkdir(parents=True, mode=0o700)
-          config = profile / "config/config.toml"
-          config.write_text('[general]\nusers_name = "user"\n[paths]\ndata_dir = ' + json.dumps(str(profile / "data")) + '\n')
-          config.chmod(0o600)
-          values = {"HOME": str(profile / "home"), "USERPROFILE": str(profile / "home"),
-                    "TMPDIR": str(profile / "tmp"), "TEMP": str(profile / "tmp"), "TMP": str(profile / "tmp"),
-                    "XDG_CONFIG_HOME": str(profile / "config"),
-                    "XDG_DATA_HOME": str(profile / "data"), "XDG_CACHE_HOME": str(profile / "cache"),
-                    "TLDW_CONFIG_PATH": str(config), "QUALIFICATION_DATA_ROOT": str(profile / "data/user")}
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
-              for key, value in values.items():
-                  output.write(key + "=" + value + "\n")
+          sys.path.insert(0, str(Path.cwd().resolve()))
+          from Tests.windows_private_fixture_runner import user_fixture_default_owner
+          with user_fixture_default_owner():
+              ancestor = Path(os.environ["RUNNER_TEMP"])
+              if os.name == "nt":
+                  ancestor = Path(os.environ["USERPROFILE"]) / "AppData" / "Local" / "Temp"
+              profile = Path(tempfile.mkdtemp(prefix="plugin-qualification-", dir=ancestor)).resolve(strict=True)
+              profile.chmod(0o700)
+              for name in ("home", "config", "data", "data/user", "cache", "tmp"):
+                  (profile / name).mkdir(parents=True, mode=0o700)
+              config = profile / "config/config.toml"
+              config.write_text('[general]\nusers_name = "user"\n[paths]\ndata_dir = ' + json.dumps(str(profile / "data")) + '\n')
+              config.chmod(0o600)
+              values = {"HOME": str(profile / "home"), "USERPROFILE": str(profile / "home"),
+                        "TMPDIR": str(profile / "tmp"), "TEMP": str(profile / "tmp"), "TMP": str(profile / "tmp"),
+                        "XDG_CONFIG_HOME": str(profile / "config"),
+                        "XDG_DATA_HOME": str(profile / "data"), "XDG_CACHE_HOME": str(profile / "cache"),
+                        "TLDW_CONFIG_PATH": str(config), "TLDW_TEST_CONFIG_ROOT": str(profile),
+                        "QUALIFICATION_DATA_ROOT": str(profile / "data/user")}
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+                  for key, value in values.items():
+                      output.write(key + "=" + value + "\n")
       - name: Record exact execution identity
         shell: python
         run: |
@@ -78,39 +85,41 @@ jobs:
           checkout = Path.cwd().resolve()
           sys.path.insert(0, str(checkout))
           from Tests.hooks_v2_process_support import bootstrap
+          from Tests.windows_private_fixture_runner import user_fixture_default_owner
           allowed = ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
                      "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
-                     "XDG_CACHE_HOME", "TLDW_CONFIG_PATH", "QUALIFICATION_DATA_ROOT", "PYTHON_KEYRING_BACKEND",
+                     "XDG_CACHE_HOME", "TLDW_CONFIG_PATH", "TLDW_TEST_CONFIG_ROOT", "QUALIFICATION_DATA_ROOT", "PYTHON_KEYRING_BACKEND",
                      "TLDW_TEST_MODE", "TLDW_TEST_GC_EVERY", "HF_HUB_OFFLINE", "PLUGIN_COLLECTION_ARTIFACT")
           environment = {key: os.environ[key] for key in allowed if key in os.environ}
-          os.environ.clear()
-          os.environ.update(environment)
-          bootstrap(str(checkout), environment, environment["QUALIFICATION_DATA_ROOT"])
-          sys.argv = ["pytest",
-              'Tests/Plugins/test_plugin_end_to_end.py',
-              'Tests/Plugins/test_owned_hook_acceptance.py',
-              'Tests/Plugins/test_recovery.py',
-              'Tests/Plugins/test_data_cleanup.py',
-              'Tests/Agents/test_hooks_v2_mcp_execution.py',
-              'Tests/Performance/test_app_startup_performance.py',
-              'Tests/DB/test_private_sqlite_inventory.py',
-              'Tests/Plugins/test_runtime_owner.py',
-              'Tests/Plugins/test_package_files.py',
-              'Tests/Plugins/test_git_acquisition.py',
-              'Tests/Plugins/test_source_service.py',
-              'Tests/Plugins/test_revocation_persistence.py',
-              'Tests/Plugins/test_credential_authority.py',
-              'Tests/Plugins/test_cursor_adapter.py',
-              'Tests/Plugins/test_codex_adapter.py',
-              'Tests/Plugins/test_vendor_hook_adapters.py',
-              'Tests/Agents/test_hooks_v2_execution.py',
-              'Tests/Agents/test_hooks_v2_budgets.py',
-              'Tests/Agents/test_hooks_v2_post_checkpoints.py',
-              'Tests/Agents/test_run_hooks.py',
-              "Tests/Plugins/test_platform_selection.py",
-              "-p", "Tests.Plugins.platform_support",
-              "-q", "-ra", "--junitxml=plugin-qualification.xml"]
-          runpy.run_module("pytest", run_name="__main__")
+          with user_fixture_default_owner():
+              os.environ.clear()
+              os.environ.update(environment)
+              bootstrap(str(checkout), environment, environment["QUALIFICATION_DATA_ROOT"])
+              sys.argv = ["pytest",
+                  'Tests/Plugins/test_plugin_end_to_end.py',
+                  'Tests/Plugins/test_owned_hook_acceptance.py',
+                  'Tests/Plugins/test_recovery.py',
+                  'Tests/Plugins/test_data_cleanup.py',
+                  'Tests/Agents/test_hooks_v2_mcp_execution.py',
+                  'Tests/Performance/test_app_startup_performance.py',
+                  'Tests/DB/test_private_sqlite_inventory.py',
+                  'Tests/Plugins/test_runtime_owner.py',
+                  'Tests/Plugins/test_package_files.py',
+                  'Tests/Plugins/test_git_acquisition.py',
+                  'Tests/Plugins/test_source_service.py',
+                  'Tests/Plugins/test_revocation_persistence.py',
+                  'Tests/Plugins/test_credential_authority.py',
+                  'Tests/Plugins/test_cursor_adapter.py',
+                  'Tests/Plugins/test_codex_adapter.py',
+                  'Tests/Plugins/test_vendor_hook_adapters.py',
+                  'Tests/Agents/test_hooks_v2_execution.py',
+                  'Tests/Agents/test_hooks_v2_budgets.py',
+                  'Tests/Agents/test_hooks_v2_post_checkpoints.py',
+                  'Tests/Agents/test_run_hooks.py',
+                  "Tests/Plugins/test_platform_selection.py",
+                  "-p", "Tests.Plugins.platform_support",
+                  "-q", "-ra", "--junitxml=plugin-qualification.xml"]
+              runpy.run_module("pytest", run_name="__main__")
       - uses: actions/upload-artifact@v4
         if: always()
         with:

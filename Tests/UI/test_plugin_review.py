@@ -6,7 +6,13 @@ from textual.widgets import Button, OptionList
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.private_profile import private_profile_test
-from Tests.UI.test_plugins_browse import BrowseApp, settled
+from Tests.UI.test_plugins_browse import (
+    BrowseApp,
+    DelayedPluginCall,
+    HeldPluginUnmount,
+    settled,
+    wait_for_plugin_prune,
+)
 
 native_console = _native_console
 native_package = _native_package
@@ -2082,3 +2088,341 @@ async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(
         assert not (
             await original(installed.installation_id, workspace_id="workspace-a")
         )["mappings"]
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["load-success", "load-error", "retained-success"])
+async def test_close_during_child_prune_settles_original_review_load(
+    request, native_console, monkeypatch, boundary
+):
+    import asyncio
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    installed = await rig.install(enable=False)
+    retained = None
+    if boundary == "retained-success":
+        creation = await rig.service.review_data_creation(installed.installation_id)
+        retained = await rig.service.create_data(creation, creation.operation_id)
+        assert (await rig.service.uninstall(installed.installation_id)).committed
+    app = BrowseApp(rig)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settled(pilot, app.screen)
+        owner = app.screen
+        method = "data_status" if retained is not None else "management_details"
+        gate = DelayedPluginCall(getattr(rig.service, method))
+        monkeypatch.setattr(rig.service, method, gate)
+        hold = HeldPluginUnmount()
+        try:
+            await app.push_screen(
+                PluginReviewModal(
+                    app.plugin_source_service,
+                    installation_id=installed.installation_id,
+                    workspace_id="workspace-a",
+                )
+            )
+            modal = app.screen
+            await asyncio.wait_for(gate.entered.wait(), 3)
+            await modal.mount(hold)
+            body = modal.query_one("#plugin-review-body", Static)
+            before = str(body.render())
+            worker = next(w for w in modal.workers if w.group == "plugin-review-load")
+            modal.query_one("#plugin-review-close", Button).press()
+            await wait_for_plugin_prune(modal, body, hold)
+            assert app.screen is owner
+            if boundary == "load-error":
+                await rig.service.aclose()
+            gate.release.set()
+            await asyncio.wait_for(worker.wait(), 10)
+            assert not worker.is_cancelled
+            assert str(body.render()) == before
+            assert modal.installation_id == installed.installation_id
+            if boundary == "load-error":
+                assert isinstance(gate.error, PermissionError)
+                assert str(gate.error) == "plugin_service_closed"
+            elif retained is not None:
+                assert tuple(row["root"] for row in gate.result) == (retained,)
+                assert gate.calls[0][1]["installation_id"] == installed.installation_id
+                assert retained.path.exists()
+            else:
+                assert (
+                    gate.result["installation"]["installation_id"]
+                    == installed.installation_id
+                )
+                assert gate.calls == [
+                    ((installed.installation_id,), {"workspace_id": "workspace-a"})
+                ]
+        finally:
+            gate.release.set()
+            hold.release.set()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "boundary", ["save-success", "save-error", "refresh-error", "queued-save"]
+)
+async def test_confirmed_profile_save_survives_close_during_child_prune(
+    request, native_console, native_package, tmp_path, monkeypatch, boundary
+):
+    import asyncio
+    import json
+
+    from textual.widgets import Input, Select, Static
+
+    from tldw_chatbook.UI.Plugins_Modules.review import PluginConnectionDraft
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    installed, local, binding, _ = await _current_mapping_case(
+        rig, native_package, tmp_path, "empty"
+    )
+    app = BrowseApp(rig)
+    app.local_mcp_control_service = local
+    original_details = rig.service.management_details
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settled(pilot, app.screen)
+        owner = app.screen
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        modal.query_one("#plugin-review-action", Select).value = "save-profile"
+        configuration = json.dumps(
+            {
+                "component_id": "mcp:remote",
+                "credential_reference": binding.reference_id,
+                "credential_generation": binding.authority_generation,
+            }
+        )
+        reference = modal.query_one("#plugin-review-reference", Input)
+        reference.value = configuration
+        await pilot.pause()
+        modal.query_one("#plugin-review-prepare", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        review = modal.draft.review
+        assert isinstance(review, PluginConnectionDraft)
+        assert review.installation_id == installed.installation_id
+        assert review.component_id == "mcp:remote"
+        assert modal.draft.configuration == configuration
+        operations = modal.operations
+        before_profiles = local.store.list_profiles()
+        if boundary == "queued-save":
+            gate = DelayedPluginCall(modal._save_profile)
+            monkeypatch.setattr(modal, "_save_profile", gate)
+        elif boundary == "refresh-error":
+            gate = DelayedPluginCall(original_details)
+            calls = 0
+
+            async def held_refresh(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:  # Actual save precheck, then its independent refresh.
+                    return await gate(*args, **kwargs)
+                return await original_details(*args, **kwargs)
+
+            monkeypatch.setattr(rig.service, "management_details", held_refresh)
+        else:
+            gate = DelayedPluginCall(operations.save_profile)
+            monkeypatch.setattr(operations, "save_profile", gate)
+        hold = HeldPluginUnmount()
+        try:
+            await modal.mount(hold)
+            status = modal.query_one("#plugin-review-status", Static)
+            before = str(status.render())
+            modal.query_one("#plugin-review-confirm", Button).focus()
+            await pilot.press("enter")
+            await asyncio.wait_for(gate.entered.wait(), 3)
+            worker = next(w for w in modal.workers if w.group == "plugin-profile-view")
+            assert modal.draft.review is review
+            modal.query_one("#plugin-review-close", Button).press()
+            await wait_for_plugin_prune(modal, reference, hold)
+            assert status.is_detached
+            assert app.screen is owner
+            assert modal.draft.configuration == configuration
+            if boundary in {"save-error", "refresh-error"}:
+                await rig.service.aclose()
+            gate.release.set()
+            await asyncio.wait_for(worker.wait(), 10)
+            assert not worker.is_cancelled
+            assert str(status.render()) == before
+            assert reference.value == configuration
+            assert modal.draft.review is review
+            assert operations.profile_tasks[review.token].done()
+            if boundary == "save-error":
+                assert isinstance(gate.error, PermissionError)
+                assert str(gate.error) == "plugin_service_closed"
+                assert operations.profile_tasks[review.token].exception() is gate.error
+                assert review.token not in operations.profile_results
+                assert local.store.list_profiles() == before_profiles
+            else:
+                result = operations.profile_results[review.token]
+                assert result["installation_id"] == installed.installation_id
+                assert result["component_id"] == review.component_id
+                record = local.store.get_profile(result["profile_id"])
+                assert record.plugin_owner["installation_id"] == review.installation_id
+                assert record.plugin_owner["component_id"] == review.component_id
+                assert len(local.store.list_profiles()) == len(before_profiles) + 1
+                if boundary == "refresh-error":
+                    assert isinstance(gate.error, PermissionError)
+                    assert str(gate.error) == "plugin_service_closed"
+                else:
+                    details = await original_details(
+                        installed.installation_id, workspace_id="workspace-a"
+                    )
+                    assert not details["mappings"]
+            if boundary == "queued-save":
+                assert gate.calls == [((review,), {})]
+            elif boundary != "refresh-error":
+                assert gate.calls == [((review, local), {})]
+            assert local.client is None
+            assert not rig.gateway.payloads
+        finally:
+            gate.release.set()
+            hold.release.set()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "error"])
+async def test_confirmed_explicit_test_survives_close_during_child_prune(
+    request, native_console, native_package, tmp_path, monkeypatch, outcome
+):
+    import asyncio
+    import json
+
+    from textual.widgets import Select, SelectionList, Static, TextArea
+
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    rig = native_console
+    namespace = "io.github.rmusser01.chatbook"
+    package = native_package(
+        extension={"version": 1, "hooks": f"./{namespace}/hooks.json"}
+    )
+    directory = package / namespace
+    directory.mkdir()
+    marker = tmp_path / "reviewed-hook-ran"
+    code = (
+        "import json,sys;from pathlib import Path;event=json.load(sys.stdin);"
+        f"Path({str(marker)!r}).write_text(event['origin']);"
+        "print(json.dumps({'version':2,'decision':'pass'}))"
+    )
+    (directory / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": "check",
+                        "event": "UserPromptSubmit",
+                        "type": "command",
+                        "effects": [],
+                        "argv": child_argv(code),
+                    }
+                ],
+            }
+        )
+    )
+    installed = await rig.service.review_install(
+        package,
+        selection=("hook:check",),
+        workspace_id="workspace-a",
+        enable_in_workspace=True,
+    )
+    assert (await rig.service.commit(installed, installed.operation_id)).committed
+    trust = await rig.service.review_trust(installed.installation_id)
+    assert (await rig.service.commit(trust, trust.operation_id)).committed
+    runtime = ConsoleRuntime(app=rig.controller.app)
+    rig.controller.app.console_runtime = runtime
+    runtime.set_chat_store(rig.store)
+    runtime.set_chat_controller(rig.controller)
+    app = BrowseApp(rig)
+    app.console_runtime = runtime
+    messages = tuple(rig.store.messages_for_session(rig.session.id))
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            await settled(pilot, app.screen)
+            owner = app.screen
+            await app.push_screen(
+                PluginReviewModal(
+                    app.plugin_source_service,
+                    installation_id=installed.installation_id,
+                    workspace_id="workspace-a",
+                    component_id="hook:check",
+                )
+            )
+            modal = app.screen
+            await modal.workers.wait_for_complete()
+            modal.query_one("#plugin-review-action", Select).value = "test-hook"
+            modal.query_one("#plugin-review-selection", SelectionList).select(
+                "hook:check"
+            )
+            modal.query_one("#plugin-review-test-data", TextArea).text = (
+                '{"prompt":"synthetic teardown test"}'
+            )
+            await pilot.pause()
+            modal.query_one("#plugin-review-prepare", Button).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            review = modal.draft.review
+            assert runtime._plugin_tests.reviews[review.token] is review
+            assert review.installation_id == installed.installation_id
+            assert review.component_id == "hook:check"
+            assert review.session_id == rig.session.id
+            assert not marker.exists()
+            gate = DelayedPluginCall(runtime.execute_plugin_test)
+            monkeypatch.setattr(runtime, "execute_plugin_test", gate)
+            hold = HeldPluginUnmount()
+            try:
+                await modal.mount(hold)
+                body = modal.query_one("#plugin-review-body", Static)
+                status = modal.query_one("#plugin-review-status", Static)
+                before = str(body.render()), str(status.render())
+                modal.query_one("#plugin-review-confirm", Button).focus()
+                await pilot.press("enter")
+                await asyncio.wait_for(gate.entered.wait(), 3)
+                worker = next(w for w in modal.workers if w.group == "plugin-test-view")
+                modal.query_one("#plugin-review-close", Button).press()
+                await wait_for_plugin_prune(modal, body, hold)
+                assert status.is_detached
+                assert app.screen is owner
+                if outcome == "error":
+                    runtime.discard_plugin_test(review)
+                gate.release.set()
+                await asyncio.wait_for(worker.wait(), 10)
+                assert not worker.is_cancelled
+                assert (str(body.render()), str(status.render())) == before
+                assert gate.calls == [((review,), {})]
+                assert modal.draft.review is review
+                if outcome == "success":
+                    assert gate.result.succeeded
+                    assert marker.read_text() == "host_plugin_test"
+                    task = runtime._plugin_tests.tasks[review.token]
+                    assert task.done() and task.result() is gate.result
+                    assert await runtime.execute_plugin_test(review) is gate.result
+                else:
+                    assert isinstance(gate.error, ValueError)
+                    assert str(gate.error) == "plugin_test_review_unavailable"
+                    assert review.token not in runtime._plugin_tests.tasks
+                    assert not marker.exists()
+                assert not rig.gateway.payloads
+                assert tuple(rig.store.messages_for_session(rig.session.id)) == messages
+                assert rig.controller.in_flight_run_count() == 0
+            finally:
+                gate.release.set()
+                hold.release.set()
+    finally:
+        await runtime.close_hooks_v2()

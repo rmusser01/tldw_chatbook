@@ -54,6 +54,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins.platform_support import managed_runtime
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The full heavy-dependency guard set from the task 163 plan. NONE of these
@@ -358,7 +360,14 @@ finally:
     }
 
 
-@pytest.mark.parametrize("module", ["coordinator", "inspection", "schemas"])
+@pytest.mark.parametrize(
+    "module",
+    [
+        "coordinator",
+        pytest.param("inspection", marks=managed_runtime),
+        pytest.param("schemas", marks=managed_runtime),
+    ],
+)
 def test_deferred_plugin_import_failure_settles_readiness(tmp_path, module):
     """First-use import failure reaches every waiter and leaves no live worker."""
     code = """
