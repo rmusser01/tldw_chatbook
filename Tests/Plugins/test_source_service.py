@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins import platform_support
 from Tests.private_profile import private_profile_test
 
 
@@ -149,6 +150,8 @@ async def test_refresh_transient_exception_keeps_other_storage_refusals(
 
 @pytest.fixture(autouse=True)
 def private_host_auth(monkeypatch, tmp_path):
+    if not platform_support.MANAGED_RUNTIME:
+        return
     import os
 
     from tldw_chatbook.Plugins import acquisition

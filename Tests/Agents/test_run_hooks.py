@@ -1127,6 +1127,8 @@ class TestEngineHardening:
     def test_close_stops_live_process_and_refuses_new_guards(self, tmp_path):
         from concurrent.futures import ThreadPoolExecutor
 
+        import psutil
+
         marker = tmp_path / "pid"
         code = f"import pathlib,os,time;pathlib.Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(30)"
         eng = _engine(HookSpec("PreToolUse", (sys.executable, "-c", code), timeout_s=2))
@@ -1144,8 +1146,7 @@ class TestEngineHardening:
             assert future.result(timeout=1).blocked
             assert eng.fire("PreToolUse", session_id="s").blocked
             close()
-        with pytest.raises(ProcessLookupError):
-            os.kill(int(marker.read_text()), 0)
+        assert not psutil.pid_exists(int(marker.read_text()))
 
     def test_notify_queue_admission_is_bounded(self, monkeypatch, caplog):
         import threading
