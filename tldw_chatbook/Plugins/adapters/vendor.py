@@ -1,9 +1,9 @@
 """Bounded vendor inventory reuses native records, metadata and authority contracts."""
 
 import hashlib
+from pathlib import PurePosixPath
 
 import yaml
-from pathlib import PurePosixPath
 
 from ..models import ComponentRecord, Diagnostic
 from ..package_files import (
@@ -16,11 +16,11 @@ from ..package_files import (
 )
 from ..schemas import (
     PLUGIN_SCHEMA,
+    _FrontmatterLoader,
     frontmatter,
     require,
     validate_manifest,
     validate_mcp,
-    _FrontmatterLoader,
 )
 from .portable import ComponentLimitError, inventory_package
 from .vendor_hooks import inventory_vendor_hooks
@@ -274,14 +274,21 @@ def inventory_vendor(
     """Normalize tested material, preserving unsupported constraints and exclusions."""
     if _recipe != "dev_20261001":
         records, variables, diagnostics, blockers = _foreign_records(
-            capture, declaration, dialect=dialect,
-            portable_root=portable_manifest is not None, _recipe=_recipe,
+            capture,
+            declaration,
+            dialect=dialect,
+            portable_root=portable_manifest is not None,
+            _recipe=_recipe,
         )
         manifest = portable_manifest or {"name": declaration["name"]}
         inventory, edges, variables, native_diags, blockers, bodies = inventory_package(
-            capture, manifest, max_components=max_components,
-            vendor_records=records, vendor_variables=variables,
-            vendor_blockers=blockers, discover_portable=portable_manifest is not None,
+            capture,
+            manifest,
+            max_components=max_components,
+            vendor_records=records,
+            vendor_variables=variables,
+            vendor_blockers=blockers,
+            discover_portable=portable_manifest is not None,
             _recipe=_recipe,
         )
         diagnostics.extend(native_diags)
@@ -399,7 +406,12 @@ def inventory_vendor(
         if declaration.get("mcpServers"):
             global_blockers.append("vendor_openai_mcp_mapping_unqualified")
         inventory, edges, variables, native_diags, native_blockers, bodies = (
-            inventory_package(capture, portable_manifest, max_components=max_components, _recipe="dev_20261001")
+            inventory_package(
+                capture,
+                portable_manifest,
+                max_components=max_components,
+                _recipe="dev_20261001",
+            )
         )
         if any(
             key in declaration
@@ -691,15 +703,21 @@ def _foreign_variables(raw, *, _recipe="integrated_2"):
             result[name]["default"] = declaration["default"]
     from ..schemas import validate_extension
 
-    return validate_extension({"version": 1, "variables": result}, _recipe=_recipe)["variables"]
+    return validate_extension({"version": 1, "variables": result}, _recipe=_recipe)[
+        "variables"
+    ]
 
 
-def _foreign_records(capture, overlay, *, dialect, portable_root=False, _recipe="integrated_2"):
+def _foreign_records(
+    capture, overlay, *, dialect, portable_root=False, _recipe="integrated_2"
+):
     """Normalize vendor records for the existing native dependency inventory."""
     from .vendor_hooks import _inventory_qualified_hooks
 
     records, diagnostics, blockers = [], [], []
-    if overlay.keys() - (VENDOR_FIELDS | (PRESENTATION if _recipe == "integrated_2" else set())):
+    if overlay.keys() - (
+        VENDOR_FIELDS | (PRESENTATION if _recipe == "integrated_2" else set())
+    ):
         blockers.append("vendor_fields_unsupported")
         diagnostics.append(Diagnostic(code="vendor_fields_unsupported"))
     if "policy" in overlay:
@@ -780,7 +798,12 @@ def _foreign_records(capture, overlay, *, dialect, portable_root=False, _recipe=
                                 else "definition_invalid"
                             ),
                         ),
-                        support=("invalid" if _recipe == "integrated_2" and str(exc) == "vendor_skill_metadata_invalid" else "unsupported"),
+                        support=(
+                            "invalid"
+                            if _recipe == "integrated_2"
+                            and str(exc) == "vendor_skill_metadata_invalid"
+                            else "unsupported"
+                        ),
                     )
         except PackageFileError as exc:
             blockers.append(str(exc))
@@ -921,19 +944,46 @@ def _integrated_instruction(capture, path, kind, dialect):
         return _document(capture, path, kind, dialect)
     raw = _metadata(capture, path)
     text = capture.read(path).decode("utf-8")
-    require("$ARGUMENTS" not in text and "${" not in text, "vendor_instruction_expansion_unsupported")
+    require(
+        "$ARGUMENTS" not in text and "${" not in text,
+        "vendor_instruction_expansion_unsupported",
+    )
     if kind == "skill":
-        require(isinstance(raw.get("metadata", {}), dict), "vendor_skill_metadata_invalid")
+        require(
+            isinstance(raw.get("metadata", {}), dict), "vendor_skill_metadata_invalid"
+        )
     if kind == "agent":
-        require(raw.get("readonly", False) is False and raw.get("is_background", False) is False,
-                "vendor_agent_limits_unsupported")
+        require(
+            raw.get("readonly", False) is False
+            and raw.get("is_background", False) is False,
+            "vendor_agent_limits_unsupported",
+        )
         require("tools" in raw, "agent_tools_unspecified")
-        require(not (raw.keys() - {"name", "description", "tools", "model", "readonly", "is_background", "color"}),
-                "vendor_agent_constraints_unsupported")
-        value = {k: v for k, v in raw.items() if k in {"name", "description", "tools", "model"}}
+        require(
+            not (
+                raw.keys()
+                - {
+                    "name",
+                    "description",
+                    "tools",
+                    "model",
+                    "readonly",
+                    "is_background",
+                    "color",
+                }
+            ),
+            "vendor_agent_constraints_unsupported",
+        )
+        value = {
+            k: v
+            for k, v in raw.items()
+            if k in {"name", "description", "tools", "model"}
+        }
         if value.get("model") == "inherit":
             value.pop("model")
-        definition = frontmatter(("---\n" + yaml.safe_dump(value) + "---\n").encode(), kind)
+        definition = frontmatter(
+            ("---\n" + yaml.safe_dump(value) + "---\n").encode(), kind
+        )
         blockers = []
         if isinstance(definition["tools"], list) and definition["tools"]:
             blockers.append("tool_mapping_required")
@@ -949,13 +999,17 @@ def _integrated_instruction(capture, path, kind, dialect):
             policy_data = capture.read(policy_path)
             require(len(policy_data) <= MAX_DOCUMENT_BYTES, "document_bytes_limit")
             try:
-                policy = yaml.load(policy_data.decode("utf-8"), Loader=_FrontmatterLoader)
+                policy = yaml.load(
+                    policy_data.decode("utf-8"), Loader=_FrontmatterLoader
+                )
                 policy = parse_document(canonical_json(policy).encode())
             except (ValueError, TypeError, UnicodeError, yaml.YAMLError):
                 raise PackageFileError("vendor_skill_policy_invalid") from None
             require(isinstance(policy, dict), "vendor_skill_policy_invalid")
             blockers = list(reasons)
-            if policy.keys() - {"interface", "policy", "dependencies"} or policy.get("dependencies"):
+            if policy.keys() - {"interface", "policy", "dependencies"} or policy.get(
+                "dependencies"
+            ):
                 blockers.append("vendor_skill_dependencies_unavailable")
             values = policy.get("policy", {})
             require(isinstance(values, dict), "vendor_skill_policy_invalid")
@@ -963,10 +1017,16 @@ def _integrated_instruction(capture, path, kind, dialect):
                 blockers.append("vendor_skill_policy_unsupported")
             metadata = dict(definition.get("metadata", {}))
             if "allow_implicit_invocation" in values:
-                require(type(values["allow_implicit_invocation"]) is bool, "vendor_skill_policy_invalid")
+                require(
+                    type(values["allow_implicit_invocation"]) is bool,
+                    "vendor_skill_policy_invalid",
+                )
                 manual = str(not values["allow_implicit_invocation"]).lower()
-                require("disable_model_invocation" not in metadata or metadata["disable_model_invocation"] == manual,
-                        "vendor_manual_flags_conflict")
+                require(
+                    "disable_model_invocation" not in metadata
+                    or metadata["disable_model_invocation"] == manual,
+                    "vendor_manual_flags_conflict",
+                )
                 metadata["disable_model_invocation"] = manual
             metadata["vendor_policy_digest"] = hashlib.sha256(policy_data).hexdigest()
             definition["metadata"] = metadata

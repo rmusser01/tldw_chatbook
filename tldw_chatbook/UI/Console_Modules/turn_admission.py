@@ -181,7 +181,9 @@ def capture_authority(controller: Any, inputs: AuthorityInputs, *, mcp_definitio
                 session, inputs.character_repository
             ),
             prompt_transform_inputs=capture_prompt_transform_inputs(app, session),
-            skill_context_maximum=capture_skill_context_maximum(app, inputs.workspace_id),
+            skill_context_maximum=capture_skill_context_maximum(
+                app, inputs.workspace_id
+            ),
             rag_top_k=controller._rag_top_k_accessor(),
         )
 

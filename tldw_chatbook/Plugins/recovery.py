@@ -35,7 +35,9 @@ def retained_inspections(
 
     from .package_files import capture_package
     from .retained_inspection import (
-        _retained_candidates, _select_retained, _verify_retained_source,
+        _retained_candidates,
+        _select_retained,
+        _verify_retained_source,
     )
 
     result = {}
@@ -48,12 +50,18 @@ def retained_inspections(
         if capture.errors:
             raise ValueError("unsafe retained package capture")
         identity = revision["installation_id"], revision["revision_digest"]
-        components = [row for row in snapshot["components"]
-                      if (row["installation_id"], row["revision_digest"]) == identity]
+        components = [
+            row
+            for row in snapshot["components"]
+            if (row["installation_id"], row["revision_digest"]) == identity
+        ]
         inspection = _select_retained(
             revision, components, _retained_candidates(capture, revision)
         )
-        if inspection.catalog_binding is not None or inspection.acquisition_reference is not None:
+        if (
+            inspection.catalog_binding is not None
+            or inspection.acquisition_reference is not None
+        ):
             from .source_service import validate_inspection_source
 
             validate_inspection_source(coordinator, inspection)
@@ -211,9 +219,12 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
             coordinator.validate_mapping(
                 mapping,
                 inspections[(mapping["installation_id"], mapping["revision_digest"])],
-                [row for row in target["mappings"]
-                 if row["installation_id"] == mapping["installation_id"]
-                 and row["revision_digest"] == mapping["revision_digest"]],
+                [
+                    row
+                    for row in target["mappings"]
+                    if row["installation_id"] == mapping["installation_id"]
+                    and row["revision_digest"] == mapping["revision_digest"]
+                ],
             )
         if reconstructed:
             # Only a secure marker (or its matching certified successor) can

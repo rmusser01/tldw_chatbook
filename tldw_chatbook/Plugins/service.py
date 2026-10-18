@@ -43,7 +43,6 @@ class PluginRunOwnership:
     component_ceiling: tuple[str, ...] | None = None
 
 
-
 @dataclass(frozen=True)
 class ManagementComponent:
     """Display metadata without executable definitions or host mappings."""
@@ -54,6 +53,7 @@ class ManagementComponent:
     evidence: tuple[InspectionEvidence, ...]
     dependencies: tuple[str, ...]
     blockers: tuple[str, ...]
+
 
 @dataclass(frozen=True)
 class ManagementInstallation:
@@ -115,7 +115,9 @@ class PluginService:
         self._ordinary_calls = set()
         self._ready = Future()
         self._catalog = {}
-        self._catalog_constraint_failures: frozenset[tuple[str, str | None]] | None = frozenset()
+        self._catalog_constraint_failures: frozenset[tuple[str, str | None]] | None = (
+            frozenset()
+        )
         self._details = ()
         self._published_revisions = {}
         self._published_generations = {}
@@ -794,7 +796,6 @@ class PluginService:
             )
         )
 
-
     async def revoke_variable_reference(self, installation_id: str, reference_id: str):
         """Revoke exactly one installation's reference and refresh readiness."""
 
@@ -806,7 +807,6 @@ class PluginService:
             return result
 
         return await self._call(operation)
-
 
     async def review_configuration(
         self,
@@ -1111,45 +1111,69 @@ class PluginService:
         revisions, generations = {}, {}
         try:
             authority = self._coordinator.published_snapshot()
-            authority, inspections = self._coordinator.recorded_inspections(tuple(
-                (row["installation_id"], row["revision_digest"])
+            authority, inspections = self._coordinator.recorded_inspections(
+                tuple(
+                    (row["installation_id"], row["revision_digest"])
+                    for row in authority["installations"]
+                )
+            )
+            revisions = {
+                row["installation_id"]: row["revision_digest"]
                 for row in authority["installations"]
-            ))
-            revisions = {row["installation_id"]: row["revision_digest"]
-                         for row in authority["installations"]}
+            }
             generations = {
-                (row["installation_id"], row["scope_kind"], row["workspace_id"]): row["generation"]
+                (row["installation_id"], row["scope_kind"], row["workspace_id"]): row[
+                    "generation"
+                ]
                 for row in authority["authority_generations"]
             }
             for installation in authority["installations"]:
                 identity = installation["installation_id"]
                 inspection = inspections[(identity, installation["revision_digest"])]
-                selected = {row["component_id"] for row in authority["selections"]
-                            if row["installation_id"] == identity
-                            and row["revision_digest"] == installation["revision_digest"]
-                            and row["selected"]}
+                selected = {
+                    row["component_id"]
+                    for row in authority["selections"]
+                    if row["installation_id"] == identity
+                    and row["revision_digest"] == installation["revision_digest"]
+                    and row["selected"]
+                }
                 for component in inspection.inventory.values():
-                    row = component_summary(identity, inspection, component.component_id,
-                                            installation.get("alias") or identity)
-                    row.update(plugin_selected=component.component_id in selected,
-                               plugin_support=component.support,
-                               plugin_dependencies=component.dependencies)
+                    row = component_summary(
+                        identity,
+                        inspection,
+                        component.component_id,
+                        installation.get("alias") or identity,
+                    )
+                    row.update(
+                        plugin_selected=component.component_id in selected,
+                        plugin_support=component.support,
+                        plugin_dependencies=component.dependencies,
+                    )
                     details.append(row)
-                scopes = {None} | {row["workspace_id"] for row in authority["activation"]
-                                   if row["installation_id"] == identity}
+                scopes = {None} | {
+                    row["workspace_id"]
+                    for row in authority["activation"]
+                    if row["installation_id"] == identity
+                }
                 for workspace in scopes:
                     catalog[(identity, workspace)] = ()
                     if not selected:
                         continue
                     try:
                         self.fences.check(identity, workspace)
-                        _alias, override = self._admission._activation(authority, installation, workspace)
-                        self._admission._scope_generations(authority, identity, workspace, override)
+                        _alias, override = self._admission._activation(
+                            authority, installation, workspace
+                        )
+                        self._admission._scope_generations(
+                            authority, identity, workspace, override
+                        )
                     except PluginUnavailable:
                         # Authenticated inactive/untrusted/revoked state is ordinary empty.
                         continue
                     try:
-                        snapshot = self._admission.capture(identity, workspace, "catalog", fresh=False)
+                        snapshot = self._admission.capture(
+                            identity, workspace, "catalog", fresh=False
+                        )
                     except PluginUnavailable:
                         try:
                             required = self._admission._unavailable_requirements(
@@ -1163,13 +1187,27 @@ class PluginService:
                     token = uuid4().hex
                     self._snapshots[token] = snapshot
                     rows = []
-                    for component_id in (*snapshot.selection, *snapshot.unavailable_hooks):
-                        row = component_summary(identity, snapshot.inspection, component_id,
-                                                snapshot.alias, json.loads(snapshot.mappings_json))
-                        row.update(plugin_ceiling=token, plugin_workspace_id=workspace,
-                                   trust_blocked=False)
+                    for component_id in (
+                        *snapshot.selection,
+                        *snapshot.unavailable_hooks,
+                    ):
+                        row = component_summary(
+                            identity,
+                            snapshot.inspection,
+                            component_id,
+                            snapshot.alias,
+                            json.loads(snapshot.mappings_json),
+                        )
+                        row.update(
+                            plugin_ceiling=token,
+                            plugin_workspace_id=workspace,
+                            trust_blocked=False,
+                        )
                         if component_id in snapshot.unavailable_hooks:
-                            row.update(plugin_constraint_only=True, availability="needs_configuration")
+                            row.update(
+                                plugin_constraint_only=True,
+                                availability="needs_configuration",
+                            )
                         rows.append(row)
                     catalog[(identity, workspace)] = tuple(rows)
             failures = frozenset(failures)
@@ -1190,8 +1228,11 @@ class PluginService:
             if failures is None:
                 raise PluginUnavailable("plugin_constraint_verification_failed")
             for identity, scope in failures:
-                key = ((identity, workspace_id) if (identity, workspace_id) in self._catalog
-                       else (identity, None))
+                key = (
+                    (identity, workspace_id)
+                    if (identity, workspace_id) in self._catalog
+                    else (identity, None)
+                )
                 if key != (identity, scope):
                     continue
                 try:
@@ -1447,7 +1488,9 @@ class PluginService:
         def admit_narrowed(maximum):
             if self._catalog_constraint_failures is None:
                 raise PluginUnavailable("plugin_constraint_verification_failed")
-            maximum = dict(maximum, available_skills=list(maximum.get("available_skills", ())))
+            maximum = dict(
+                maximum, available_skills=list(maximum.get("available_skills", ()))
+            )
             originals = {}
             for row in maximum["available_skills"]:
                 if row.get("plugin_owned"):
@@ -1461,16 +1504,28 @@ class PluginService:
             from .components import component_summary
 
             for (token, workspace), prior in originals.items():
-                present = {row.get("plugin_component_id") for row in maximum["available_skills"]
-                           if row.get("plugin_ceiling") == token
-                           and row.get("plugin_workspace_id") == workspace}
+                present = {
+                    row.get("plugin_component_id")
+                    for row in maximum["available_skills"]
+                    if row.get("plugin_ceiling") == token
+                    and row.get("plugin_workspace_id") == workspace
+                }
                 for key in sorted(set(prior.unavailable_hooks) - present):
-                    maximum["available_skills"].append(dict(
-                        component_summary(prior.installation_id, prior.inspection,
-                                          key, prior.alias, json.loads(prior.mappings_json)),
-                        plugin_ceiling=token, plugin_workspace_id=workspace,
-                        plugin_constraint_only=True, availability="needs_configuration",
-                    ))
+                    maximum["available_skills"].append(
+                        dict(
+                            component_summary(
+                                prior.installation_id,
+                                prior.inspection,
+                                key,
+                                prior.alias,
+                                json.loads(prior.mappings_json),
+                            ),
+                            plugin_ceiling=token,
+                            plugin_workspace_id=workspace,
+                            plugin_constraint_only=True,
+                            availability="needs_configuration",
+                        )
+                    )
             if run_id in self._retired:
                 raise PluginUnavailable("plugin_turn_retired")
             turn_id = maximum.get("plugin_turn_id")
@@ -1602,7 +1657,11 @@ class PluginService:
         return await self._call(operation)
 
     def _checked(
-        self, name: str, token: str, *, binding: bool = False,
+        self,
+        name: str,
+        token: str,
+        *,
+        binding: bool = False,
         component_kind: str | None = None,
     ):
         from .components import component_summary
@@ -1795,7 +1854,6 @@ class PluginService:
             return snapshot, key, row
         return self._checked(name, token, binding=binding)
 
-
     async def component_snapshots(self, maximum):
         """Resolve already admitted selections through the actual immutable ceiling."""
         admitted = await self.admit(maximum, maximum["plugin_run_id"])
@@ -1814,17 +1872,28 @@ class PluginService:
 
         return await self._call(operation)
 
-    async def hook_configuration(self, maximum, *, scratch_manager=None, scratch_snapshot=None):
+    async def hook_configuration(
+        self, maximum, *, scratch_manager=None, scratch_snapshot=None
+    ):
         """Pin owned handlers from the same captured Console component ceiling."""
         from .hooks import NativeHooks
 
         snapshots = await self.component_snapshots(maximum)
-        return await self._call(lambda: NativeHooks(
-            self, snapshots, scratch_manager=scratch_manager, scratch_snapshot=scratch_snapshot
-        ))
+        return await self._call(
+            lambda: NativeHooks(
+                self,
+                snapshots,
+                scratch_manager=scratch_manager,
+                scratch_snapshot=scratch_snapshot,
+            )
+        )
 
     async def agent_presets(
-        self, entries, eligible: frozenset[str], *, parent_provider: str = "",
+        self,
+        entries,
+        eligible: frozenset[str],
+        *,
+        parent_provider: str = "",
         registry: Any = None,
     ) -> tuple:
         """Project admitted ephemeral presets before ordinary child planning."""
@@ -1863,7 +1932,9 @@ class PluginService:
             from .context import instruction_block
             from .package_files import capture_package, validate_relative_member
 
-            snapshot, component_id, row = self._checked(name, admission_token, component_kind="skill")
+            snapshot, component_id, row = self._checked(
+                name, admission_token, component_kind="skill"
+            )
             relative = validate_relative_member(path)
             component = snapshot.inspection.inventory[component_id]
             member = str(Path(component.path).parent / relative)

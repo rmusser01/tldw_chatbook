@@ -301,28 +301,28 @@ $ds-portrait-review-lines: 13;
 
 /* Plugins: the existing dense terminal list / details grammar. */
 #plugins-shell {
-    height: 1fr;
+    height: $ds-height-fill;
     padding: $ds-space-0 $ds-space-inset;
 }
 #plugins-status { height: auto; max-height: $ds-control-height; color: $ds-text-muted; }
 #plugins-modes, #plugins-entry-actions, #plugins-management-actions, #plugins-pager, #plugins-detail-actions, .plugins-form-actions {
     height: $ds-control-height;
 }
-#plugins-shell Button { min-width: 0; width: 1fr; }
+#plugins-shell Button { min-width: $ds-size-0; width: $ds-width-fill; }
 #plugins-modes Button { height: $ds-control-height; }
-#plugins-panes { height: 1fr; min-height: 0; }
-#plugins-list-pane { width: $ds-sidebar-width; min-width: $ds-sidebar-min-width; height: 1fr; }
-#plugins-list { height: 1fr; border: solid $ds-grid-line; }
+#plugins-panes { height: $ds-height-fill; min-height: $ds-size-0; }
+#plugins-list-pane { width: $ds-sidebar-width; min-width: $ds-sidebar-min-width; height: $ds-height-fill; }
+#plugins-list { height: $ds-height-fill; border: solid $ds-grid-line; }
 #plugins-list:focus { border: solid $ds-focus-accent; }
-#plugins-detail-pane { width: 1fr; height: 1fr; padding-left: $ds-space-inset; }
-#plugins-detail-scroll { height: 1fr; border: solid $ds-grid-line; padding: $ds-space-0 $ds-space-inset; }
+#plugins-detail-pane { width: $ds-width-fill; height: $ds-height-fill; padding-left: $ds-space-inset; }
+#plugins-detail-scroll { height: $ds-height-fill; border: solid $ds-grid-line; padding: $ds-space-0 $ds-space-inset; }
 #plugins-detail, #plugins-readme { height: auto; }
 #plugins-page { width: auto; padding: $ds-space-1; }
-#plugins-entry-form { height: 1fr; }
+#plugins-entry-form { height: $ds-height-fill; }
 #plugins-entry-form Input, #plugins-entry-form Select { margin-bottom: $ds-space-stack; }
 #plugins-form-result { height: auto; }
-.plugins-narrow #plugins-list-pane { width: 100%; min-width: 0; }
-.plugins-narrow #plugins-detail-pane { width: 100%; padding-left: $ds-space-0; }
+.plugins-narrow #plugins-list-pane { width: $ds-width-full; min-width: $ds-size-0; }
+.plugins-narrow #plugins-detail-pane { width: $ds-width-full; padding-left: $ds-space-0; }
 #plugins-back { height: $ds-control-height; }
 .plugins-narrow #plugins-modes, .plugins-narrow #plugins-entry-actions,
 .plugins-narrow #plugins-management-actions,

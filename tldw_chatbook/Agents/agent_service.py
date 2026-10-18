@@ -7134,16 +7134,17 @@ class AgentService:
                 sampling_params=child_sampling_params,
             )
             # Re-project the current preset once, retaining unrelated context.
-            origins = {
-                row["content"].checked_origins() for row in plugin_instructions
-            }
+            origins = {row["content"].checked_origins() for row in plugin_instructions}
             seed = [
                 *plugin_instructions,
-                *(dict(message) for message in retained.messages
-                  if not (
-                      isinstance(message.get("content"), PluginContextText)
-                      and message["content"].checked_origins() in origins
-                  )),
+                *(
+                    dict(message)
+                    for message in retained.messages
+                    if not (
+                        isinstance(message.get("content"), PluginContextText)
+                        and message["content"].checked_origins() in origins
+                    )
+                ),
             ]
             retained_steering = retained.steering_with_causes or tuple(
                 (source, text, None) for source, text in retained.steering

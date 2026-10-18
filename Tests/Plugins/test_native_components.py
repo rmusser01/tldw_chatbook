@@ -558,7 +558,9 @@ async def test_valid_rule_blocks_refuse_total_context_overflow_whole(
 async def test_native_agent_requires_exact_host_model_and_tool_mapping(
     native_console, native_package
 ):
-    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import LocalLLMProviderCatalogService
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
 
     rig = native_console
     namespace = "io.github.rmusser01.chatbook"
@@ -584,10 +586,16 @@ async def test_native_agent_requires_exact_host_model_and_tool_mapping(
     provider, models = "llama_cpp", ["mapped"]
     owner = LocalLLMProviderCatalogService(
         provider_catalog_loader=lambda: {provider: models},
-        settings_loader=lambda: {"api_settings": {provider: {"api_url": "http://127.0.0.1:8080/v1/chat/completions"}}},
+        settings_loader=lambda: {
+            "api_settings": {
+                provider: {"api_url": "http://127.0.0.1:8080/v1/chat/completions"}
+            }
+        },
         environ={},
     )
-    await rig.service._call(lambda: setattr(rig.service._coordinator, "model_mapping_owner", owner))
+    await rig.service._call(
+        lambda: setattr(rig.service._coordinator, "model_mapping_owner", owner)
+    )
     review = await rig.service.review_configuration(
         install.installation_id,
         tool_references={"agent:mapped": {"arithmetic": "builtin:calculator"}},
@@ -1156,7 +1164,10 @@ def test_native_tool_reference_uses_mcp_owner_even_when_other_native_mappings_so
             "target_reference": target,
         },
     ]
-    mappings = [{**row, "installation_id": "installed", "revision_digest": "revision"} for row in mappings]
+    mappings = [
+        {**row, "installation_id": "installed", "revision_digest": "revision"}
+        for row in mappings
+    ]
     assert mapped_tools("installed", component, mappings) == (
         owned_mcp_tool_name("installed", "mcp:shared", "echo"),
     )
@@ -1402,8 +1413,13 @@ async def test_native_agent_empty_tools_survives_real_spawn_and_resume(
     db = AgentRunsDB(tmp_path / "native-runs.sqlite", client_id="native-agent")
     holder = {}
     service, chat, fleet = make_fleet_service(db, [], {})
-    definition = agent_definition(snapshot, "agent:reviewer", frozenset(RESUME_CFG.allowed_tools),
-                                  registry=service.registry, parent_provider="llama_cpp")
+    definition = agent_definition(
+        snapshot,
+        "agent:reviewer",
+        frozenset(RESUME_CFG.allowed_tools),
+        registry=service.registry,
+        parent_provider="llama_cpp",
+    )
     task_key = str(definition.instructions)
     # Use the committed fleet transport double and the real retained-child path.
     service, chat, fleet = make_fleet_service(
@@ -1524,7 +1540,9 @@ async def test_owned_hook_registration_failure_settles_unlaunched_reservation(
         )
     )
     install = await install_components(rig.service, package, ("hook:work",))
-    data_review = await rig.service.review_data_creation(install.installation_id, workspace_id=None)
+    data_review = await rig.service.review_data_creation(
+        install.installation_id, workspace_id=None
+    )
     await rig.service.create_data(data_review, data_review.operation_id)
     snapshot = await rig.service.capture_mcp_snapshot(
         install.installation_id, "workspace-a", "registration-failure"
@@ -1550,7 +1568,9 @@ async def test_owned_hook_registration_failure_settles_unlaunched_reservation(
         assert not outcome.succeeded
         assert not rig.service.live_runs() and not engine.processes.records
         assert not await rig.service._call(lambda: usage.pending)
-        assert await rig.service._call(lambda: rig.service._coordinator.owner.list_processes(limit=10, offset=0))
+        assert await rig.service._call(
+            lambda: rig.service._coordinator.owner.list_processes(limit=10, offset=0)
+        )
         assert all(
             row["state"] == "settled"
             for row in await rig.service._call(
@@ -1575,7 +1595,7 @@ async def test_combined_hooks_keep_distinct_installation_revision_process_owners
     from Tests.hooks_v2_process_support import child_argv
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
-    from tldw_chatbook.Plugins.hooks import _NativeHookProcessOwner, NativeHooks
+    from tldw_chatbook.Plugins.hooks import NativeHooks, _NativeHookProcessOwner
 
     service = native_console.service
     snapshots, roots = [], {}
@@ -1754,10 +1774,15 @@ async def test_mixed_builtin_and_mcp_aliases_retain_exact_owner_forms(
     import json
     from dataclasses import replace
 
-    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        ToolCatalogRegistry,
+    )
     from tldw_chatbook.Plugins.agent_presets import agent_definition
     from tldw_chatbook.Plugins.host_references import (
-        capture_reference, mapping_id, tool_constraint_id,
+        capture_reference,
+        mapping_id,
+        tool_constraint_id,
     )
 
     case = shared_connection_case
@@ -1771,45 +1796,102 @@ async def test_mixed_builtin_and_mcp_aliases_retain_exact_owner_forms(
         component_tools={"agent:reader": {"search": "mcp:shared::echo"}},
     )
     assert (await case.service.commit(review, review.operation_id)).committed
-    snapshot = await case.service.capture_mcp_snapshot(case.installation, "a", "mixed-aliases")
+    snapshot = await case.service.capture_mcp_snapshot(
+        case.installation, "a", "mixed-aliases"
+    )
     mappings = json.loads(snapshot.mappings_json)
-    builtin = next(row for row in mappings if row["mapping_id"] == mapping_id("agent:reader", "arithmetic"))
-    canonical = next(row for row in mappings if row["mapping_id"] == tool_constraint_id("agent:reader", "search"))
+    builtin = next(
+        row
+        for row in mappings
+        if row["mapping_id"] == mapping_id("agent:reader", "arithmetic")
+    )
+    canonical = next(
+        row
+        for row in mappings
+        if row["mapping_id"] == tool_constraint_id("agent:reader", "search")
+    )
     assert builtin["kind"] == "tool" and canonical["kind"] == "configuration"
-    expected = (await case.service._call(case.service._coordinator.published_snapshot))["mappings"]
-    assert not any(row.phase == "recovery_required"
-                   for row in await case.service._call(case.service._coordinator.recover))
-    assert (await case.service._call(case.service._coordinator.published_snapshot))["mappings"] == expected
-    admitted = await case.service.admit(case.service.capture_maximum("a"), "pending:mixed")
-    assert any(row["plugin_component_id"] == "agent:reader" for row in admitted["available_skills"])
-    eligible = frozenset({"calculator", *(row.name for row in case.registries["a"].list_catalog())})
-    definition = agent_definition(snapshot, "agent:reader", eligible, parent_provider="llama_cpp")
+    expected = (await case.service._call(case.service._coordinator.published_snapshot))[
+        "mappings"
+    ]
+    assert not any(
+        row.phase == "recovery_required"
+        for row in await case.service._call(case.service._coordinator.recover)
+    )
+    assert (await case.service._call(case.service._coordinator.published_snapshot))[
+        "mappings"
+    ] == expected
+    admitted = await case.service.admit(
+        case.service.capture_maximum("a"), "pending:mixed"
+    )
+    assert any(
+        row["plugin_component_id"] == "agent:reader"
+        for row in admitted["available_skills"]
+    )
+    eligible = frozenset(
+        {"calculator", *(row.name for row in case.registries["a"].list_catalog())}
+    )
+    definition = agent_definition(
+        snapshot, "agent:reader", eligible, parent_provider="llama_cpp"
+    )
     assert set(definition.tool_allowlist) == set(eligible)
     builtin_registry = ToolCatalogRegistry()
     builtin_registry.register_provider(BuiltinToolProvider())
     assert "calculator" in definition.tool_allowlist
     result = builtin_registry.invoke_by_name(
-        "calculator", {"expression": "2+2"},
+        "calculator",
+        {"expression": "2+2"},
         expected_definition=builtin_registry.snapshot_for_hook("calculator"),
     )
     assert result.ok and "4" in result.content
     with pytest.raises(PermissionError, match="tool_unavailable"):
-        agent_definition(snapshot, "agent:reader", eligible - {"calculator"}, parent_provider="llama_cpp")
+        agent_definition(
+            snapshot,
+            "agent:reader",
+            eligible - {"calculator"},
+            parent_provider="llama_cpp",
+        )
 
     async def validate(row, rows):
-        await case.service._call(lambda: case.service._coordinator.validate_mapping(row, snapshot.inspection, rows))
+        await case.service._call(
+            lambda: case.service._coordinator.validate_mapping(
+                row, snapshot.inspection, rows
+            )
+        )
 
-    target = next(row for row in mappings if row["mapping_id"] == canonical["target_reference"])
-    legacy = capture_reference(case.installation, snapshot.inspection, "agent:reader", "tool",
-                               target["target_reference"], label="search", mappings=mappings)
+    target = next(
+        row for row in mappings if row["mapping_id"] == canonical["target_reference"]
+    )
+    legacy = capture_reference(
+        case.installation,
+        snapshot.inspection,
+        "agent:reader",
+        "tool",
+        target["target_reference"],
+        label="search",
+        mappings=mappings,
+    )
     legacy_rows = [legacy if row == canonical else row for row in mappings]
     await validate(legacy, legacy_rows)
     await validate(canonical, mappings)
-    for row, rows in ((legacy, legacy_rows), (canonical, mappings), (builtin, mappings)):
-        for field in ("definition_digest", "configuration_digest", "mapping_id", "target_reference", "revision_digest"):
+    for row, rows in (
+        (legacy, legacy_rows),
+        (canonical, mappings),
+        (builtin, mappings),
+    ):
+        for field in (
+            "definition_digest",
+            "configuration_digest",
+            "mapping_id",
+            "target_reference",
+            "revision_digest",
+        ):
             changed = {**row, field: "unknown-or-tampered"}
             with pytest.raises((PermissionError, ValueError, KeyError)):
-                await validate(changed, [changed if candidate == row else candidate for candidate in rows])
+                await validate(
+                    changed,
+                    [changed if candidate == row else candidate for candidate in rows],
+                )
     with pytest.raises(PermissionError, match="ambiguous"):
         await validate(canonical, [*mappings, legacy])
     with pytest.raises(PermissionError, match="ambiguous"):
@@ -1822,14 +1904,23 @@ async def test_mixed_builtin_and_mcp_aliases_retain_exact_owner_forms(
         )
     original_schema = BuiltinToolProvider.load_schema
     with monkeypatch.context() as patch:
-        patch.setattr(BuiltinToolProvider, "load_schema",
-                      lambda self, tool_id: replace(original_schema(self, tool_id), description="changed schema"))
+        patch.setattr(
+            BuiltinToolProvider,
+            "load_schema",
+            lambda self, tool_id: replace(
+                original_schema(self, tool_id), description="changed schema"
+            ),
+        )
         with pytest.raises(PermissionError, match="reference_changed"):
             await validate(builtin, mappings)
-        assert any(row.phase == "recovery_required"
-                   for row in await case.service._call(case.service._coordinator.recover))
-    assert not any(row.phase == "recovery_required"
-                   for row in await case.service._call(case.service._coordinator.recover))
+        assert any(
+            row.phase == "recovery_required"
+            for row in await case.service._call(case.service._coordinator.recover)
+        )
+    assert not any(
+        row.phase == "recovery_required"
+        for row in await case.service._call(case.service._coordinator.recover)
+    )
     await validate(builtin, mappings)
 
 
@@ -1837,49 +1928,99 @@ def test_historical_and_canonical_model_records_keep_distinct_exact_identities(
     plugin_stack, native_package, monkeypatch
 ):
     import json
-    import tldw_chatbook.config as config
-    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import LocalLLMProviderCatalogService
-    from tldw_chatbook.Plugins.host_references import capture_model_mapping, capture_reference, mapped_model
+
+    from tldw_chatbook import config
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.Plugins.host_references import (
+        capture_model_mapping,
+        capture_reference,
+        mapped_model,
+    )
     from tldw_chatbook.Plugins.inspection import inspect_package
 
-    settings = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080/v1/chat/completions"}}}
+    settings = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1/chat/completions"}
+        }
+    }
     monkeypatch.setattr(config, "load_settings", lambda: settings)
-    monkeypatch.setattr(config, "get_cli_providers_and_models", lambda: {"llama_cpp": ["m"]})
+    monkeypatch.setattr(
+        config, "get_cli_providers_and_models", lambda: {"llama_cpp": ["m"]}
+    )
     package = native_package(extension={"version": 1, "agents": ["agent.md"]})
-    (package / "agent.md").write_text("---\nname: reader\ndescription: Read\ntools: []\nmodel: chosen\n---\nRead.")
+    (package / "agent.md").write_text(
+        "---\nname: reader\ndescription: Read\ntools: []\nmodel: chosen\n---\nRead."
+    )
     inspection = inspect_package(package)
-    owner = LocalLLMProviderCatalogService(provider_catalog_loader=lambda: {"llama_cpp": ["m"]},
-                                           settings_loader=lambda: settings, environ={})
+    owner = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"llama_cpp": ["m"]},
+        settings_loader=lambda: settings,
+        environ={},
+    )
     stack = plugin_stack
     stack.call(lambda: setattr(stack.coordinator, "model_mapping_owner", owner))
-    legacy = capture_reference("installation", inspection, "agent:reader", "model", "llama_cpp::m")
-    canonical = capture_model_mapping(owner, "installation", inspection, "agent:reader", "llama_cpp/m")
+    legacy = capture_reference(
+        "installation", inspection, "agent:reader", "model", "llama_cpp::m"
+    )
+    canonical = capture_model_mapping(
+        owner, "installation", inspection, "agent:reader", "llama_cpp/m"
+    )
     assert legacy["mapping_id"] != canonical["mapping_id"]
     for row in (legacy, canonical):
         before = json.dumps(row, sort_keys=True)
-        stack.call(lambda: stack.coordinator.validate_mapping(row, inspection, [row]))
+        stack.call(
+            lambda row=row: stack.coordinator.validate_mapping(row, inspection, [row])
+        )
         assert json.dumps(row, sort_keys=True) == before
-        assert mapped_model(inspection.inventory["agent:reader"], [row]) == ("llama_cpp", "m")
-        for field in ("mapping_id", "definition_digest", "configuration_digest", "target_reference", "revision_digest"):
+        assert mapped_model(inspection.inventory["agent:reader"], [row]) == (
+            "llama_cpp",
+            "m",
+        )
+        for field in (
+            "mapping_id",
+            "definition_digest",
+            "configuration_digest",
+            "target_reference",
+            "revision_digest",
+        ):
             changed = {**row, field: "unknown-or-tampered"}
             with pytest.raises((PermissionError, ValueError, KeyError)):
-                stack.call(lambda: stack.coordinator.validate_mapping(changed, inspection, [changed]))
+                stack.call(
+                    lambda changed=changed: stack.coordinator.validate_mapping(
+                        changed, inspection, [changed]
+                    )
+                )
         with pytest.raises(PermissionError, match="ambiguous"):
-            stack.call(lambda: stack.coordinator.validate_mapping(row, inspection, [legacy, canonical]))
+            stack.call(
+                lambda row=row: stack.coordinator.validate_mapping(
+                    row, inspection, [legacy, canonical]
+                )
+            )
 
 
 def test_direct_canonical_tool_constraint_uses_actual_registry_and_parent():
-    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        ToolCatalogRegistry,
+    )
     from tldw_chatbook.Plugins.host_references import resolve_tool_ceiling
 
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    assert resolve_tool_ceiling(("builtin:calculator",), registry, frozenset({"calculator"})) == ("calculator",)
+    assert resolve_tool_ceiling(
+        ("builtin:calculator",), registry, frozenset({"calculator"})
+    ) == ("calculator",)
     assert resolve_tool_ceiling((), registry, frozenset({"calculator"})) == ()
-    assert resolve_tool_ceiling(None, registry, frozenset({"calculator"})) == ("calculator",)
-    for wanted, parent in ((("builtin:calculator",), frozenset()),
-                           (("builtin:missing",), frozenset({"calculator"})),
-                           (("Calculator display title",), frozenset({"calculator"}))):
+    assert resolve_tool_ceiling(None, registry, frozenset({"calculator"})) == (
+        "calculator",
+    )
+    for wanted, parent in (
+        (("builtin:calculator",), frozenset()),
+        (("builtin:missing",), frozenset({"calculator"})),
+        (("Calculator display title",), frozenset({"calculator"})),
+    ):
         with pytest.raises(PermissionError, match="tool_unavailable"):
             resolve_tool_ceiling(wanted, registry, parent)
 

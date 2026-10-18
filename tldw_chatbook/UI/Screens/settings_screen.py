@@ -370,6 +370,7 @@ from ..Speech.speech_settings_contracts import (
     SpeechTTSNavigationTarget,
 )
 from ...Internal_Prompts import authoring as internal_prompts_authoring
+from .settings_category_exports import CATEGORY_EXPORTS as _CATEGORY_EXPORTS
 from .settings_image_gen_defaults import (
     BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
     FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
@@ -3956,7 +3957,7 @@ class SettingsScreen(BaseAppScreen):
         self._snapshot_preferences_raw = None
         self._snapshot_preferences_saving = False
         self._snapshot_preferences_unavailable = False
-        self._web_search_settings: 'WebSearchSettings | None' = None
+        self._web_search_settings: WebSearchSettings | None = None
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         # TASK-33005.1: draft-scoped, publishing to the app's shared owner.
         self._provider_test_evidence_store = ProviderTestEvidenceStore(lambda: self.app)
@@ -4386,7 +4387,7 @@ class SettingsScreen(BaseAppScreen):
         self._settings_workspace_memory_armed: (
             _SettingsWorkspaceMemoryConfirmation | None
         ) = None
-        self._advanced_config_settings: 'AdvancedConfigSettings | None' = None
+        self._advanced_config_settings: AdvancedConfigSettings | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
         # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
         # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
@@ -4539,21 +4540,19 @@ class SettingsScreen(BaseAppScreen):
                 self._hooks_snapshot = hooks_snapshot
 
         search_session = state.get("web_search_session")
-        if search_session is not None:
-
-            if type(search_session) is _settings_category_symbol('WebSearchSettings'):
-                self._web_search_settings = search_session
-                self._settings_drafts[SettingsCategoryId.WEB_SEARCH] = (
-                    search_session.draft
-                )
-                self._web_search_model()
+        if search_session is not None and type(
+            search_session
+        ) is _settings_category_symbol("WebSearchSettings"):
+            self._web_search_settings = search_session
+            self._settings_drafts[SettingsCategoryId.WEB_SEARCH] = search_session.draft
+            self._web_search_model()
 
         raw_session = state.get("raw_config_session")
-        if raw_session is not None:
-
-            if type(raw_session) is _settings_category_symbol('AdvancedConfigSettings'):
-                self._advanced_config_settings = raw_session
-                self._raw_config_model()  # Rebind this live, memory-only session.
+        if raw_session is not None and type(raw_session) is _settings_category_symbol(
+            "AdvancedConfigSettings"
+        ):
+            self._advanced_config_settings = raw_session
+            self._raw_config_model()  # Rebind this live, memory-only session.
 
         snapshot = state.get("speech_tts_panel_draft")
         if type(snapshot) is SpeechTTSPanelDraftSnapshot:
@@ -8476,8 +8475,10 @@ class SettingsScreen(BaseAppScreen):
         app_config = getattr(self.app_instance, "app_config", {})
         return app_config if isinstance(app_config, Mapping) else {}
 
-    def _appearance_loaded_defaults(self) -> 'SettingsAppearanceDefaults':
-        return _settings_category_symbol('load_appearance_defaults')(self._app_config_mapping())
+    def _appearance_loaded_defaults(self) -> "SettingsAppearanceDefaults":
+        return _settings_category_symbol("load_appearance_defaults")(
+            self._app_config_mapping()
+        )
 
     def _appearance_loaded_values(self) -> dict[str, object]:
         return asdict(self._appearance_loaded_defaults())
@@ -8495,11 +8496,15 @@ class SettingsScreen(BaseAppScreen):
             for key, value in loaded.items()
         }
 
-    def _appearance_current_defaults(self) -> 'SettingsAppearanceDefaults':
-        return _settings_category_symbol('SettingsAppearanceDefaults')(**self._appearance_setting_values())
+    def _appearance_current_defaults(self) -> "SettingsAppearanceDefaults":
+        return _settings_category_symbol("SettingsAppearanceDefaults")(
+            **self._appearance_setting_values()
+        )
 
     def _appearance_validation_result(self):
-        return _settings_category_symbol('validate_appearance_defaults')(self._appearance_current_defaults())
+        return _settings_category_symbol("validate_appearance_defaults")(
+            self._appearance_current_defaults()
+        )
 
     def _appearance_save_enabled(self) -> bool:
         if not self._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE):
@@ -8725,7 +8730,10 @@ class SettingsScreen(BaseAppScreen):
         if token is not self._image_gen_load_token:
             return
         try:
-            panel = self.query_one("#settings-imagegen-panel", _settings_category_symbol('ImageGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-imagegen-panel",
+                _settings_category_symbol("ImageGenSettingsPanel"),
+            )
         except QueryError:
             return
         panel.config = cfg
@@ -8809,55 +8817,12 @@ class SettingsScreen(BaseAppScreen):
             )
 
     def _image_gen_draft_values_for_save(
-        self, panel: 'ImageGenSettingsPanel'
+        self, panel: "ImageGenSettingsPanel"
     ) -> ImageGenDraftValues:
+        from ...Widgets.settings_image_gen_panel import _draft_values_for_save
+
         draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
-        values = draft.values if draft is not None else {}
-        backend_fields: dict[str, dict[str, str]] = {}
-        cleared_fields: dict[str, list[str]] = {}
-        for key, value in values.items():
-            if key.startswith("field::"):
-                _prefix, backend_id, toml_key = key.split("::", 2)
-                backend_fields.setdefault(backend_id, {})[toml_key] = value
-            elif key.startswith("cleared::"):
-                _prefix, backend_id, toml_key = key.split("::", 2)
-                cleared_fields.setdefault(backend_id, []).append(toml_key)
-
-        # enabled_backends/default_backend/context_llm_enabled are ALWAYS
-        # read live off the mounted widgets (never from `values`) -- see
-        # the class-comment above for why this is safe and required (an
-        # untouched checkbox/select must still be reflected, since it's
-        # never staged unless the user actually toggles it).
-        enabled_backends = [
-            backend_id
-            for backend_id in IMAGE_GEN_BACKEND_IDS
-            if panel.query_one(
-                f"#settings-imagegen-enabled-{backend_id}", Checkbox
-            ).value
-        ]
-        default_backend_widget_value = panel.query_one(
-            "#settings-imagegen-default_backend", Select
-        ).value
-        default_backend = (
-            default_backend_widget_value
-            if isinstance(default_backend_widget_value, str)
-            else None
-        )
-        context_llm_enabled = bool(
-            panel.query_one("#settings-imagegen-context_llm_enabled", Checkbox).value
-        )
-
-        return ImageGenDraftValues(
-            default_backend=default_backend,
-            enabled_backends=enabled_backends,
-            default_batch=values.get("default_batch"),
-            max_variants_per_message=values.get("max_variants_per_message"),
-            context_llm_enabled=context_llm_enabled,
-            context_llm_turns=values.get("context_llm_turns"),
-            context_llm_timeout_seconds=values.get("context_llm_timeout_seconds"),
-            backend_fields=backend_fields,
-            cleared_fields=cleared_fields,
-        )
+        return _draft_values_for_save(panel, draft.values if draft is not None else {})
 
     @on(Select.Changed, "#settings-imagegen-default_backend")
     def handle_image_gen_default_backend_changed(self, event: Select.Changed) -> None:
@@ -8903,7 +8868,10 @@ class SettingsScreen(BaseAppScreen):
             return
         event.checkbox.label = switch_word(bool(event.value))
         try:
-            panel = self.query_one("#settings-imagegen-panel", _settings_category_symbol('ImageGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-imagegen-panel",
+                _settings_category_symbol("ImageGenSettingsPanel"),
+            )
         except QueryError:
             return
         enabled_backends = [
@@ -9011,14 +8979,18 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.query_one(
                 f"#settings-imagegen-field-{backend_id}-{toml_key}", Input
-            ).placeholder = _settings_category_symbol('_image_gen_secret_placeholder')(new_source)
+            ).placeholder = _settings_category_symbol("_image_gen_secret_placeholder")(
+                new_source
+            )
         except QueryError:
             pass
         try:
             source_static = self.query_one(
                 f"#settings-imagegen-key-source-{backend_id}", Static
             )
-            source_static.update(_settings_category_symbol('_image_gen_key_source_line')(new_source))
+            source_static.update(
+                _settings_category_symbol("_image_gen_key_source_line")(new_source)
+            )
             secret_optional = backend_id == "swarmui"
             source_static.set_class(
                 secret_optional and new_source == "missing",
@@ -9045,7 +9017,7 @@ class SettingsScreen(BaseAppScreen):
     # unrelated, freshly (re)opened panel.
 
     def _image_gen_test_form_values(
-        self, panel: 'ImageGenSettingsPanel', backend_id: str
+        self, panel: "ImageGenSettingsPanel", backend_id: str
     ) -> dict[str, str]:
         """Gather the CURRENT non-secret form values for `backend_id`'s Test
         probe -- an edited-but-unsaved Input wins; a blank (untouched)
@@ -9068,7 +9040,7 @@ class SettingsScreen(BaseAppScreen):
         return form_values
 
     def _image_gen_test_secret(
-        self, panel: 'ImageGenSettingsPanel', backend_id: str
+        self, panel: "ImageGenSettingsPanel", backend_id: str
     ) -> str | None:
         """The secret to probe with: this session's pasted-but-unsaved
         value if present, else ``""`` -- `_image_gen_probe_worker` then
@@ -9105,7 +9077,10 @@ class SettingsScreen(BaseAppScreen):
         if self._image_gen_probe_in_flight:
             return
         try:
-            panel = self.query_one("#settings-imagegen-panel", _settings_category_symbol('ImageGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-imagegen-panel",
+                _settings_category_symbol("ImageGenSettingsPanel"),
+            )
         except QueryError:
             return
         form_values = self._image_gen_test_form_values(panel, backend_id)
@@ -9172,7 +9147,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _handle_image_gen_save(self) -> None:
         try:
-            panel = self.query_one("#settings-imagegen-panel", _settings_category_symbol('ImageGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-imagegen-panel",
+                _settings_category_symbol("ImageGenSettingsPanel"),
+            )
         except QueryError:
             return
         draft_values = self._image_gen_draft_values_for_save(panel)
@@ -9229,7 +9207,10 @@ class SettingsScreen(BaseAppScreen):
         # than silently spanning across a discard-and-restart edit.
         self._image_gen_raw_section_cache = None
         try:
-            panel = self.query_one("#settings-imagegen-panel", _settings_category_symbol('ImageGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-imagegen-panel",
+                _settings_category_symbol("ImageGenSettingsPanel"),
+            )
         except QueryError:
             panel = None
         if panel is not None:
@@ -9561,7 +9542,10 @@ class SettingsScreen(BaseAppScreen):
         if token is not self._video_gen_load_token:
             return
         try:
-            panel = self.query_one("#settings-videogen-panel", _settings_category_symbol('VideoGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-videogen-panel",
+                _settings_category_symbol("VideoGenSettingsPanel"),
+            )
         except QueryError:
             return
         panel.config = cfg
@@ -9636,72 +9620,12 @@ class SettingsScreen(BaseAppScreen):
             )
 
     def _video_gen_draft_values_for_save(
-        self, panel: 'VideoGenSettingsPanel'
+        self, panel: "VideoGenSettingsPanel"
     ) -> VideoGenDraftValues:
+        from ...Widgets.settings_video_gen_panel import _draft_values_for_save
+
         draft = self._settings_drafts.get(SettingsCategoryId.VIDEO_GENERATION)
-        values = draft.values if draft is not None else {}
-        backend_fields: dict = {}
-        cleared_fields: dict[str, list[str]] = {}
-        for key, value in values.items():
-            if key.startswith("field::"):
-                _prefix, backend_id, toml_key = key.split("::", 2)
-                backend_fields.setdefault(backend_id, {})[toml_key] = value
-            elif key.startswith("cleared::"):
-                _prefix, backend_id, toml_key = key.split("::", 2)
-                cleared_fields.setdefault(backend_id, []).append(toml_key)
-
-        # Checkbox/Select values are ALWAYS read live (no blank ambiguity --
-        # the image block's rule), so an untouched toggle still lands.
-        enabled_backends = [
-            backend_id
-            for backend_id in VIDEO_GEN_BACKEND_IDS
-            if panel.query_one(
-                f"#settings-videogen-enabled-{backend_id}", Checkbox
-            ).value
-        ]
-        default_backend_widget_value = panel.query_one(
-            "#settings-videogen-default_backend", Select
-        ).value
-        default_backend = (
-            default_backend_widget_value
-            if isinstance(default_backend_widget_value, str)
-            else None
-        )
-        retention_widget_value = panel.query_one(
-            "#settings-videogen-retention", Select
-        ).value
-        retention = (
-            retention_widget_value if isinstance(retention_widget_value, str) else None
-        )
-        confirm_cost_estimate = bool(
-            panel.query_one("#settings-videogen-confirm_cost_estimate", Checkbox).value
-        )
-        # bool-kind backend fields (e.g. minimax allow_uploads) read live too.
-        from .settings_video_gen_defaults import FIELD_SCHEMA as VIDEO_GEN_FIELD_SCHEMA
-
-        for backend_id in VIDEO_GEN_BACKEND_IDS:
-            for spec in VIDEO_GEN_FIELD_SCHEMA.get(backend_id, ()):
-                if spec.kind != "bool":
-                    continue
-                try:
-                    value = panel.query_one(
-                        f"#settings-videogen-field-{backend_id}-{spec.toml_key}",
-                        Checkbox,
-                    ).value
-                except QueryError:
-                    continue
-                backend_fields.setdefault(backend_id, {})[spec.toml_key] = bool(value)
-
-        return VideoGenDraftValues(
-            default_backend=default_backend,
-            enabled_backends=enabled_backends,
-            retention=retention,
-            retention_ttl_hours=values.get("retention_ttl_hours"),
-            max_store_mb=values.get("max_store_mb"),
-            confirm_cost_estimate=confirm_cost_estimate,
-            backend_fields=backend_fields,
-            cleared_fields=cleared_fields,
-        )
+        return _draft_values_for_save(panel, draft.values if draft is not None else {})
 
     @on(Select.Changed, "#settings-videogen-default_backend")
     def handle_video_gen_default_backend_changed(self, event: Select.Changed) -> None:
@@ -9744,7 +9668,8 @@ class SettingsScreen(BaseAppScreen):
                 return
             try:
                 panel = self.query_one(
-                    "#settings-videogen-panel", _settings_category_symbol('VideoGenSettingsPanel')
+                    "#settings-videogen-panel",
+                    _settings_category_symbol("VideoGenSettingsPanel"),
                 )
             except QueryError:
                 return
@@ -9853,7 +9778,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _handle_video_gen_save(self) -> None:
         try:
-            panel = self.query_one("#settings-videogen-panel", _settings_category_symbol('VideoGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-videogen-panel",
+                _settings_category_symbol("VideoGenSettingsPanel"),
+            )
         except QueryError:
             return
         draft_values = self._video_gen_draft_values_for_save(panel)
@@ -9907,7 +9835,10 @@ class SettingsScreen(BaseAppScreen):
         self._settings_drafts.pop(SettingsCategoryId.VIDEO_GENERATION, None)
         self._video_gen_raw_section_cache = None
         try:
-            panel = self.query_one("#settings-videogen-panel", _settings_category_symbol('VideoGenSettingsPanel'))
+            panel = self.query_one(
+                "#settings-videogen-panel",
+                _settings_category_symbol("VideoGenSettingsPanel"),
+            )
         except QueryError:
             panel = None
         if panel is not None:
@@ -10255,7 +10186,9 @@ class SettingsScreen(BaseAppScreen):
         ).lower()
         if summary.category is SettingsCategoryId.WEB_SEARCH:
 
-            secondary_haystack += " " + _settings_category_symbol('WEB_SEARCH_TERMS').lower()
+            secondary_haystack += (
+                " " + _settings_category_symbol("WEB_SEARCH_TERMS").lower()
+            )
         if query in secondary_haystack:
             return 2
         # task-1715: field labels -- typing a setting's visible name
@@ -12915,7 +12848,7 @@ class SettingsScreen(BaseAppScreen):
         app_config: object | None = None,
         *,
         read_skill_trust: bool = True,
-    ) -> 'SettingsPrivacyPosture':
+    ) -> "SettingsPrivacyPosture":
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
         trace_maintenance = None
@@ -12928,7 +12861,7 @@ class SettingsScreen(BaseAppScreen):
                 logger.warning(
                     "Unable to read content-free Console trace maintenance status."
                 )
-        return _settings_category_symbol('build_settings_privacy_posture')(
+        return _settings_category_symbol("build_settings_privacy_posture")(
             app_config,
             skill_trust=self._skill_trust_posture(read_status=read_skill_trust),
             trace_maintenance=trace_maintenance,
@@ -12937,7 +12870,9 @@ class SettingsScreen(BaseAppScreen):
     def _privacy_posture_rows(
         self, app_config: object | None = None
     ) -> tuple[str, ...]:
-        return _settings_category_symbol('build_privacy_posture_rows')(self._settings_privacy_posture(app_config))
+        return _settings_category_symbol("build_privacy_posture_rows")(
+            self._settings_privacy_posture(app_config)
+        )
 
     def _privacy_check_results(
         self, app_config: object | None = None
@@ -12945,7 +12880,7 @@ class SettingsScreen(BaseAppScreen):
         posture = self._settings_privacy_posture(app_config)
         return (
             "Privacy check: complete",
-            *_settings_category_symbol('build_privacy_posture_rows')(posture),
+            *_settings_category_symbol("build_privacy_posture_rows")(posture),
             (
                 "Provider key source: "
                 f"environment {posture.provider_env_present} present / "
@@ -12982,7 +12917,9 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if token is not self._skill_trust_token:
             return  # a later Privacy render owns the row now
-        status = _settings_category_symbol('safe_skill_trust_status')(trust.get("trust_status"))
+        status = _settings_category_symbol("safe_skill_trust_status")(
+            trust.get("trust_status")
+        )
         self._set_static_text(
             "#settings-privacy-skill-trust",
             f"Skill trust: {_settings_category_symbol('skill_trust_display')(status)}",
@@ -15315,21 +15252,21 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_picker_groups(
         self, query: str = ""
-    ) -> 'tuple[ProviderPickerGroup, ...]':
+    ) -> "tuple[ProviderPickerGroup, ...]":
         provider = str(self._provider_display_setting_values().get("provider") or "")
         catalog = self._provider_catalog_entries()
         # TASK-33007.2: configured providers lead. Re-read only for the
         # unfiltered list (compose, open, close), never per keystroke.
         if not query.strip() or self._provider_configured_keys is None:
-            self._provider_configured_keys = _settings_category_symbol('configured_provider_keys')(
-                catalog, self._provider_readiness_app_config(), PROVIDER_ENDPOINT_KEYS
-            )
-        return _settings_category_symbol('build_provider_picker_groups')(
+            self._provider_configured_keys = _settings_category_symbol(
+                "configured_provider_keys"
+            )(catalog, self._provider_readiness_app_config(), PROVIDER_ENDPOINT_KEYS)
+        return _settings_category_symbol("build_provider_picker_groups")(
             catalog, provider, query, self._provider_configured_keys
         )
 
     def _provider_picker_options(
-        self, groups: 'tuple[ProviderPickerGroup, ...]'
+        self, groups: "tuple[ProviderPickerGroup, ...]"
     ) -> list[Option]:
         options: list[Option] = []
         for group in groups:
@@ -15356,7 +15293,7 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _provider_picker_has_catalog_matches(
-        groups: 'tuple[ProviderPickerGroup, ...]',
+        groups: "tuple[ProviderPickerGroup, ...]",
     ) -> bool:
         return any(
             group.group_id in {"configured", "cloud", "local", "custom"}
@@ -15484,7 +15421,7 @@ class SettingsScreen(BaseAppScreen):
             )
             status.update(f"{matches} found · Enter picks · Esc cancels")
         else:
-            status.update(_settings_category_symbol('provider_picker_summary')(groups))
+            status.update(_settings_category_symbol("provider_picker_summary")(groups))
 
     def _provider_select_value_for_provider(self, provider: str) -> str:
         catalog_keys = self._provider_catalog_keys()
@@ -18851,7 +18788,7 @@ class SettingsScreen(BaseAppScreen):
             )
             if value
         )
-        return _settings_category_symbol('build_settings_overview')(
+        return _settings_category_symbol("build_settings_overview")(
             {
                 # TASK-31805 / TASK-33005.15: what a new chat would send with.
                 "configuration": overview_configuration(self),
@@ -19106,7 +19043,7 @@ class SettingsScreen(BaseAppScreen):
             app_config["custom_endpoints"] = copy.deepcopy(dict(section))
 
     def _custom_endpoint_reference_labels(
-        self, store: 'CustomEndpointReferenceStore', session_ids: Sequence[str]
+        self, store: "CustomEndpointReferenceStore", session_ids: Sequence[str]
     ) -> list[str]:
         """Return display labels (title, else id) for the referencing sessions."""
         wanted = set(session_ids)
@@ -19123,7 +19060,9 @@ class SettingsScreen(BaseAppScreen):
         provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}"
         store = self._custom_endpoints_store()
         references = (
-            _settings_category_symbol('conversations_referencing_endpoint')(store, provider_id)
+            _settings_category_symbol("conversations_referencing_endpoint")(
+                store, provider_id
+            )
             if store is not None
             else []
         )
@@ -19187,9 +19126,9 @@ class SettingsScreen(BaseAppScreen):
             # input_validation, family-normalizes the URL, and requests
             # removal of a cleared ``api_key_env`` key (config saves merge,
             # so an omitted key would silently keep the old reference).
-            mutation, delete_keys = _settings_category_symbol('build_entry_edit_mutation')(
-                entry, base_url, env_var, models_raw
-            )
+            mutation, delete_keys = _settings_category_symbol(
+                "build_entry_edit_mutation"
+            )(entry, base_url, env_var, models_raw)
         except ValueError as error:
             self._set_static_text("#settings-cep-edit-error", str(error))
             return
@@ -19350,7 +19289,7 @@ class SettingsScreen(BaseAppScreen):
     def _custom_endpoints_delete_worker(self, slug: str) -> None:
         """Delete an unreferenced entry off the event loop."""
         try:
-            _settings_category_symbol('detach_and_delete_entry')(
+            _settings_category_symbol("detach_and_delete_entry")(
                 load_settings(),
                 self._custom_endpoints_store(),
                 f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
@@ -19370,7 +19309,7 @@ class SettingsScreen(BaseAppScreen):
     def _custom_endpoints_detach_worker(self, slug: str) -> None:
         """Detach referencing conversations, then delete, off the event loop."""
         try:
-            _settings_category_symbol('detach_and_delete_entry')(
+            _settings_category_symbol("detach_and_delete_entry")(
                 load_settings(),
                 self._custom_endpoints_store(),
                 f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
@@ -19393,7 +19332,9 @@ class SettingsScreen(BaseAppScreen):
     def _custom_endpoints_convert_worker(self, slot_id: str) -> None:
         """Create a named endpoint from a built-in slot off the event loop."""
         try:
-            provider_id = _settings_category_symbol('convert_slot_to_named_endpoint')(load_settings(), slot_id)
+            provider_id = _settings_category_symbol("convert_slot_to_named_endpoint")(
+                load_settings(), slot_id
+            )
         except ValueError as error:
             self.app.call_from_thread(self._custom_endpoints_status_update, str(error))
             return
@@ -22583,7 +22524,7 @@ class SettingsScreen(BaseAppScreen):
 
         if self._web_search_settings is None:
             category = SettingsCategoryId.WEB_SEARCH
-            self._web_search_settings = _settings_category_symbol('WebSearchSettings')(
+            self._web_search_settings = _settings_category_symbol("WebSearchSettings")(
                 lambda: self._settings_drafts.setdefault(
                     category, SettingsDraft(category)
                 ),
@@ -22978,7 +22919,9 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "Splash Screen", classes="destination-section settings-column-title"
             )
-            yield _settings_category_symbol('SettingsSplashScreenViewer')(id="settings-splash-screen-viewer")
+            yield _settings_category_symbol("SettingsSplashScreenViewer")(
+                id="settings-splash-screen-viewer"
+            )
         elif category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static(
                 "Internal Prompts", classes="destination-section settings-column-title"
@@ -22986,7 +22929,7 @@ class SettingsScreen(BaseAppScreen):
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.WEB_SEARCH:
 
-            yield _settings_category_symbol('WebSearchSettingsPanel')(
+            yield _settings_category_symbol("WebSearchSettingsPanel")(
                 self._web_search_model(), id="settings-web-search-panel"
             )
         elif category is SettingsCategoryId.IMAGE_GENERATION:
@@ -23002,7 +22945,7 @@ class SettingsScreen(BaseAppScreen):
             )
             image_gen_overlay = self._image_gen_overlay_values()
             # TASK-32926: composes pending; config loads on a worker.
-            yield _settings_category_symbol('ImageGenSettingsPanel')(
+            yield _settings_category_symbol("ImageGenSettingsPanel")(
                 id="settings-imagegen-panel",
                 overlay=image_gen_overlay,
             )
@@ -23013,7 +22956,7 @@ class SettingsScreen(BaseAppScreen):
             )
             video_gen_overlay = self._video_gen_overlay_values()
             # TASK-32926: composes pending; config loads on a worker.
-            yield _settings_category_symbol('VideoGenSettingsPanel')(
+            yield _settings_category_symbol("VideoGenSettingsPanel")(
                 id="settings-videogen-panel",
                 overlay=video_gen_overlay,
             )
@@ -23152,7 +23095,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Credential sources", classes="destination-section")
                 yield self._detail_row(
                     "Provider env vars",
-                    _settings_category_symbol('env_var_summary')(
+                    _settings_category_symbol("env_var_summary")(
                         present=posture.provider_env_present,
                         missing=posture.provider_env_missing,
                         configured=posture.provider_env_configured,
@@ -23168,9 +23111,13 @@ class SettingsScreen(BaseAppScreen):
                 )
                 yield self._detail_row(
                     "Skill trust",
-                    _settings_category_symbol('skill_trust_display')(posture.skill_trust_status)
-                    if posture.skill_trust_enabled
-                    else "disabled",
+                    (
+                        _settings_category_symbol("skill_trust_display")(
+                            posture.skill_trust_status
+                        )
+                        if posture.skill_trust_enabled
+                        else "disabled"
+                    ),
                     identifier="settings-privacy-skill-trust",
                 )
                 yield self._detail_row(
@@ -23432,7 +23379,9 @@ class SettingsScreen(BaseAppScreen):
                 )
         elif category is SettingsCategoryId.AGENTS:
             yield Static("Agents", classes="destination-section settings-column-title")
-            yield _settings_category_symbol('AgentsSettingsPanel')(self.app_instance, id="settings-agents-panel")
+            yield _settings_category_symbol("AgentsSettingsPanel")(
+                self.app_instance, id="settings-agents-panel"
+            )
         elif category in DOMAIN_SETTINGS_CATEGORY_IDS:
             yield from self._render_domain_category_detail(category)
         else:
@@ -23440,7 +23389,7 @@ class SettingsScreen(BaseAppScreen):
                 "Advanced Config", classes="destination-section settings-column-title"
             )
 
-            yield _settings_category_symbol('AdvancedConfigPanel')(
+            yield _settings_category_symbol("AdvancedConfigPanel")(
                 self._raw_config_model(),
                 ADVANCED_CONFIG_GUIDED_PATHS,
                 id="settings-advanced-config-card",
@@ -26539,7 +26488,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Stage the accepted shared and destination reader defaults."""
         event.stop()
-        defaults = _settings_category_symbol('SettingsAppearanceDefaults')()
+        defaults = _settings_category_symbol("SettingsAppearanceDefaults")()
         for key in (
             "library_reader_library_open",
             "library_reader_custom_widths_enabled",
@@ -32500,7 +32449,9 @@ class SettingsScreen(BaseAppScreen):
             self.app.push_screen(
                 ConfirmationDialog(
                     title="Arm Terminal for this launch",
-                    message="\n\n".join(_settings_category_symbol('TERMINAL_DISCLOSURE_LINES')),
+                    message="\n\n".join(
+                        _settings_category_symbol("TERMINAL_DISCLOSURE_LINES")
+                    ),
                     confirm_label="Arm full-user Terminal",
                     cancel_label="Cancel",
                     confirm_callback=_confirmed_arm,
@@ -33682,7 +33633,9 @@ class SettingsScreen(BaseAppScreen):
                 self.app.notify("No Settings changes to save.", severity="information")
                 return
             values = self._appearance_current_defaults()
-            validation = _settings_category_symbol('validate_appearance_defaults')(values)
+            validation = _settings_category_symbol("validate_appearance_defaults")(
+                values
+            )
             if not validation.valid:
                 self._appearance_result = validation.message
                 self._set_static_text(
@@ -33692,7 +33645,9 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(category)
                 self.app.notify(validation.message, severity="error")
                 return
-            section_values = _settings_category_symbol('build_appearance_save_sections')(
+            section_values = _settings_category_symbol(
+                "build_appearance_save_sections"
+            )(
                 self._app_config_mapping(),
                 values,
             )
@@ -33967,7 +33922,9 @@ class SettingsScreen(BaseAppScreen):
             self._web_search_model().capture_pending_input()
         if category is SettingsCategoryId.ADVANCED_CONFIG:
 
-            self.query_one(_settings_category_symbol('AdvancedConfigPanel')).request_replacement("revert")
+            self.query_one(
+                _settings_category_symbol("AdvancedConfigPanel")
+            ).request_replacement("revert")
             return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
@@ -34075,7 +34032,9 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.WEB_SEARCH:
 
             try:
-                panel = self.query_one(_settings_category_symbol('WebSearchSettingsPanel'))
+                panel = self.query_one(
+                    _settings_category_symbol("WebSearchSettingsPanel")
+                )
             except QueryError:
                 self._web_search_model().revert()
             else:
@@ -35567,64 +35526,8 @@ class SettingsScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
 
+
 # Category exports stay lazy, with explicit assignments retaining their patch points.
-_CATEGORY_EXPORTS = {'TERMINAL_DISCLOSURE_LINES': ('...Terminal.contracts', 'TERMINAL_DISCLOSURE_LINES'),
- 'CustomEndpointReferenceStore': ('.settings_provider_view_model',
-                                  'CustomEndpointReferenceStore'),
- 'ProviderPickerGroup': ('.settings_provider_view_model', 'ProviderPickerGroup'),
- 'SettingsOverviewPresentation': ('.settings_provider_view_model',
-                                  'SettingsOverviewPresentation'),
- 'build_entry_edit_mutation': ('.settings_provider_view_model',
-                               'build_entry_edit_mutation'),
- 'build_provider_picker_groups': ('.settings_provider_view_model',
-                                  'build_provider_picker_groups'),
- 'build_settings_overview': ('.settings_provider_view_model',
-                             'build_settings_overview'),
- 'conversations_referencing_endpoint': ('.settings_provider_view_model',
-                                        'conversations_referencing_endpoint'),
- 'convert_slot_to_named_endpoint': ('.settings_provider_view_model',
-                                    'convert_slot_to_named_endpoint'),
- 'custom_endpoint_rows': ('.settings_provider_view_model', 'custom_endpoint_rows'),
- 'detach_and_delete_entry': ('.settings_provider_view_model',
-                             'detach_and_delete_entry'),
- 'SettingsSplashScreenViewer': ('...Widgets.settings_splash_screen_viewer',
-                                'SettingsSplashScreenViewer'),
- 'AgentsSettingsPanel': ('...Widgets.settings_agents_panel', 'AgentsSettingsPanel'),
- 'WEB_SEARCH_TERMS': ('.settings_web_search', 'SEARCH_TERMS'),
- 'WebSearchSettings': ('.settings_web_search', 'WebSearchSettings'),
- 'WebSearchSettingsPanel': ('...Widgets.settings_web_search_panel',
-                            'WebSearchSettingsPanel'),
- 'AdvancedConfigSettings': ('.settings_advanced_config', 'AdvancedConfigSettings'),
- 'AdvancedConfigPanel': ('...Widgets.settings_advanced_config_panel',
-                         'AdvancedConfigPanel'),
- 'ImageGenSettingsPanel': ('...Widgets.settings_image_gen_panel',
-                           'ImageGenSettingsPanel'),
- '_image_gen_key_source_line': ('...Widgets.settings_image_gen_panel',
-                                '_key_source_line'),
- '_image_gen_secret_placeholder': ('...Widgets.settings_image_gen_panel',
-                                   '_secret_placeholder'),
- 'VideoGenSettingsPanel': ('...Widgets.settings_video_gen_panel',
-                           'VideoGenSettingsPanel'),
- 'SettingsAppearanceDefaults': ('.settings_appearance_defaults',
-                                'SettingsAppearanceDefaults'),
- 'build_appearance_save_sections': ('.settings_appearance_defaults',
-                                    'build_appearance_save_sections'),
- 'load_appearance_defaults': ('.settings_appearance_defaults',
-                              'load_appearance_defaults'),
- 'validate_appearance_defaults': ('.settings_appearance_defaults',
-                                  'validate_appearance_defaults'),
- 'SettingsPrivacyPosture': ('.settings_privacy_security', 'SettingsPrivacyPosture'),
- 'build_privacy_posture_rows': ('.settings_privacy_security',
-                                'build_privacy_posture_rows'),
- 'build_settings_privacy_posture': ('.settings_privacy_security',
-                                    'build_settings_privacy_posture'),
- 'env_var_summary': ('.settings_privacy_security', 'env_var_summary'),
- 'skill_trust_display': ('.settings_privacy_security', 'skill_trust_display'),
- 'configured_provider_keys': ('.settings_provider_view_model',
-                              'configured_provider_keys'),
- 'provider_picker_summary': ('.settings_provider_view_model',
-                             'provider_picker_summary'),
- 'safe_skill_trust_status': ('.settings_privacy_security', 'safe_skill_trust_status')}
 
 
 def _settings_category_symbol(name: str) -> Any:
@@ -35635,21 +35538,54 @@ def _settings_category_symbol(name: str) -> Any:
 
 
 def __getattr__(name: str) -> Any:
-    "Keep category exports lazy and preserve their original object identity."
-    from importlib import import_module
+    """Keep category imports lazy and retain their exact exported identities."""
+    from .settings_category_exports import resolve_category_symbol
 
-    if name not in _CATEGORY_EXPORTS:
-        raise AttributeError(name)
-    module, member = _CATEGORY_EXPORTS[name]
-    return getattr(import_module(module, __package__), member)
+    return resolve_category_symbol(name)
 
 
 if TYPE_CHECKING:
-    from ...Terminal.contracts import TERMINAL_DISCLOSURE_LINES
-    from .settings_provider_view_model import CustomEndpointReferenceStore, ProviderPickerGroup, SettingsOverviewPresentation, build_entry_edit_mutation, build_provider_picker_groups, build_settings_overview, configured_provider_keys, conversations_referencing_endpoint, convert_slot_to_named_endpoint, detach_and_delete_entry, provider_picker_summary
-    from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
-    from ...Widgets.settings_agents_panel import AgentsSettingsPanel
-    from ...Widgets.settings_image_gen_panel import ImageGenSettingsPanel, _key_source_line as _image_gen_key_source_line, _secret_placeholder as _image_gen_secret_placeholder
+    from ...Terminal.contracts import (
+        TERMINAL_DISCLOSURE_LINES as TERMINAL_DISCLOSURE_LINES,
+    )
+    from ...Widgets.settings_agents_panel import (
+        AgentsSettingsPanel as AgentsSettingsPanel,
+    )
+    from ...Widgets.settings_image_gen_panel import ImageGenSettingsPanel
+    from ...Widgets.settings_image_gen_panel import (
+        _key_source_line as _image_gen_key_source_line,
+    )  # noqa: F401 -- preserve the lazy public export alias
+    from ...Widgets.settings_image_gen_panel import (
+        _secret_placeholder as _image_gen_secret_placeholder,
+    )  # noqa: F401 -- preserve the lazy public export alias
+    from ...Widgets.settings_splash_screen_viewer import (
+        SettingsSplashScreenViewer as SettingsSplashScreenViewer,
+    )
     from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
-    from .settings_appearance_defaults import SettingsAppearanceDefaults, build_appearance_save_sections, load_appearance_defaults, validate_appearance_defaults
-    from .settings_privacy_security import SettingsPrivacyPosture, build_privacy_posture_rows, build_settings_privacy_posture, env_var_summary, safe_skill_trust_status, skill_trust_display
+    from .settings_appearance_defaults import (
+        SettingsAppearanceDefaults,
+        build_appearance_save_sections as build_appearance_save_sections,
+        load_appearance_defaults as load_appearance_defaults,
+        validate_appearance_defaults as validate_appearance_defaults,
+    )
+    from .settings_privacy_security import (
+        SettingsPrivacyPosture,
+        build_privacy_posture_rows as build_privacy_posture_rows,
+        build_settings_privacy_posture as build_settings_privacy_posture,
+        env_var_summary as env_var_summary,
+        safe_skill_trust_status as safe_skill_trust_status,
+        skill_trust_display as skill_trust_display,
+    )
+    from .settings_provider_view_model import (
+        CustomEndpointReferenceStore,
+        ProviderPickerGroup,
+        SettingsOverviewPresentation,
+        build_entry_edit_mutation as build_entry_edit_mutation,
+        build_provider_picker_groups as build_provider_picker_groups,
+        build_settings_overview as build_settings_overview,
+        configured_provider_keys as configured_provider_keys,
+        conversations_referencing_endpoint as conversations_referencing_endpoint,
+        convert_slot_to_named_endpoint as convert_slot_to_named_endpoint,
+        detach_and_delete_entry as detach_and_delete_entry,
+        provider_picker_summary as provider_picker_summary,
+    )

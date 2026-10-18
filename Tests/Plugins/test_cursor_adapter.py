@@ -214,13 +214,11 @@ def test_bad_vendor_skill_metadata_keeps_valid_siblings(
 # Qualified /2 controls use the same current host owners.
 """Cursor paths, constraints and catalog interpretation."""
 
-import json
 
 import pytest
 
 from Tests.Plugins import platform_support
 from Tests.Plugins.test_codex_adapter import UPSTREAM, write_json, write_skill
-from tldw_chatbook.Plugins.inspection import inspect_package
 
 
 @platform_support.package_capture
@@ -404,7 +402,10 @@ def test_rules_are_manual_and_agent_constraints_are_preserved(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("---\n" + yaml.safe_dump(metadata) + "---\nInstruction body")
     result = inspect_package(tmp_path, dialect="cursor")
-    assert "vendor_rule_activation_unsupported" in result.inventory["rule:python"].activation_blockers
+    assert (
+        "vendor_rule_activation_unsupported"
+        in result.inventory["rule:python"].activation_blockers
+    )
     assert json.loads(result.inventory["agent:limited"].definition_json)["tools"] == []
     assert (
         "model_mapping_required"

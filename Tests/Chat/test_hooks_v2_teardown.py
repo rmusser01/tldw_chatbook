@@ -12,7 +12,6 @@ from Tests.Agents.test_hooks_v2_execution import command
 from Tests.Chat.hooks_v2_owned_rig import disposed_hook_rig, disposed_mounted_hook_rig
 from Tests.Chat.test_console_fleet_wake import _controller_rig
 from Tests.Chat.test_console_runtime_lifetime import _View
-from Tests.conftest import _close_database_instance
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 

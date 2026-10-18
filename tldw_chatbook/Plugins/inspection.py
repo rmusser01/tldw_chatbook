@@ -104,21 +104,31 @@ def inspect_capture(
     catalog_overlay: dict | None = None,
 ) -> PackageInspection:
     """Inspect captured bytes with the current, explicitly versioned interpretation."""
-    return _inspect_capture(capture, dialect=dialect, catalog_overlay=catalog_overlay,
-                            recipe="integrated_2")
+    return _inspect_capture(
+        capture, dialect=dialect, catalog_overlay=catalog_overlay, recipe="integrated_2"
+    )
 
 
 def _inspect_capture(
-    capture: PackageCapture, *, dialect: str | None = None,
+    capture: PackageCapture,
+    *,
+    dialect: str | None = None,
     catalog_overlay: dict | None = None,
     recipe: Literal["dev_20261001", "branch_7b4d5c", "integrated_2"],
 ) -> PackageInspection:
     """Closed historical parsing; callers cannot request it through public inspection."""
-    require(recipe in {"dev_20261001", "branch_7b4d5c", "integrated_2"}, "retained_adapter_unsupported")
+    require(
+        recipe in {"dev_20261001", "branch_7b4d5c", "integrated_2"},
+        "retained_adapter_unsupported",
+    )
     historical_dev = recipe == "dev_20261001"
     version = "2" if recipe == "integrated_2" else "1"
     vendor_overlays = {}
-    carrier = catalog_identity(catalog_overlay) if catalog_overlay is not None and not historical_dev else None
+    carrier = (
+        catalog_identity(catalog_overlay)
+        if catalog_overlay is not None and not historical_dev
+        else None
+    )
     diagnostics = list(capture.diagnostics) + list(capture.errors)
     candidates = []
     manifest = None
@@ -186,10 +196,23 @@ def _inspect_capture(
                         overlays=(
                             (overlay,) if manifest and dialect_name == "openai" else ()
                         ),
-                        format_version=("portable/1.0.0" if manifest and dialect_name == "openai" else "docs/2026-10-01")
-                        if historical_dev else "documented-2026-09-16",
-                        adapter_version=("chatbook-" + dialect_name + "/2026-10-01.1")
-                        if historical_dev else "chatbook-" + ("codex" if dialect_name == "openai" else "cursor") + "/" + version,
+                        format_version=(
+                            (
+                                "portable/1.0.0"
+                                if manifest and dialect_name == "openai"
+                                else "docs/2026-10-01"
+                            )
+                            if historical_dev
+                            else "documented-2026-09-16"
+                        ),
+                        adapter_version=(
+                            ("chatbook-" + dialect_name + "/2026-10-01.1")
+                            if historical_dev
+                            else "chatbook-"
+                            + ("codex" if dialect_name == "openai" else "cursor")
+                            + "/"
+                            + version
+                        ),
                         qualified=not historical_dev,
                     )
                 )
@@ -203,11 +226,18 @@ def _inspect_capture(
         "link_targets": capture.link_targets,
         "diagnostics": tuple(diagnostics),
     }
-    if not historical_dev and manifest is None and (
-        "plugin.json" in capture.files or "plugin.json" in capture.directories
-        or any(d.path == "plugin.json" for d in capture.errors)
+    if (
+        not historical_dev
+        and manifest is None
+        and (
+            "plugin.json" in capture.files
+            or "plugin.json" in capture.directories
+            or any(d.path == "plugin.json" for d in capture.errors)
+        )
     ):
-        return PackageInspection(**base, rejected=True, activation_blockers=("root_manifest_invalid",))
+        return PackageInspection(
+            **base, rejected=True, activation_blockers=("root_manifest_invalid",)
+        )
     if not candidates:
         return PackageInspection(
             **base, rejected=True, activation_blockers=("package_format_unsupported",)
@@ -343,15 +373,31 @@ def _inspect_capture(
                     if catalog:
                         base["overlay_identities"] = (*selected.overlays, CATALOG_PATH)
                 else:
-                    require(captured_catalog == catalog_overlay, "catalog_overlay_conflict")
+                    require(
+                        captured_catalog == catalog_overlay, "catalog_overlay_conflict"
+                    )
             overlay = {**catalog, **vendor_overlays[dialect]}
             if recipe == "integrated_2":
-                validate_manifest({"$schema": PLUGIN_SCHEMA, **{
-                    k: v for k, v in overlay.items() if k in _MANIFEST_FIELDS - {"$schema", "extensions"}
-                }, **({"name": manifest["name"]} if manifest else {})})
-            inventory, edges, variables, extra, blockers, bodies, native_manifest = inventory_vendor(
-                capture, overlay, dialect, max_components=MAX_COMPONENTS,
-                portable_manifest=manifest if dialect == "openai" else None, _recipe=recipe,
+                validate_manifest(
+                    {
+                        "$schema": PLUGIN_SCHEMA,
+                        **{
+                            k: v
+                            for k, v in overlay.items()
+                            if k in _MANIFEST_FIELDS - {"$schema", "extensions"}
+                        },
+                        **({"name": manifest["name"]} if manifest else {}),
+                    }
+                )
+            inventory, edges, variables, extra, blockers, bodies, native_manifest = (
+                inventory_vendor(
+                    capture,
+                    overlay,
+                    dialect,
+                    max_components=MAX_COMPONENTS,
+                    portable_manifest=manifest if dialect == "openai" else None,
+                    _recipe=recipe,
+                )
             )
         else:
             if not historical_dev:
@@ -360,7 +406,11 @@ def _inspect_capture(
                 capture, manifest, max_components=MAX_COMPONENTS, _recipe=recipe
             )
     except (PackageFileError, ComponentLimitError, TypeError, ValueError) as exc:
-        code = str(exc) if isinstance(exc, (PackageFileError, ComponentLimitError)) else "vendor_interpretation_invalid"
+        code = (
+            str(exc)
+            if isinstance(exc, (PackageFileError, ComponentLimitError))
+            else "vendor_interpretation_invalid"
+        )
         return PackageInspection(**base, rejected=True, activation_blockers=(code,))
     diagnostics.extend(extra)
     base["diagnostics"] = tuple(diagnostics)

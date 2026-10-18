@@ -22,7 +22,11 @@ def test_preimport_defers_settings_category_services(
     """The full registry walk must not execute unopened Settings services."""
     repo_root = Path(__file__).resolve().parents[2]
     env = {
-        **{key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR") if key in os.environ},
+        **{
+            key: os.environ[key]
+            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+            if key in os.environ
+        },
         "TLDW_TEST_MODE": "1",
         "HOME": str(tmp_path / "home"),
         "USERPROFILE": str(tmp_path / "home"),
@@ -73,7 +77,11 @@ def test_category_first_use_preserves_original_exports_and_assigned_patch_points
     for name in ("home", "data", "config", "cache"):
         (tmp_path / name).mkdir()
     env = {
-        **{key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR") if key in os.environ},
+        **{
+            key: os.environ[key]
+            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+            if key in os.environ
+        },
         "TLDW_TEST_MODE": "1",
         "HOME": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
@@ -147,7 +155,11 @@ assert not network_guard.drain_blocked_attempts()
 def test_cold_overview_defers_categories_until_actual_use_and_restores_drafts(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     env = {
-        **{key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR") if key in os.environ},
+        **{
+            key: os.environ[key]
+            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+            if key in os.environ
+        },
         "TLDW_TEST_MODE": "1",
         "TLDW_SCREEN_PREIMPORT": "0",
         "HOME": str(tmp_path / "home"),

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
@@ -237,7 +236,9 @@ def _capture_skill_context_from_records(
             plugin_context = plugin_service.capture_maximum(workspace_id)
         except PluginUnavailable as error:
             if str(error) == "plugin_constraint_verification_failed":
-                raise RecoveryRequired("plugin_constraint_verification_failed") from error
+                raise RecoveryRequired(
+                    "plugin_constraint_verification_failed"
+                ) from error
             raise
         names = {item.get("name") for item in available + blocked}
         available.extend(

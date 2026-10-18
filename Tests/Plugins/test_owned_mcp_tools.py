@@ -207,7 +207,11 @@ async def shared_connection_case(native_package, tmp_path, monkeypatch, request)
         )
         if fixture_mode == "native_mixed":
             agent = package / "agent.md"
-            agent.write_text(agent.read_text().replace("tools: [search]", "tools: [search, arithmetic]"))
+            agent.write_text(
+                agent.read_text().replace(
+                    "tools: [search]", "tools: [search, arithmetic]"
+                )
+            )
         selection += ("agent:reader",)
     review = await service.review_install(
         package, selection=selection, workspace_id="a"

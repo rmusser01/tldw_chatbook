@@ -9812,12 +9812,23 @@ class ConsoleChatController:
             if configuration is not None
             else self.resolve_turn_configuration_snapshot(session.id)
         )
-        resumed_reference = prepared_continuation if resumed_preparation is not None and prepared_continuation is not None else None
-        if resumed_reference is not None and resumed_reference.invocation_source is not None:
-            clean_draft = resumed_reference.invocation_source
+        from .console_plugin_context import _prepare_native_references
+
         try:
-            native_selector, _native_rest, native_kind = self._native_selector(
-                clean_draft, configuration.skill_context_maximum.get("available_skills", ()))
+            (
+                clean_draft,
+                executed_draft_text,
+                reference_records,
+                reference_offsets,
+            ) = await _prepare_native_references(
+                self,
+                clean_draft,
+                configuration,
+                origin=origin,
+                machine_input=machine_input,
+                resumed_preparation=resumed_preparation,
+                prepared_continuation=prepared_continuation,
+            )
         except PermissionError as error:
             copy = (
                 "Plugin agents run through child spawning; select an admitted agent there."
@@ -9825,68 +9836,6 @@ class ConsoleChatController:
                 else "Plugin selector is unavailable; review selected components."
             )
             return self._block(session.id, copy)
-        first_word, _ = _split_skill_command_word(clean_draft.lstrip())
-        native_literal_arguments = native_kind == "command" or any(
-            first_word == MENTION_SIGIL + row["name"] and row.get("plugin_owned")
-            for row in configuration.skill_context_maximum.get("available_skills", ()))
-        # TASK-27021: expand @-references (files/folders/diff) into the text
-        # the PROVIDER sees, before the one preparation construction below.
-        # The user echo keeps the RAW draft; a compact system row records what
-        # expanded/refused (26020 AC#6). Expansion failures never block the
-        # send -- the raw draft goes through with a note. AGENT_WAKE drafts
-        # are machine-composed and never expanded.
-        executed_draft_text = resumed_preparation.executed_draft if resumed_reference is not None else clean_draft
-        reference_records: tuple = ()
-        reference_offsets = resumed_reference.reference_offsets if resumed_reference is not None else ()
-        # Qodo #6 (PR #2313): a RESUMED preparation re-enters this seam with
-        # the already-expanded executed_draft; expansion is not idempotent
-        # (each raw @token survives ahead of its inserted block), so re-running
-        # it would inject every referenced file a second time. Expand only on
-        # the first pass.
-        if (
-            not origin.automatic
-            and machine_input is None
-            and resumed_preparation is None
-            and not native_literal_arguments
-        ):
-            try:
-                from tldw_chatbook.Chat.console_references import (
-                    ReferenceExpansion,
-                    build_console_reference_resolver,
-                    expand_references,
-                    find_reference_candidates,
-                    run_git_reference,
-                )
-
-                candidates = find_reference_candidates(clean_draft)
-                if native_kind == "rule":
-                    start = len(clean_draft) - len(clean_draft.lstrip())
-                    candidates = [candidate for candidate in candidates
-                                  if not (candidate.start == start and candidate.raw == first_word)]
-                if candidates:
-                    def _expand():
-                        resolver = build_console_reference_resolver()
-                        chunks, records, offsets = [], [], []
-                        previous = 0
-                        for candidate in candidates:
-                            expansion = expand_references(candidate.raw, resolve=resolver, git_runner=run_git_reference)
-                            chunks.extend((clean_draft[previous:candidate.start], expansion.expanded_text))
-                            records.extend(expansion.records)
-                            offsets.append((candidate.end, len(expansion.expanded_text) - len(candidate.raw)))
-                            previous = candidate.end
-                        chunks.append(clean_draft[previous:])
-                        return ReferenceExpansion("".join(chunks), records), tuple(offsets)
-
-                    expansion, reference_offsets = await asyncio.to_thread(_expand)
-                    executed_draft_text = expansion.expanded_text
-                    reference_records = tuple(expansion.records)
-            except Exception:  # noqa: BLE001 - references must never block a send
-                logger.opt(exception=True).warning(
-                    "@-reference expansion failed; sending the raw draft"
-                )
-                executed_draft_text = clean_draft
-                reference_records = ()
-                reference_offsets = ()
         if any(
             row.get("plugin_owned")
             for row in configuration.skill_context_maximum.get("available_skills", ())
@@ -9904,9 +9853,14 @@ class ConsoleChatController:
                 (service, maximum["plugin_run_id"])
             )
         try:
-            configuration = await self._native_skill_configuration(configuration, clean_draft)
+            configuration = await self._native_skill_configuration(
+                configuration, clean_draft
+            )
         except (PermissionError, ValueError):
-            return self._block(session.id, "Plugin model constraints are unavailable; review and retry.")
+            return self._block(
+                session.id,
+                "Plugin model constraints are unavailable; review and retry.",
+            )
         turn_selection = configuration.provider_selection
         if has_pending_attachment:
             vision_model = configuration.effective_model
@@ -10589,7 +10543,10 @@ class ConsoleChatController:
             if reference_offsets and executed_draft_text != clean_draft:
                 for index in range(len(provider_messages) - 1, -1, -1):
                     if provider_messages[index].get("role") == "user":
-                        provider_messages[index] = {**provider_messages[index], "content": executed_draft_text}
+                        provider_messages[index] = {
+                            **provider_messages[index],
+                            "content": executed_draft_text,
+                        }
                         break
             trace_source_messages = tuple(dict(row) for row in provider_messages)
             # TASK-34350 (owner ruling 2026-10-03): a composer send over the
@@ -10638,8 +10595,11 @@ class ConsoleChatController:
                 skill_bindings,
                 skill_bundle_block,
             ) = await self._apply_skill_substitution(
-                provider_messages, turn_context, invocation_source=clean_draft,
-                reference_offsets=reference_offsets)
+                provider_messages,
+                turn_context,
+                invocation_source=clean_draft,
+                reference_offsets=reference_offsets,
+            )
             if refuse is not None:
                 # A substitution refusal is a block outcome like any other
                 # (provider not ready, probe raise): fail the echoed row so the
@@ -15182,7 +15142,6 @@ class ConsoleChatController:
         """Forward to the documented InterruptRoundHost implementation."""
         return self._interrupt_host._console_tool_kill_switch_reader()
 
-
     def plugin_test_admission(self, configuration):
         """Reserve the real Console slot through the lazy explicit-test adapter."""
         from .console_plugin_tests import plugin_test_admission
@@ -18924,132 +18883,21 @@ class ConsoleChatController:
     async def _hooks_for_compaction(
         self, session_id, resolution, *, reason, current, configuration=None
     ):
-        """Resolve a real context operation under the runtime's one hook owner."""
-        runtime = getattr(self, "_hooks_v2_runtime", None)
-        if runtime is None:
-            return None
-        from tldw_chatbook.Agents.hooks_v2.lifecycle import CompactionHooks
+        from .console_compaction_hooks import _hooks_for_compaction
 
-        task = asyncio.current_task()
-        submissions = getattr(self, "_hooks_v2_submissions", {})
-        captured = submissions.get(task)
-        operation = None
-        if task in submissions:
-            if (
-                not isinstance(captured, tuple)
-                or len(captured) != 3
-                or captured[2] != session_id
-            ):
-                raise PermissionError("compaction hook submission already reserved")
-            if captured[0] is None and captured[1] is None:
-                return None
-            if captured[0] is None or captured[1] is None:
-                raise PermissionError("compaction hook submission already reserved")
-            lifecycle, scope, _session = captured
-        else:
-            if configuration is None:
-                configuration = await self.capture_turn_configuration_snapshot(session_id)
-            from .console_automatic_submission import _begin_hook_submission
-            from .console_received_turn import received_turn_claim_for
-
-            if (
-                received_turn_claim_for(self.store, session_id) is not None
-                or self.store.received_turn_for_session(session_id) is not None
-            ):
-                raise RuntimeError("console_received_turn_pending")
-            busy = self._live_busy_session_ids()
-            if session_id in busy or len(busy) >= self.max_parallel_runs:
-                raise RuntimeError("console_session_busy")
-            prior_state = self.run_state_for(session_id)
-            _begin_hook_submission(self, session_id)
-            submissions = self._hooks_v2_submissions
-            operation = (
-                task,
-                submissions[task],
-                prior_state,
-                self.run_state_for(session_id),
-            )
-            try:
-                lifecycle = await runtime.prepare_hooks_v2(
-                    session_id, reason="resume", configuration=configuration
-                )
-            except BaseException:
-                operation = (task, submissions.get(task, operation[1]), *operation[2:])
-                self._release_compaction_submission(operation)
-                raise
-            operation = (task, submissions.get(task, operation[1]), *operation[2:])
-            if lifecycle is None:
-                self._release_compaction_submission(operation)
-                return None
-            scope = lifecycle.turn_scope
-            reason = "manual"
-        try:
-            session = next(row for row in self.store.sessions() if row.id == session_id)
-            workspace_id = session.workspace_id
-
-            def memory_current(memory):
-                if not lifecycle.current():
-                    return False
-                session_now = next(
-                    (row for row in self.store.sessions() if row.id == session_id), None
-                )
-                if session_now is None or session_now.workspace_id != workspace_id:
-                    return False
-                snapshots = self._durable_context_snapshots(session_id)
-                if not snapshots:
-                    return False
-                effective = self._select_session_effective_memory(
-                    session_id,
-                    memory.conversation_id,
-                    snapshots,
-                )
-                selected = effective.memory
-                return bool(
-                    selected is not None
-                    and selected.memory_id == memory.memory_id
-                    and selected.revision == memory.revision
-                    and selected.active
-                    and selected.summarized_prefix_digest == memory.summarized_prefix_digest
-                )
-
-            def prepare(messages, cap):
-                return self.provider_gateway.prepare_chat_request(
-                    replace(resolution, streaming=False, max_tokens=cap),
-                    list(messages),
-                    apply_safety_window=False,
-                )
-
-            hooks = CompactionHooks(
-                lifecycle,
-                scope,
-                reason=reason,
-                prepare=prepare,
-                current=current,
-                memory_current=memory_current,
-            )
-            hooks._controller_submission = operation
-            return hooks
-        except BaseException:
-            self._release_compaction_submission(operation)
-            raise
+        return await _hooks_for_compaction(
+            self,
+            session_id,
+            resolution,
+            reason=reason,
+            current=current,
+            configuration=configuration,
+        )
 
     def _release_compaction_submission(self, operation):
-        """Release only this auxiliary operation's reservation and validating state."""
-        if operation is None:
-            return
-        task, reservation, prior_state, owned_state = operation
-        submissions = self._hooks_v2_submissions
-        if submissions.get(task) is not reservation:
-            return
-        lifecycle, scope, session_id = reservation
-        if self.run_state_for(session_id) is owned_state:
-            self._set_run_state(prior_state, session_id=session_id)
-        submissions.pop(task)
-        if lifecycle is not None:
-            if lifecycle.turn_scope == scope:
-                lifecycle.turn_scope = None
-            if lifecycle._handoff is None or lifecycle._handoff[0] != scope:
-                lifecycle.close_scope(scope)
+        from .console_compaction_hooks import _release_compaction_submission
+
+        _release_compaction_submission(self, operation)
 
     async def _summarize_manual(
         self, message_id: str, *, from_here: bool, focus: str = ""
@@ -19122,7 +18970,9 @@ class ConsoleChatController:
             )
             if hooks is None:
                 self._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
+                    ConsoleRunState(
+                        ConsoleRunStatus.VALIDATING, "Summarizing conversation…"
+                    ),
                     session_id=session_id,
                 )
             transaction = await service.summarize_manual(
@@ -21547,168 +21397,48 @@ class ConsoleChatController:
 
     @staticmethod
     def _native_selector(source, entries):
-        word, rest = _split_skill_command_word(source.lstrip())
-        if not word.startswith(("/", "@")) or word.count(":") != 1:
-            return None, rest, None
-        alias, local_id = word[1:].split(":", 1)
-        if not alias or not local_id:
-            return None, rest, None
-        kind = "command" if word[0] == "/" else "rule"
-        rows = [row for row in entries if row.get("plugin_owned")
-                and row.get("plugin_kind") == kind and row["name"] == f"{alias}:{kind}:{local_id}"]
-        if not rows and kind == "rule" and any(
-            row.get("plugin_owned") and row.get("plugin_kind") == "agent"
-            and row["name"] == f"{alias}:agent:{local_id}" for row in entries
-        ):
-            raise PermissionError("plugin_agent_child_only")
-        if len(rows) != 1 or kind == "rule" and rows[0].get("plugin_rule_mode") != "manual":
-            raise PermissionError("plugin_selector_unavailable")
-        return rows[0], rest, kind
+        from .console_plugin_context import _native_selector
 
-    async def _legacy_native_substitution(self, messages, turn_context, invocation_source):
-        maximum = turn_context.skill_context_maximum if turn_context is not None else {}
-        final = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), None)
-        if final is None or not isinstance(messages[final].get("content"), str):
-            return None
-        source = messages[final]["content"] if invocation_source is None else invocation_source
-        row, rest, kind = self._native_selector(source, maximum.get("available_skills", ()))
-        if row is None:
-            return None
-        service = getattr(getattr(self._skills_service, "local_service", None), "plugin_service", None)
-        if service is None:
-            raise PermissionError("plugin_owner_unavailable")
-        admitted = await service.admit(maximum, maximum["plugin_run_id"])
-        row, rest, kind = self._native_selector(source, admitted["available_skills"])
-        arguments = rest
-        if kind == "command" and len(row.get("arguments", ())) == 1:
-            arguments = json.dumps({row["arguments"][0]: rest}, ensure_ascii=False)
-        rendered = await service.execute_skill(row["name"], admission_token=row["plugin_admission"],
-                                               args=arguments if kind == "command" else "")
-        blocks = [{"role": "user", "content": rendered["rendered_prompt"]}]
-        if kind == "rule":
-            _, expanded_rest = _split_skill_command_word(messages[final]["content"].lstrip())
-            if expanded_rest:
-                blocks.append({"role": "user", "content": expanded_rest})
-        result = [*messages[:final], *blocks, *messages[final + 1:]]
-        from tldw_chatbook.Agents.agent_models import check_host_context
-        check_host_context(result, strip=False)
-        await service.check_entries(admitted["available_skills"])
-        return result, None, (), (), ""
+        return _native_selector(source, entries)
+
+    async def _legacy_native_substitution(
+        self, messages, turn_context, invocation_source
+    ):
+        from .console_plugin_context import _legacy_native_substitution
+
+        return await _legacy_native_substitution(
+            self, messages, turn_context, invocation_source
+        )
 
     async def _native_skill_configuration(self, configuration, draft):
-        maximum = configuration.skill_context_maximum
-        entries = [row for row in maximum.get("available_skills", ())
-                   if row.get("plugin_owned") and row.get("plugin_kind") == "skill"]
-        if not entries:
-            return configuration
-        local = getattr(self._skills_service, "local_service", None)
-        service = getattr(local, "plugin_service", None)
-        if service is None:
-            raise PermissionError("plugin_owner_unavailable")
-        admitted = await service.admit(maximum, maximum["plugin_run_id"])
-        entries = [row for row in admitted["available_skills"]
-                   if row.get("plugin_kind") == "skill" and row.get("user_invocable")]
-        word, rest = _split_skill_command_word(draft.lstrip())
-        resolution = resolve_skill_command(word[len(MENTION_SIGIL):], rest,
-            self._skill_candidates_from_context(admitted) + self._skill_blocked_candidates_from_context(admitted)) if word.startswith(MENTION_SIGIL) else None
-        selected = [row for row in entries if resolution is not None
-                    and resolution.kind == "resolved" and row["name"] == resolution.name]
-        if not selected:
-            names = frozenset(row["name"] for row in entries if row.get("context") == "inline")
-            mentioned = {mention.name for mention in find_embedded_mentions(draft, names)}
-            selected = [row for row in entries if row["name"] in mentioned]
-        if not selected:
-            return configuration
-        from tldw_chatbook.Plugins.host_references import mapped_model
-        from tldw_chatbook.Chat.provider_readiness import provider_config_key
-        keys = {(row["plugin_installation_id"], row["plugin_component_id"]) for row in selected}
-        models = set()
-        for snapshot in await service.component_snapshots(admitted):
-            for component_id in snapshot.selection:
-                if (snapshot.installation_id, component_id) not in keys:
-                    continue
-                provider, model = mapped_model(snapshot.inspection.inventory[component_id], json.loads(snapshot.mappings_json))
-                if model:
-                    if provider_config_key(provider) != provider_config_key(configuration.provider_selection.provider):
-                        raise PermissionError("plugin_model_parent_mismatch")
-                    models.add(model)
-        if len(models) > 1:
-            raise PermissionError("plugin_model_conflict")
-        if models:
-            from tldw_chatbook.Chat.console_configuration_capture import max_history_images
+        from .console_plugin_context import _native_skill_configuration
 
-            model = models.pop()
-            provider = configuration.provider_selection.provider
-            capabilities = dict(configuration.capabilities)
-            capabilities["vision"] = bool(capabilities.get("vision")) and is_vision_capable(provider, model)
-            capabilities["max_history_images"] = min(
-                int(capabilities.get("max_history_images", 0) or 0),
-                max_history_images(provider, model),
-            )
-            return replace(configuration,
-                provider_selection=replace(configuration.provider_selection, explicit_model=model),
-                capabilities=capabilities)
-        return configuration
+        return await _native_skill_configuration(self, configuration, draft)
 
-    async def _apply_skill_substitution(self, provider_messages, turn_context=None, *, invocation_source=None, reference_offsets=()):
-        """Apply manual material, then whole active rules in the untrusted lane."""
-        try:
-            result = await self._legacy_native_substitution(provider_messages, turn_context, invocation_source)
-        except (PermissionError, ValueError, KeyError):
-            return provider_messages, "Plugin context is unavailable; review selected components.", (), (), ""
-        legacy_result = result is not None
-        if result is None:
-            result = await self._substitute_skills(provider_messages, turn_context,
-                invocation_source=invocation_source, reference_offsets=reference_offsets)
-        messages, refuse, notes, bindings, bundle = result
-        if refuse or turn_context is None:
-            return result
-        maximum = turn_context.skill_context_maximum
-        rules = [
-            row
-            for row in maximum.get("available_skills", ())
-            if row.get("plugin_kind") == "rule"
-            and row.get("plugin_rule_mode") == "always"
-        ]
-        if not rules:
-            return result
-        local = getattr(self._skills_service, "local_service", None)
-        plugins = getattr(local, "plugin_service", None)
-        try:
-            if plugins is None:
-                raise PermissionError("plugin_owner_unavailable")
-            admitted = await plugins.admit(maximum, maximum["plugin_run_id"])
-            blocks = await plugins.render_rules(admitted["available_skills"])
-            # A legacy rule can replace one user row with body + remainder.
-            # Always rules precede that whole contribution, not just its tail.
-            source_rows = provider_messages if legacy_result else messages
-            index = next(
-                (i for i in range(len(source_rows) - 1, -1, -1)
-                 if source_rows[i].get("role") == "user"),
-                None,
-            )
-            if index is None:
-                raise PermissionError("plugin_input_owner_unavailable")
-            messages = [*messages[:index], *blocks, *messages[index:]]
-            from tldw_chatbook.Agents.agent_models import check_host_context
+    async def _apply_skill_substitution(
+        self,
+        provider_messages,
+        turn_context=None,
+        *,
+        invocation_source=None,
+        reference_offsets=(),
+    ):
+        from .console_plugin_context import _apply_skill_substitution
 
-            check_host_context(messages, strip=False)
-            await plugins.check_entries(admitted["available_skills"])
-        except (PermissionError, ValueError):
-            return (
-                provider_messages,
-                "Plugin instructions are unavailable or too large; review selected components.",
-                (),
-                (),
-                "",
-            )
-        return messages, None, notes, bindings, bundle
+        return await _apply_skill_substitution(
+            self,
+            provider_messages,
+            turn_context,
+            invocation_source=invocation_source,
+            reference_offsets=reference_offsets,
+        )
 
     async def _substitute_skills(
         self,
         provider_messages: list[dict[str, Any]],
         turn_context: ConsoleTurnExecutionContext | None = None,
-        *, invocation_source: str | None = None,
+        *,
+        invocation_source: str | None = None,
         reference_offsets: tuple[tuple[int, int], ...] = (),
     ) -> tuple[list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str]:
         """Render-fresh the triggering turn's skill mention(s) at payload build time.
@@ -22057,8 +21787,12 @@ class ConsoleChatController:
             body = rendered_by_name.get(mention.name)
             if body is None:
                 continue
-            start = mention.start + sum(size for end, size in reference_offsets if end <= mention.start)
-            end = mention.end + sum(size for offset, size in reference_offsets if offset <= mention.end)
+            start = mention.start + sum(
+                size for end, size in reference_offsets if end <= mention.start
+            )
+            end = mention.end + sum(
+                size for offset, size in reference_offsets if offset <= mention.end
+            )
             new_content = new_content[:start] + body + new_content[end:]
         if new_content == content:
             return provider_messages, None, tuple(notes), (), ""

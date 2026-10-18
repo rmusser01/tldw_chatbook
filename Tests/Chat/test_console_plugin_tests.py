@@ -279,7 +279,9 @@ async def test_explicit_admission_refuses_real_occupied_slot_without_consuming_i
     runtime = ConsoleRuntime(app=rig.controller.app)
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
-    configuration = await rig.controller.capture_turn_configuration_snapshot(rig.session.id)
+    configuration = await rig.controller.capture_turn_configuration_snapshot(
+        rig.session.id
+    )
     claim = None
     if busy == "received":
         claim = rig.store.claim_received_turn(rig.session.id, "ordinary-received-turn")
@@ -290,7 +292,9 @@ async def test_explicit_admission_refuses_real_occupied_slot_without_consuming_i
             session_id=rig.session.id,
         )
     try:
-        with pytest.raises(RuntimeError, match="console_(received_turn_pending|session_busy)"):
+        with pytest.raises(
+            RuntimeError, match="console_(received_turn_pending|session_busy)"
+        ):
             async with rig.controller.plugin_test_admission(configuration):
                 pytest.fail("occupied session admitted an explicit plugin test")
         assert not getattr(rig.controller, "_hooks_v2_submissions", {})
@@ -321,7 +325,9 @@ async def test_stock_app_test_admission_uses_actual_async_capture_and_session():
         controller = runtime._chat_controller
         assert controller is not None
         store = runtime.chat_store
-        session = next(row for row in store.sessions() if row.id == store.active_session_id)
+        session = next(
+            row for row in store.sessions() if row.id == store.active_session_id
+        )
         assert controller._turn_context_provider is None
         configuration = await controller.capture_turn_configuration_snapshot(session.id)
         assert configuration.session_id == session.id
@@ -329,7 +335,11 @@ async def test_stock_app_test_admission_uses_actual_async_capture_and_session():
         before = tuple(store.messages_for_session(session.id))
         async with controller.plugin_test_admission(configuration):
             import asyncio
-            assert controller._hooks_v2_submissions[asyncio.current_task()][2] == session.id
+
+            assert (
+                controller._hooks_v2_submissions[asyncio.current_task()][2]
+                == session.id
+            )
         assert tuple(store.messages_for_session(session.id)) == before
         assert not controller._hooks_v2_submissions
         assert controller.in_flight_run_count() == 0

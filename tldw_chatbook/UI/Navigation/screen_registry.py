@@ -9,9 +9,14 @@ from loguru import logger
 
 from tldw_chatbook.Constants import (
     TAB_CCP,
+    TAB_EVALS,
     TAB_LLM,
     TAB_MEETINGS,
+    TAB_PERSONAS,
     TAB_RESEARCH_WORKSPACE,
+    TAB_SCHEDULES,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_WORKFLOWS,
 )
 from .shell_destinations import resolve_shell_route
 
@@ -68,6 +73,16 @@ class ScreenRoute:
         except (ImportError, AttributeError) as exc:
             logger.warning(f"Screen route unavailable: {self.screen_name}: {exc}")
             return None
+
+
+_SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
+    "plugins": ("screen_feature_plugins.tcss",),
+    TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
+    TAB_EVALS: ("screen_feature_evals.tcss",),
+    TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
+    TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
+    TAB_PERSONAS: ("screen_feature_roleplay.tcss",),
+}
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {

@@ -4383,20 +4383,45 @@ def _advertised_scratch_relative_tools(
 
 def _resolve_native_tool_context(messages, registry, eligible):
     from dataclasses import replace
+
     from tldw_chatbook.Agents.agent_models import PluginContextText
     from tldw_chatbook.Plugins.host_references import resolve_tool_ceiling
 
     def origin(value):
-        return replace(value, allowed_tools=resolve_tool_ceiling(value.allowed_tools, registry, eligible)) if value.allowed_tools is not None else value
+        return (
+            replace(
+                value,
+                allowed_tools=resolve_tool_ceiling(
+                    value.allowed_tools, registry, eligible
+                ),
+            )
+            if value.allowed_tools is not None
+            else value
+        )
 
     def content(value):
         if isinstance(value, list):
-            return [dict(part, text=content(part["text"])) if isinstance(part, dict) and "text" in part else part for part in value]
+            return [
+                (
+                    dict(part, text=content(part["text"]))
+                    if isinstance(part, dict) and "text" in part
+                    else part
+                )
+                for part in value
+            ]
         if not isinstance(value, PluginContextText):
             return value
-        return PluginContextText(str(value), tuple(origin(row) for row in value.checked_origins()),
-            tuple(replace(row, package_origins=tuple(origin(item) for item in row.package_origins))
-                  for row in value.checked_hook_origins()))
+        return PluginContextText(
+            str(value),
+            tuple(origin(row) for row in value.checked_origins()),
+            tuple(
+                replace(
+                    row,
+                    package_origins=tuple(origin(item) for item in row.package_origins),
+                )
+                for row in value.checked_hook_origins()
+            ),
+        )
 
     return [dict(row, content=content(row.get("content"))) for row in messages]
 
@@ -4595,7 +4620,9 @@ def build_console_first_request_plan(
     )
     from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
 
-    agent_messages = _resolve_native_tool_context(agent_messages, registry, frozenset(allowed_tools))
+    agent_messages = _resolve_native_tool_context(
+        agent_messages, registry, frozenset(allowed_tools)
+    )
     allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
     config = AgentConfig(
         model=resolved_model,
@@ -4944,17 +4971,25 @@ class _BridgeSkillRunner:
         )
         model = None
         if name in self._plugin_entries:
-            from tldw_chatbook.Plugins.host_references import resolve_tool_ceiling
             from tldw_chatbook.Chat.provider_readiness import provider_config_key
+            from tldw_chatbook.Plugins.host_references import resolve_tool_ceiling
 
             try:
                 declared_allowed_tools = resolve_tool_ceiling(
-                    declared_allowed_tools, self._plugin_registry, self._plugin_eligible)
+                    declared_allowed_tools, self._plugin_registry, self._plugin_eligible
+                )
                 model = result.get("model_override")
-                if model and (not self._plugin_provider or provider_config_key(result.get("model_provider", "")) != provider_config_key(self._plugin_provider)):
+                if model and (
+                    not self._plugin_provider
+                    or provider_config_key(result.get("model_provider", ""))
+                    != provider_config_key(self._plugin_provider)
+                ):
                     raise PermissionError("plugin_model_parent_mismatch")
             except PermissionError:
-                return ToolResult(ok=False, error="Plugin constraints are unavailable; review and retry.")
+                return ToolResult(
+                    ok=False,
+                    error="Plugin constraints are unavailable; review and retry.",
+                )
         # Narrow-only against THIS run's builtin + local tool names: a skill
         # can never grant its child a tool the parent run doesn't have (no
         # runtime tools, no MCP tools, no other skills). Local tools in the
@@ -4992,7 +5027,9 @@ class _BridgeSkillRunner:
                 f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
                 rendered,
             )
-        return spawn(rendered, allowed_tools=allowed_tools, **({"model": model} if model else {}))
+        return spawn(
+            rendered, allowed_tools=allowed_tools, **({"model": model} if model else {})
+        )
 
 
 @dataclass(slots=True)
@@ -6216,7 +6253,11 @@ class ConsoleAgentBridge:
                 plugin_entries=plugin_entries,
                 plugin_registry=registry,
                 plugin_eligible=frozenset(first_request_plan.config.allowed_tools),
-                plugin_provider=str(getattr(resolution, "selected_provider", "") or getattr(resolution, "execution_key", "") or getattr(resolution, "provider", "")),
+                plugin_provider=str(
+                    getattr(resolution, "selected_provider", "")
+                    or getattr(resolution, "execution_key", "")
+                    or getattr(resolution, "provider", "")
+                ),
                 skill_names=first_request_plan.skill_names,
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
@@ -7542,8 +7583,12 @@ class ConsoleAgentBridge:
             on_primary_budget_settled=on_primary_budget_settled,
             # Standalone work has no plugin dependency graph.
             hooks_v2_required_handler_ids=lambda _run_id: (),
-            hooks_v2_render_context=(hooks_v2_engine.native_plugins.render_context
-                if hooks_v2_engine is not None and getattr(hooks_v2_engine, "native_plugins", None) is not None else None),
+            hooks_v2_render_context=(
+                hooks_v2_engine.native_plugins.render_context
+                if hooks_v2_engine is not None
+                and getattr(hooks_v2_engine, "native_plugins", None) is not None
+                else None
+            ),
             hooks_v2_definition_requirements=(
                 (
                     lambda definition, messages: (

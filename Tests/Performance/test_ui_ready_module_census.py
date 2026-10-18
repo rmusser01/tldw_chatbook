@@ -667,16 +667,18 @@ print("FIRST_USE_IDENTITY_OK")
         for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
         if key in os.environ
     }
-    env.update({
-        "HOME": str(profile),
-        "XDG_DATA_HOME": str(profile / "data"),
-        "XDG_CONFIG_HOME": str(profile / "config"),
-        "TLDW_CONFIG_PATH": str(profile / "config.toml"),
-        "TLDW_TEST_MODE": "1",
-        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-        "HF_HUB_OFFLINE": "1",
-        "TRANSFORMERS_OFFLINE": "1",
-    })
+    env.update(
+        {
+            "HOME": str(profile),
+            "XDG_DATA_HOME": str(profile / "data"),
+            "XDG_CONFIG_HOME": str(profile / "config"),
+            "TLDW_CONFIG_PATH": str(profile / "config.toml"),
+            "TLDW_TEST_MODE": "1",
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+        }
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=REPO_ROOT,

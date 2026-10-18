@@ -1,6 +1,5 @@
 """Dispose the runtime and databases owned by hook lifecycle test rigs."""
 
-import asyncio
 from contextlib import asynccontextmanager
 
 
