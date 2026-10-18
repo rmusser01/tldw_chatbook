@@ -1,7 +1,7 @@
 ---
 id: TASK-35583
 title: Rebase archive recovery PR3162 onto current dev and qualify integration
-status: In Progress
+status: Done
 created_date: 2026-10-18 20:02
 assignee:
 - '@codex'
@@ -12,7 +12,7 @@ references:
 documentation:
 - backlog/decisions/166-agent-assisted-archive-recovery.md
 - backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md
-updated_date: 2026-10-18 20:35
+updated_date: 2026-10-18 20:40
 ---
 
 ## Description
@@ -23,9 +23,9 @@ Integrate the approved archive-recovery feature with current dev so PR3162 appli
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 PR3162 is rebased onto the fetched dev tip without dropping current dev behavior or the approved archive search/confirmation/restore/Open boundaries; migrations use unoccupied current versions.
-- [ ] #2 Affected storage, runtime, capture and mounted UI targeted tests pass on the rebased source, with failures attributed and scoped static/generated-artifact checks recorded.
-- [ ] #3 The rebased branch is pushed using an exact force-with-lease, PR3162 reports no merge conflicts, and its validation and integration notes reflect the actual new head.
+- [x] #1 PR3162 is rebased onto the fetched dev tip without dropping current dev behavior or the approved archive search/confirmation/restore/Open boundaries; migrations use unoccupied current versions.
+- [x] #2 Affected storage, runtime, capture and mounted UI targeted tests pass on the rebased source, with failures attributed and scoped static/generated-artifact checks recorded.
+- [x] #3 The rebased branch is pushed using an exact force-with-lease, PR3162 reports no merge conflicts, and its validation and integration notes reflect the actual new head.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,7 +50,7 @@ Targeted evidence: runtime 184 distinct passes; root original 308-case selection
 
 Independent source review approved after exact alias RED/GREEN (one failed/seven passed → nine passed), with no remaining actionable integration findings. Scoped syntax/duplicate/critical Ruff, no-new-diagnostic comparisons, source whitespace and 65-module CSS build/sync qualify current source. Ten unchanged baseline failures and cumulative descriptor warnings 295/213/255 remain explicit; dedicated retirement/canceled-disposal checks pass. No full sweep, new live/model call, installed build or long resource repeat. Existing ADR166/097 and current lifecycle ADRs apply; no new ADR. Updated architecture, user guides, lessons, design/plan/task records; historical QA remains immutable.
 
-Durable validation: Docs/superpowers/qa/console/2026-10-18-archive-recovery-pr3162-rebase.md and its integration-review/validation artifacts. Git continuation and exact-lease PR publication are pending; original verified branch remains preserved.
+Durable validation: Docs/superpowers/qa/console/2026-10-18-archive-recovery-pr3162-rebase.md and its integration-review/validation artifacts. Rebase completed and exact-lease push published source commit 5660e9cb51c168575ca629d16a16986ac94a4481. GitHub verified current dev 9af0c59263dce00fa44be4a74d5d7e78712346bf, exact new head and MERGEABLE/no-conflict status; PR validation notes updated, draft retained, auto-merge off. All 72 tested source blobs match the committed tree; original verified branch remains preserved. Documentation-only closeout records these final results.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

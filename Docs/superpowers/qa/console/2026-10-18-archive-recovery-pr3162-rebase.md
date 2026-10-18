@@ -42,4 +42,4 @@ No full suite, installed distribution build, long resource plateau repeat or new
 
 ## Publication
 
-Targeted qualification and independent source review are complete. Explicit staging, rebase continuation and exact-lease push follow. Keep PR3162draft, with no merge/auto-merge. Final remote ancestry and mergeability will be recorded after publication.
+The exact-lease push replaced the original PR head with source commit `5660e9cb51c168575ca629d16a16986ac94a4481`. GitHub verified the same dev base, that exact head and MERGEABLE status (no merge conflicts). The PR remains draft with no auto-merge. All72tested source blobs match the committed tree; the original verified branch remains intact. A documentation-only closeout commit records publication and task completion without changing tested source.
