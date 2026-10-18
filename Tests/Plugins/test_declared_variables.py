@@ -14,7 +14,14 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
 @pytest.fixture
-async def variable_case(tmp_path, native_package):
+async def variable_case(tmp_path, native_package, request):
+    from Tests.private_profile import is_private_profile_child
+
+    if getattr(
+        request.function, "_private_profile_test", False
+    ) and not is_private_profile_child(request):
+        yield None
+        return
     from Tests.Plugins.platform_support import require_managed_runtime
 
     require_managed_runtime()
@@ -32,7 +39,9 @@ async def variable_case(tmp_path, native_package):
     service = PluginService(
         tmp_path / "profile",
         workspace_lookup=lambda _: SimpleNamespace(archived=False),
-        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        marker_store_factory=lambda _: FilePluginMarkerStore(
+            tmp_path / "variable-marker"
+        ),
         accept_reduced_protection=True,
         mcp_mapping_owner=local,
     )

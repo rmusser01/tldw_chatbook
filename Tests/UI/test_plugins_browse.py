@@ -38,6 +38,7 @@ def test_untrusted_display_is_literal_bounded_and_removes_terminal_controls():
 
 class BrowseApp(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
+    _SCREEN_OWNED_ROUTE_CSS = TldwCli._SCREEN_OWNED_ROUTE_CSS
 
     def __init__(self, rig):
         super().__init__()
@@ -45,6 +46,7 @@ class BrowseApp(ConsolidatedCSSApp):
         self.workspace_registry_service = rig.registry
 
     async def on_mount(self):
+        TldwCli._ensure_screen_owned_css(self, "plugins")
         route = resolve_screen_route("plugins")
         await self.push_screen(
             TldwCli._create_navigation_screen(

@@ -323,6 +323,12 @@ class NativeHooks:
         self.service._call_from_agent(
             lambda: self.service._admission.check(snapshot, component)
         )
+        if (
+            snapshot.workspace_id is None
+            and self.scratch_manager is not None
+            and not self.scratch_manager.is_live(self.scratch_snapshot)
+        ):
+            raise PluginUnavailable("plugin_scratch_unavailable")
         return True
 
     def effects_current(
@@ -334,6 +340,12 @@ class NativeHooks:
         try:
             self.service.check_effect_actor(snapshot, component, run_id=event.run_id)
         except PermissionError:
+            return False
+        if (
+            snapshot.workspace_id is None
+            and self.scratch_manager is not None
+            and not self.scratch_manager._published_current(self.scratch_snapshot)
+        ):
             return False
         return self.service.published_current(snapshot)
 

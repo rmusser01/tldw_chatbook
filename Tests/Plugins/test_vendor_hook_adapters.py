@@ -496,7 +496,8 @@ async def test_vendor_transform_runs_once_then_native_final_guard(tmp_path):
     definition = ToolDefinitionSnapshot.from_schema(
         replace(CALC, id="local:test"), "local", 1, 1
     )
-    original["data"]["operation"] = definition.operation
+    if definition.operation is not None:
+        original["data"]["operation"] = definition.operation
     try:
         with pytest.raises(HookPreparationError):
             await prepare_tool(parse_event(original), engine, definition=definition)
@@ -652,10 +653,14 @@ async def test_actual_admission_keeps_guard_selection_and_final_phase_constraint
         is admitted
     )
     if selected and not admitted:
-        assert any(
-            row["plugin_component_id"] == hook_id and row.get("plugin_constraint_only")
-            for row in rows
+        assert source == "preToolUse" and hook_id in snapshot.selection
+        assert installed.inspection.inventory[hook_id].support == "adapted"
+        assert (
+            f"dependency_guard_unqualified:{hook_id}"
+            in installed.inspection.inventory["skill:review"].activation_blockers
         )
+        hook_rows = [row for row in rows if row["plugin_component_id"] == hook_id]
+        assert len(hook_rows) == 1 and not hook_rows[0].get("plugin_constraint_only")
 
 
 @platform_support.vendor_command

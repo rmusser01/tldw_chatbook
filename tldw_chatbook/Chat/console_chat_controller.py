@@ -10280,7 +10280,13 @@ class ConsoleChatController:
             return thinking_block
 
         if resumed_preparation is not None:
-            turn_context = resumed_preparation.execution_context
+            turn_context = replace(
+                resumed_preparation.execution_context,
+                configuration=replace(
+                    resumed_preparation.execution_context.configuration,
+                    skill_context_maximum=configuration.skill_context_maximum,
+                ),
+            )
         else:
             try:
                 turn_context = self._finalize_turn_execution_context(
@@ -10949,6 +10955,8 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- hook boundary
             if echoed_user is not None:
                 self._mark_transient_echo_blocked(echoed_user.id)
+            if preparation is not None:
+                self._abandon_preparation(preparation.preparation_id)
             return self._block(session.id, "Required hook input failed.")
         # This await remains before acceptance. A refusal or cancellation must
         # release the exact optimistic echo and preparation, preserving custody.

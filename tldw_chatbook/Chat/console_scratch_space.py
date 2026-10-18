@@ -169,6 +169,16 @@ class ConsoleScratchSpaceManager:
             self._tombstone_locked(record)
             return False
 
+    def _published_current(self, snapshot: ConsoleScratchSnapshot | None) -> bool:
+        """Check issued custody without filesystem IO on the effect lane."""
+        if not isinstance(snapshot, ConsoleScratchSnapshot) or not isinstance(
+            snapshot.token, str
+        ):
+            return False
+        with self._condition:
+            record = self._matching_record_locked(snapshot)
+            return not self._disposed and record is not None and not record.tombstoned
+
     def close(self, session_id: str) -> None:
         """Revoke one live session and schedule cleanup after its leases drain.
 

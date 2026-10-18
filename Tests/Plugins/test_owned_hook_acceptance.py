@@ -779,6 +779,95 @@ async def test_installed_mcp_hook_normalization(
         assert not engine.processes.records
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["live", "published_refused", "worker_refused"])
+async def test_owned_mcp_currentness_uses_actual_worker_and_effect_lanes(
+    native_package, tmp_path, monkeypatch, mode
+):
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+
+    payload = {"structuredContent": {"version": 2, "decision": "pass"}}
+    async with _owned_peer(
+        native_package,
+        tmp_path,
+        monkeypatch,
+        [_mcp_hook(payload)],
+        requires={"hook:initial": ["mcp:peer"]},
+    ) as case:
+        await case.provider.connect("mcp:peer")
+        engine = await _native_engine(
+            case.service, case.installed.installation_id, "owned-case"
+        )
+        native = engine.native_plugins
+        lanes = []
+
+        def worker_authority(handler, event, stage):
+            try:
+                on_owner_loop = asyncio.get_running_loop() is engine.loop
+            except RuntimeError:
+                on_owner_loop = False
+            assert not on_owner_loop, "blocking authority ran on the owner loop"
+            allowed = native.authority(handler, event, stage)
+            lanes.append(("worker", stage))
+            return allowed and not (mode == "worker_refused" and stage == "launch")
+
+        def published_authority(handler, event, stage):
+            assert asyncio.get_running_loop() is engine.loop
+            allowed = native.effects_current(handler, event, stage)
+            lanes.append(("published", stage))
+            return allowed and mode != "published_refused"
+
+        engine.authority_check = worker_authority
+        engine._effect_authority_check = published_authority
+        lifecycle = HookSessionLifecycle(
+            engine, "owned-case", render_context=native.render_context
+        )
+        event = lifecycle.event("SessionStart", data={"reason": "startup"})
+        engine.mcp_executor.bind_context(
+            MCPHookContext(
+                case.registry,
+                lifecycle,
+                lifecycle.scope_id,
+                "owned-case",
+                "owned-case",
+                frozenset({case.name}),
+                lambda: all(
+                    native.effects_current(handler, event, "accept")
+                    for handler in engine.definitions
+                ),
+                lambda definition: native.definition_requirements(
+                    definition, case.registry
+                ),
+                workspace_id="workspace-a",
+            )
+        )
+        token = lifecycle.reserve(event)
+        before = len(case.unified.execution_log.read_recent())
+        try:
+            result = await lifecycle.initialize(token)
+            assert result.succeeded is (mode == "live"), result
+            assert ("worker", "admission") in lanes and ("worker", "launch") in lanes
+            if mode != "worker_refused":
+                assert ("published", "launch") in lanes
+            if mode == "live":
+                assert ("worker", "accept") in lanes
+            else:
+                assert not result.allowed and not result.accepted
+            assert len(case.unified.execution_log.read_recent()) == before + (
+                mode == "live"
+            )
+            assert case.ownership.is_connected(
+                case.profile_id, "owned-case:workspace-a"
+            )
+        finally:
+            lifecycle.cancel(token)
+            await engine.close()
+        assert not engine.mcp_executor.cleanup_pending
+        assert not any(engine.budget_owner.snapshot().values())
+        assert not engine.processes.records
+
+
 def _post_barrier(entered, release, mode):
     return (
         "import json,sys,time;from pathlib import Path;e=json.load(sys.stdin);"
@@ -1335,14 +1424,14 @@ async def _installed_compaction_case(
             if automatic:
                 assert [row[0] for row in automatic_observations] == [
                     "decision",
-                    "hooks",
+                    "decision",
                     "hooks",
                 ]
-                assert automatic_observations[0][1].value == "automatic"
-                assert all(
-                    row[1] == (None, None, session.id)
-                    for row in automatic_observations[1:]
-                )
+                assessment, execution, reservation = automatic_observations
+                assert assessment[3]["compactable_units"] == 0
+                assert execution[3]["compactable_units"] > 0
+                assert execution[1].value == "automatic"
+                assert reservation[1] == (None, None, session.id)
                 assert payloads and controller.provider_gateway.calls == 1
                 assert controller.run_state_for(session.id).is_send_allowed
             return
@@ -1670,7 +1759,7 @@ async def test_installed_provisional_mcp_initialization(
             waiter = asyncio.create_task(runtime.wait_for_turn(turn))
             await asyncio.sleep(0)
             try:
-                if mode != "cyclic":
+                if mode not in {"cyclic", "disconnected"}:
                     await _wait(
                         lambda: rig.controller.has_pending_approval_round(
                             rig.session.id
@@ -1695,15 +1784,12 @@ async def test_installed_provisional_mcp_initialization(
                     lifecycle = engine.lifecycle_owner
                     assert not lifecycle.live and lifecycle._reservations
                     owned = tuple(case.service.live_runs())
-                    if mode == "disconnected":
-                        assert not owned and not case.ownership.connections
-                    else:
-                        assert owned and all(
-                            row.installation_id == case.installed.installation_id
-                            and row.workspace_id == "workspace-a"
-                            and not row.completed.is_set()
-                            for row in owned
-                        )
+                    assert owned and all(
+                        row.installation_id == case.installed.installation_id
+                        and row.workspace_id == "workspace-a"
+                        and not row.completed.is_set()
+                        for row in owned
+                    )
                     assert not case.unified.execution_log.read_recent()
                     if mode == "cancelled":
                         waiter.cancel()
@@ -1714,9 +1800,7 @@ async def test_installed_provisional_mcp_initialization(
                         rig.controller.resolve_pending_approval(
                             {
                                 row.llm_name: (
-                                    "approve_once"
-                                    if mode in {"approved", "disconnected"}
-                                    else "deny"
+                                    "approve_once" if mode == "approved" else "deny"
                                 )
                                 for row in state["calls"]
                             },
@@ -1727,6 +1811,14 @@ async def test_installed_provisional_mcp_initialization(
                 else:
                     result = await waiter
                     assert not result.accepted
+                    if mode == "disconnected":
+                        assert not rig.controller.has_pending_approval_round(
+                            rig.session.id
+                        )
+                        assert (
+                            not case.ownership.connections
+                            and not case.service.live_runs()
+                        )
                 await _wait(lambda: bool(terminal))
                 assert len(accepted) == len(stops) == (1 if mode == "approved" else 0)
                 assert bool(rig.gateway.payloads) is (mode == "approved")
@@ -1740,8 +1832,11 @@ async def test_installed_provisional_mcp_initialization(
                         assert len(audit) == 1 and audit[0]["decision"] == "denied"
                         assert audit[0]["error_category"] == "denied"
                     elif mode == "disconnected":
-                        assert len(audit) == 1 and audit[0]["decision"] == "approved"
-                        assert audit[0]["error_category"] == "execution_failed"
+                        assert (
+                            len(audit) == 1
+                            and audit[0]["decision"] == "denied-unresolved"
+                        )
+                        assert audit[0]["error_category"] == "definition_changed"
                     else:
                         assert len(audit) == (1 if mode == "approved" else 0), audit
                     if mode == "disconnected":

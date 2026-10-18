@@ -194,6 +194,8 @@ async def test_actual_console_composes_owned_mcp_hook_without_automatic_connecti
     try:
         refused = await rig.controller.submit_draft("hello", session_id=session.id)
         assert not refused.accepted and not rig.gateway.payloads
+        assert refused.visible_copy == "Required hook input failed."
+        assert rig.store.preparation_for_session(session.id) is None
         assert len(case.calls.read_text().splitlines()) == before
         assert any(
             getattr(row, "ownership", None) is case.ownership for row in observed
@@ -499,6 +501,14 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     rig = native_console
+    admitted_maxima = []
+    admit = rig.service.admit
+
+    async def capture_admission(maximum, run_id):
+        admitted_maxima.append((dict(maximum), run_id))
+        return await admit(maximum, run_id)
+
+    monkeypatch.setattr(rig.service, "admit", capture_admission)
     install = await rig.install()
     session = rig.store.create_session(ephemeral=True, workspace_id="workspace-a")
     monkeypatch.setattr(rig.gateway, "supports_durable_capture", True, raising=False)
@@ -533,7 +543,21 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
             install.installation_id, workspace_id="workspace-a", intent="disabled"
         )
         await rig.service.commit(review, review.operation_id)
+    original_maximum = preparation.execution_context.configuration.skill_context_maximum
+    admitted_maxima.clear()
     resumed = await rig.controller.send_without_capture(preparation.preparation_id)
+    assert admitted_maxima
+    fresh_ids = {run_id for _maximum, run_id in admitted_maxima}
+    assert len(fresh_ids) == 1 and original_maximum["plugin_run_id"] not in fresh_ids
+    for maximum, run_id in admitted_maxima:
+        assert maximum["plugin_run_id"] == run_id
+        assert {
+            key: value for key, value in maximum.items() if key != "plugin_run_id"
+        } == {
+            key: value
+            for key, value in original_maximum.items()
+            if key != "plugin_run_id"
+        }
     if disable:
         assert not resumed.accepted and not rig.gateway.payloads
         assert reads == ["evidence.txt"]
@@ -558,6 +582,14 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     rig = native_console
+    admitted_maxima = []
+    admit = rig.service.admit
+
+    async def capture_admission(maximum, run_id):
+        admitted_maxima.append((dict(maximum), run_id))
+        return await admit(maximum, run_id)
+
+    monkeypatch.setattr(rig.service, "admit", capture_admission)
     package = native_package(extension={"version": 1, "rules": ["rule.md", "other.md"]})
     (package / "rule.md").write_text(
         "---\nname: style\nmode: manual\n---\nMANUAL STYLE BODY."
@@ -605,7 +637,25 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
         preparation = rig.store.preparation_for_session(session.id)
         assert not sent.accepted and preparation is not None
         assert not rig.gateway.payloads
+        original_maximum = (
+            preparation.execution_context.configuration.skill_context_maximum
+        )
+        admitted_maxima.clear()
         sent = await rig.controller.send_without_capture(preparation.preparation_id)
+        assert admitted_maxima
+        fresh_ids = {run_id for _maximum, run_id in admitted_maxima}
+        assert (
+            len(fresh_ids) == 1 and original_maximum["plugin_run_id"] not in fresh_ids
+        )
+        for maximum, run_id in admitted_maxima:
+            assert maximum["plugin_run_id"] == run_id
+            assert {
+                key: value for key, value in maximum.items() if key != "plugin_run_id"
+            } == {
+                key: value
+                for key, value in original_maximum.items()
+                if key != "plugin_run_id"
+            }
     assert sent.accepted
     payload = rig.gateway.payloads[-1]
     text = "\n".join(

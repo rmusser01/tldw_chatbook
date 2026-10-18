@@ -773,3 +773,10 @@ Direct provider custody follows actual checked typed component origins as well a
 
 
 Legacy schema-v1 resume retains zero plugin authority. Only its existing service owner may validate a present captured requirement record, or establish absence of native rows, intersect to zero, and issue a private empty record. Ordinary missing proof still refuses. A verified zero record cannot reactivate substituted native rows: the existing zero intersection discards them. No current catalog supplies absent archive producers or requirements. (Rebase qualification R33.)
+
+
+### Rebase qualification: MCP effect lane, scratch publication and attempt cleanup (R36)
+
+MCP delivery currentness uses the existing nonblocking effect-authority callback only on the exact owning HookEngine loop. Other threads/loops retain full worker authority. Full admission/use/acceptance, context/dependency, cancellation/deadline/inherited-policy, definition, permissions, audit, provenance and terminal resource checks remain. The ordinary provider keeps its sanitized failure boundary. A disconnected definition refuses before approval; a test cannot reconnect or acquire authority by expecting an approval.
+
+Native hook worker authority validates actual scratch physical identity with the existing is_live owner, including result acceptance. Effects consult only a new private published-current query under the existing scratch manager lock: exact issued snapshot/record, alive and not tombstoned/disposed, with no filesystem IO or resource acquisition. This memory check detects logical close/disposal; external filesystem replacement still requires the existing worker physical checks. Process/root custody remains until terminal and reap. Resumed attempts preserve the original frozen ceiling in an attempt-local context with a fresh pending ID. Input-hook failure abandons only the exact preaccept preparation through the existing store owner, which protects accepted commit custody. No new authority owner, persistent state, schema or public API is introduced.
