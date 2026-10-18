@@ -992,7 +992,8 @@ class ConsoleSettingsFieldRowsMixin:
             )
         options = [(_choice_label(choice), choice) for choice in offered]
         if value in domain and value not in offered:
-            options.append((f"{_choice_label(value)} {UNSENT_CHOICE_SUFFIX}", value))
+            label = f"{_choice_label(str(value))} {UNSENT_CHOICE_SUFFIX}"
+            options.append((label, str(value)))
         return options
 
     def _show_choice(self, select: Select, value: object) -> None:
