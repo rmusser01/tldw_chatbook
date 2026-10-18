@@ -983,6 +983,22 @@ registry bookkeeping or passing tests. The durable
 [qualification record](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md)
 retains before/after counts and the unresolved Workspace boundary.
 
+## A strict child bootstrap can shadow pytest's network policy (PR #3148, 2026-10-18)
+
+**Incident.** Plugin qualification installed the hook-child socket/DNS refusal
+before importing pytest's network guard. The latter captured already-patched
+socket methods: marked owned loopback was still refused, and Windows asyncio's
+internal socket pair failed, poisoning later asyncio fixture setup. Windows
+recorded 225 setup errors overall, including a separate fixture-import problem.
+A regression running the literal workflow prefix reproduced `TestNetworkRefused` on a real marked
+loopback fixture. Its first attempt failed earlier on private-profile lifetime;
+that attempt was retained separately and did not establish the network failure.
+
+**What to do.** Use the canonical pytest profile/network guards for a pytest
+process; retain strict refusal in isolated hook children. Test the actual workflow
+prefix with real asyncio and owned loopback controls, while preserving external
+network refusal. Select a fresh private profile before imports for source-bound
+configuration consumers; an earlier harness refusal is not the intended RED.
 
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
