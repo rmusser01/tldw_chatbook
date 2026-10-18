@@ -356,7 +356,9 @@ from ..Speech.speech_settings_contracts import (
     SpeechTTSNavigationTarget,
 )
 from ...Internal_Prompts import authoring as internal_prompts_authoring
-from .settings_category_exports import CATEGORY_EXPORTS as _CATEGORY_EXPORTS
+from .settings_category_exports import (
+    CATEGORY_EXPORTS as _CATEGORY_EXPORTS,  # noqa: F401 -- private compatibility alias
+)
 from .settings_image_gen_defaults import (
     BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
     FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
@@ -35768,46 +35770,46 @@ def __getattr__(name: str) -> Any:
 
 if TYPE_CHECKING:
     from ...Terminal.contracts import (
-        TERMINAL_DISCLOSURE_LINES as TERMINAL_DISCLOSURE_LINES,
+        TERMINAL_DISCLOSURE_LINES,  # noqa: F401 -- lazy static export
     )
     from ...Widgets.settings_agents_panel import (
-        AgentsSettingsPanel as AgentsSettingsPanel,
+        AgentsSettingsPanel,  # noqa: F401 -- lazy static export
     )
     from ...Widgets.settings_image_gen_panel import ImageGenSettingsPanel
     from ...Widgets.settings_image_gen_panel import (
-        _key_source_line as _image_gen_key_source_line,
-    )  # noqa: F401 -- preserve the lazy public export alias
+        _key_source_line as _image_gen_key_source_line,  # noqa: F401 -- lazy static export
+    )
     from ...Widgets.settings_image_gen_panel import (
-        _secret_placeholder as _image_gen_secret_placeholder,
-    )  # noqa: F401 -- preserve the lazy public export alias
+        _secret_placeholder as _image_gen_secret_placeholder,  # noqa: F401 -- lazy static export
+    )
     from ...Widgets.settings_splash_screen_viewer import (
-        SettingsSplashScreenViewer as SettingsSplashScreenViewer,
+        SettingsSplashScreenViewer,  # noqa: F401 -- lazy static export
     )
     from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
     from .settings_appearance_defaults import (
         SettingsAppearanceDefaults,
-        build_appearance_save_sections as build_appearance_save_sections,
-        load_appearance_defaults as load_appearance_defaults,
-        validate_appearance_defaults as validate_appearance_defaults,
+        build_appearance_save_sections,  # noqa: F401 -- lazy static export
+        load_appearance_defaults,  # noqa: F401 -- lazy static export
+        validate_appearance_defaults,  # noqa: F401 -- lazy static export
     )
     from .settings_privacy_security import (
         SettingsPrivacyPosture,
-        build_privacy_posture_rows as build_privacy_posture_rows,
-        build_settings_privacy_posture as build_settings_privacy_posture,
-        env_var_summary as env_var_summary,
-        safe_skill_trust_status as safe_skill_trust_status,
-        skill_trust_display as skill_trust_display,
+        build_privacy_posture_rows,  # noqa: F401 -- lazy static export
+        build_settings_privacy_posture,  # noqa: F401 -- lazy static export
+        env_var_summary,  # noqa: F401 -- lazy static export
+        safe_skill_trust_status,  # noqa: F401 -- lazy static export
+        skill_trust_display,  # noqa: F401 -- lazy static export
     )
     from .settings_provider_view_model import (
         CustomEndpointReferenceStore,
         ProviderPickerGroup,
         SettingsOverviewPresentation,
-        build_entry_edit_mutation as build_entry_edit_mutation,
-        build_provider_picker_groups as build_provider_picker_groups,
-        build_settings_overview as build_settings_overview,
-        configured_provider_keys as configured_provider_keys,
-        conversations_referencing_endpoint as conversations_referencing_endpoint,
-        convert_slot_to_named_endpoint as convert_slot_to_named_endpoint,
-        detach_and_delete_entry as detach_and_delete_entry,
-        provider_picker_summary as provider_picker_summary,
+        build_entry_edit_mutation,  # noqa: F401 -- lazy static export
+        build_provider_picker_groups,  # noqa: F401 -- lazy static export
+        build_settings_overview,  # noqa: F401 -- lazy static export
+        configured_provider_keys,  # noqa: F401 -- lazy static export
+        conversations_referencing_endpoint,  # noqa: F401 -- lazy static export
+        convert_slot_to_named_endpoint,  # noqa: F401 -- lazy static export
+        detach_and_delete_entry,  # noqa: F401 -- lazy static export
+        provider_picker_summary,  # noqa: F401 -- lazy static export
     )

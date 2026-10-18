@@ -82,7 +82,7 @@ def test_literal_historical_projection_survives_real_owner_recovery(
     plugin_stack, tmp_path, case, pin
 ):
     root, original, observation = _literal_inspection(tmp_path, case, pin)
-    _review, before = installed(plugin_stack, original)
+    review, before = installed(plugin_stack, original)
     assert plugin_stack.call(plugin_stack.authority.verify_current) == before
     revision = before["revisions"][0]
     assert revision["variables_digest"] == observation["variables_digest"]
@@ -342,7 +342,7 @@ def test_portable_declared_value_selects_only_authenticated_interpretation(
     )
     inspection = _inspect_capture(capture_package(root), recipe=recipe)
     assert ("variable_unset:VALUE" in inspection.activation_blockers) is blocked
-    review, state = installed(plugin_stack, inspection)
+    _review, state = installed(plugin_stack, inspection)
     revision = state["revisions"][0]
     candidates = _retained_candidates(
         capture_package(Path(revision["materialized_identity"])), revision

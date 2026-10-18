@@ -17,7 +17,7 @@ async def _delete_local_profile(self, server_key: str, profile_id: str) -> None:
             return
         try:
             await service.delete_local_profile(profile_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- surface existing profile failure
             _owner.logger.warning(
                 "{}", _owner._safe_diagnostic_message("MCP profile delete failed", exc)
             )
@@ -76,7 +76,7 @@ async def _save_local_profile(
             else:
                 self.app.notify(_owner._toast(str(exc)), severity="error")
             return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- surface existing profile failure
             _owner.logger.warning(
                 "{}", _owner._safe_diagnostic_message("MCP profile save failed", exc)
             )

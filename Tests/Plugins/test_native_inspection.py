@@ -199,9 +199,9 @@ def test_unset_required_variable_and_reserved_name(native_package):
     result = inspect_package(
         native_package(extension={"version": 1, "variables": {"TOKEN": declaration}})
     )
-    assert (
-        "variable_unset:TOKEN" in result.inventory["skill:review"].activation_blockers
-    )
+    assert result.adapter_version == "chatbook-portable/2"
+    assert json.loads(result.variables_json)["TOKEN"] == declaration
+    assert not result.inventory["skill:review"].activation_blockers
     result = inspect_package(
         native_package(
             extension={"version": 1, "variables": {"PLUGIN_ROOT": declaration}}
