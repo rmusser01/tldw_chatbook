@@ -4641,13 +4641,16 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_tools_footer_shortcuts()
 
     def _refresh_tools_footer_shortcuts(self) -> None:
-        """Register (via the pane) or clear the Tools-mode hint set."""
+        """Register the active Tools-mode hint set; clear it otherwise."""
         if self.active_category != SettingsCategoryId.TOOLS.value:
             self.clear_footer_shortcuts(source="settings-tools")
             return
-        pane = self._tools_hub_pane()
-        if pane is not None:
-            pane.register_footer_hints()
+        # Unconditional: a fresh TOOLS enter runs before the pane mounts,
+        # and a default (servers) load fires no ModeChanged to re-register.
+        self.register_footer_shortcuts(
+            source="settings-tools",
+            shortcuts=tools_footer_hints(self._tools_hub_pane()),
+        )
 
     def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
         """Category- and focus-aware footer hints (task-1564/1560).
