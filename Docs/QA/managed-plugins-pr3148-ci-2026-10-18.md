@@ -165,8 +165,12 @@ The successful retry is freeze06. See `recoverable-source-cleanup.json` and
 At repaired code `ede1a24f48`, all four direct static gates return zero again.
 Per-file Ruff parity covers all 12 changed Python files and introduces no finding;
 the same 45 inherited findings remain in the three previously documented files.
-The MCP module and source/legacy test changes are whole-file Ruff/Black clean;
-the new startup test passes bounded Python-3.12 formatting. No module cap changed.
+The MCP module and source test are whole-file Ruff/Black clean; the legacy
+test is Ruff clean and its changed function passes bounded Black. The earlier
+whole-file legacy formatting claim overstated the receipt, which checked only
+lines1127–1149. Current baseline and repaired file retain three identical
+unrelated Black26.5.1 hunks. The new startup test passes bounded Python-3.12
+formatting. No module cap changed.
 `protected-round2-repair-blobs.json` pins all 13 code/workflow artifacts.
 
 Second independent review: **0 Critical / 0 Important / 0 Minor**, report
@@ -195,3 +199,5 @@ Third run39152582452 executes actual merge checkout22702d65fe9853ba81cd90af3c9a2
 The retained AgentService snapshot at9015ms shows the owner loop idle and the worker in normal calculator STEP_TOOL_CALL persistence: agent_runtime3245 -> observe_step8459 -> AgentRuns_DB.insert_steps_at_indices2172 -> guarded registry open -> Windows GetVolumeInformationByHandleW440, before registry flock. Required MCP pre-hook acceptance precedes this step. The other admission worker is in its normal idle wait. This identifies reached work, not syscall duration or eventual completion. The whole-turn10s test watchdog includes persistence plus a hook allowed10active seconds: that test budget is too short for valid integration work. Plan113 changes only the outer watchdog to30s and initializer success to15s, preserving five refusal-case5s bounds and all semantic assertions. The temporary sampler is removed. Product active/wall/cleanup budgets, authority and storage checks are untouched.
 
 The other actual Windows failure, legacy test_notify_cwd_override, reads an empty payload file. The shared fixture creates the final file before writing JSON; its notify consumer treats existence as completion. The producer now closes a sibling temporary JSON file and atomically replaces the final payload. The original5s poll and cwd assertion remain; all four existing helper callers are covered by targeted renewal. No product synchronization API or close/cancellation workaround is introduced. Native failures are retained as RED; local targeted GREEN and native renewal are pending. Legacy changed-helper Ruff/Black pass; Black26.5.1 whole-file baseline/current retain the same three unrelated hunks.
+
+Final test repair source861bf46a43ec5cb0f2e85a1d6ccb75b078ebae81: frozen ci12 **25PASS11.29s**, input manifest unchanged/0unexpected outputs, covering18MCP cases and7legacy fixture/notification/shutdown controls. Fresh independent scoped review **0C/0I/0M**, report `.superpowers/pr3148-ci-20261018-02/review/ci-round3-final-review.md`, SHA256`cd63f66b40a6c251864d9e43b58618ec66a0af4f08eae977fc4c4d209f0c37fe`. Both exact test-source hashes and observer removal are verified. All production, scripts and security-inventory inputs remain identical to the prior four passing static-gate run; applicability is recorded in round3-final-applicability.json. Ruff passes; MCP file and legacy changed helper pass Black; the three whole-legacy inherited formatting hunks remain. Native renewal/publication remain pending at this receipt; no full suite or merge claim.
