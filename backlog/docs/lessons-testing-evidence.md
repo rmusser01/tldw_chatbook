@@ -20537,3 +20537,14 @@ comparison or another passing count cannot reconstruct its bytes.
 ## Rebuild hook event payloads through the existing model serializer (PR3148, 2026-10-18)
 
 The rebased row-removal refusal witness reached the real guarded engine, then failed `lifecycle.event` with `ValueError: non-JSON value`: `dict(event.data, ...)` retained nested immutable mappings. The existing `event.model_dump()["data"]` projection produced JSON containers without changing the strict parser or authority. That exact matching-refusal/nonmatching-positive/cleanup case then passed on141369945f (phase30,2.83s). Use the model projection before rebuilding an event; a shallow outer copy does not thaw its nested values.
+
+## Mounted flags survive Textual child pruning (PR3148, 2026-10-18)
+
+PR3148's worker census review found a real Close/navigation interval in Textual8.2.8:
+`_running` becomes false, children are pruned, and only then does Unmount cancel
+screen workers. Eleven frozen regressions held a real child's Unmount, resumed
+actual service calls after the original controls detached, and reached
+`WorkerFailed`/`NoMatches`; `is_mounted` still read true. Fencing only DOM
+publication with `is_running` made all eleven pass while confirmed owner saves
+and explicit tests still completed. Preserve owner work and freshness checks;
+do not replace this proof with fake mounted flags, mocked queries or a broad catch.

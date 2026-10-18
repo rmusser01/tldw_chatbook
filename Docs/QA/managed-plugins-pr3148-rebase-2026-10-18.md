@@ -1,5 +1,7 @@
 # PR #3148 dev rebase verification — 2026-10-18
 
+> Follow-up: the retained P3, Settings qualification and named static/CI blockers are now covered by the [blocker follow-up report](managed-plugins-pr3148-blockers-2026-10-18.md). The original runs, limits and 38 decisions below remain historical evidence.
+
 ## Outcome
 
 [PR #3148](https://github.com/rmusser01/tldw_chatbook/pull/3148) is rebased onto recorded `dev` revision `b07fc0425288fb51d17cde5f745051720a7c9db6`. Conflicts were resolved, relevant targeted checks ran, and one fresh independent review completed. The reviewed source, `141369945f5ee4ae0e5d7b5fbb00a3fbce61728e`, was published and its remote head verified. The review supports the **draft update**; **merge readiness is not established**.

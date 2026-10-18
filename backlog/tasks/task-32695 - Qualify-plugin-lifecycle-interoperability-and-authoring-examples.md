@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 16:11'
+updated_date: '2026-10-18 16:17'
 labels:
   - plugins
   - implementation
@@ -42,11 +42,11 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #13 I7: Package PATH cannot change bare executable lookup for owned MCP or hooks; explicit contained package executables and unrelated permitted child environment values still work.
 - [x] #14 I8: Every explicit three-platform workflow selection respects production ownership, command and package-capture boundaries, retains applicable and genuine unsupported/refusal controls, and makes no unexecuted native-platform success claim.
 - [x] #15 PR3148 is rebased onto the recorded current dev revision with conflicts resolved while preserving approved plugin/hook behavior and current host fixes; relevant targeted checks and independent code review cover the rebased source, and the verified update is published with an exact force-with-lease while original history/evidence remain recoverable.
-- [ ] #16 Candidate-discard confirmation is invalidated before paging or refreshing its list, including a failed reload; a fresh exact review is required before reference release.
-- [ ] #17 Previously unqualified Settings cases have current-source targeted execution evidence; diagnosed fixture or production blockers are repaired without weakening profile, permission or persistence guards.
-- [ ] #18 The remaining relevant module-size and CSS-dimension gates pass without increasing ratchet ceilings, formatting compression, blanket exclusions or changed visual values.
+- [x] #16 Candidate-discard confirmation is invalidated before paging or refreshing its list, including a failed reload; a fresh exact review is required before reference release.
+- [x] #17 Previously unqualified Settings cases have current-source targeted execution evidence; diagnosed fixture or production blockers are repaired without weakening profile, permission or persistence guards.
+- [x] #18 The remaining relevant module-size and CSS-dimension gates pass without increasing ratchet ceilings, formatting compression, blanket exclusions or changed visual values.
 - [ ] #19 Relevant affected regression, static and integration checks pass on the repaired source; remaining limits and review disposition are documented and the existing draft PR is updated safely.
-- [ ] #20 Observed published-head CI bootstrap, plugin timestamp, diagnostic-inventory and worker/markup gate blockers are repaired or explicitly bounded by native platform evidence, preserving guards and currentness rather than suppressing checks.
+- [x] #20 Observed published-head CI bootstrap, plugin timestamp, diagnostic-inventory and worker/markup gate blockers are repaired or explicitly bounded by native platform evidence, preserving guards and currentness rather than suppressing checks.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -267,6 +267,8 @@ Targeted current-source renewals retain actual failed phases and source applicab
 One fresh independent requesting-code-review on141369945f reported0Critical/0Important/1Minor in inspected paths. It supports draft publication and does not establish merge readiness. P3candidate-confirmation visibility remains deferred;281Settings outcomes are unqualified, neither proven inherited nor new regressions. Full-suite/nativeLinux/Windows/keychain/reboot/vendor-host/custom-data-base limits remain. No merge or auto-merge.
 
 The reviewed source141369945f was published with exact original7b4d5c501b lease and remote head verified before checking AC15. Docs/QA/managed-plugins-pr3148-rebase-2026-10-18.md contains current evidence, review coverage, remaining limits and all38rulings with reasons/costs. This supersedes earlier unfinished checkpoint notes only for this integration outcome. Existing14historical criteria stay historical; no blanket feature/suite or merge-readiness claim. Final documentation/task closeout has exact unchanged product/test applicability and its own verified publication.
+
+PR3148 follow-up local qualification completed at reviewed code/census510ba3b52fbd48c8d749fa21dab6159f4e94e2dc. Fixed P3 confirmation invalidation and actual retired-screen worker publication, current Settings/profile/UI test contracts, bounded existing-owner module moves/equal-value CSS, canonical timestamp writers, reviewed diagnostic/markup/worker metadata and CI profile bootstrap. Exact selected latest accounting648passes/1genuineWindows-onlyskip, including Settings286/286 and all11actualprune regressions; original failures remain preserved. All four direct static gates return0, relevant size/CSS/startup/semantic controls pass, no raised caps/guard relaxation. Independent requesting-code-review0Critical/0Important/0Minor; P3resolved; reporta98fc2c7d8ce7dde2a466cd9e7839e12923470a42341a16bcdfa6c5d76e46f73. QA: Docs/QA/managed-plugins-pr3148-blockers-2026-10-18.md; previous38rulings retained. Existing ADR097/150/161/162/163/173 apply, no newADR. Added actual Textual-prune lesson. Native Linux/Windows, full suite, realkeychain/reboot/vendorhosts/races/customdata projection/realresetundoidle remain unqualified; actualDarwinCIbootstrap+3collectionnodes only. PublicationAC19 staysopen until observed-head lease update and remote verification; draft/autooff retained.
 <!-- SECTION:NOTES:END -->
 
 <!-- SECTION:PLAN:END -->
