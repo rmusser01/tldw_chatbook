@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
+from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_MODE
+
 
 @dataclass(frozen=True)
 class ShellDestination:
@@ -291,6 +293,29 @@ _ROUTE_MAP["mcp"] = ResolvedShellRoute("settings", "settings", "mcp")
 _ROUTE_MAP["tools_settings"] = ResolvedShellRoute(
     "settings", "settings", "tools_settings"
 )
+
+# Legacy alias routes that need a default navigation context applied
+# when navigated to directly (bare ``NavigateToScreen(route)``, no
+# explicit context supplied). Mirrors how ``open_notes_workspace`` builds
+# ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
+# Notes tab -- except "prompts" (the retired Personas "prompts" mode
+# chip, Task 7), "skills" (the retired standalone Skills tab, Skills
+# sub-project Task 5), "search" (the retired standalone Search
+# screen, RAG UX v2 PR-1 Task 1), and "media" (the retired standalone
+# Media Library screen, task-2851) have no dedicated re-entry action to
+# carry that context, so the bare alias route itself must supply it here.
+# The retired Customize screen folds into Settings > Theme.
+LEGACY_ROUTE_NAV_CONTEXTS: dict[str, dict[str, str]] = {
+    "artifacts": {LIBRARY_NAV_CONTEXT_MODE: "artifacts-all"},
+    "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
+    "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
+    "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
+    "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
+    "customize": {"category": "theme"},
+    # ADR-237: the MCP destination folds into Settings > Tools & MCP.
+    "mcp": {"category": "tools"},
+    "tools_settings": {"category": "tools"},
+}
 
 
 def get_shell_destination(destination_id: str) -> ShellDestination:
