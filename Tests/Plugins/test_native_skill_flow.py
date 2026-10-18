@@ -1062,14 +1062,27 @@ async def test_live_service_authority_uses_protected_skills_directory():
 
 
 @pytest.mark.asyncio
-async def test_storage_worker_retires_its_workspace_lookup_connection(native_console):
+async def test_storage_worker_retires_its_workspace_lookup_connection(
+    native_console, monkeypatch
+):
     from Tests.Backup_Recovery.test_finite_db_retirement import worker_leases
 
     rig = native_console
+    observed = []
+    lookup = rig.service._admission.workspace_lookup
+
+    def read_workspace(workspace_id):
+        record = lookup(workspace_id)
+        observed.append((workspace_id, record))
+        return record
+
+    monkeypatch.setattr(rig.service._admission, "workspace_lookup", read_workspace)
     await rig.install()
-    assert worker_leases(rig.registry.db), (
-        "real storage worker never read workspace authority"
+    assert any(
+        workspace == "workspace-a" and record is not None
+        for workspace, record in observed
     )
+    assert not worker_leases(rig.registry.db), "finite workspace read retained a lease"
     await rig.service.aclose()
     assert not worker_leases(rig.registry.db), (
         "closed plugin worker retained its workspace handle"

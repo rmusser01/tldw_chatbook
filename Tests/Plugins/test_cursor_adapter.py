@@ -131,8 +131,9 @@ def test_explicit_missing_mcp_file_is_not_an_empty_definition(interop_package):
     manifest["mcpServers"] = "missing.json"
     path.write_text(json.dumps(manifest))
     result = inspect_package(root)
-    assert result.rejected
-    assert "vendor_mcp_path_unavailable" in result.activation_blockers
+    assert not result.rejected
+    assert "mcp_definition_unsupported" in result.activation_blockers
+    assert any(item.code == "mcp_definition_unsupported" for item in result.diagnostics)
 
 
 @pytest.mark.parametrize(
@@ -498,6 +499,7 @@ def test_unsupported_guard_blocks_native_extension_siblings(native_package):
         ".cursor-plugin/plugin.json",
         {
             "name": "test",
+            "commands": ["command.md"],
             "hooks": {
                 "version": 1,
                 "hooks": {

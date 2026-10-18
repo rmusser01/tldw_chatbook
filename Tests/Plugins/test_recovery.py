@@ -515,7 +515,7 @@ def test_retained_definition_mismatch_never_partially_reconstructs(
     original = stack.call(stack.authority.verify_current)
     altered = deepcopy(original)
     altered["components"][0]["definition_digest"] = "0" * 64
-    with pytest.raises(ValueError, match="constraints"):
+    with pytest.raises(ValueError, match="retained_interpretation_mismatch"):
         retained_inspections(altered)
     assert (
         stack.call(

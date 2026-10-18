@@ -1666,8 +1666,11 @@ async def test_video_gen_filter_exposes_category_and_enter_opens_existing_panel(
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_invalid_video_gen_draft_never_invokes_save_worker():
+async def test_invalid_video_gen_draft_never_invokes_save_worker(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 

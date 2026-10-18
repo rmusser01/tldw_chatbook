@@ -78,6 +78,22 @@ class ManagementInstallation:
     dialect: str | None
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _CapturedRequirementCeiling:
+    """Host-private refusal metadata; it cannot authorize an executable row."""
+
+    owner_identity: int
+    session: str
+    workspace: str | None
+    originals: tuple[tuple[str, object], ...]
+
+    def __bool__(self):
+        return any(snapshot.unavailable_hooks for _token, snapshot in self.originals)
+
+    def __deepcopy__(self, memo):
+        return self
+
+
 class PluginService:
     """Own one persistent worker; construction performs no IO or keyring work."""
 
@@ -1248,6 +1264,7 @@ class PluginService:
             catalog = self._catalog
             identities = sorted({identity for identity, _ in catalog})
             rows = []
+            originals = {}
             for identity in identities:
                 try:
                     self.fences.check(identity, workspace_id)
@@ -1266,13 +1283,62 @@ class PluginService:
                         self.fences.check_snapshot(prior)
                     except PluginUnavailable:
                         continue
+                    originals[row["plugin_ceiling"]] = prior
                     rows.append(dict(deepcopy(row), plugin_workspace_id=workspace_id))
+            requirements = _CapturedRequirementCeiling(
+                id(self),
+                self.fences.session_nonce,
+                workspace_id,
+                tuple(sorted(originals.items())),
+            )
         return {
+            "_plugin_requirement_ceiling": requirements,
             "backend": "local",
             "available_skills": rows,
             "blocked_skills": [],
             "context_text": "",
         }
+
+    def _captured_requirement_originals(self, maximum):
+        """Validate captured refusal custody without recovering removed execution."""
+        proof = maximum.get("_plugin_requirement_ceiling")
+        if (
+            type(proof) is not _CapturedRequirementCeiling
+            or proof.owner_identity != id(self)
+            or proof.session != self.fences.session_nonce
+        ):
+            raise PluginUnavailable("plugin_constraint_verification_failed")
+        self._require_catalog_constraints(proof.workspace)
+        originals = {}
+        for token, prior in proof.originals:
+            if self._snapshots.get(token) is not prior:
+                raise PluginUnavailable("plugin_constraint_verification_failed")
+            snapshot = prior
+            if prior.workspace_id is None and proof.workspace is not None:
+                scope = ("workspace", proof.workspace, 0)
+                snapshot = replace(
+                    prior,
+                    workspace_id=proof.workspace,
+                    generations=tuple(sorted((*prior.generations, scope))),
+                    live_generations=tuple(sorted((*prior.live_generations, scope))),
+                )
+            elif prior.workspace_id != proof.workspace:
+                raise PluginUnavailable("plugin_constraint_verification_failed")
+            self.fences.check_snapshot(snapshot)
+            self.fences.current(snapshot.installation_id, snapshot.generations)
+            originals[(token, proof.workspace)] = prior
+        for row in maximum.get("available_skills", ()):
+            if not row.get("plugin_owned"):
+                continue
+            prior = originals.get(
+                (row.get("plugin_ceiling"), row.get("plugin_workspace_id"))
+            )
+            if prior is None or row.get("plugin_component_id") not in (
+                *prior.selection,
+                *prior.unavailable_hooks,
+            ):
+                raise PluginUnavailable("plugin_constraint_verification_failed")
+        return originals
 
     def published_current(self, snapshot) -> bool:
         """Check worker-published authority generations without effect-lane IO."""
@@ -1294,6 +1360,7 @@ class PluginService:
         eligible = {
             (row["plugin_installation_id"], row["plugin_component_id"])
             for row in maximum["available_skills"]
+            if not row.get("plugin_constraint_only")
         }
         with self._lock:
             rows = [deepcopy(row) for row in self._details]
@@ -1472,17 +1539,40 @@ class PluginService:
             if checkpoint.managed_resume is not None
             else "zero"
         )
-        return await self._call(
-            lambda: self._constrain_resume_maximum(maximum, constraint)
-        )
+
+        def operation():
+            if constraint != "zero":
+                return self._constrain_resume_maximum(maximum, constraint)
+            workspace = None
+            if "_plugin_requirement_ceiling" in maximum:
+                self._captured_requirement_originals(maximum)
+                workspace = maximum["_plugin_requirement_ceiling"].workspace
+            elif any(
+                row.get("plugin_owned") for row in maximum.get("available_skills", ())
+            ):
+                raise PluginUnavailable("plugin_constraint_verification_failed")
+            narrowed = self._constrain_resume_maximum(maximum, constraint)
+            # Only this legacy archive owner can issue absent local-only custody.
+            # Zero cannot inherit a current producer or its unavailable requirements.
+            return dict(
+                narrowed,
+                _plugin_requirement_ceiling=_CapturedRequirementCeiling(
+                    id(self), self.fences.session_nonce, workspace, ()
+                ),
+            )
+
+        return await self._call(operation)
 
     async def admit(self, maximum: Mapping[str, Any], run_id: str) -> dict:
         def operation():
             # Files, SQLite and package bytes are verified on the worker without
             # holding the lock needed by immediate live revocation.
-            narrowed = self._constrain_resume_maximum(
-                maximum, maximum.get("plugin_resume_constraint")
-            )
+            constraint = maximum.get("plugin_resume_constraint")
+            if constraint != "zero":
+                self._captured_requirement_originals(maximum)
+            # Zero removes native rows before membership checks; even substituted
+            # rows cannot widen it. The exact private record is still required below.
+            narrowed = self._constrain_resume_maximum(maximum, constraint)
             return admit_narrowed(narrowed)
 
         def admit_narrowed(maximum):
@@ -1491,16 +1581,18 @@ class PluginService:
             maximum = dict(
                 maximum, available_skills=list(maximum.get("available_skills", ()))
             )
-            originals = {}
-            for row in maximum["available_skills"]:
-                if row.get("plugin_owned"):
-                    token = row.get("plugin_ceiling")
-                    prior = self._snapshots.get(token)
-                    if prior is None:
-                        raise PluginUnavailable("plugin_ceiling_unavailable")
-                    workspace = row.get("plugin_workspace_id")
-                    self._require_catalog_constraints(workspace)
-                    originals[(token, workspace)] = prior
+            originals = self._captured_requirement_originals(maximum)
+            if maximum.get("plugin_resume_constraint") is not None:
+                # The existing verified archive owner chooses its producers.
+                # Refusal custody cannot introduce an absent archive producer.
+                represented = {
+                    (row.get("plugin_ceiling"), row.get("plugin_workspace_id"))
+                    for row in maximum["available_skills"]
+                    if row.get("plugin_owned")
+                }
+                originals = {
+                    key: prior for key, prior in originals.items() if key in represented
+                }
             from .components import component_summary
 
             for (token, workspace), prior in originals.items():
@@ -1576,19 +1668,19 @@ class PluginService:
                             else prior.live_generations
                         ),
                     )
-                    if maximum.get("plugin_resume_constraint") is not None:
-                        selected = {
-                            item.get("plugin_component_id")
-                            for item in maximum.get("available_skills", ())
-                            if item.get("plugin_ceiling") == row.get("plugin_ceiling")
-                            and item.get("plugin_workspace_id") == workspace
-                        }
-                        snapshot = replace(
-                            snapshot,
-                            selection=tuple(
-                                key for key in snapshot.selection if key in selected
-                            ),
-                        )
+                    selected = {
+                        item.get("plugin_component_id")
+                        for item in maximum.get("available_skills", ())
+                        if item.get("plugin_ceiling") == row.get("plugin_ceiling")
+                        and item.get("plugin_workspace_id") == workspace
+                        and not item.get("plugin_constraint_only")
+                    }
+                    snapshot = replace(
+                        snapshot,
+                        selection=tuple(
+                            key for key in snapshot.selection if key in selected
+                        ),
+                    )
                     self.fences.require_admission(
                         snapshot.installation_id, snapshot.revision_digest
                     )
@@ -1613,7 +1705,17 @@ class PluginService:
                         if token is None:
                             token = uuid4().hex
                             self._admission_keys[key] = token
-                            self._admitted[token] = snapshot
+                        else:
+                            existing = self._admitted[token]
+                            snapshot = replace(
+                                snapshot,
+                                selection=tuple(
+                                    key
+                                    for key in snapshot.selection
+                                    if key in existing.selection
+                                ),
+                            )
+                        self._admitted[token] = snapshot
                     from .components import component_summary
 
                     row = dict(

@@ -67,6 +67,12 @@ def project_hook_definition(
     mappings: tuple[dict, ...] | list[dict],
 ) -> HookHandler:
     """Rejoin the original declaration under current execution and mapping gates."""
+    from .variables import consumed
+
+    if "PLUGIN_DATA" in consumed(inspection.inventory[component_id]):
+        shared = [row for row in roots if row["workspace_id"] is None]
+        if len(shared) != 1:
+            raise PluginUnavailable("plugin_data_root_unavailable")
     handler = _parse_hook_declaration(inspection, installation_id, component_id)
     raw = json.loads(inspection.inventory[component_id].definition_json)
     raw["id"] = handler.id
@@ -423,6 +429,8 @@ class NativeHooks:
         else:
             host_cwd = Path.cwd()
             lookup_path = host_environment.get("PATH", "")
+            if not lookup_path:
+                raise PluginUnavailable("plugin_executable_unavailable")
             # Anchor empty and relative entries before applying child cwd/PATH.
             lookup_path = os.pathsep.join(
                 str(host_cwd / entry) for entry in lookup_path.split(os.pathsep)

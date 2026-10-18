@@ -20,6 +20,7 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -438,8 +439,10 @@ async def test_h3_completion_for_session_a_never_clears_identical_visible_draft_
         db.close_connection()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
+    request,
     monkeypatch,
 ):
     _patch_h3_enabled(monkeypatch)
@@ -534,8 +537,10 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         assert batch_calls == 0
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
+    request,
     monkeypatch,
 ):
     _patch_h3_enabled(monkeypatch)
@@ -652,9 +657,11 @@ async def test_real_app_shutdown_cancels_and_drains_owned_h3_operation():
             await operation.task
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_kind", ("success", "failure", "cancel"))
 async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
+    request,
     monkeypatch,
     tmp_path,
     terminal_kind,
@@ -882,6 +889,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
         db.close_connection()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_kind", "expected_copy"),
@@ -901,6 +909,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
     ),
 )
 async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
+    request,
     monkeypatch,
     failure_kind,
     expected_copy,
@@ -987,6 +996,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
         assert "sentinel" not in repr(system_copy)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_kind", "expected_copy"),
@@ -1002,6 +1012,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
     ),
 )
 async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore(
+    request,
     monkeypatch,
     tmp_path,
     failure_kind,

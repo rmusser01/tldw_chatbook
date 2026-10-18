@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 
 @pytest.fixture(autouse=True)
 def private_host_auth(monkeypatch, tmp_path):
@@ -180,10 +182,11 @@ def test_missing_git_is_redacted_and_preserves_existing_package(
     assert Path(previous.materialized_identity).exists()
 
 
+@private_profile_test
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("redirect", [False, True])
 def test_https_host_helpers_tls_and_exact_origin(
-    plugin_stack, native_package, tmp_path, redirect
+    request, plugin_stack, native_package, tmp_path, redirect
 ):
     import json
     import os
@@ -286,6 +289,7 @@ def test_unsupported_host_retargeting_refuses_before_network(
         )
 
 
+@private_profile_test
 @pytest.mark.parametrize(
     "extra",
     [
@@ -299,7 +303,7 @@ def test_unsupported_host_retargeting_refuses_before_network(
     ],
 )
 def test_ssh_host_projection_and_explicit_refusals(
-    plugin_stack, native_package, tmp_path, monkeypatch, extra
+    request, plugin_stack, native_package, tmp_path, monkeypatch, extra
 ):
     import json
     import os

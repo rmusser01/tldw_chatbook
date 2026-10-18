@@ -9836,14 +9836,15 @@ class ConsoleChatController:
                 else "Plugin selector is unavailable; review selected components."
             )
             return self._block(session.id, copy)
-        if any(
+        if configuration.skill_context_maximum.get(
+            "_plugin_requirement_ceiling"
+        ) or any(
             row.get("plugin_owned")
             for row in configuration.skill_context_maximum.get("available_skills", ())
         ):
             maximum = dict(configuration.skill_context_maximum)
-            if resumed_preparation is None:
-                maximum["plugin_run_id"] = "pending:" + str(uuid4())
-                configuration = replace(configuration, skill_context_maximum=maximum)
+            maximum["plugin_run_id"] = "pending:" + str(uuid4())
+            configuration = replace(configuration, skill_context_maximum=maximum)
             local = getattr(self._skills_service, "local_service", None)
             service = getattr(local, "plugin_service", None)
             pending = getattr(self, "_plugin_pending_submissions", None)
@@ -15205,7 +15206,10 @@ class ConsoleChatController:
             **({"_freeze_definition_maximum_on_compose": True} if deferred else {}),
             **(
                 {"plugin_maximum": configuration.skill_context_maximum}
-                if any(
+                if configuration.skill_context_maximum.get(
+                    "_plugin_requirement_ceiling"
+                )
+                or any(
                     row.get("plugin_owned")
                     for row in configuration.skill_context_maximum.get(
                         "available_skills", ()
@@ -15464,10 +15468,13 @@ class ConsoleChatController:
         if (
             turn_context is not None
             and turn_context.skill_context_maximum.get("plugin_run_id")
-            and any(
-                row.get("plugin_owned")
-                for row in turn_context.skill_context_maximum.get(
-                    "available_skills", ()
+            and (
+                turn_context.skill_context_maximum.get("_plugin_requirement_ceiling")
+                or any(
+                    row.get("plugin_owned")
+                    for row in turn_context.skill_context_maximum.get(
+                        "available_skills", ()
+                    )
                 )
             )
         ):
@@ -24512,6 +24519,8 @@ class ConsoleChatController:
                 )
 
                 raise AutomaticWorkRefused("native_goal_required")
+            from .console_plugin_context import _native_provider_entries
+
             return await self._run_direct_provider_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,
@@ -24534,16 +24543,11 @@ class ConsoleChatController:
                 before_provider_dispatch=before_provider_dispatch,
                 capture_mode_override=capture_mode_override,
                 trace_request=trace_request,
-                plugin_context={
-                    **turn_context.skill_context_maximum,
-                    "available_skills": [
-                        row
-                        for row in turn_context.skill_context_maximum.get(
-                            "available_skills", ()
-                        )
-                        if row.get("plugin_owned") and row.get("name") in skill_bindings
-                    ],
-                },
+                plugin_context=_native_provider_entries(
+                    turn_context.skill_context_maximum,
+                    provider_messages,
+                    skill_bindings,
+                ),
             )
         finally:
             self._trace_last_provider_activity = time.monotonic()
@@ -25432,7 +25436,9 @@ class ConsoleChatController:
         async def enter_provider_dispatch() -> None:
             nonlocal plugin_service, admitted_plugin_entries
             maximum = plugin_context or {}
-            if maximum.get("available_skills"):
+            if maximum.get("available_skills") or maximum.get(
+                "_plugin_requirement_ceiling"
+            ):
                 local = getattr(self._skills_service, "local_service", None)
                 plugin_service = local.plugin_service
                 admitted = await plugin_service.admit(maximum, maximum["plugin_run_id"])
@@ -25459,7 +25465,9 @@ class ConsoleChatController:
             if plugin_service is not None:
                 await plugin_service.check_entries(admitted_plugin_entries)
 
-        if (plugin_context or {}).get("available_skills"):
+        if (plugin_context or {}).get("available_skills") or (plugin_context or {}).get(
+            "_plugin_requirement_ceiling"
+        ):
             stream_signals.provider_work_callback = retain_plugin_provider_work
         try:
             if self._teardown_refuses_turn(owner_id):

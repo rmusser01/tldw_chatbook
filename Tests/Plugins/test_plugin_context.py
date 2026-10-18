@@ -173,10 +173,15 @@ async def test_actual_console_composes_owned_mcp_hook_without_automatic_connecti
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     observed, explicit_setup = [], False
-    compose = rig.controller._compose_native_mcp_providers
+    compose = rig.controller._compose_mcp_provider
 
     async def capture(*args, **kwargs):
+        from tldw_chatbook.Plugins.mcp_provider import MCPProviderGroup
+
+        kwargs["_retain_empty_plugin_providers"] = True
         providers = await compose(*args, **kwargs)
+        if not isinstance(providers, MCPProviderGroup):
+            return providers
         observed.extend(providers.providers)
         if explicit_setup:
             for provider in providers.providers:
@@ -184,7 +189,7 @@ async def test_actual_console_composes_owned_mcp_hook_without_automatic_connecti
                     await provider.connect("mcp:shared")
         return providers
 
-    monkeypatch.setattr(rig.controller, "_compose_native_mcp_providers", capture)
+    monkeypatch.setattr(rig.controller, "_compose_mcp_provider", capture)
     before = len(case.calls.read_text().splitlines())
     try:
         refused = await rig.controller.submit_draft("hello", session_id=session.id)

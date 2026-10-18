@@ -399,14 +399,15 @@ async def test_unavailable_guard_survives_actual_child_and_sealed_resume(
     (case.tmp_path / "read-control").write_text("read")
     bound = []
 
-    async def use(rows, actor):
+    async def use(rows, actor, captured):
         with use_run_actor(actor):
             await asyncio.to_thread(service.check_entries_from_agent, rows)
             snapshots = await service.component_snapshots(
-                {
-                    "available_skills": list(rows),
-                    "plugin_run_id": rows[0]["plugin_run_id"],
-                }
+                dict(
+                    captured,
+                    available_skills=list(rows),
+                    plugin_run_id=rows[0]["plugin_run_id"],
+                )
             )
             assert len(snapshots) == 1 and snapshots[0].unavailable_hooks == (
                 "hook:guard",
@@ -462,7 +463,7 @@ async def test_unavailable_guard_survives_actual_child_and_sealed_resume(
             component_ceiling=ceiling,
         )
         bound.append("child")
-        await use(child, CurrentRunActor("subagent", "child", "primary"))
+        await use(child, CurrentRunActor("subagent", "child", "primary"), maximum)
         pin = await asyncio.to_thread(
             service.capture_resume_pin, child, "child", "conversation", "message"
         )
@@ -487,7 +488,7 @@ async def test_unavailable_guard_survives_actual_child_and_sealed_resume(
             service.bind_run, resumed_entries, "resumed", lambda: None
         )
         bound.append("resumed")
-        await use(resumed_entries, CurrentRunActor("primary", "resumed", None))
+        await use(resumed_entries, CurrentRunActor("primary", "resumed", None), resumed)
         with pytest.raises(PermissionError):
             await service.resume_maximum(
                 dict(fresh, available_skills=[]),
@@ -648,6 +649,8 @@ async def test_catalog_failure_keeps_legitimate_empty_states(
     case, service = variable_case, variable_case.service
     assert not service.capture_maximum("workspace-a")["available_skills"]
     if state == "no-installed":
+        maximum = service.capture_maximum("workspace-a")
+        assert not (await service.admit(maximum, "known-empty"))["available_skills"]
         return
     installed = await install_components(
         service, case.package, ("skill:review", "hook:guard")
@@ -681,7 +684,9 @@ async def test_catalog_failure_keeps_legitimate_empty_states(
         ):
             await service.admit({"available_skills": []}, "unknown-state")
         return
-    assert not service.capture_maximum("workspace-a")["available_skills"]
+    maximum = service.capture_maximum("workspace-a")
+    assert not maximum["available_skills"]
+    assert not (await service.admit(maximum, "known-empty"))["available_skills"]
     assert not service.live_runs()
 
 
@@ -724,3 +729,257 @@ async def test_console_capture_translates_only_exact_constraint_failure(
         )
         assert not snapshot.skill_context_maximum["available_skills"]
     assert not rig.gateway.payloads and not rig.service.live_runs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", ["missing", "mapping", "foreign", "workspace", "replaced"]
+)
+async def test_captured_requirement_ceiling_refuses_changed_custody(
+    variable_case, change
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+    from tldw_chatbook.Plugins.service import PluginService
+
+    case, service = variable_case, variable_case.service
+    await install_components(service, case.package, ("skill:review", "hook:guard"))
+    maximum = service.capture_maximum("workspace-a")
+    prior = None
+    if change == "missing":
+        maximum.pop("_plugin_requirement_ceiling")
+    elif change == "mapping":
+        maximum["_plugin_requirement_ceiling"] = {"workspace": "workspace-a"}
+    elif change == "foreign":
+        other = PluginService(
+            case.tmp_path / "foreign", workspace_lookup=lambda _: None
+        )
+        maximum["_plugin_requirement_ceiling"] = other.capture_maximum("workspace-a")[
+            "_plugin_requirement_ceiling"
+        ]
+    elif change == "workspace":
+        maximum["available_skills"] = [
+            dict(row, plugin_workspace_id="workspace-b")
+            for row in maximum["available_skills"]
+        ]
+    else:
+        token = maximum["available_skills"][0]["plugin_ceiling"]
+        prior = service._snapshots[token]
+        service._snapshots[token] = replace(prior)
+    try:
+        with pytest.raises(
+            PluginUnavailable, match="^plugin_constraint_verification_failed$"
+        ):
+            await service.admit(maximum, "changed-custody")
+        assert not service.live_runs()
+    finally:
+        if prior is not None:
+            service._snapshots[token] = prior
+
+
+@pytest.mark.asyncio
+async def test_captured_requirement_ceiling_survives_freeze_without_execution(
+    variable_case,
+):
+    from copy import deepcopy
+
+    from tldw_chatbook.Chat.console_turn_context import _freeze
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    case, service = variable_case, variable_case.service
+    await install_components(service, case.package, ("skill:review", "hook:guard"))
+    maximum = service.capture_maximum("workspace-a")
+    proof = maximum["_plugin_requirement_ceiling"]
+    for source in (deepcopy(maximum), _freeze(maximum)):
+        assert source["_plugin_requirement_ceiling"] is proof
+        omitted = dict(source, available_skills=[], plugin_run_id="refusal-only")
+        admitted = await service.admit(omitted, "refusal-only")
+        assert {row["plugin_component_id"] for row in admitted["available_skills"]} == {
+            "hook:guard"
+        }
+        assert all(
+            row["plugin_constraint_only"] for row in admitted["available_skills"]
+        )
+        snapshots = await service.component_snapshots(admitted)
+        assert len(snapshots) == 1 and snapshots[0].selection == ()
+        assert snapshots[0].unavailable_hooks == ("hook:guard",)
+        token = admitted["available_skills"][0]["plugin_admission"]
+        with pytest.raises(PluginUnavailable):
+            skill = next(
+                row
+                for row in maximum["available_skills"]
+                if row["plugin_component_id"] == "skill:review"
+            )
+            await service.execute_skill(skill["name"], admission_token=token)
+    assert not service.live_runs()
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_refusal_engine_when_all_native_rows_are_removed(
+    native_console, variable_case
+):
+    from dataclasses import replace
+
+    from Tests.Plugins.test_owned_hook_acceptance import _runtime
+    from Tests.Plugins.test_vendor_hook_adapters import tool_event
+
+    rig = native_console
+    await install_components(
+        rig.service, variable_case.package, ("skill:review", "hook:guard")
+    )
+    configuration = await rig.controller.capture_turn_configuration_snapshot(
+        rig.session.id
+    )
+    maximum = dict(configuration.skill_context_maximum, available_skills=[])
+    assert maximum["_plugin_requirement_ceiling"]
+    configuration = replace(configuration, skill_context_maximum=maximum)
+    async with _runtime(rig) as runtime:
+        engine = await runtime.prepare_hooks_v2(
+            rig.session.id, configuration=configuration
+        )
+        assert engine is not None and engine.native_plugins.unavailable
+        assert all(
+            handler.id in engine.native_plugins.unavailable
+            for handler in engine.definitions
+        )
+        source = tool_event(provider="local")
+        matching = source.model_copy(
+            update={"data": dict(source.data, operation="file.write")}
+        )
+        nonmatching = source.model_copy(
+            update={"data": dict(source.data, operation="file.read")}
+        )
+        assert (await engine.fire_async(nonmatching)).allowed
+        assert not (await engine.fire_async(matching)).allowed
+        assert not rig.gateway.payloads and not rig.service.live_runs()
+
+
+@pytest.mark.asyncio
+async def test_bridge_validates_captured_requirements_without_availability_rows(
+    native_console, variable_case, tmp_path, monkeypatch
+):
+    from Tests.Plugins.test_owned_hook_acceptance import _runtime
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    rig = native_console
+    await install_components(
+        rig.service, variable_case.package, ("skill:review", "hook:guard")
+    )
+    capture, admit = rig.service.capture_maximum, rig.service.admit
+    observed = []
+
+    def narrowed(workspace):
+        return dict(capture(workspace), available_skills=[])
+
+    async def admitting(maximum, run_id):
+        observed.append(
+            (
+                bool(maximum.get("_plugin_requirement_ceiling")),
+                bool(maximum.get("available_skills")),
+            )
+        )
+        return await admit(maximum, run_id)
+
+    monkeypatch.setattr(rig.service, "capture_maximum", narrowed)
+    monkeypatch.setattr(rig.service, "admit", admitting)
+    db = AgentRunsDB(tmp_path / "refusal-bridge.sqlite", client_id="refusal-bridge")
+    try:
+        async with _runtime(rig) as runtime:
+            bridge = ConsoleAgentBridge(
+                agent_runs_db=db,
+                store=rig.store,
+                provider_gateway=rig.gateway,
+                skills_service=rig.skills,
+                get_hooks_v2=runtime.get_hooks_v2,
+            )
+            rig.controller.update_agent_runtime(enabled=True, bridge=bridge)
+            result = await rig.controller.submit_draft(
+                "ordinary input", session_id=rig.session.id
+            )
+            assert result.accepted and rig.gateway.payloads
+            assert (True, False) in observed
+            engine = runtime.get_hooks_v2(rig.session.id)
+            assert engine is not None and engine.native_plugins.unavailable
+            assert not any(
+                snapshot.selection for snapshot in engine.native_plugins.snapshots
+            )
+            await rig.controller.shutdown()
+    finally:
+        db.close()
+    assert not rig.service.live_runs()
+
+
+@pytest.mark.asyncio
+async def test_legacy_resume_issues_only_empty_native_requirement_custody(
+    variable_case,
+):
+    from Tests.Chat.test_provider_continuation import _checkpoint
+    from tldw_chatbook.Chat.provider_continuation import (
+        parse_provider_continuation_json,
+    )
+
+    case, service = variable_case, variable_case.service
+    checkpoint = parse_provider_continuation_json(json.dumps(_checkpoint()))
+    assert checkpoint.schema_version == 1
+    local = {"name": "local-only", "description": "local"}
+    local_maximum = {"available_skills": [local]}
+    zero = await service.resume_maximum(
+        local_maximum, checkpoint, "conversation", "message"
+    )
+    assert zero["plugin_resume_constraint"] == "zero"
+    assert not zero["_plugin_requirement_ceiling"]
+    assert (await service.admit(zero, "legacy-local"))["available_skills"] == [local]
+
+    await install_components(service, case.package, ("skill:review", "hook:guard"))
+    captured = service.capture_maximum("workspace-a")
+    assert captured["_plugin_requirement_ceiling"]
+    zero = await service.resume_maximum(captured, checkpoint, "conversation", "message")
+    assert not zero["available_skills"] and not zero["_plugin_requirement_ceiling"]
+    assert zero["_plugin_requirement_ceiling"].workspace == "workspace-a"
+    assert not await service.component_snapshots(
+        dict(zero, plugin_run_id="legacy-required")
+    )
+    zero["available_skills"] = captured["available_skills"]
+    assert not (await service.admit(zero, "legacy-substituted"))["available_skills"]
+    assert not service.live_runs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("constraint", [None, "nonzero", "zero"])
+async def test_missing_requirement_custody_never_enters_ordinary_admit(
+    variable_case, constraint
+):
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    maximum = {"available_skills": []}
+    if constraint is not None:
+        maximum["plugin_resume_constraint"] = constraint
+    with pytest.raises(
+        PluginUnavailable, match="^plugin_constraint_verification_failed$"
+    ):
+        await variable_case.service.admit(maximum, "missing-custody")
+    assert not variable_case.service.live_runs()
+
+
+@pytest.mark.asyncio
+async def test_legacy_resume_refuses_native_rows_without_captured_custody(
+    variable_case,
+):
+    from Tests.Chat.test_provider_continuation import _checkpoint
+    from tldw_chatbook.Chat.provider_continuation import (
+        parse_provider_continuation_json,
+    )
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+    case, service = variable_case, variable_case.service
+    await install_components(service, case.package, ("skill:review", "hook:guard"))
+    maximum = service.capture_maximum("workspace-a")
+    maximum.pop("_plugin_requirement_ceiling")
+    checkpoint = parse_provider_continuation_json(json.dumps(_checkpoint()))
+    with pytest.raises(
+        PluginUnavailable, match="^plugin_constraint_verification_failed$"
+    ):
+        await service.resume_maximum(maximum, checkpoint, "conversation", "message")
+    assert not service.live_runs()

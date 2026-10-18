@@ -11,6 +11,8 @@ from ``Tests/Internal_Prompts/conftest.py``).
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import threading
 import time
 import tomllib
@@ -59,6 +61,20 @@ _ALL_SECRET_ENV_VARS = (
     "QWEN_API_KEY",
     "SWARMUI_TOKEN",
 )
+
+
+def _seed_selected_image_config(text):
+    """Seed only image defaults in the already-selected private child profile."""
+    from tldw_chatbook import config
+
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    with path.open("rb") as stream:
+        current = tomllib.load(stream)
+    assert config.delete_settings_from_cli_config(
+        "image_generation", list(current.get("image_generation", {}))
+    )
+    assert config.save_settings_to_cli_config(tomllib.loads(text))
+    reset_image_generation_config_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -354,10 +370,10 @@ async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
 # ---------------------------------------------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_edit_marks_dirty_and_save_writes_nested_toml(scratch_config, tmp_path):
-    scratch_config(
-        """
+async def test_edit_marks_dirty_and_save_writes_nested_toml(request, tmp_path):
+    _seed_selected_image_config("""
 [image_generation]
 default_backend = "openrouter"
 enabled_backends = ["openrouter"]
@@ -386,7 +402,7 @@ default_model = "old-model"
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-        config_path = tmp_path / "config.toml"
+        config_path = Path(os.environ["TLDW_CONFIG_PATH"])
         with open(config_path, "rb") as f:
             saved = tomllib.load(f)
         assert (
@@ -483,12 +499,12 @@ default_model = "original-model"
     assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_clear_key_deletes_not_blanks(scratch_config, tmp_path, monkeypatch):
+async def test_clear_key_deletes_not_blanks(request, tmp_path, monkeypatch):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    scratch_config(
-        """
+    _seed_selected_image_config("""
 [image_generation]
 default_backend = "openrouter"
 enabled_backends = ["openrouter"]
@@ -527,7 +543,7 @@ api_key = "sk-saved-key"
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert "api_key" not in saved["image_generation"].get("openrouter", {})
@@ -619,9 +635,10 @@ enabled_backends = ["openrouter"]
     assert saved["image_generation"]["openrouter"]["api_key"] == "sk-pasted-key"
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_unedited_baked_field_produces_empty_diff_on_save(
-    scratch_config, tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Pin (carry-note 1): a FRESH config (no ``[image_generation]`` section
     at all -- every backend field is baked-default-only) must NOT write any
@@ -635,8 +652,7 @@ async def test_unedited_baked_field_produces_empty_diff_on_save(
     """
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    scratch_config(
-        """
+    _seed_selected_image_config("""
 [general]
 default_theme = "textual-dark"
 """
@@ -657,7 +673,7 @@ default_theme = "textual-dark"
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
 

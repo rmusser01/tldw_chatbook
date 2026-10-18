@@ -1156,6 +1156,13 @@ async def test_dispatch_console_command_blocks_generate_image_when_ephemeral():
 
     screen._console_command_generate_image = _spy_handler
 
+    async def unexpected_response_rule(*_args):
+        raise AssertionError("image dispatch reached response rules")
+
+    screen._response_rules_ui = SimpleNamespace(
+        learn=unexpected_response_rule, manage=unexpected_response_rule
+    )
+
     parse = CommandParse(kind="command", name="generate-image", args="a dragon")
     await screen._dispatch_console_command(parse)
 

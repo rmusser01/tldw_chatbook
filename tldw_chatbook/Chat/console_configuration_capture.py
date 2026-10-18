@@ -229,6 +229,7 @@ def _capture_skill_context_from_records(
         if _plugin_service is _UNSET_PLUGIN_SERVICE
         else _plugin_service
     )
+    plugin_context = {}
     if plugin_service is not None:
         from tldw_chatbook.Plugins.admission import PluginUnavailable
 
@@ -247,6 +248,15 @@ def _capture_skill_context_from_records(
             if row["name"] not in names
         )
     return {
+        **(
+            {
+                "_plugin_requirement_ceiling": plugin_context[
+                    "_plugin_requirement_ceiling"
+                ]
+            }
+            if "_plugin_requirement_ceiling" in plugin_context
+            else {}
+        ),
         "plugin_run_id": "pending:" + str(uuid4()),
         "available_skills": available,
         "blocked_skills": blocked,

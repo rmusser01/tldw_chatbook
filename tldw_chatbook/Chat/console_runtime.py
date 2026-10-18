@@ -3858,7 +3858,7 @@ class ConsoleRuntime:
         )
         if configuration is not None:
             maximum = configuration.skill_context_maximum
-            if any(
+            if maximum.get("_plugin_requirement_ceiling") or any(
                 row.get("plugin_owned") for row in maximum.get("available_skills", ())
             ):
                 local = getattr(

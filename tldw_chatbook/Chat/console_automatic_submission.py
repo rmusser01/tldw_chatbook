@@ -300,7 +300,13 @@ async def submission_hook_input(
     rows = lifecycle.context.blocks(scope, "model")
     from tldw_chatbook.Agents.agent_models import check_host_context
 
-    check_host_context([*provider_messages, *rows], strip=False)
+    messages = [*provider_messages, *rows]
+    check_host_context(messages, strip=False)
+    native = getattr(lifecycle.engine, "native_plugins", None)
+    if native is not None:
+        lifecycle.checkpoints.assert_continuation_dependencies(
+            scope, required_handler_ids=native.requirements_for(None, None, messages)
+        )
     return rows
 
 
