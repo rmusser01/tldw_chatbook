@@ -62,6 +62,19 @@ your shell before connecting.
    a raw-JSON box when the schema is too complex). An Ask-gated tool asks
    once per run; the run is recorded in History (`4`).
 
+**Suggested "Always allow" (approval-history mining).** When you repeatedly
+approve the same tool — "Approve once" or "Approve for session" — Permissions
+mode lists it below the matrix as a reviewable suggestion: server/tool, how
+many times you approved it, and when you last did. Focus a suggestion row and
+press **a** to accept it (this writes a real Always-allow entry through the
+same hash-checked path the matrix uses) or **d** to dismiss it (not proposed
+again until restored). Dismissed rows stay listed for review; press **r** on
+one to restore it, or **c** to clear every dismissal. Suggestions are
+proposals only — runtime approval behavior never changes until you accept
+one, a tool whose definition changed is not proposed against the stale
+fingerprint, and high-risk tools are never suggested. The section hides
+entirely when there is nothing to review.
+
 To remove a server, select its row in Servers mode and use **Delete**
 (a two-step confirm; Escape backs out). **Import…** accepts a
 Claude-Desktop-style `{"mcpServers": …}` config — secret-shaped values

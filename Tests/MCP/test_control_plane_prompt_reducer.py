@@ -5,8 +5,10 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.MCP.execution_log import ExecutionRecord, MCPExecutionLog
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
-from tldw_chatbook.MCP.permission_store import definition_hash
+from tldw_chatbook.MCP.permission_prompt_reducer import build_permission_prompt_report
+from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -198,3 +200,119 @@ async def test_apply_permission_prompt_recommendation_requires_permission_store(
 
     with pytest.raises(RuntimeError, match="MCP permission store unavailable"):
         await service.apply_permission_prompt_recommendation("local:docs", "search")
+
+
+@pytest.mark.asyncio
+async def test_dismissed_suggestions_are_not_reported_nor_appliable(tmp_path):
+    """TASK-18928 AC#3: a dismissed suggestion is not re-proposed on any
+    surface (report AND apply both consult the same snapshot)."""
+    service, store = _service(tmp_path, [_profile_record()])
+    _append_approved(store, ts="2026-08-01T20:00:00+00:00")
+    _append_approved(store, ts="2026-08-01T20:05:00+00:00")
+
+    service.dismiss_permission_suggestion("local:docs", "search")
+
+    report = await service.permission_prompt_recommendations()
+    assert report.recommendations == []
+    with pytest.raises(KeyError):
+        await service.apply_permission_prompt_recommendation("local:docs", "search")
+
+
+@pytest.mark.asyncio
+async def test_restored_suggestion_is_reported_again(tmp_path):
+    service, store = _service(tmp_path, [_profile_record()])
+    _append_approved(store, ts="2026-08-01T20:00:00+00:00")
+    _append_approved(store, ts="2026-08-01T20:05:00+00:00")
+    service.dismiss_permission_suggestion("local:docs", "search")
+
+    service.restore_permission_suggestion("local:docs", "search")
+
+    report = await service.permission_prompt_recommendations()
+    assert [
+        (r.server_key, r.tool_name) for r in report.recommendations
+    ] == [("local:docs", "search")]
+
+
+def test_suggestion_dismissals_round_trip_through_the_service(tmp_path):
+    service, _store = _service(tmp_path, [_profile_record()])
+
+    service.dismiss_permission_suggestion("local:docs", "search")
+    service.dismiss_permission_suggestion("local:docs", "purge")
+    dismissals = service.list_permission_suggestion_dismissals()
+
+    assert sorted(dismissals) == ["local:docs::purge", "local:docs::search"]
+
+    service.clear_permission_suggestion_dismissals()
+    assert service.list_permission_suggestion_dismissals() == {}
+
+
+@pytest.mark.asyncio
+async def test_existing_suggestions_do_not_change_runtime_resolution(tmp_path):
+    """TASK-18928 AC#5: suggestions are proposal-only -- while one merely
+    exists, effective resolution and standing policy are unchanged."""
+    service, store = _service(tmp_path, [_profile_record()])
+    _append_approved(store, ts="2026-08-01T20:00:00+00:00")
+    _append_approved(store, ts="2026-08-01T20:05:00+00:00")
+
+    report = await service.permission_prompt_recommendations()
+
+    assert [
+        (r.server_key, r.tool_name) for r in report.recommendations
+    ] == [("local:docs", "search")]
+    tools = await service._local_prompt_reduction_tools()
+    states = service.effective_tool_states(tools)
+    assert states[("local:docs", "search")].state == "ask"
+    servers = service.permission_store.load()["profiles"]["default"]["servers"]
+    assert not servers.get("local:docs", {}).get("tools", {})
+
+
+def test_high_risk_exclusion_is_shared_with_the_approval_card_badge():
+    """TASK-18928 AC#4 drift guard: both the reducer's exclusion and the
+    approval card's "(high risk)" badge key off the SAME
+    ``EffectiveToolState.risk_floored`` flag -- no parallel list."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    state = EffectiveToolState(
+        state="ask", origin="global_default", risk_floored=True
+    )
+
+    # The card renders the badge from the resolved state's risk_floored
+    # flag; the reducer excludes on the same flag -- one source, no drift.
+    assert "high risk" in format_approval_reason({"reason": "risk_floored"}).lower()
+
+    tool = HubTool(
+        server_key="local:docs",
+        server_label="docs",
+        source="local",
+        name="process",
+        description="process description",
+        input_schema={"type": "object"},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    records = [
+        {
+            "ts": "2026-08-01T20:00:00+00:00",
+            "server_key": "local:docs",
+            "tool_name": "process",
+            "initiator": "agent",
+            "decision": "approved",
+            "ok": True,
+        },
+        {
+            "ts": "2026-08-01T20:01:00+00:00",
+            "server_key": "local:docs",
+            "tool_name": "process",
+            "initiator": "agent",
+            "decision": "approved",
+            "ok": True,
+        },
+    ]
+
+    report = build_permission_prompt_report(records, [tool], {("local:docs", "process"): state})
+
+    assert report.recommendations == []
+    assert report.excluded[("local:docs", "process")] == "high-risk-floor"

@@ -1817,3 +1817,139 @@ async def test_update_matrix_renders_discovery_hint_line(request):
         await pilot.pause()
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert "no tools yet" not in legend
+
+
+def _recommendation(
+    server_key: str = "local:docs",
+    tool_name: str = "search",
+    approved_count: int = 3,
+) -> object:
+    from tldw_chatbook.MCP.permission_prompt_reducer import (
+        PermissionPromptRecommendation,
+    )
+
+    return PermissionPromptRecommendation(
+        server_key=server_key,
+        server_label=server_key.removeprefix("local:"),
+        tool_name=tool_name,
+        approved_count=approved_count,
+        first_seen="2026-08-01T20:00:00+00:00",
+        last_seen="2026-08-01T20:05:00+00:00",
+        current_state="ask",
+        reason="Repeatedly approved while still ask-gated.",
+    )
+
+
+async def _mounted_suggestions_canvas(pilot, app):
+    canvas = app.query_one(MCPPermissionsMode)
+    canvas.populate_suggestions(
+        [_recommendation(), _recommendation(tool_name="purge", approved_count=2)],
+        {"local:docs::erase": "2026-08-02T10:00:00Z"},
+    )
+    await pilot.pause()
+    return canvas
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_suggestions_section_lists_recommendations_and_dismissed(request):
+    from textual.widgets import DataTable as _DT
+
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        await _mounted_suggestions_canvas(pilot, app)
+        table = app.query_one("#mcp-perm-suggestions-table", _DT)
+        assert table.display
+        row_keys = [str(key.value) for key in table.rows]
+        assert row_keys == [
+            "sugg:local:docs::search",
+            "sugg:local:docs::purge",
+            "dismissed:local:docs::erase",
+        ]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_suggestions_section_hides_when_nothing_to_review(request):
+    from textual.widgets import DataTable as _DT
+
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.populate_suggestions([], {})
+        await pilot.pause()
+        assert not app.query_one("#mcp-perm-suggestions-table", _DT).display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_accept_and_dismiss_keys_post_requests_for_focused_suggestion(request):
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = await _mounted_suggestions_canvas(pilot, app)
+        table = app.query_one("#mcp-perm-suggestions-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        messages: list[object] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_accept_suggestion()
+            canvas.action_dismiss_suggestion()
+        finally:
+            canvas.post_message = original_post_message
+        assert [
+            (type(m).__name__, m.server_key, m.tool_name) for m in messages
+        ] == [
+            ("SuggestionAcceptRequested", "local:docs", "search"),
+            ("SuggestionDismissRequested", "local:docs", "search"),
+        ]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_restore_key_only_acts_on_a_dismissed_row(request):
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = await _mounted_suggestions_canvas(pilot, app)
+        table = app.query_one("#mcp-perm-suggestions-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)  # a live suggestion, not a dismissed row
+        await pilot.pause()
+        messages: list[object] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_restore_suggestion()
+            table.move_cursor(row=2)  # the dismissed row
+            canvas.action_restore_suggestion()
+            canvas.action_clear_suggestion_dismissals()
+        finally:
+            canvas.post_message = original_post_message
+        assert [type(m).__name__ for m in messages] == [
+            "SuggestionRestoreRequested",
+            "SuggestionDismissalsClearRequested",
+        ]
+        assert messages[0].server_key == "local:docs"
+        assert messages[0].tool_name == "erase"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_suggestion_keys_do_not_fire_from_the_matrix_and_vice_versa(request):
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = await _mounted_suggestions_canvas(pilot, app)
+        matrix = app.query_one("#mcp-perm-table", DataTable)
+        matrix.focus()
+        await pilot.pause()
+        messages: list[object] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_accept_suggestion()
+            canvas.action_restore_suggestion()
+            canvas.action_clear_suggestion_dismissals()
+        finally:
+            canvas.post_message = original_post_message
+        assert messages == []
