@@ -941,7 +941,7 @@ def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
     A daemon one-shot thread is the failure floor: the sender bounds
     itself with a hard 3s subprocess timeout, needs no Textual worker
     lifecycle, and is safe to abandon at app teardown (the notifier child
-    runs in its own session, so a quit can strand it for at most that
+    starts in its own session, so a quit can strand it for at most that
     timeout). Never call this on the UI thread -- the whole point is that
     a stuck ``osascript``/``notify-send`` cannot freeze the Console.
     """

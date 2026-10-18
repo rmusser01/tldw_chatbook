@@ -7080,6 +7080,7 @@ class SettingsScreen(BaseAppScreen):
                     "console.sidechat_model",
                     "console.sidechat_prompt_template",
                     "console.background_effects.*",
+                    "console.os_notifications.*",
                     "console.conversation_budget_*",
                     "console.compaction_*",
                     "chat_defaults.streaming",

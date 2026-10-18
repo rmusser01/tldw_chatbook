@@ -277,3 +277,32 @@ class TestSendOSNotification:
                 os.environ["DBUS_SESSION_BUS_ADDRESS"] = old
         env = runner.calls[0][1]["env"]
         assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/tmp/canary-bus"
+
+    def test_darwin_env_is_exactly_path(self) -> None:
+        """macOS needs no D-Bus plumbing: the scrubbed env is PATH alone."""
+        import os
+
+        old_dbus = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+        old_xdg = os.environ.get("XDG_RUNTIME_DIR")
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/tmp/canary-bus"
+        os.environ["XDG_RUNTIME_DIR"] = "/tmp/canary-xdg"
+        try:
+            runner = _RecordingRunner()
+            send_os_notification(
+                "run_finished",
+                "Ops",
+                platform="darwin",
+                settings=ConsoleOSNotificationSettings(enabled=True),
+                runner=runner,
+            )
+        finally:
+            for key, old in (
+                ("DBUS_SESSION_BUS_ADDRESS", old_dbus),
+                ("XDG_RUNTIME_DIR", old_xdg),
+            ):
+                if old is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old
+        env = runner.calls[0][1]["env"]
+        assert set(env) == {"PATH"}
