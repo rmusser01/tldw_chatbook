@@ -533,6 +533,33 @@ class ConsoleStatusChips(Horizontal):
         """The one-line text widget (only child of the scroll shell)."""
         return self.query_one("#console-status-text", ConsoleStatusText)
 
+    # -- public read seam (tests, inspector-style consumers) -------------
+
+    def segment_text(self, name: str) -> str:
+        """The rendered text of one segment, or ``""`` when absent.
+
+        Column-accurate: reads back the plain text between the segment's
+        span boundaries in the composed line, so wide-character labels
+        report what is actually on screen.
+        """
+        line = self._status_text()
+        renderable = line.renderable
+        plain = (
+            renderable.plain if hasattr(renderable, "plain") else str(line.render())
+        )
+        for segment_name, start, end in line.segment_spans:
+            if segment_name == name:
+                return plain[start:end]
+        return ""
+
+    def segment_visible(self, name: str) -> bool:
+        """Whether one segment is currently on the line."""
+        line = self._status_text()
+        return any(
+            segment_name == name
+            for segment_name, _start, _end in line.segment_spans
+        )
+
     def _run_segment(self) -> StatusSegment:
         label, _tooltip, hidden = self._run_chip_render(*self._run_chip_state)
         return StatusSegment(

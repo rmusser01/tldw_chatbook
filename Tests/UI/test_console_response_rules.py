@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
 from Tests.UI.response_rules_fixtures import mounted_rules_console, seed_answer
 from Tests.UI.test_console_native_chat_flow import (
@@ -17,9 +17,28 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_command_suggestions import _COMMAND_DESCRIPTIONS
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+# TASK-35160: the run chip is the status line's "run" segment; these read
+# the strip's public seam where the chip widget used to be queried.
+def _run_visible(console) -> bool:
+    return console.query_one(
+        "#console-status-chips", ConsoleStatusChips
+    ).segment_visible("run")
+
+
+def _run_text(console) -> str:
+    return console.query_one(
+        "#console-status-chips", ConsoleStatusChips
+    ).segment_text("run")
+
 
 
 @pytest.mark.parametrize(
@@ -255,8 +274,6 @@ async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_p
 
 @pytest.mark.asyncio
 async def test_violation_status_opens_rules_with_disable_action(tmp_path):
-    from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleRunChip
-
     async with mounted_rules_console(tmp_path, (120, 35)) as case:
         seed_answer(case)
         case.reply = "Still missing proof"
@@ -265,9 +282,11 @@ async def test_violation_status_opens_rules_with_disable_action(tmp_path):
         ).state == "active"
         assert case.rules.state(case.session_id).assessment.outcome == "violation"
         case.console._sync_console_mode_bar()
+        # TASK-35160: the run chip's activation route is the line's segment
+        # action now (it posts the same ConsoleRunChip.OpenRequested).
         case.console.query_one(
-            "#console-run-chip", ConsoleRunChip
-        ).action_open_inspector()
+            "#console-status-text", ConsoleStatusText
+        ).action_open_segment("run")
         for _ in range(12):
             await case.pilot.pause()
         assert isinstance(case.host.screen, ResponseRulesModal)
@@ -291,8 +310,8 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             await case.pilot.pause()
             assert case.rules.state(case.session_id).phase == "drafting"
             assert not case.console._console_transcript_poll_needed()
-            chip = case.console.query_one("#console-run-chip", Static)
-            assert chip.display and "Drafting rule" in str(chip.render())
+            assert _run_visible(case.console)
+            assert "Drafting rule" in _run_text(case.console)
             stop = case.console.query_one("#console-stop-generation", Button)
             assert stop.display and not stop.disabled
             assert await case.pilot.click("#console-stop-generation")
@@ -300,7 +319,7 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             assert case.composer.draft_text() == complaint
             assert case.rules.state(case.session_id).phase == "idle"
             assert case.rules.helpers.unsettled_count == 1
-            assert "Drafting rule" not in str(chip.render())
+            assert "Drafting rule" not in _run_text(case.console)
         finally:
             case.helper_release.set()
             async with asyncio.timeout(5):
@@ -310,7 +329,7 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
         assert case.composer.draft_text() == complaint
         assert case.learning_results and case.learning_results[-1][0] != "active"
         assert case.rules.state(case.session_id).phase == "idle"
-        assert "Drafting rule" not in str(chip.render())
+        assert "Drafting rule" not in _run_text(case.console)
 
 
 @pytest.mark.asyncio
@@ -374,7 +393,6 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert case.rules.acceptance_current(source)
             stop = case.console.query_one("#console-stop-generation", Button)
             assert stop.display and not stop.disabled
-            chip = case.console.query_one("#console-run-chip", Static)
             held, release, expired = (
                 threading.Event(),
                 threading.Event(),
@@ -425,7 +443,8 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 assert not expired.is_set(), (
                     f"rule event blocked on the config rebuild for {elapsed:.3f}s"
                 )
-                assert chip.display and "Testing rule" in str(chip.render())
+                assert _run_visible(case.console)
+                assert "Testing rule" in _run_text(case.console)
                 assert len(sync_results) == 1
                 assert type(sync_results[0]) is bool
                 if deferral == "maintenance":
@@ -447,7 +466,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                         )
                     )
                 case.rules._project(other_session_id, phase="repairing")
-                assert "Testing rule" in str(chip.render())
+                assert "Testing rule" in _run_text(case.console)
                 # Exercise the armed timer before Stop, without relying on cadence.
                 await case.console._console_credential_poll_timer._tick(
                     next_timer=time.monotonic(), count=0
@@ -456,12 +475,15 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 stop.press()
                 async with asyncio.timeout(1):
                     while case.rules.state(case.session_id).phase != "idle" or (
-                        chip.display and "Testing rule" in str(chip.render())
+                        _run_visible(case.console)
+                        and "Testing rule" in _run_text(case.console)
                     ):
                         await asyncio.sleep(0.01)
                 assert not expired.is_set() and not release.is_set()
                 assert holder.is_alive()
-                assert not chip.display or "Testing rule" not in str(chip.render())
+                assert not _run_visible(case.console) or (
+                    "Testing rule" not in _run_text(case.console)
+                )
                 assert case.rules.state(other_session_id).phase == "repairing"
                 assert not case.rules.acceptance_current(source)
                 assert case.rules.helpers.unsettled_count == 1
@@ -493,7 +515,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             async with asyncio.timeout(5):
                 while case.console._console_control_bar_sync_scheduled:
                     await case.pilot.pause(0.01)
-            assert "Testing rule" not in str(chip.render())
+            assert "Testing rule" not in _run_text(case.console)
             assert not stop.display
             assert case.rules.state(case.session_id).phase == "idle"
             # The following source-event checks start without a learning result.
@@ -506,18 +528,18 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
         ):
             # Exercise the runtime's source notification boundary, not widget writers.
             case.rules._project(case.session_id, phase=phase)
-            chip = case.console.query_one("#console-run-chip", Static)
-            assert chip.display and label in str(chip.render())
+            assert _run_visible(case.console)
+            assert label in _run_text(case.console)
             case.rules._project(other_session_id, phase="idle")
-            assert label in str(chip.render())
+            assert label in _run_text(case.console)
         case.rules._project(case.session_id, phase="idle")
-        assert not chip.display
+        assert not _run_visible(case.console)
         await case.host.pop_screen()
         await case.pilot.pause()
         assert not case.console.is_attached
         snapshot = case.console._console_credential_snapshot
         case.console._poll_console_credential_readiness()
         assert case.console._console_credential_snapshot == snapshot
-        before = str(chip.render())
+        before = _run_text(case.console)
         case.rules._project(case.session_id, phase="checking")
-        assert str(chip.render()) == before
+        assert _run_text(case.console) == before

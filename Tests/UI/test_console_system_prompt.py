@@ -14,6 +14,10 @@ from Tests.UI.console_controller_stubs import context_spend_for_test
 from pathlib import Path
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -36,6 +40,10 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     FILTER_INPUT_ID,
     ROW_ID_PREFIX,
@@ -176,7 +184,10 @@ async def test_console_rail_system_line_click_opens_editor_modal():
 
 
 def _system_prompt_chip_text(console) -> str:
-    return _static_plain_text(console.query_one("#console-system-prompt-chip", Static))
+    """TASK-35160: the chip is the status line's "system-prompt" segment."""
+    return console.query_one(
+        "#console-status-chips", ConsoleStatusChips
+    ).segment_text("system-prompt")
 
 
 @pytest.mark.asyncio
@@ -188,11 +199,20 @@ async def test_console_system_prompt_chip_activation_opens_editor_modal():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         baseline_depth = len(host.screen_stack)
-        await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
 
         # Activate via keyboard: the test harness loads no stylesheet, so the
-        # chip strip overflows the screen and a mouse click lands out of bounds.
-        console.query_one("#console-system-prompt-chip").focus()
+        # status line overflows the screen and a mouse click lands out of
+        # bounds. TASK-35160: focus the line and walk its segment cursor to
+        # the system-prompt segment (the chips' focus+Enter, segment edition).
+        line = console.query_one("#console-status-text", ConsoleStatusText)
+        line.focus()
+        await pilot.pause()
+        for _ in range(len(line.segment_spans)):
+            if line.segment_spans[line._cursor][0] == "system-prompt":
+                break
+            await pilot.press("right")
+        assert line.segment_spans[line._cursor][0] == "system-prompt"
         await pilot.press("enter")
         await pilot.pause(0.2)
 
@@ -209,7 +229,7 @@ async def test_console_system_prompt_chip_label_reflects_applied_prompt():
 
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
         console._session._apply_console_session_system_prompt("Be concise.")

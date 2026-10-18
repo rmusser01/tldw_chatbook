@@ -59,6 +59,7 @@ from tldw_chatbook.UI.Console_Modules.session import _character_session_prompt_s
 from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
     project_console_send_authority,
 )
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -398,9 +399,10 @@ async def _assert_reads_blocked(h) -> None:
         lambda: str(badge.render()) == "Blocked",
         what=f"the painted header badge reads {str(badge.render())!r}",
     )
-    chip = h.console.query_one("#console-run-chip", Static)
-    assert chip.display
-    assert str(chip.render()) == f"Run: Blocked — {BLOCKED_REASON}"
+    # TASK-35160: the run chip is the strip's "run" segment now.
+    strip = h.console.query_one("#console-status-chips", ConsoleStatusChips)
+    assert strip.segment_visible("run")
+    assert strip.segment_text("run") == f"Run: Blocked — {BLOCKED_REASON}"
     # TASK-33620.5: the hidden compat mode bar reads the chip's copy first, so
     # it says Blocked too. On dev it repeated the run state's own copy ("Trace
     # provenance could not be saved. ...") while the chip said Blocked.

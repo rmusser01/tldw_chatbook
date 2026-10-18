@@ -30,6 +30,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -48,6 +52,7 @@ from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 from Tests.console_provider_doubles import with_destination
 from Tests.UI.app_factory import attach_chachanotes_db, persist_seeded_config
 
@@ -1448,5 +1453,10 @@ async def test_prompt_system_replacement_refreshes_visible_status_chip(destinati
             captured_snapshot=snapshot if destination == "replace_snapshot" else None,
         )
         await pilot.pause()
-        chip = console.query_one("#console-system-prompt-chip")
-        assert str(chip.render()) == "System Prompt: set"
+        # TASK-35160: the system-prompt chip is the strip line's segment now.
+        assert (
+            console.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            ).segment_text("system-prompt")
+            == "System Prompt: set"
+        )

@@ -9,6 +9,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
@@ -44,6 +48,7 @@ from tldw_chatbook.UI.Console_Modules.send_price import (
     ConsoleSendPriceController,
     build_next_send_price,
 )
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     BASE_ACTIONS_WIDTH,
     ConsoleComposerBar,
@@ -552,7 +557,10 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = console.query_one("#console-send-message", Button)
-        cost_chip = console.query_one("#console-cost-chip")
+        # TASK-35160: the cost chip is the strip line's "cost" segment.
+        status_strip = console.query_one(
+            "#console-status-chips", ConsoleStatusChips
+        )
 
         composer.load_draft("hello")
         await _settle_successful_full(console, pilot)
@@ -562,8 +570,8 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         # happens under this parked pointer -- which is exactly the state the
         # freshness guarantee has to hold in.
         cost_before = (
-            cost_chip.display,
-            str(cost_chip.render()),
+            status_strip.segment_visible("cost"),
+            status_strip.segment_text("cost"),
             context_spend_for_test(console)._last_console_cost_state,
         )
         await pilot.hover("#console-send-message")
@@ -575,8 +583,8 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         assert "claude-sonnet-4-6" in tooltip
         assert "rates as of" in tooltip
         assert (
-            cost_chip.display,
-            str(cost_chip.render()),
+            status_strip.segment_visible("cost"),
+            status_strip.segment_text("cost"),
             context_spend_for_test(console)._last_console_cost_state,
         ) == cost_before
 

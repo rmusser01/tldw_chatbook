@@ -7,6 +7,10 @@ tracker math (Tests/Chat/test_console_cost_tracker.py), the controller's
 fingerprint/cache-TTL ground truth (task-3), and the chip widget itself
 (Tests/Chat/test_console_status_chips_cost.py).
 
+TASK-35160: the chip widget collapsed into the status line's "cost" segment
+(``ConsoleStatusChips.segment_text``/``segment_visible`` plus the segment
+state from ``_build_segments()``); the semantics pinned here are unchanged.
+
 Harness: mirrors ``Tests/UI/test_console_native_chat_flow.py`` -- a real
 mounted ``ChatScreen`` behind ``ConsoleHarness``, a stub provider gateway
 injected via ``app.console_provider_gateway_factory`` (never a real network
@@ -55,7 +59,10 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
-from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 from tldw_chatbook.config import load_settings, save_settings_to_cli_config
 from Tests.console_provider_doubles import provider_resolution
 
@@ -64,6 +71,20 @@ from Tests.console_provider_doubles import provider_resolution
 pytestmark = pytest.mark.bootstrap_profile
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
+
+
+def _strip(console) -> ConsoleStatusChips:
+    return console.query_one("#console-status-chips", ConsoleStatusChips)
+
+
+def _cost_segment(console):
+    """The cost segment's full state (visible flag + emphasis), the segment
+    successor of the chip-era ``ConsoleCostChip`` widget reads."""
+    for segment in _strip(console)._build_segments():
+        if segment.name == "cost":
+            return segment
+    raise AssertionError("cost segment missing")
+
 
 # Anthropic-native usage-payload shapes (see ProviderUsage.from_provider_payload):
 # a plain priced call with no cache activity, and one that reports a cache
@@ -245,17 +266,12 @@ async def test_cost_chip_shows_dollar_figure_after_priced_send():
         console = host.screen_stack[-1]
         await _send_and_settle(console, pilot, "hello", "the priced answer")
 
-        chip = console.query_one("#console-cost-chip")
-        assert chip.display is True
-        # At 200 columns the chips before it leave no room for a figure, so
-        # at rest it reads "…" (it used to keep a label the strip cut to
-        # "Context"); with focus it shows every figure.
-        assert str(chip.render()) == "…"
-        chip.focus()
-        for _ in range(5):
-            await pilot.pause()
-        rendered = str(chip.render())
-        assert "$" in rendered
+        assert _strip(console).segment_visible("cost") is True
+        # TASK-35160: the chip-era fitting dance is gone with the chips -- the
+        # chip used to ellipsize to "…" at rest at 200 columns and reveal every
+        # figure on focus; the line always renders the width-aware label and
+        # scrolls when it overflows.
+        assert "$" in _strip(console).segment_text("cost")
 
         state = context_spend_for_test(console)._last_console_cost_state
         assert state is not None
@@ -323,8 +339,8 @@ async def test_editing_earlier_history_alerts_the_warm_cache_chip():
         # to the break-reason case didn't also drop the rendered figure.
         assert "~+$" in state.tooltip
 
-        chip = console.query_one("#console-cost-chip")
-        assert chip.has_class("console-chip-alert")
+        # TASK-35160: the chip's alert class is the segment's alert span now.
+        assert _cost_segment(console).alert is True
 
 
 @pytest.mark.asyncio
@@ -435,9 +451,12 @@ async def test_reverting_the_edit_clears_the_alert():
         assert state.cold is False
         assert context_spend_for_test(console)._console_cost_cache_state == ConsoleCacheState.WARM
 
-        chip = console.query_one("#console-cost-chip")
-        assert not chip.has_class("console-chip-alert")
-        assert not chip.has_class("console-chip-cold")
+        # TASK-35160: the chip-era alert/cold classes flattened into the
+        # segment's alert/dim spans; the cold FACT stays on the cost state
+        # (asserted above).
+        segment = _cost_segment(console)
+        assert segment.alert is False
+        assert segment.dim is True
 
 
 # --- task-2115: revert-with-TTL-remaining vs. genuine TTL lapse -------------
@@ -507,9 +526,12 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
         assert had_activity_after is True
         assert warm_until_after == warm_until_before
 
-        chip = console.query_one("#console-cost-chip")
-        assert not chip.has_class("console-chip-alert")
-        assert not chip.has_class("console-chip-cold")
+        # TASK-35160: the chip-era alert/cold classes flattened into the
+        # segment's alert/dim spans; the cold FACT stays on the cost state
+        # (asserted above).
+        segment = _cost_segment(console)
+        assert segment.alert is False
+        assert segment.dim is True
 
 
 @pytest.mark.asyncio
@@ -552,8 +574,13 @@ async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expire
         assert "Cache: expired" in state.tooltip
         assert context_spend_for_test(console)._console_cost_cache_state == ConsoleCacheState.EXPIRED
 
-        chip = console.query_one("#console-cost-chip")
-        assert chip.has_class("console-chip-cold")
+        # TASK-35160: the chip-era "cold" class had no token-legal markup
+        # span and flattened into dim; the expired FACT stays on the cost
+        # state (asserted above). The segment must stay visible and calm.
+        segment = _cost_segment(console)
+        assert segment.alert is False
+        assert segment.dim is True
+        assert _strip(console).segment_visible("cost") is True
 
 
 # --- (d) no active native session -> None / hidden --------------------------
@@ -584,7 +611,7 @@ async def test_staged_evidence_changes_next_send_but_not_current_spend():
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("price this request")
@@ -646,7 +673,7 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
 
         baseline = context_spend_for_test(console)._build_console_cost_state()
         assert baseline is not None
@@ -667,7 +694,7 @@ async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         # A freshly mounted Console session has no usage/cost yet, so the
         # snapshot is empty and the chip renders hidden either way -- force
         # the "no session at all" branch directly, matching how
@@ -677,8 +704,8 @@ async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
         console._console_chat_store = None
         console._sync_console_cost_chip()
 
-        chip = console.query_one("#console-cost-chip")
-        assert chip.display is False
+        # TASK-35160: a hidden cost state drops the segment from the line.
+        assert _strip(console).segment_visible("cost") is False
 
 
 # --- (e) TTL: past warm_until flips EXPIRED/cold and stops the timer --------
@@ -719,8 +746,12 @@ async def test_ttl_timer_expires_the_chip_and_stops_itself():
         assert state.cold is True
         assert context_spend_for_test(console)._console_cost_ttl_timer is None
 
-        chip = console.query_one("#console-cost-chip")
-        assert chip.has_class("console-chip-cold")
+        # TASK-35160: the expired FACT stays on the cost state (asserted
+        # above); the chip-era "cold" class flattened into dim, non-alert.
+        segment = _cost_segment(console)
+        assert segment.alert is False
+        assert segment.dim is True
+        assert _strip(console).segment_visible("cost") is True
 
 
 # --- (f) fingerprint recompute is skipped while STREAMING -------------------
@@ -788,15 +819,14 @@ async def test_cost_chip_press_opens_the_breakdown_modal():
         console = host.screen_stack[-1]
         await _send_and_settle(console, pilot, "hello", "the priced answer")
 
-        # The chip strip is a hard-pinned single row after 9 other chips
-        # (dossier §1c/§1f) -- at a modest terminal width the cost chip can
-        # sit past the visible edge, so drive activation the same way
-        # Tests/Chat/test_console_status_chips_cost.py's keyboard-activation
-        # test does (`action_open_cost_breakdown`) rather than a real
-        # `pilot.click`, which would need an unrealistically wide screen to
-        # guarantee the chip is on-screen.
-        chip = console.query_one("#console-cost-chip", ConsoleCostChip)
-        chip.action_open_cost_breakdown()
+        # The cost segment sits last on the status line (dossier §1c/§1f) --
+        # at a modest terminal width it can sit past the visible edge, so
+        # drive activation the same way the strip's own keyboard path does
+        # (`action_open_segment("cost")` posts the same
+        # ``ConsoleCostChip.ConsoleCostChipPressed`` the click posts) rather
+        # than a real `pilot.click`, which would need an unrealistically wide
+        # screen to guarantee the segment is on-screen.
+        console.query_one("#console-status-text", ConsoleStatusText).action_open_segment("cost")
         await pilot.pause()
 
         from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
@@ -917,7 +947,7 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
 
         baseline = context_spend_for_test(console)._build_console_cost_state()
         assert baseline is not None

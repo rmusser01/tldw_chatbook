@@ -17,7 +17,11 @@ import asyncio
 import tomllib
 
 import pytest
-from textual.widgets import Input, Static
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+from textual.widgets import Input
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
@@ -30,6 +34,7 @@ from tldw_chatbook.config import load_settings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 
 SON = ("s", "o", "n")
 MODEL_ONLY = ("alt+m", *SON, "enter")
@@ -129,20 +134,24 @@ def _composer(console: ChatScreen):
 
 
 async def _chips_show(console: ChatScreen, pilot, provider: str, model: str) -> None:
-    """AC#9: the status chips name the applied pair (they refresh on the tick)."""
+    """AC#9: the status line names the applied pair (it refreshes on the tick).
 
-    def text(selector: str) -> str:
-        return str(console.query_one(selector, Static).render())
+    TASK-35160: the provider/model chips are the line's "provider"/"model"
+    segments; the seam reads back exactly their rendered text.
+    """
+
+    def segment(name: str) -> str:
+        return console.query_one(
+            "#console-status-chips", ConsoleStatusChips
+        ).segment_text(name)
 
     for _ in range(100):
-        if provider in text("#console-provider-chip") and model in text(
-            "#console-model-chip"
-        ):
+        if provider in segment("provider") and model in segment("model"):
             return
         await pilot.pause(0.05)
     raise AssertionError(
-        f"chips still show {text('#console-provider-chip')!r} "
-        f"/ {text('#console-model-chip')!r}"
+        f"status line still shows {segment('provider')!r} "
+        f"/ {segment('model')!r}"
     )
 
 
@@ -164,7 +173,7 @@ async def test_apply_paths_from_the_composer_meet_their_key_budgets(request) -> 
         console = harness.screen
         assert isinstance(console, ChatScreen)
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        await _wait_for_selector(console, pilot, "#console-provider-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
         _composer(console).focus()

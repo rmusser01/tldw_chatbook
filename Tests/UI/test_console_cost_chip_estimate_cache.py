@@ -14,6 +14,9 @@ tokenize exactly that one row. The chip's SEMANTICS (mid-stream freeze, staged
 evidence, ``~`` prefix, TTL states, fingerprint gating) are pinned unchanged by
 Tests/UI/test_console_cost_chip_screen.py, which this file deliberately does
 not modify.
+
+TASK-35160: the cost chip is the status strip's "cost" SEGMENT on one text
+line now; the mount waits below settle on the line (#console-status-text).
 """
 
 from __future__ import annotations
@@ -24,6 +27,10 @@ import time
 from unittest.mock import Mock
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from Tests.private_profile import private_profile_test
 
 from Tests.UI.test_console_cost_chip_screen import (
@@ -88,7 +95,7 @@ async def test_second_identical_tick_does_not_retokenize_the_transcript(
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         _seed_usageless_transcript(console)
 
         spy = _spy_on_estimator(monkeypatch)
@@ -118,7 +125,7 @@ async def test_editing_one_row_retokenizes_only_that_row(monkeypatch, request):
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store, session_id = _seed_usageless_transcript(console)
 
         context_spend_for_test(console)._build_console_cost_state()
@@ -147,7 +154,7 @@ async def test_late_terminal_usage_replaces_settled_cost_without_payload_edit(
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
         store.append_message(
@@ -186,7 +193,7 @@ async def test_edited_row_is_repriced_not_served_stale(monkeypatch, request):
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store, session_id = _seed_usageless_transcript(console)
 
         before = context_spend_for_test(console)._build_console_cost_state()
@@ -214,7 +221,7 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch, re
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         before_used = context_spend_for_test(console)._active_console_settings_context_estimate().used_tokens
 
         reference = EvidenceReference(
@@ -277,7 +284,7 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick(request):
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
         user_message = store.append_message(

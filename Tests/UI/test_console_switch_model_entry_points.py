@@ -16,6 +16,10 @@ real writers own, as in ``test_console_switch_model_keys``):
 from __future__ import annotations
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
@@ -35,6 +39,10 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 
 SWITCH_MODEL = "Switch model"
 CHAT_SETTINGS = "Chat settings"
@@ -58,7 +66,15 @@ async def _open_console(harness: _Harness, pilot) -> ChatScreen:
     console = harness.screen
     assert isinstance(console, ChatScreen)
     await _wait_for_selector(console, pilot, "#console-native-composer")
-    await _wait_for_selector(console, pilot, "#console-provider-chip")
+    await _wait_for_selector(console, pilot, "#console-status-text")
+    # TASK-35160: the provider chip is the status line's "provider" segment
+    # now; ready means the provider label is on the line.
+    strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+    await _until(
+        pilot,
+        lambda: "Provider:" in strip.segment_text("provider"),
+        "the provider segment to render",
+    )
     _composer(console).focus()
     await pilot.pause()
     return console
@@ -141,9 +157,10 @@ async def test_model_query_opens_switch_model_with_find_filled(request) -> None:
 @pytest.mark.asyncio
 @private_profile_test
 async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) -> None:
-    """AC#3, AC#5, AC#6: Ctrl+O opens Chat settings from the composer and from
-    a focused Provider/Model chip; the rail's "Change  Alt+M" opens Switch
-    model; the chips' Enter and the footer's Alt+M/Ctrl+O all work."""
+    """AC#3, AC#5, AC#6: Ctrl+O opens Chat settings from the composer and
+    from a focused provider/model segment of the status line; the rail's
+    "Change  Alt+M" opens Switch model; the segments' Enter and the footer's
+    Alt+M/Ctrl+O all work."""
     app = _console_app()
     harness = _Harness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -157,24 +174,31 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
         )
         await _close_chat_settings(harness, console, pilot)
 
-        for chip_id in ("console-provider-chip", "console-model-chip"):
-            chip = console.query_one(f"#{chip_id}", Static)
-            tooltip = str(chip.tooltip)
-            assert f"{SWITCH_MODEL} (Alt+M)" in tooltip, tooltip
-            assert f"{CHAT_SETTINGS} (Ctrl+O)" in tooltip, tooltip
-            chip.focus()
+        # TASK-35160: the provider/model chips are segments of one focusable
+        # status line. Per-segment tooltips are gone -- the Alt+M/Ctrl+O
+        # teaching lives on the footer (asserted below) -- and the Enter /
+        # Ctrl+O routes walk the line's own segment cursor instead of
+        # focusing a chip.
+        for segment_name in ("provider", "model"):
+            line = console.query_one("#console-status-text", ConsoleStatusText)
+            line.focus()
             await pilot.pause()
+            for _ in range(len(line.segment_spans)):
+                if line.segment_spans[line._cursor][0] == segment_name:
+                    break
+                await pilot.press("right")
+            assert line.segment_spans[line._cursor][0] == segment_name
             await pilot.press("enter")
             await _switcher_ready(harness, pilot)
             await pilot.press("escape")
             await _until(pilot, lambda: harness.screen is console, "the switcher to close")
-            chip.focus()
+            line.focus()
             await pilot.pause()
             await pilot.press("ctrl+o")
             await _until(
                 pilot,
                 lambda: isinstance(harness.screen, ConsoleSettingsModal),
-                f"Ctrl+O from #{chip_id}",
+                f"Ctrl+O from the {segment_name} segment",
             )
             await _close_chat_settings(harness, console, pilot)
 
