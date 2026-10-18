@@ -22925,3 +22925,8 @@ against preserved current source; all passed, with matching copies and
 before/after hashes. The four historical missing copies remain missing.
 Copy the runnable source before each phase or rewrite; a hash, a later function
 comparison or another passing count cannot reconstruct its bytes.
+
+
+## Rebuild hook event payloads through the existing model serializer (PR3148, 2026-10-18)
+
+The rebased row-removal refusal witness reached the real guarded engine, then failed `lifecycle.event` with `ValueError: non-JSON value`: `dict(event.data, ...)` retained nested immutable mappings. The existing `event.model_dump()["data"]` projection produced JSON containers without changing the strict parser or authority. That exact matching-refusal/nonmatching-positive/cleanup case then passed on141369945f (phase30,2.83s). Use the model projection before rebuilding an event; a shallow outer copy does not thaw its nested values.
