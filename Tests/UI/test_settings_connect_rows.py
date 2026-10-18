@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 from textual import events
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import Collapsible, Input, OptionList, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen
@@ -600,6 +600,10 @@ _NO_FOCUS_GUIDE = {
     ),
 }
 
+#: The field Esc releases, where the category guides one whose tooltip the
+#: focus-help line shows (task-2835); no Console Behavior guided field has one.
+_ESC_FIELDS = {"providers-models": "#settings-session-summary-duration"}
+
 
 @pytest.mark.asyncio
 @private_profile_test
@@ -643,14 +647,28 @@ async def test_the_revert_dialog_leaves_focus_off_the_navigation_bar(
         def guide() -> str:
             return str(screen.query_one(guide_id, Static).renderable)
 
-        # Capture phase: once Esc releases the field, the guide stops naming it.
+        def focus_help() -> str:
+            return str(screen.query_one("#settings-focus-help", Static).renderable)
+
+        tip = screen.query_one(_ESC_FIELDS.get(category, selector), Input)
+        for node in tip.ancestors:  # the duration sits in an Advanced disclosure
+            if isinstance(node, Collapsible):
+                node.collapsed = False
+        await pilot.pause()
+        tip.focus()
+        await pilot.pause()
+        assert focus_help() == str(tip.tooltip or ""), focus_help()
+        # Capture phase: once Esc releases the field, the guide and the
+        # focus-help line stop describing it.
         assert no_focus_copy not in guide()
         await pilot.press("escape")
         await pilot.pause()
         assert no_focus_copy in guide(), guide()
+        assert focus_help() == "", focus_help()
         await pilot.press("r")
         await revert_dialog_answered(("enter",) if keep else ("tab", "enter"))
         assert no_focus_copy in guide(), guide()
+        assert focus_help() == "", focus_help()
 
         focused = host.focused
         assert focused is None or not any(

@@ -35696,9 +35696,9 @@ class SettingsScreen(BaseAppScreen):
             and not self._category_search_has_focus()
         ):
             # task-1560: Esc releases field focus, so the footer's "Esc, s save
-            # category" chain holds for EVERY text field (only the filter
-            # input used to handle Esc; later keys kept feeding the field).
-            self.set_focus(None)
+            # category" chain holds for EVERY text field, not just the filter.
+            self.set_focus(None)  # no DescendantFocus follows, so reset here
+            self._update_focus_help(None)  # its focus-help line (task-2835)
             self._active_settings_field_id = None  # TASK-33007.11: nor its guide
             for k in ("provider", "appearance", "storage", "rag", "console_behavior"):
                 getattr(self, f"_refresh_{k}_field_guidance")()  # off-category: no-op
