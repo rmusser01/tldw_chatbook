@@ -852,12 +852,12 @@ async def test_runtime_keeps_refusal_engine_when_all_native_rows_are_removed(
                 handler.id in engine.native_plugins.unavailable
                 for handler in engine.definitions
             )
-            source = tool_event(provider="local")
+            source = tool_event(provider="local").model_dump()["data"]
             matching = lifecycle.event(
-                "PreToolUse", data=dict(source.data, operation="file.write")
+                "PreToolUse", data=dict(source, operation="file.write")
             )
             nonmatching = lifecycle.event(
-                "PreToolUse", data=dict(source.data, operation="file.read")
+                "PreToolUse", data=dict(source, operation="file.read")
             )
             assert (await engine.fire_async(nonmatching)).allowed
             assert not (await engine.fire_async(matching)).allowed
