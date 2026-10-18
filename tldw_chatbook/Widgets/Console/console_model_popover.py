@@ -204,8 +204,10 @@ class DefaultReadinessResolver(Protocol):
 class PairUse(Protocol):
     """One recent provider·model pair (``model_switcher.ModelPairUse``)."""
 
-    provider: str
-    model: str
+    @property
+    def provider(self) -> str: ...
+    @property
+    def model(self) -> str: ...
 
     def used_label(self, now: datetime) -> str: ...
 

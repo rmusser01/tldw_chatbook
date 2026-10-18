@@ -30,7 +30,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, TypedDict
 
 from loguru import logger
 
@@ -63,6 +63,15 @@ if TYPE_CHECKING:
     )
     from ...Chat.local_server_discovery import DiscoveredLocalServer
     from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from ...Widgets.Console.console_model_popover import (
+        CatalogLoader,
+        ConnectionProber,
+        DefaultReadinessResolver,
+        DraftRebaser,
+        PairUse,
+        PreviousPairResolver,
+        RecentPairsLoader,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 RECENT_CONVERSATION_LIMIT = 50
@@ -78,6 +87,19 @@ _CARD_SWITCHER_RECOVERIES = frozenset(
 )
 
 Pair = tuple[str, str | None]
+
+
+class SwitcherSources(TypedDict):
+    """The ``ConsoleModelPopover`` keyword arguments every mode lists from."""
+
+    app_config: Mapping[str, object]
+    providers_models: Mapping[str, Sequence[str]]
+    draft_rebaser: DraftRebaser
+    default_readiness_resolver: DefaultReadinessResolver
+    recent_pairs_loader: RecentPairsLoader
+    previous_pair: PreviousPairResolver
+    catalog_loader: CatalogLoader
+    connection_prober: ConnectionProber
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,8 +285,8 @@ class PreviousPairMemory:
         )
 
     def previous(
-        self, session_id: str, current: Pair, recent: Sequence[ModelPairUse]
-    ) -> ModelPairUse | None:
+        self, session_id: str, current: Pair, recent: Sequence[PairUse]
+    ) -> PairUse | None:
         """Return this chat's previous pair, else RECENT's newest other pair.
 
         Args:
@@ -278,7 +300,9 @@ class PreviousPairMemory:
         remembered = self._by_session.get(session_id)
         if remembered is not None and remembered.pair != current:
             return remembered
-        return next((use for use in recent if use.pair != current), None)
+        return next(
+            (use for use in recent if (use.provider, use.model) != current), None
+        )
 
 
 #: The process-lifetime PREVIOUS memory the switcher reads and records into.
@@ -421,7 +445,7 @@ def _switcher_sources(
     app_config: Mapping[str, object] | None = None,
     readiness: Callable[..., ConsoleSettingsReadiness] | None = None,
     listing: tuple[str, Sequence[str]] | None = None,
-) -> dict[str, object]:
+) -> SwitcherSources:
     """Return the pair sources every Switch model mode lists from.
 
     The Get started card's detected server passes the three optional
@@ -450,7 +474,9 @@ def _switcher_sources(
         app_config = screen._provider_readiness_app_config()
     probe = switcher_connection_prober(screen.app, app_config)
 
-    async def connection_prober(targets, settled):  # type: ignore[no-untyped-def]
+    async def connection_prober(
+        targets: Mapping[str, str | None], settled: Callable[[str], None]
+    ) -> None:
         def settled_here_and_under(provider: str) -> None:
             settled(provider)
             if not screen.is_attached:  # A probe outlives a closed switcher.
@@ -762,7 +788,7 @@ def _open_switcher(
                 else highlight
             ),
             reopened_provider=reopened,
-            **_switcher_sources(  # type: ignore[arg-type]
+            **_switcher_sources(
                 screen,
                 session.id,
                 before,
@@ -981,7 +1007,7 @@ def open_model_picker(
             pick_only=True,
             query=query,  # "<entry name> " keeps its space for the model id
             served_models=served,
-            **_switcher_sources(  # type: ignore[arg-type]
+            **_switcher_sources(
                 screen, origin.session_id, (settings.provider, settings.model)
             ),
         ),
