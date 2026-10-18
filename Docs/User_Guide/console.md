@@ -869,11 +869,16 @@ that needs no key and runs on this computer or a private-network address
 the same short timeout as **Test connection**, and a result under 10 seconds
 old is reused. The list opens and takes keys at once; the words change as
 the answers come in, and a stopped server's "refused" reaches this chat's
-status at once, under the open list. A server on a carrier-grade NAT address
+status at once, under the open list. Once a server's model listing has
+answered (this check, or **Test connection** of the same connection), that
+server's rows are the models it listed, and saved or cached models it did
+not list are no longer offered; this chat's own model stays listed first.
+Until then (not checked yet, refused or timed out) the rows are the saved
+and cached models. A server on a carrier-grade NAT address
 (100.64.0.0/10, as some VPNs use) counts as public and is not checked. Cloud providers, a server on a public address or host name, and
 any endpoint that would send a key are never contacted automatically.
-Typing filters every provider's saved and cached models in memory and
-highlights the best match; it never starts a model listing or a network
+Typing filters every provider's listed, saved and cached models in memory
+and highlights the best match; it never starts a model listing or a network
 call. Typing exactly a provider's name or id (`OpenAI`, `llama_cpp`) lists
 that provider's own rows first in their group and highlights the first of
 them, ahead of an aggregator's ids that start with the name (OpenRouter's

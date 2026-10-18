@@ -74,6 +74,8 @@ class Servers:
         self.up = set(up)
         #: Port -> HTTP status a server answers its listing with (401, 403).
         self.status: dict[int, int] = {}
+        #: Port -> the model ids a running server lists (default: model-a).
+        self.listing: dict[int, list[str]] = {}
         self.hold: threading.Event | None = None
         self.requests: list[tuple[str, int, str | None, int]] = []
         self.in_flight = self.max_in_flight = 0
@@ -100,7 +102,8 @@ class Servers:
                 raise httpx.ConnectError("refused") from OSError(
                     errno.ECONNREFUSED, "refused"
                 )
-            return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+            listed = self.listing.get(request.url.port, ["model-a"])
+            return httpx.Response(200, json={"data": [{"id": m} for m in listed]})
         finally:
             with self._lock:
                 self.in_flight -= 1
@@ -826,6 +829,56 @@ async def test_rows_read_verified_only_for_the_models_the_key_check_listed(reque
         assert presentation.primary_label == words[model]
         assert settings_rows["Readiness"] == words[model]
     assert "not listed by the server" in settings_rows["Model"]
+
+
+@pytest.mark.parametrize("server", ["lists", "lists-this-chat", "not-probed", "refused"])
+async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, server):
+    """TASK-33005.12: Ollama's rows came from its saved list (qwen3:4b,
+    gemma3:12b) although the running server listed only qwen2.5:0.5b, which
+    no row offered. Once the probe's listing is in the shared evidence, the
+    rows are the listed models, and an Ollama chat's own model stays first
+    (ADR-020); with no listing (not probed, or refused) they stay the saved
+    ones. The rows read the evidence the probe recorded: one request per
+    local server, as before."""
+    servers.up = set() if server == "refused" else {OLLAMA}
+    servers.listing = {OLLAMA: ["qwen2.5:0.5b"]}
+    saved = ["qwen3:4b", "gemma3:12b"]
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            providers_models={**PROVIDERS_MODELS, "ollama": saved},
+            prober=server != "not-probed",
+            pair=("ollama", "qwen3:4b")
+            if server == "lists-this-chat"
+            else ("llama_cpp", "model-a"),
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        ready = [
+            row.model
+            for row in _group(switcher, "READY PROVIDERS")
+            if row.kind == "pair" and row.provider == "ollama"
+        ]
+        models = switcher._models_for("ollama")
+        lines = list_lines(app, switcher)
+
+    if server == "lists":
+        assert ready == ["qwen2.5:0.5b"]
+        _identity, reached = _evidence(app, OLLAMA)
+        word = f"Ready · reachable {reached.observed_at.astimezone():%H:%M}"
+        assert word in line_with(lines, "qwen2.5:0.5b")
+        assert not any("qwen3:4b" in line or "gemma3:12b" in line for line in lines)
+    elif server == "lists-this-chat":
+        assert ready == ["qwen3:4b", "qwen2.5:0.5b"]
+        assert popover_module.CURRENT_MARK in line_with(lines, "qwen3:4b")
+        assert not any("gemma3:12b" in line for line in lines)
+    elif server == "not-probed":
+        assert ready == saved
+    else:
+        assert ready == []  # refused: not offered as ready at all
+    assert models == (("qwen2.5:0.5b",) if "lists" in server else tuple(saved))
+    assert sorted(servers.ports) == ([] if server == "not-probed" else [LLAMA, OLLAMA])
 
 
 async def test_the_switcher_widget_makes_no_network_call_itself(servers):

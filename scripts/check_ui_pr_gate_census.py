@@ -388,7 +388,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # real-CSS backend-row node (TASK-33641.3), now a private-profile test: 351.
 # Phase 9 Task 15 appends the credential round-trip node (TASK-33006.16),
 # now a private-profile test, 3 of 3 serial: 352.
-MINIMUM_FILES = 352
+# Phase 9 Task 16 appends one node id, 3 of 3 serial: a local server's
+# switcher rows are the models its probe listed (TASK-33005.12): 353, after
+# Task 15's 352, in the Wave 6 integration.
+MINIMUM_FILES = 353
 
 
 def read_census(path: Path) -> list[str]:

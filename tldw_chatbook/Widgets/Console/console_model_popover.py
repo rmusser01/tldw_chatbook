@@ -168,6 +168,33 @@ def _retries_in_place(readiness: ConsoleSettingsReadiness) -> bool:
     )
 
 
+def _server_listing(
+    readiness: ConsoleSettingsReadiness | None,
+) -> tuple[str, ...] | None:
+    """The models a server's last listing returned, or None (TASK-33005.12).
+
+    The switcher's local probe (or any test of the same connection) records
+    them in the shared evidence this readiness carries, so reading them sends
+    nothing. Only a server's own listing counts: a URL-based provider or a
+    registry entry; a cloud key check's listing is no catalog.
+    """
+    evidence = getattr(readiness, "evidence", None)
+    connection = getattr(readiness, "connection", None)
+    if (
+        evidence is None
+        or connection is None
+        or readiness.endpoint != "reachable"
+        or (
+            connection.custom_endpoint_id is None
+            and connection.provider_key not in URL_BASED_PROVIDER_KEYS
+        )
+    ):
+        return None
+    return tuple(
+        dict.fromkeys(m for m in map(normalize_model_id, evidence.model_ids) if m)
+    )
+
+
 #: Blockers a connection test produced; such a row leads NEEDS SETUP, so the
 #: row cap never hides a stopped local server behind keyless cloud rows.
 _TEST_FAILURES = frozenset({"endpoint_unreachable", "credential_rejected"})
@@ -1095,6 +1122,10 @@ class ConsoleModelPopover(
         return cached
 
     def _models_for(self, key: str) -> tuple[str, ...]:
+        """What the server listed, else the catalog, else the saved models."""
+        listed = _server_listing(self._readiness.get(key))
+        if listed is not None:
+            return listed
         catalog = self._catalogs.get(key)
         return catalog if catalog is not None else self._saved_models(key)
 
@@ -1473,6 +1504,8 @@ class ConsoleModelPopover(
 
     def _catalog_status_rows(self, key: str, has_rows: bool) -> list[SwitcherRow]:
         """AC#9: a loading, empty or unavailable catalog says so in a row."""
+        if has_rows and _server_listing(self._readiness.get(key)) is not None:
+            return []  # the server's own listing fills them, not a catalog
         state = self._catalog_state.get(key)
         name = self._display(key)
         if state == "loading" and not has_rows:

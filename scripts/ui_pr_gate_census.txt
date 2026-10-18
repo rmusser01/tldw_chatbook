@@ -657,3 +657,6 @@ Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and
 # Phase 9 Task 15 (2026-10-18) appends one entry no lane ran, 3 of 3 serial (and 10 of 10, TASK-33003.21's bar).
 # TASK-33006.16: through a real credential round trip a pick still names Model alone, and a Temperature edit still asks (2 cases, ~40 s, private profile).
 Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
+# Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
+# TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
+Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
