@@ -8,7 +8,7 @@ created_date: 2026-10-16 20:14
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-POPULAR_TABS in tldw_chatbook/app_command_providers.py still lists TAB_MCP; after the MCP destination retirement (task-35150 / ADR-237) both TAB_MCP (now an alias) and TAB_SETTINGS render a Switch-to-Settings command in the palette's popular row. Remove the duplicate or relabel it 'Settings — Tools & MCP'.
+POPULAR_TABS in tldw_chatbook/app_command_providers.py still lists TAB_MCP; after the MCP destination retirement (task-35150 / ADR-240) both TAB_MCP (now an alias) and TAB_SETTINGS render a Switch-to-Settings command in the palette's popular row. Remove the duplicate or relabel it 'Settings — Tools & MCP'.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -43,7 +43,7 @@ def test_tab_navigation_provider_includes_settings_and_mcp_shell_commands():
     tab_ids = TabNavigationProvider.navigation_tab_ids()
 
     assert TAB_SETTINGS in tab_ids
-    # ADR-237: the MCP destination retired into Settings > Tools & MCP; the
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP; the
     # legacy route ids are no longer navigation tabs.
     assert TAB_MCP not in tab_ids
     assert TAB_TOOLS_SETTINGS not in tab_ids
@@ -57,7 +57,7 @@ def test_command_palette_has_one_entry_per_shell_destination(request):
 
     # One labeled palette command per destination; nothing else.
     assert command_tab_ids == TabNavigationProvider.navigation_tab_ids()
-    # ADR-237 retired the MCP destination: 13 shell destinations remain.
+    # ADR-240 retired the MCP destination: 13 shell destinations remain.
     assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 13
 
     # Legacy route ids are aliases, not separate labeled commands.
@@ -124,7 +124,7 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination(request):
     assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms[
         "watchlists_collections"
     ]
-    # ADR-237: the MCP destination's route identity moved onto Settings as
+    # ADR-240: the MCP destination's route identity moved onto Settings as
     # palette alias terms.
     assert {"tools", "mcp", "tool settings"} <= alias_terms["settings"]
     assert {"chatbooks", "Chatbooks"} <= alias_terms["library"]

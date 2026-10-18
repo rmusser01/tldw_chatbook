@@ -8,7 +8,7 @@ created_date: 2026-10-16 20:15
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Spec amendment A4, resolved as a contract note in ADR-237: the legacy mcp/tools_settings aliases carry only the default category context via the default-context map; explicit caller contexts are not merged under the alias. Either merge the default context under explicit caller contexts in app_navigation, or codify canonical-route-only producers; decide the approach inside this task.
+Spec amendment A4, resolved as a contract note in ADR-240: the legacy mcp/tools_settings aliases carry only the default category context via the default-context map; explicit caller contexts are not merged under the alias. Either merge the default context under explicit caller contexts in app_navigation, or codify canonical-route-only producers; decide the approach inside this task.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -2196,7 +2196,7 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
     """Realigned from the retired `UnifiedMCPPanel` 3-column embed.
 
     Task 8 replaced the embedded panel with the rail/canvas/inspector
-    `MCPWorkbench` triad; ADR-237 moved that triad into the Settings Tools &
+    `MCPWorkbench` triad; ADR-240 moved that triad into the Settings Tools &
     MCP pane. Same product intent -- server list, server detail, and
     readiness/actions each get a fully visible, non-overflowing pane --
     verified against the `#mcp-hub-rail` / `#mcp-hub-canvas` /
@@ -2225,7 +2225,7 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
 async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry(request):
     """Realigned from the retired `UnifiedMCPPanel` embed (same intent as above).
 
-    ADR-237: hosted by the Settings Tools & MCP pane now. Verifies the
+    ADR-240: hosted by the Settings Tools & MCP pane now. Verifies the
     default local-source state (no server selected, only the built-in server
     present) does not break the workbench triad's geometry, and that the
     servers-mode overview content stays confined to the canvas pane rather
@@ -2294,7 +2294,7 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(request, monkeypa
             # Private-profile children start cold (no warm module cache), so
             # the first screen push can outgrow the helper's tight default.
             await _wait_for_production_screen(app, pilot, ChatScreen, timeout=30.0)
-            # ADR-237: the bare "mcp" route lands Settings > Tools & MCP.
+            # ADR-240: the bare "mcp" route lands Settings > Tools & MCP.
             await app.handle_screen_navigation(NavigateToScreen("mcp"))
             screen = await _wait_for_production_screen(
                 app, pilot, SettingsScreen, timeout=30.0

@@ -5318,7 +5318,7 @@ class SettingsScreen(BaseAppScreen):
                 continue
 
     def on_screen_resume(self) -> None:
-        # ADR-237: re-assert what suspend cleared ("settings-tools" source).
+        # ADR-240: re-assert what suspend cleared ("settings-tools" source).
         self._register_footer_shortcuts()
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
@@ -29952,7 +29952,7 @@ class SettingsScreen(BaseAppScreen):
             isinstance(self.app.screen, ModalScreen)
             and self._active_category_id() is SettingsCategoryId.THEME
         )
-        # ADR-237 port: under an overlay, clear the Tools & MCP hint set
+        # ADR-240 port: under an overlay, clear the Tools & MCP hint set
         # and invalidate an accepted recovery review's receipt.
         self.clear_footer_shortcuts(source="settings-tools")
         if (tools_pane := self._tools_hub_pane()) is not None:
@@ -33182,7 +33182,7 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self.active_category == SettingsCategoryId.TOOLS.value:
-            # No draft state: `s` answers with guidance here (ADR-237 A3).
+            # No draft state: `s` answers with guidance here (ADR-240 A3).
             self.app.notify(
                 "Tools & MCP applies changes immediately — nothing to save."
             )
@@ -34530,7 +34530,7 @@ class SettingsScreen(BaseAppScreen):
         self._trigger_library_rag_profile_set_active()
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
-        """Forward runtime-backend changes to the Tools & MCP pane (ADR-237)."""
+        """Forward runtime-backend changes to the Tools & MCP pane (ADR-240)."""
         if (pane := self._tools_hub_pane()) is not None:
             pane.handle_runtime_backend_change(runtime_backend)
 

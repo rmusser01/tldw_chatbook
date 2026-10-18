@@ -123,7 +123,7 @@ async def test_mode_keys_and_verb_keys_dispatch_only_in_tools_category():
         called: list[str] = []
         pane.activate_mode = lambda mode: called.append(mode)  # type: ignore[assignment]
         pane.test_selected_tool = lambda: called.append("test")  # type: ignore[assignment]
-        # The 1-4/a/r/t keys are pane-held BINDINGS (ADR-237 ratchet offset:
+        # The 1-4/a/r/t keys are pane-held BINDINGS (ADR-240 ratchet offset:
         # strictly better scoping than the category guard -- they fire when
         # focus is inside the pane, and keep their pre-branch Settings
         # meanings outside it).
@@ -278,7 +278,7 @@ async def test_apply_navigation_context_rejects_malformed_tools_context(request)
 @pytest.mark.asyncio
 @private_profile_test
 async def test_suspending_settings_invalidates_in_flight_recovery_review(request):
-    """ADR-237 port check: leaving Settings mid-review must invalidate an
+    """ADR-240 port check: leaving Settings mid-review must invalidate an
     accepted recovery review's UI receipt AND clear the TOOLS footer hints --
     both halves of the retired MCP shell's on_screen_suspend, driven through
     the REAL SettingsScreen handler (not an inlined copy)."""

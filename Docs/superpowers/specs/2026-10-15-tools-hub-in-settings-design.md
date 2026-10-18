@@ -7,7 +7,7 @@ stays separate with a cross-link; `mcp-defaults` deleted outright.
 Amended 2026-10-16 by a second, independent design review (see "Amendments"
 at the end): the user confirmed the long-term goal is UX and ease-of-use;
 no approved decision changes.
-ADR: ADR-237 (retire the MCP destination; Settings hosts the Tools hub)
+ADR: ADR-240 (retire the MCP destination; Settings hosts the Tools hub)
 — renumbered from the contested 233 per amendment A5; re-sweep refs at merge.
 
 ## Problem
@@ -62,7 +62,7 @@ operations, the test bench, and Audit stay in a (renamed) destination.
 The in-code `mcp-defaults` domain contract warns against "flattening tools
 into Settings." That objection was about flattening tool *config into form
 categories*; Approach A does not flatten — it re-homes the workbench intact
-and deletes the pointer card. ADR-237 records this supersession explicitly.
+and deletes the pointer card. ADR-240 records this supersession explicitly.
 
 ## Design
 
@@ -169,7 +169,7 @@ accelerator comment in `settings_screen.py` and the s/r/t guided verbs):
 
 ### 7. ADR plan
 
-ADR required: yes — `backlog/decisions/237-mcp-destination-retirement-tools-hub-in-settings.md`.
+ADR required: yes — `backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md`.
 
 - Decision: retire the MCP shell destination; Settings hosts the Tools & MCP
   workbench intact.
@@ -210,7 +210,7 @@ ADR required: yes — `backlog/decisions/237-mcp-destination-retirement-tools-hu
 2. Port deep links and the Tool Profiles handoff to the Settings pane.
 3. Retire the destination: shell order/shortcuts, route aliases, default
    context, palette aliases, compatibility binding; delete `mcp_screen.py`.
-4. Test migration + ADR-237 + docs (AGENTS.md tool-calling section,
+4. Test migration + ADR-240 + docs (AGENTS.md tool-calling section,
    Architecture index).
 
 ## Risks
@@ -307,7 +307,7 @@ replacing them. Add a test that posts
 after retirement and asserts Permissions mode with that profile selected;
 otherwise Console's permission deep links silently land on Servers.
 
-> Resolved as contract note 2026-10-16 (ADR-237): producers of deep links
+> Resolved as contract note 2026-10-16 (ADR-240): producers of deep links
 > must post full contexts to the canonical `settings` route; the
 > `mcp`/`tools_settings` aliases carry `{"category": "tools"}` via the
 > default-context map only (no merge of caller keys under the alias).
@@ -324,8 +324,8 @@ all refs at merge time** — and update the spec, plan, task-35150, and the
 decisions README. `backlog/decisions/` already carries duplicate numbers
 (031, 033, 150, 228); do not ship another.
 
-> Resolved 2026-10-16 (closeout): renumbered to **ADR-237**
-> (`backlog/decisions/237-mcp-destination-retirement-tools-hub-in-settings.md`);
+> Resolved 2026-10-16 (closeout): renumbered to **ADR-240**
+> (`backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md`);
 > every spec/plan/task/docs/code reference swept (the grep for the old
 > number is zero
 > outside git history). Re-sweep once more at merge time in case the sibling

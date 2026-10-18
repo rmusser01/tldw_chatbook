@@ -307,7 +307,7 @@ def test_startup_route_validation_accepts_shell_and_legacy_defaults():
     app = _build_test_app()
 
     # "mcp"/"tools_settings": the retired MCP destination's legacy aliases
-    # stay valid startup defaults (ADR-237) -- they resolve to Settings via
+    # stay valid startup defaults (ADR-240) -- they resolve to Settings via
     # the registry alias and carry the {"category": "tools"} default
     # context (see test_boot_with_mcp_default_tab_lands_on_settings_tools_hub).
     for route in [
@@ -4731,7 +4731,7 @@ async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_s
 @pytest.mark.asyncio
 @private_profile_test
 async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
-    """ADR-237 compat: booting with ``default_tab = "mcp"`` must land on
+    """ADR-240 compat: booting with ``default_tab = "mcp"`` must land on
     Settings with the Tools & MCP category active. The retired MCP
     destination's alias carries the same boot-time default-context promise
     as the Library aliases above (``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``

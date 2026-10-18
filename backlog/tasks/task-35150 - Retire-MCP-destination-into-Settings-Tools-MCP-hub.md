@@ -36,7 +36,7 @@ The MCP destination is protocol jargon and a whole top-level destination for too
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented per ADR-237; see Implementation Notes below.
+Implemented per ADR-240; see Implementation Notes below.
 
 **Approach.** Re-hosted the existing four-mode `MCPWorkbench` intact inside a
 new sibling pane module (`UI/Screens/settings_tools_hub.py`) registered as
@@ -50,7 +50,7 @@ self-guarded mode bindings, `a`/`r`/`t` gain a TOOLS branch while keeping their
 old meaning in every other category; per-mode footer hints ride the category
 footer-shortcuts path. Spec:
 `Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md`; ADR:
-`backlog/decisions/237-mcp-destination-retirement-tools-hub-in-settings.md`
+`backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md`
 (renumbered from 233 — numbers 233-236 are claimed on sibling branches).
 
 **Key decisions.**

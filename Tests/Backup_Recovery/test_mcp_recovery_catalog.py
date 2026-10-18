@@ -39,7 +39,7 @@ class Bench(MCPWorkbench):
 class Surface(Screen):
  def compose(self):self.workbench=Bench(host);yield self.workbench
  def on_screen_suspend(self):
-  # ADR-237: the retired MCP shell handler these journeys borrowed is now
+  # ADR-240: the retired MCP shell handler these journeys borrowed is now
   # the REAL production method the Settings host calls on suspend -- no
   # inlined copy of the semantics anymore.
   self.workbench.suspend_recovery_review()

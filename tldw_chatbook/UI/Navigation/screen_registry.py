@@ -294,7 +294,7 @@ _SCREEN_ALIASES = {
     # The standalone Customize screen is retired: theme/splash management now
     # lives inside Settings. Legacy "customize" route ids resolve to Settings.
     "customize": "settings",
-    # ADR-237: the MCP destination retired into Settings > Tools & MCP.
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP.
     "mcp": "settings",
     "tools_settings": "settings",
 }

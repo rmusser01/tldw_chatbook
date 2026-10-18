@@ -1,6 +1,6 @@
 """Settings Tools & MCP category pane: mode strip + the MCP workbench.
 
-Port of the retired MCP destination shell (ADR-237): the
+Port of the retired MCP destination shell (ADR-240): the
 same mode chips, per-mode shortcut sets, exclusive reload worker group, and
 bounded initial view state -- hosted inside the Settings screen instead of a
 standalone destination. DOM ids (#mcp-mode-strip, mcp-mode-* chips,
@@ -10,7 +10,7 @@ unchanged.
 The module also hosts the Settings-side tools-domain support code the ratchet
 offset (spec amendment A2) moved out of ``settings_screen.py``: the deep-link
 context validation, the category summary/ownership records, the MCP-service
-accessors, and the Tool Pack failure copy. Tools-domain only (ADR-237) --
+accessors, and the Tool Pack failure copy. Tools-domain only (ADR-240) --
 nothing unrelated to agent tools lives here.
 """
 
@@ -90,7 +90,7 @@ TOOLS_HUB_OWNERSHIP_RECORD = SettingsOwnershipRecord(
 )
 
 # The sibling tools-boundary record: Tool Profiles' every row is about the
-# MCP permission store and portable tool packs (ADR-237 keeps the category
+# MCP permission store and portable tool packs (ADR-240 keeps the category
 # itself next door; only the record's home moved, ratchet offset A2).
 TOOL_PROFILES_OWNERSHIP_RECORD = SettingsOwnershipRecord(
     category=SettingsCategoryId.TOOL_PROFILES,
@@ -125,7 +125,7 @@ def tools_footer_hints(pane: "ToolsHubPanel | None") -> tuple[tuple[str, str], .
 def parse_tools_navigation_context(
     context: dict[str, object],
 ) -> dict[str, object] | None:
-    """Validate one Tools & MCP navigation context (ADR-237 deep links).
+    """Validate one Tools & MCP navigation context (ADR-240 deep links).
 
     Same bounds the retired MCP destination's apply_navigation_context
     enforced: known keys only, a mode from ``MCP_HUB_MODES``, and a profile
@@ -269,7 +269,7 @@ _RELOAD_WORKER_GROUP = "settings-tools-hub-reload"
 class ToolsHubPanel(Vertical):
     """Hosts the MCP workbench for the Settings Tools & MCP category."""
 
-    # Ported verbatim from the retired MCP destination's BINDINGS (ADR-237).
+    # Ported verbatim from the retired MCP destination's BINDINGS (ADR-240).
     # show=False: the surfaced contract is the per-mode footer hint set
     # (TOOLS_HUB_MODE_SHORTCUTS, F-055), not the binding list. Pane-held
     # bindings fire when focus is inside the pane, so the keys are scoped
@@ -426,7 +426,7 @@ class ToolsHubPanel(Vertical):
             )
 
     def suspend_recovery_review(self) -> None:
-        """Invalidate an accepted recovery review's UI receipt (ADR-237 port).
+        """Invalidate an accepted recovery review's UI receipt (ADR-240 port).
 
         The workbench method is the single owner of that semantics; this
         proxy exists so Settings' suspend path needs no workbench knowledge.

@@ -1,4 +1,4 @@
-# ADR-237: Retire the MCP destination; Settings hosts the Tools & MCP hub
+# ADR-240: Retire the MCP destination; Settings hosts the Tools & MCP hub
 
 Status: Accepted
 Date: 2026-10-16
@@ -10,12 +10,18 @@ in MCP" stance (the contract object is deleted with the category)
 Related: ADR-172 (retirement template reused), ADR-148 (workbench IA preserved
 unchanged), ADR-031/ADR-152 (shortcut lockstep for removing ctrl+9)
 
-Renumber note (2026-10-16): originally drafted under number 233; renumbered to 237
-because 233-236 are claimed on sibling branches (served-web work: 233 session
-persistence/device pairing per `ce8f2d6dcd`, 234 mobile companion, 235 WebAuthn
-passkey login, 236 canvas relay message types — spec amendment A5). All
-references in spec/plan/task/docs/code were swept to 237; re-sweep at merge
-time in case sibling branches moved again.
+Renumber note (2026-10-18): originally drafted under number 233; renumbered to
+237 on 2026-10-16 because 233-236 are claimed on sibling branches (served-web
+work: 233 session persistence/device pairing per `ce8f2d6dcd`, 234 mobile
+companion, 235 WebAuthn passkey login, 236 canvas relay message types — spec
+amendment A5). 237 was then contested by open PR #3157 (the Kanban work also
+claims number 237) and dev has since merged 238 and 239 (canvas ADRs:
+`238-offline-authenticated-canvas-build-inputs.md`,
+`239-canvas-sync-replica-and-lifecycle-contract.md`), so this ADR was
+renumbered again to 240 — the next free number. All references in
+spec/plan/task/docs/code were swept to 240; re-swept at merge time 2026-10-18
+(full reference sweep across Docs/, backlog/, tldw_chatbook/, Tests/ came back
+clean).
 
 ## Decision
 

@@ -954,7 +954,7 @@ class TldwCli(
             "Library Artifacts",
             show=False,
         ),
-        # ADR-237: preserve muscle memory after MCP folds into Settings.
+        # ADR-240: preserve muscle memory after MCP folds into Settings.
         Binding(
             MCP_COMPATIBILITY_SHORTCUT,
             "settings_tools_hub",
@@ -2765,7 +2765,7 @@ class TldwCli(
             "tools_settings",
             "notes",
             "prompts",
-            # ADR-237: the retired MCP destination's route id stays valid as
+            # ADR-240: the retired MCP destination's route id stays valid as
             # a startup default -- `_push_initial_screen` resolves it through
             # the registry alias to Settings and applies the legacy-route
             # default context ({"category": "tools"}), same promise as

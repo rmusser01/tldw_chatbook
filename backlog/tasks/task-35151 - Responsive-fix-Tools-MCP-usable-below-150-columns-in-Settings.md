@@ -8,7 +8,7 @@ created_date: 2026-10-16 20:14
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The workbench grid needs roughly 66 columns; Settings' detail pane gives about terminal width minus 41, so below roughly 150 columns the Tools & MCP category overflows and is unusable. The old full-screen MCP destination worked at 80 columns. Make the category usable in Settings at narrow widths (follow-up to task-35150 / ADR-237).
+The workbench grid needs roughly 66 columns; Settings' detail pane gives about terminal width minus 41, so below roughly 150 columns the Tools & MCP category overflows and is unusable. The old full-screen MCP destination worked at 80 columns. Make the category usable in Settings at narrow widths (follow-up to task-35150 / ADR-240).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

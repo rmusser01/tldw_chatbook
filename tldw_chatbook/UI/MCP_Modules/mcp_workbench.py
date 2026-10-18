@@ -3361,7 +3361,7 @@ class MCPWorkbench(Container):
 
         The review's own confirmation opens before busy is set. Once accepted,
         leaving the host surface invalidates its UI receipt even if the user
-        returns before the retained native write finishes. ADR-237: this is
+        returns before the retained native write finishes. ADR-240: this is
         the single owner of that semantics -- the retired MCP shell screen
         carried it in its own ``on_screen_suspend``; the Settings host and
         any other host call this method from theirs.
