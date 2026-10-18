@@ -113,4 +113,8 @@ OPEN for the next session (auto-merge DISARMED so nothing lands broken):
 3. Local-only clusters to classify (env vs conversion): inspector_compact_access rail-display (6; pure-dev baseline fails 12/12 -- environmental), response_rules/blocked_send/prompts.
 NOTE: the implementation-notes sections in this file got reordered across the queue's rebase of the branch; content is all present, ordering is cosmetic.
 
+
+### Follow-up 8 (2026-10-18): A/B classification of remaining reds
+
+Pure-dev (111f8e48fc) A/B run of the three remaining failing selections (rule_phase_events, provenance_failure, improvement_target) reproduces the same failures on dev WITHOUT this branch -- pre-existing on current dev, not introduced here. The branch adds no new reds beyond dev's own. Re-arming auto-merge is deferred until those dev-side reds are fixed (out of this branch's scope) or the required lanes are re-scoped.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
