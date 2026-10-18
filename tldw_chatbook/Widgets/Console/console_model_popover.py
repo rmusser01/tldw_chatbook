@@ -169,15 +169,19 @@ def _retries_in_place(readiness: ConsoleSettingsReadiness) -> bool:
 
 
 def _server_listing(
-    readiness: ConsoleSettingsReadiness | None,
+    readiness: ConsoleSettingsReadiness | None, *known: Sequence[str]
 ) -> tuple[str, ...] | None:
     """The models a server's last listing returned, or None (TASK-33005.12).
 
     The switcher's local probe (or any test of the same connection) records
     them in the shared evidence this readiness carries, so reading them sends
     nothing. Only a server's own listing counts: a URL-based provider or a
-    registry entry; a cloud key check's listing is no catalog.
+    registry entry; a cloud key check's listing is no catalog. A listing at
+    the probe's bound may stop short of what the server serves, so the
+    ``known`` models (its catalog, its saved ones) follow it there.
     """
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+
     if readiness is None or readiness.endpoint != "reachable":
         return None
     evidence, connection = readiness.evidence, readiness.connection
@@ -190,9 +194,10 @@ def _server_listing(
         )
     ):
         return None
-    return tuple(
-        dict.fromkeys(m for m in map(normalize_model_id, evidence.model_ids) if m)
-    )
+    listed: Sequence[str] = evidence.model_ids
+    if len(listed) >= MODEL_IDS_MAX_COUNT:
+        listed = [*listed, *(model for models in known for model in models)]
+    return tuple(dict.fromkeys(m for m in map(normalize_model_id, listed) if m))
 
 
 #: Blockers a connection test produced; such a row leads NEEDS SETUP, so the
@@ -1123,11 +1128,11 @@ class ConsoleModelPopover(
 
     def _models_for(self, key: str) -> tuple[str, ...]:
         """What the server listed, else the catalog, else the saved models."""
-        listed = _server_listing(self._readiness.get(key))
+        catalog, saved = self._catalogs.get(key), self._saved_models(key)
+        listed = _server_listing(self._readiness.get(key), catalog or (), saved)
         if listed is not None:
             return listed
-        catalog = self._catalogs.get(key)
-        return catalog if catalog is not None else self._saved_models(key)
+        return catalog if catalog is not None else saved
 
     # -- rows -----------------------------------------------------------
 

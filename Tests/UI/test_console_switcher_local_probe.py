@@ -832,7 +832,8 @@ async def test_rows_read_verified_only_for_the_models_the_key_check_listed(reque
 
 
 @pytest.mark.parametrize(
-    "server", ["lists", "lists-this-chat", "not-probed", "refused"]
+    "server",
+    ["lists", "lists-this-chat", "lists-past-the-bound", "not-probed", "refused"],
 )
 async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, server):
     """TASK-33005.12: Ollama's rows came from its saved list (qwen3:4b,
@@ -840,11 +841,15 @@ async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, ser
     no row offered. Once the probe's listing is in the shared evidence, the
     rows are the listed models, and an Ollama chat's own model stays first
     (ADR-020); with no listing (not probed, or refused) they stay the saved
-    ones. The rows read the evidence the probe recorded: one request per
-    local server, as before."""
+    ones. A listing at the probe's bound (100 of a server's 150) may stop
+    short, so the saved models past it stay offered (round-1 review: the
+    saved m120 dropped out, and Find offered it as a typed id). The rows read
+    the evidence the probe recorded: one request per local server, as
+    before."""
     servers.up = set() if server == "refused" else {OLLAMA}
-    servers.listing = {OLLAMA: ["qwen2.5:0.5b"]}
-    saved = ["qwen3:4b", "gemma3:12b"]
+    bound = [f"m{index:03d}" for index in range(150)]
+    servers.listing = {OLLAMA: bound if "bound" in server else ["qwen2.5:0.5b"]}
+    saved = ["m120"] if "bound" in server else ["qwen3:4b", "gemma3:12b"]
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
@@ -875,11 +880,16 @@ async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, ser
         assert ready == ["qwen3:4b", "qwen2.5:0.5b"]
         assert popover_module.CURRENT_MARK in line_with(lines, "qwen3:4b")
         assert not any("gemma3:12b" in line for line in lines)
+    elif server == "lists-past-the-bound":
+        assert ready == bound[:3]  # the first three, then "… 98 more"
     elif server == "not-probed":
         assert ready == saved
     else:
         assert ready == []  # refused: not offered as ready at all
-    assert models == (("qwen2.5:0.5b",) if "lists" in server else tuple(saved))
+    if "bound" in server:
+        assert models == (*bound[:100], "m120")
+    else:
+        assert models == (("qwen2.5:0.5b",) if "lists" in server else tuple(saved))
     assert sorted(servers.ports) == ([] if server == "not-probed" else [LLAMA, OLLAMA])
 
 
