@@ -509,7 +509,8 @@ async def test_navigation_during_child_prune_settles_original_load(
                 ]
             else:
                 assert isinstance(gate.error, PermissionError)
-                assert str(gate.error) == "plugin_service_closed"
+                assert str(gate.error) == "plugin_management_unavailable"
+                assert str(gate.error.__cause__) == "plugin_service_closed"
                 assert gate.calls[0][0] == ("workspace-a",)
         finally:
             gate.release.set()
