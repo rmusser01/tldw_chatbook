@@ -144,6 +144,43 @@ async def _close_context(context: Any) -> None:
     await context.__aexit__(None, None, None)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("mount setup failed"),
+        asyncio.CancelledError("mount setup cancelled"),
+    ],
+    ids=("error", "cancelled"),
+)
+@private_profile_test
+async def test_mount_setup_exception_closes_its_app(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    failure: BaseException,
+) -> None:
+    app = _build_test_app()
+    context = app.run_test(size=(120, 40))
+    monkeypatch.setattr(app, "run_test", lambda **_kwargs: context)
+    monkeypatch.setattr(f"{__name__}._build_test_app", lambda: app)
+
+    async def fail_after_mount(pilot: Any, predicate: Any, *, message: str) -> None:
+        assert pilot.app is app
+        assert app.screen.query_one(LLMManagementWindow).is_mounted
+        raise failure
+
+    monkeypatch.setattr(f"{__name__}._settle_pilot_until", fail_after_mount)
+    try:
+        with pytest.raises(type(failure)) as raised:
+            await _mount_models(monkeypatch)
+        assert raised.value is failure
+        assert app._task.done()
+        assert not app.is_running
+    finally:
+        # The failing baseline must release its real app before pytest teardown.
+        await _close_context(context)
+
+
 def _select_values(select: Select) -> tuple[object, ...]:
     return tuple(value for _label, value in select._options if value is not Select.NULL)
 
