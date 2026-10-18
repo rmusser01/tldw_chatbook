@@ -66,6 +66,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSubmission,
     ConsoleSettingsSurface,
     ConsoleSettingsTransfer,
+    pick_base_url,
     remember_model_draft,
 )
 from tldw_chatbook.Chat.provider_catalog import (
@@ -1153,19 +1154,20 @@ class ConsoleModelPopover(
         """The last listing of the server a pick of ``key`` lands on, or None.
 
         That is the readiness's connection (``_server_listing``), except on
-        this chat's own provider, where a pick keeps this chat's Endpoint
-        (TASK-35190). There a Chat settings listing (``served_models``, kept
-        only where a pick lands, TASK-33006.19) is the listing; without one,
-        the readiness's listing counts only while this chat's Endpoint is the
-        connection it listed (the configured one), else there is none.
+        this chat's own provider and where a pick keeps a draft's Endpoint,
+        by the rebaser's own rule (``pick_base_url``, TASK-35190): after a
+        pick of another provider in between too. There a Chat settings
+        listing (``served_models``, kept only where a pick lands,
+        TASK-33006.19) is the listing; without one, the readiness's listing
+        counts only while it listed that Endpoint, else there is none.
         """
         readiness = self._readiness.get(key)
-        if key != provider_key(self._current[0]):
+        endpoint = pick_base_url(self._draft, key, full_surface=self._pick_only)
+        if not endpoint and key != provider_key(self._current[0]):
             return _server_listing(readiness, *known)
         if key in self._served:
             return _with_known(self._served[key], *known)
         connection = readiness.connection if readiness is not None else None
-        endpoint = self._chat_settings.base_url
         if (
             connection is not None
             and connection.custom_endpoint_id is None

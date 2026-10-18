@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     provider_identity_key,
     split_custom_endpoint_id,
 )
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
 
 # ADR-095 amendment 2026-09-26 (D3, TASK-33004.1): the quick default mask. The
@@ -209,7 +210,9 @@ def remember_model_draft(
         entry for the current provider/model pair, keyed by the canonical
         provider IDENTITY (registry entries keep the dashed
         ``custom-ep:<slug>`` spelling) so rebase targets and popover
-        carried-source lookups address the same key.
+        carried-source lookups address the same key. That entry moves to the
+        end, so the drafts run from least to most recently remembered
+        (``rebased_endpoint`` reads the latest on a provider, TASK-35190).
     """
     # CE-001: drafts are keyed by provider IDENTITY. Registry ids
     # (``custom-ep:<slug>``) must stay dashed so the key matches the rebase
@@ -225,14 +228,8 @@ def remember_model_draft(
         endpoint_draft=state.endpoint_draft,
     )
     key = (provider, model)
-    drafts = list(state.model_drafts)
-    for index, existing in enumerate(drafts):
-        if (existing.provider, existing.model) == key:
-            drafts[index] = remembered
-            break
-    else:
-        drafts.append(remembered)
-    return replace(state, model_drafts=tuple(drafts))
+    drafts = [d for d in state.model_drafts if (d.provider, d.model) != key]
+    return replace(state, model_drafts=(*drafts, remembered))
 
 
 def rebased_endpoint(
@@ -249,11 +246,11 @@ def rebased_endpoint(
 
     A kept pair (the current one, or a remembered target) keeps its own
     endpoint. An unseen pair takes the endpoint of the latest draft on its
-    provider: the current one, else the last remembered one. So a pick on the
-    chat's own provider keeps the chat's Endpoint, after a detour through
-    another provider too, and a pick onto another provider never carries it
-    (TASK-35190). An unset URL there means the configured one, not "no
-    endpoint", so the target's default chain applies, as it does for a
+    provider: the current one, else the most recently remembered one. So a
+    pick on the chat's own provider keeps the chat's Endpoint, after a detour
+    through another provider too, and a pick onto another provider never
+    carries it (TASK-35190). An unset URL there means the configured one, not
+    "no endpoint", so the target's default chain applies, as it does for a
     registry entry, whose own URL is its endpoint. Only the full surface
     carries an endpoint edit.
 
@@ -285,13 +282,17 @@ def rebased_endpoint(
         )
     )
     endpoint = peer.endpoint_draft if peer is not None else None
-    bound = endpoint is not None and endpoint.bound_provider_config_key == config_key
-    if full_surface and bound and endpoint.dirty:
-        return endpoint.value or None, endpoint
+    bound = (
+        endpoint
+        if endpoint is not None and endpoint.bound_provider_config_key == config_key
+        else None
+    )
+    if full_surface and bound is not None and bound.dirty:
+        return bound.value or None, bound
     base_url = default_base_url
     if (
         peer is not None
-        and (endpoint is None or (bound and not endpoint.dirty))
+        and (endpoint is None or (bound is not None and not bound.dirty))
         and (
             preserve_snapshot
             or (
@@ -305,6 +306,37 @@ def rebased_endpoint(
     return base_url, ConsoleEndpointDraft(
         value=base_url, bound_provider_config_key=config_key, dirty=False, checked=False
     )
+
+
+def pick_base_url(
+    state: ConsoleSettingsDraftState, provider: str, *, full_surface: bool
+) -> str | None:
+    """Return the URL a pick of an unseen model on ``provider`` lands on.
+
+    The rebaser's own rule (``rebased_endpoint``), so Switch model's rows,
+    its readiness and its probe read the server the rebase lands on and
+    cannot drift from it (TASK-35190).
+
+    Args:
+        state: The draft a pick would rebase.
+        provider: The provider picked onto.
+        full_surface: Whether the rebase carries an endpoint edit (Chat
+            settings, so pick mode).
+
+    Returns:
+        The URL, or None for the provider's default chain (its configured
+        endpoint, or a registry entry's own URL).
+    """
+    provider_id = provider_identity_key(provider)
+    return rebased_endpoint(
+        state,
+        state,
+        provider_id=provider_id,
+        config_key=provider_config_key(provider_id),
+        default_base_url=None,
+        preserve_snapshot=False,
+        full_surface=full_surface,
+    )[0]
 
 
 def quick_blank_field_default(

@@ -660,7 +660,7 @@ Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keep
 # Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
 # TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
-# TASK-33005.12 (Wave 6 integration review), renamed by TASK-35190: on this chat's endpoint a Chat settings listing, not the configured server's, is the provider's rows (3 cases, 3 of 3 serial, ~4 s).
+# TASK-33005.12 (Wave 6 integration review), renamed by TASK-35190: on this chat's endpoint a Chat settings listing, not the configured server's, is the provider's rows, also after a pick of OpenAI (4 cases, 3 of 3 serial, ~7 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers
 # TASK-33005.12 (Wave 6 integration review round 2), renamed by TASK-35190: on this chat's endpoint a Chat settings listing replaces a loaded catalog (3 of 3 serial, ~2 s).
 Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog
@@ -669,5 +669,12 @@ Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoi
 Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint
 # TASK-35190: the rebaser keeps the chat's URL for an unseen model on its provider, but a registry entry keeps its own (2 cases, <1 s).
 Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry
-# TASK-35190 AC#4: Switch model keeps the session endpoint, offers what the configured listing left out, and Make default saves no endpoint (~7 s, private profile).
+# TASK-35190 AC#4: Switch model's real probe and readiness read the session endpoint while the configured one is down, a pick keeps it, and Make default saves no endpoint (~6 s, private profile).
 Tests/UI/test_console_endpoint_discovery.py::test_switch_model_keeps_the_chats_session_endpoint_and_saves_none
+# Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial.
+# TASK-35190: an unseen pick takes the endpoint its provider's drafts had most recently, after a detour too (2 cases, ~12 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last
+# TASK-35190: Chat settings' pick mode reads the session endpoint while the configured one is down, and its pick keeps it (~7 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down
+# TASK-35190: after a Settings round trip a pick on the chat's provider still keeps the session endpoint (~10 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider

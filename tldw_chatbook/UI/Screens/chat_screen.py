@@ -204,6 +204,7 @@ from ...Chat.console_settings_apply import (
     ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
+    remember_model_draft,
 )
 from ...Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
@@ -3178,6 +3179,19 @@ class ChatScreen(BaseAppScreen):
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
+            live = store.session_settings(session_id)
+            if suspended_draft is not None and live is not None:
+                # TASK-35190: the chat's own pair stays remembered across a
+                # Settings round trip, so a pick back on its provider keeps
+                # the chat's Endpoint.
+                own = self._console_settings_initial_draft(
+                    live,
+                    initial_draft.context_policy_overrides,
+                    exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+                )
+                initial_draft = replace(
+                    initial_draft, model_drafts=remember_model_draft(own).model_drafts
+                )
         else:
             origin = transfer.origin
             session_id = origin.session_id

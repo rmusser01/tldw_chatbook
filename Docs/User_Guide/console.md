@@ -879,9 +879,13 @@ server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
 longer offered. A pick on this chat's own provider keeps this chat's
 endpoint, so while the chat runs on a server other than the configured one,
-the configured server's listing is not that provider's rows: they are the
-models a listing in Chat settings found on this chat's endpoint, else the
-saved and cached models. A listing is read up to 100 models, and
+that provider's readiness words, its background check and its rows are this
+chat's endpoint's, not the configured server's: a configured server that is
+down does not put the provider under NEEDS SETUP, and its listing is not
+that provider's rows. They are what this chat's endpoint listed (in Chat
+settings, a listing there), else the saved and cached models. In Chat
+settings the same holds for a provider picked earlier in the draft, whose
+pick brings back the endpoint it had. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
 stay after the listed ones; this chat's own model stays listed first.
 Until then (not checked yet, refused or timed out) the rows are the saved
@@ -945,8 +949,11 @@ The keys, printed under the values, work while you type in Find:
   "… N more" row, and "Enter choose a model first" while no row is
   highlighted (Enter then applies nothing).
 - **Ctrl+N** makes the highlighted pair the default for new chats, with its
-  Temperature, Max tokens and Streaming. **Save as model default** (no key;
-  Shift+Tab from Find reaches it) saves those three as the model's defaults.
+  Temperature, Max tokens and Streaming, and never this chat's endpoint. New
+  chats use the configured endpoint, so a pair that cannot send there is not
+  made the default, whatever this chat's endpoint says. **Save as model
+  default** (no key; Shift+Tab from Find reaches it) saves those three as the
+  model's defaults.
   Both also apply the pair to this chat. A blank Max tokens removes the
   model's saved cap.
 - **Ctrl+O** opens Chat settings on the highlighted pair with your

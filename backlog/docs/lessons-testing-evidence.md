@@ -16822,15 +16822,23 @@ first, often another provider's row, and typing re-ranks the highlight across
 providers. By the time Enter lands on the llama.cpp row the draft is on vLLM,
 and the pick takes the configured URL again. Chat settings has the same path
 after a pick of another provider in between. The fix reads the latest draft
-on the target's provider (the current one, else the last remembered one).
-With that lookup removed, the direct-pick and pick-mode listing tests still
-pass; only the three detour cases fail (`[after-openai]`, `[after-an-entry]`,
-and the Alt+M test that highlights a vLLM row first).
+on the target's provider (the current one, else the most recently remembered
+one). With that lookup removed, the direct-pick and pick-mode listing tests
+still pass; only the three detour cases fail (`[after-openai]`,
+`[after-an-entry]`, and the Alt+M test that highlights a vLLM row first).
+Review round 1 found the lookup still wrong after a longer detour: it read
+the last entry of `model_drafts`, but `remember_model_draft` updated a pair
+already there in place, so the last entry was the last pair first
+remembered, not the latest. A pick of model-b after served-y (with :9300
+typed), model-a and gpt-5 landed on served-y's stale :9300. Remembering now
+moves the pair to the end, so the tuple's order is recency order.
 
 **What to do.** When a fix reads the draft's state at pick time, list what
 moves that state before the pick (highlight rebases, earlier picks, a
-transfer from the other surface) and test the pick after each one, not only
-from the state the surface opened with.
+transfer from the other surface, a Settings round trip that reopens the
+draft) and test the pick after each one, not only from the state the surface
+opened with. When it reads "the latest" from a collection, check that every
+writer keeps that order: an update in place does not.
 
 ## A first reactive read can reenter a loader before its arguments finish evaluating
 

@@ -399,8 +399,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # this chat's endpoint replaces the configured server's and the catalog, no
 # count change) and appends three node ids, each 3 of 3 serial: a pick keeps
 # the chat's session endpoint, a registry entry keeps its own URL, and Switch
-# model keeps it and saves none (TASK-35190): 358.
-MINIMUM_FILES = 358
+# model keeps it and saves none (TASK-35190): 358. Its review round 1
+# appends three node ids, each 3 of 3 serial: a pick takes its provider's
+# latest endpoint, pick mode reads the session endpoint, and a Settings
+# round trip keeps it (TASK-35190): 361.
+MINIMUM_FILES = 361
 
 
 def read_census(path: Path) -> list[str]:

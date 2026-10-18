@@ -414,7 +414,7 @@ async def test_the_consoles_pick_opener_never_rebases_and_its_committer_refuses(
         calls.append("rebase")
         return real_rebase(state, **kwargs)
 
-    def sources(_screen, _session_id, _before):
+    def sources(_screen, _session_id, _before, **_landing):
         return {
             "app_config": app.app_config,
             "providers_models": PROVIDERS_MODELS,

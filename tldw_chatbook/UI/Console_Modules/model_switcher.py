@@ -445,6 +445,9 @@ def _switcher_sources(
     app_config: Mapping[str, object] | None = None,
     readiness: Callable[..., ConsoleSettingsReadiness] | None = None,
     listing: tuple[str, Sequence[str]] | None = None,
+    *,
+    draft: ConsoleSettingsDraftState | None = None,
+    full_surface: bool = False,
 ) -> SwitcherSources:
     """Return the pair sources every Switch model mode lists from.
 
@@ -453,6 +456,12 @@ def _switcher_sources(
     readiness that read the detected endpoint, and the server's own listing,
     which is that provider's catalog. Nothing here is saved.
 
+    A pick keeps a draft's Endpoint on its provider (TASK-35190), so with
+    ``draft`` the readiness and the local probe read each provider at the
+    Endpoint a pick on it lands on (``pick_base_url``, the rebaser's own
+    rule), in memory only, as R12 does for a detected server. The rebaser
+    keeps ``app_config``, so a default it saves names no session Endpoint.
+
     Args:
         screen: The Console screen that owns the chat.
         session_id: The chat whose PREVIOUS pair the list offers.
@@ -460,19 +469,33 @@ def _switcher_sources(
         app_config: The configuration the list reads; the saved one if None.
         readiness: The readiness resolver; the saved defaults' if None.
         listing: ``(provider, models)`` a server listed, if any.
+        draft: The draft the switcher opens on, whose picks it lists.
+        full_surface: Whether its picks carry an endpoint edit (pick mode).
 
     Returns:
         ``ConsoleModelPopover`` keyword arguments: the configuration, the
         saved and cached catalogs, readiness, RECENT and PREVIOUS, the local
         probe and the controller's rebaser.
     """
+    from ...Chat.console_settings_apply import pick_base_url
     from .connection_probe import switcher_connection_prober
 
     store = screen._ensure_console_chat_store()
     providers_models = screen._providers_models()
     if app_config is None:
         app_config = screen._provider_readiness_app_config()
-    probe = switcher_connection_prober(screen.app, app_config)
+    readiness = readiness or screen._console_default_readiness
+    landing = app_config
+    if draft is not None:
+        drafts = (draft.settings.provider, *(d.provider for d in draft.model_drafts))
+        for provider in dict.fromkeys(drafts):
+            url = pick_base_url(draft, provider or "", full_surface=full_surface)
+            if url:
+                key = provider_config_key(provider)
+                landing = with_provider_endpoint(landing, key, url)
+    if landing is not app_config:
+        readiness = partial(readiness, app_config=landing)
+    probe = switcher_connection_prober(screen.app, landing)
 
     async def connection_prober(
         targets: Mapping[str, str | None], settled: Callable[[str], None]
@@ -502,7 +525,7 @@ def _switcher_sources(
         "draft_rebaser": (
             screen._ensure_console_chat_controller().rebase_console_settings_draft
         ),
-        "default_readiness_resolver": readiness or screen._console_default_readiness,
+        "default_readiness_resolver": readiness,
         "recent_pairs_loader": lambda: read_recent_model_pairs(
             getattr(screen.app_instance, "chachanotes_db", None), store.sessions()
         ),
@@ -684,6 +707,11 @@ def _open_switcher(
         return
     session = store.switch_session(session_id)
     before = (settings.provider, settings.model)
+    draft = screen._console_settings_initial_draft(
+        settings,
+        store.session_context_policy_overrides(session_id),
+        exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
+    )
     # A reopened list too: a save of a provider with no model leaves a
     # new-chat default that cannot send, whatever the chat holds.
     sets_default = (card or bool(reopened)) and (
@@ -710,12 +738,15 @@ def _open_switcher(
     def commit(submission):  # type: ignore[no-untyped-def]
         chosen = submission.draft.settings
         adopt = server is not None and provider_config_key(chosen.provider) == detected
-        if sets_default:
-            # As Ctrl+N: a pair that cannot send never becomes the default.
+        default = submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+        if sets_default or default:
+            # As Ctrl+N: a pair that cannot send never becomes the default. New
+            # chats use the configured endpoint, so this is its readiness, not
+            # that of the chat's Endpoint the rows read (TASK-35190).
             verdict = readiness(chosen.provider, chosen.model)
             if not verdict.native_send_supported:
                 raise ValueError(f"Unavailable: {verdict.detail}")
-            if not adopt:
+            if sets_default and not adopt:
                 # Whichever action commits the pick, as the scope line says.
                 # Ctrl+N's writes the model's defaults too, so Save as model
                 # default loses nothing by running as it.
@@ -756,11 +787,7 @@ def _open_switcher(
     screen.app.push_screen(
         ConsoleModelPopover(
             origin=origin,
-            initial_draft=screen._console_settings_initial_draft(
-                settings,
-                store.session_context_policy_overrides(session_id),
-                exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
-            ),
+            initial_draft=draft,
             scope_copy=SCOPE_THIS_CHAT_AND_NEW_CHATS
             if sets_default
             else SCOPE_THIS_CHAT,
@@ -795,6 +822,8 @@ def _open_switcher(
                 app_config,
                 readiness,
                 (detected, server.model_ids) if server is not None else None,
+                # R12: a detected server's endpoint stands for its provider.
+                draft=draft if server is None else None,
             ),
         ),
         callback=screen._apply_console_model_popover_result,
@@ -1008,7 +1037,11 @@ def open_model_picker(
             query=query,  # "<entry name> " keeps its space for the model id
             served_models=served,
             **_switcher_sources(
-                screen, origin.session_id, (settings.provider, settings.model)
+                screen,
+                origin.session_id,
+                (settings.provider, settings.model),
+                draft=draft,
+                full_surface=True,
             ),
         ),
         callback=on_pick,

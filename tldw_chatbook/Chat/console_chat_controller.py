@@ -13993,7 +13993,7 @@ class ConsoleChatController:
             current_key != target_key and remembered_target is not None
         )
         preserve_snapshot = current_key == target_key or restoring_remembered_target
-        source = remembered_target if restoring_remembered_target else state
+        source = (remembered_target if restoring_remembered_target else None) or state
         source_settings, source_fields = source.settings, source.field_drafts
 
         quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS

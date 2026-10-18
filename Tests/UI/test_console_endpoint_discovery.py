@@ -33,6 +33,12 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderTestEvidence,
     provider_connection_evidence,
 )
+from tldw_chatbook.UI.Console_Modules import connection_probe
+
+# Bound at import: Tests/conftest.py's ``_no_switcher_probe`` replaces the
+# module attribute for every test, so a test that runs the switcher's own
+# probe sets this back (as Tests/UI/test_console_switcher_local_probe.py does).
+_REAL_SWITCHER_PROBER = connection_probe.switcher_connection_prober
 from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
@@ -782,11 +788,15 @@ async def test_named_entry_adapter_echo_does_not_cancel_pending_probe(adapter):
         assert evidence.endpoint == "reachable"
 
 
-def _stub_llama_network(monkeypatch, server: dict[str, bool]) -> list[str]:
+def _stub_llama_network(
+    monkeypatch, server: dict[str, bool], listings=None
+) -> list[str]:
     """Replace only the network under the real probe (TASK-33005.2).
 
     Everything above it -- the modal's tester, the Console's retry, the
-    category mapping -- is production code. Returns the probed URLs.
+    category mapping -- is production code. Every server lists model-a, or
+    what ``listings`` names for its port (None: refused). Returns the probed
+    URLs.
     """
     import errno
 
@@ -798,11 +808,12 @@ def _stub_llama_network(monkeypatch, server: dict[str, bool]) -> list[str]:
     probed: list[str] = []
 
     async def network(request: httpx.Request) -> httpx.Response:
-        if not server["up"]:
+        models = (listings or {}).get(request.url.port, ("model-a",))
+        if not server["up"] or models is None:
             raise httpx.ConnectError("refused") from OSError(
                 errno.ECONNREFUSED, "refused"
             )
-        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+        return httpx.Response(200, json={"data": [{"id": m} for m in models]})
 
     async def probe(base_url, **kwargs):
         probed.append(base_url)
@@ -1508,6 +1519,46 @@ async def test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint(detou
 
 
 @pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detour", [False, True], ids=["direct", "after-openai"])
+async def test_a_pick_keeps_the_endpoint_its_provider_had_last(detour):
+    """TASK-35190 review round 1: an unseen pick takes the Endpoint of the
+    most recently remembered draft on its provider. On :9200, served-y is
+    picked, then :9300 typed for it, then model-a picked back (restoring
+    :9200). A pick of model-b then keeps :9200, also after a pick of OpenAI
+    in between: a re-remembered pair moves to the end of the drafts, so the
+    older served-y draft and its :9300 edit are not the latest."""
+
+    async def connection(_identity):
+        return ProviderProbeResult("reachable", ("model-a", "model-b", "served-y"))
+
+    app = CoreFirstHarness()
+    settings = replace(_settings(), base_url=SESSION_URL)
+    modal = pick_modal(app, settings, connection_tester=connection)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        await _list_served_y(pilot, app, modal)
+        await pick(pilot, app, modal, "served-y")
+        assert base_url.value == SESSION_URL
+        base_url.value = "http://127.0.0.1:9300"
+        await settle(pilot, app)
+        await pick(pilot, app, modal, "model-a")
+        assert modal._current_model_value() == "model-a"
+        assert base_url.value == SESSION_URL
+        if detour:
+            await pick(pilot, app, modal, "gpt-5")
+        await pick(pilot, app, modal, "model-b")
+        assert (modal._draft.settings.provider, modal._current_model_value()) == (
+            "llama_cpp",
+            "model-b",
+        )
+        assert base_url.value == SESSION_URL
+        assert modal._draft.settings.base_url == SESSION_URL
+        assert not modal._draft.endpoint_draft.dirty
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("provider", "kept"),
     [("llama_cpp", True), ("custom-ep:gpu-box", False)],
@@ -1542,25 +1593,28 @@ def test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry(provider,
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("typed", "listed", "offered"),
+    ("typed", "listed", "detour", "offered"),
     [
-        (False, True, {"model-a", "served-y"}),
-        (True, True, {"model-a", "served-y"}),
-        (True, False, {"model-a", "model-b"}),
+        (False, True, False, {"model-a", "served-y"}),
+        (True, True, False, {"model-a", "served-y"}),
+        (True, False, False, {"model-a", "model-b"}),
+        (False, False, True, {"model-a", "model-b"}),
     ],
-    ids=["chats-endpoint", "typed", "typed-unlisted"],
+    ids=["chats-endpoint", "typed", "typed-unlisted", "after-openai"],
 )
 async def test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers(
-    typed, listed, offered
+    typed, listed, detour, offered
 ):
     """TASK-35190, for TASK-33005.12's listing: pick mode reads the configured
-    :9099's readiness, as the Console's does, and :9099's own listing
+    :9099's readiness, as these tests' opener does, and :9099's own listing
     (model-a, only-at-9099) is in the shared evidence. A pick on llama.cpp
     lands on this chat's Endpoint, :9200, the chat's own or one typed, so
     :9099's only-at-9099 is never offered. llama.cpp's rows are what Test
     connection listed at :9200 (model-a, served-y), without the saved
     model-b, which no server listed (TASK-33005.12 AC#1); with no listing
-    there they are the saved models (its AC#2)."""
+    there they are the saved models (its AC#2). After a pick of OpenAI in
+    between (review round 1), a llama.cpp pick still lands on :9200, by the
+    rebaser's own rule, so :9099's listing is still not llama.cpp's rows."""
     app = CoreFirstHarness()
     owner = provider_connection_evidence(app)
     configured = console_send_connection(
@@ -1574,7 +1628,7 @@ async def test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers(
     picker = pick_mode_opener(app, app.app_config, connection_evidence=owner)
     assert (
         await _llama_models_listed_at_9200(
-            app, typed=typed, listed=listed, model_picker=picker
+            app, typed=typed, listed=listed, detour=detour, model_picker=picker
         )
         == offered
     )
@@ -1595,11 +1649,12 @@ async def test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog():
 
 
 async def _llama_models_listed_at_9200(
-    app, *, typed=False, listed=True, **kwargs
+    app, *, typed=False, listed=True, detour=False, **kwargs
 ) -> set[str]:
     """Chat settings on :9200, this chat's Endpoint or (``typed``) one typed
-    over the configured :9099, lists served-y there (unless not ``listed``);
-    return the llama.cpp models Change offers."""
+    over the configured :9099, lists served-y there (unless not ``listed``)
+    and picks OpenAI's gpt-5 (if ``detour``); return the llama.cpp models
+    Change offers."""
     settings = _settings() if typed else replace(_settings(), base_url=SESSION_URL)
     modal = _served_y_modal(app, settings, **kwargs)
     async with app.run_test(size=(211, 44)) as pilot:
@@ -1609,8 +1664,44 @@ async def _llama_models_listed_at_9200(
             await settle(pilot, app)
         if listed:
             await _list_served_y(pilot, app, modal)
+        if detour:
+            await pick(pilot, app, modal, "gpt-5")
+            assert modal._draft.settings.provider == "openai"
         pairs = await _pick_mode_pairs(pilot, app, modal)
     return {model for provider, model in pairs if provider == "llama_cpp"}
+
+
+async def _probed(switcher, pilot, provider):
+    """Wait for the switcher's own probe of ``provider``; return its readiness."""
+    for _ in range(60):
+        readiness = switcher._readiness.get(provider)
+        if readiness is not None and readiness.evidence is not None:
+            return readiness
+        await pilot.pause(0.05)
+    pytest.fail(f"Switch model never probed {provider}")
+
+
+def _on_9200(monkeypatch, listed):
+    """Run the switcher's real probe over a network where the configured
+    :9099 refuses and this chat's :9200 lists ``listed``; return the probed
+    URLs."""
+    monkeypatch.setattr(
+        connection_probe, "switcher_connection_prober", _REAL_SWITCHER_PROBER
+    )
+    return _stub_llama_network(monkeypatch, {"up": True}, {9099: None, 9200: listed})
+
+
+async def _console_on_9200(harness, pilot):
+    """The Console, with its llama.cpp chat moved to :9200; return it."""
+    from Tests.UI.test_destination_shells import _wait_for_selector
+
+    console = harness.screen
+    await _wait_for_selector(console, pilot, "#console-settings-summary")
+    store = console._ensure_console_chat_store()
+    console._session._replace_active_console_session_settings(
+        replace(store.session_settings(store.active_session_id), base_url=SESSION_URL)
+    )
+    return console
 
 
 @pytest.mark.asyncio
@@ -1619,12 +1710,14 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
     request, monkeypatch
 ):
     """TASK-35190 AC#4: Switch model (Alt+M) on a llama.cpp chat on :9200
-    while the config says :9099, whose listing (model-a alone) is in the
-    shared evidence. A pick on llama.cpp lands on :9200, so :9099's listing
-    is not llama.cpp's rows, and the saved model-b is offered, as with no
-    listing (TASK-33005.12 AC#2). Picked after a detour through vLLM it keeps
-    :9200, as Chat settings does (AC#1); Make default for new chats then saves
-    the pair and never the Endpoint."""
+    while the configured :9099 is down. A pick on llama.cpp lands on :9200,
+    so Switch model's readiness and its own probe (the real one, over a
+    stubbed network) read :9200, never :9099 (review round 1): llama.cpp is
+    READY and its rows are what :9200 listed, served-y and not the saved
+    model-c. Picked after a detour through vLLM, model-b keeps :9200, as
+    Chat settings does (AC#1). Make default for new chats then saves the pair
+    and never the Endpoint; new chats use :9099, so once :9099 is known
+    refused it refuses, as before."""
     import tomllib
 
     from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -1634,10 +1727,10 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
         _open_provider_popover,
         _persisted_console_app,
     )
-    from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.config import get_cli_config_path
 
-    _stub_llama_network(monkeypatch, {"up": True})  # no probe reaches a socket
+    listed = ("model-a", "model-b", "served-y")
+    probed = _on_9200(monkeypatch, listed)
     app = _persisted_console_app()
     app.providers_models = {
         "llama_cpp": ["model-a", "model-b", "model-c"],
@@ -1646,25 +1739,14 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
     config_path = get_cli_config_path()
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
-        console = harness.screen
-        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        console = await _console_on_9200(harness, pilot)
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
-        console._session._replace_active_console_session_settings(
-            replace(store.session_settings(session_id), base_url=SESSION_URL)
-        )
-
-        config = console._provider_readiness_app_config()
-        configured = console_send_connection(
-            build_target_default_console_session_settings(config, "llama_cpp", None),
-            app_config=config,
-        )
-        provider_connection_evidence(harness).publish(
-            ProviderTestEvidence(configured, "reachable", ("model-a",)), order=1
-        )
 
         quick = await _open_provider_popover(console, harness, pilot)
-        assert quick._readiness["llama_cpp"].evidence.model_ids == ("model-a",)
+        llama = await _probed(quick, pilot, "llama_cpp")
+        assert (llama.blocker, llama.evidence.model_ids) == (None, listed)
+        assert quick._models_for("llama_cpp") == listed
         assert (await _highlight(quick, pilot, "vllm")).provider == "vllm"
         row = await _highlight(quick, pilot, "model-b")
         assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-b")
@@ -1680,19 +1762,128 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
         )
 
         quick = await _open_provider_popover(console, harness, pilot)
-        await _highlight(quick, pilot, "model-c")
+        await _highlight(quick, pilot, "served-y")
         quick.action_make_new_chat_default()
         await pilot.pause()
         await _drain_settings_tasks(app)
         assert harness.screen is console
         applied = store.session_settings(session_id)
-        assert (applied.model, applied.base_url) == ("model-c", SESSION_URL)
+        assert (applied.model, applied.base_url) == ("served-y", SESSION_URL)
+
+        config = console._provider_readiness_app_config()
+        configured = console_send_connection(
+            build_target_default_console_session_settings(config, "llama_cpp", None),
+            app_config=config,
+        )
+        provider_connection_evidence(harness).publish(
+            ProviderTestEvidence(
+                configured, "unreachable", (), category="connection_refused"
+            ),
+            order=1,
+        )
+        quick = await _open_provider_popover(console, harness, pilot)
+        await _highlight(quick, pilot, "model-b")
+        quick.action_make_new_chat_default()
+        await pilot.pause()
+        assert harness.screen is quick
+        assert quick._error.startswith("Unavailable")
+    assert all(":9099" not in url for url in probed)
     saved = config_path.read_text(encoding="utf-8")
-    assert tomllib.loads(saved)["chat_defaults"]["model"] == "model-c"
+    assert tomllib.loads(saved)["chat_defaults"]["model"] == "served-y"
     assert tomllib.loads(saved)["api_settings"]["llama_cpp"]["api_url"] == (
         "http://127.0.0.1:9099"
     )
     assert "127.0.0.1:9200" not in saved
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down(
+    request, monkeypatch
+):
+    """TASK-35190 review round 1: Chat settings on a llama.cpp chat on :9200
+    while the configured :9099 is down. Pick mode, opened by the Console's
+    own opener, reads llama.cpp at :9200, where a pick of it lands, so its
+    probe never tries :9099: llama.cpp is READY with served-y, which Test
+    connection listed at :9200, and picking it keeps :9200."""
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+
+    probed = _on_9200(monkeypatch, ("model-a", "served-y"))
+    harness = _ConsoleFlowHarness(_persisted_console_app())
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _console_on_9200(harness, pilot)
+        await console._open_console_settings(focus_model=False)
+        await settle(pilot, harness)
+        modal = harness.screen
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        assert base_url.value == SESSION_URL
+        await _list_served_y(pilot, harness, modal)
+
+        switcher = await press_change(pilot, harness, modal)
+        assert switcher._readiness["llama_cpp"].blocker is None
+        assert ("llama_cpp", "served-y") in {
+            (row.provider, row.model) for row in switcher._rows if row.kind == "pair"
+        }
+        await pilot.press(*"served-y")
+        await settle(pilot, harness)
+        await pilot.press("enter")
+        await settle(pilot, harness)
+        assert harness.screen is modal
+        assert modal._current_model_value() == "served-y"
+        assert base_url.value == SESSION_URL
+        assert modal._draft.settings.base_url == SESSION_URL
+    assert all(":9099" not in url for url in probed)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider(
+    request, monkeypatch
+):
+    """TASK-35190 review round 1: Chat settings on a llama.cpp chat on :9200
+    picks vLLM, and its draft is suspended (as a pick whose key is set in
+    Settings suspends it) and reopened. The reopened draft still remembers
+    the chat's own pair, so a pick of model-b keeps :9200, as it does with no
+    round trip (AC#1)."""
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+
+    app = _persisted_console_app()
+    app.providers_models = {
+        "llama_cpp": ["model-a", "model-b"],
+        "vllm": ["vendor/model:b"],
+    }
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _console_on_9200(harness, pilot)
+        await console._open_console_settings(focus_model=False)
+        await settle(pilot, harness)
+        modal = harness.screen
+        await pick(pilot, harness, modal, "vendor/model:b")
+        assert modal._draft.settings.provider == "vllm"
+        snapshot = modal.capture_suspended_draft()
+        await harness.pop_screen()
+        await settle(pilot, harness)
+        assert harness.screen is console
+
+        await console._open_console_settings(suspended_draft=snapshot)
+        await settle(pilot, harness)
+        modal = harness.screen
+        assert modal._draft.settings.provider == "vllm"
+        await pick(pilot, harness, modal, "model-b")
+        assert (modal._draft.settings.provider, modal._current_model_value()) == (
+            "llama_cpp",
+            "model-b",
+        )
+        assert modal.query_one("#console-settings-base-url", Input).value == (
+            SESSION_URL
+        )
+        assert modal._draft.settings.base_url == SESSION_URL
 
 
 @pytest.mark.bootstrap_profile
