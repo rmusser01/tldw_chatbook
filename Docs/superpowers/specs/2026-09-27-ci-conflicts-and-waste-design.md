@@ -383,7 +383,7 @@ runs. Method and caveats are in TASK-33160's notes.
 | Measure | Baseline | Target | Result | |
 |---|---|---|---|---|
 | Sync merges with any conflict | 50% (281 of 558, final meter) | ≤ 25% | **12%** (9 of 70) | met |
-| Runner-minutes per day, changed workflows | ~1,100 | ≥ 80% lower | **334** (70% lower) | **missed** |
+| Runner-minutes per day, changed workflows | ~1,100 | ≥ 80% lower | **334** (70% lower) | missed on 10-11; accepted on 10-18 (below) |
 | Fast-lane failures carrying `text-area--gutter` | 16 of 37 failed jobs | 0 | **0** of 381 failed jobs | met |
 
 - **The runner-minutes miss is all GGUF evidence.** The nightly and the two guards are at zero.
@@ -394,6 +394,25 @@ runs. Method and caveats are in TASK-33160's notes.
   `Tests/private_profile.py`), and each run starts three OS jobs.
 - **Sync merges are now rare.** The rule since 2026-09-28 is to rebase, which leaves no merge
   commit, so the meter saw 70 sync merges where the baseline window had 558.
+
+**Runner-minutes re-measured 2026-10-18: 250 a day, 77% lower; accepted by the owner.** #3072
+dropped `Tests/UI/app_factory.py` and `Tests/private_profile.py` from GGUF source's triggers (merged
+2026-10-11T17:19:20Z). Over the 7 days after it, the changed workflows used 1,748 minutes: GGUF
+source 1,484 (83 runs), GGUF import 264 (61 runs), the nightly 0, and the two guards are deleted.
+Rounding each job up to a whole minute gives 282 a day (74% lower).
+
+| GGUF minutes fired only by | PRs | Minutes | Per day (rounded) |
+|---|---|---|---|
+| `Tests/conftest.py` | #3083 #3087 #3121 #3080 #2862 | 817 | 117 |
+| `pyproject.toml` | #3084 #3127 #3138 | 487 | 70 |
+| both of those | #3096 | 88 | 13 |
+| a GGUF path of its own, or a dispatch | #3023 #3099 #3148, 2 dispatches | 356 | 51 |
+
+`pyproject.toml` and both conftests were restored on #2860 at review, and the owner confirmed
+keeping them on 2026-10-11: the GGUF jobs give the only macOS and Windows evidence for those
+changes. Dropping the root conftest would have given about 88% lower, and dropping all three about 95%. The
+remaining gap to 80% is 30 minutes a day, less than the swing between weeks: the 10-11 replay
+predicted 202 a day, and this week two large PRs touched the root conftest.
 
 **Throughput (not attributable to this sub-project alone):**
 
