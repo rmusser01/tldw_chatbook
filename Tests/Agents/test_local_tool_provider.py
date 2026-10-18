@@ -399,7 +399,12 @@ def test_fs_mkdir_preflight_maps_directory_target_and_consults_the_chain_guard(
     monkeypatch.setattr(
         sensitive_paths_module, "refuses_new_directory_chain", lambda *a, **k: True
     )
-    with pytest.raises(LocalToolError, match="collide with a protected path"):
+    # The raw-arg form ("creating 'c/d'") is unique to the provider's
+    # branch; the resolve choke point's write-chain refusal echoes the
+    # ABSOLUTE path, so this match pins which raise fired (review Minor
+    # on #3154: a future function-local import in local_tool_impls must
+    # not silently shift the exercised path).
+    with pytest.raises(LocalToolError, match=r"creating 'c/d' would collide"):
         provider.path_targets("local:fs_mkdir", {"path": "c/d"})
 
 
