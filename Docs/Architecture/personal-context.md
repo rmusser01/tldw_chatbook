@@ -41,6 +41,7 @@ This document describes the user-owned memory systems that cross agent sessions:
 ## Boundaries
 
 - Personal Context is **not** general agent memory: conversation compaction (ADR-052) and Notes keep their own owners; pending-proposal records never enter agent context; diagnostics never enter model payloads, logs, exports, or sync objects.
+- The shared first-request roster read (`Chat/console_agent_bridge.py::_console_first_request_runtime_context`) uses `operation_owned_connection` to retire newly acquired worker handles while preserving borrowed connections and their active transactions.
 - The Settings inspection path (My Profile) sees the user's private records; the agent path sees only the agent-eligible view — deliberately different.
 - Lesson guidance is trusted runtime text; lesson bodies are untrusted data.
 - No `[personal_context]` config section exists — control is data-owned (per-record visibility/sync modes, per-scope agent authority, global runtime switch); the DB path is fixed.

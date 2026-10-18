@@ -27,7 +27,8 @@ from .limits import (
     validate_utf8_text,
 )
 
-CANVAS_ARCHIVE_EXTENSION_VERSION = "1.0"
+CANVAS_ARCHIVE_EXTENSION_VERSION = "2.0"
+CANVAS_ARCHIVE_LEGACY_EXTENSION_VERSION = "1.0"
 CANVAS_ARCHIVE_SUPPORTED_RUNTIME_PROFILE = SUPPORTED_CANVAS_RUNTIME_PROFILE
 MAX_CANVAS_ARCHIVE_DOCUMENTS = 1_000
 MAX_CANVAS_ARCHIVE_REVISIONS = MAX_CANVAS_ARCHIVE_DOCUMENTS * MAX_REVISIONS_PER_CANVAS
@@ -93,7 +94,7 @@ def export_canvas_archive(
         "JOIN canvas_revisions AS revision ON revision.canvas_id = document.id "
         "JOIN messages AS message ON message.id = revision.origin_message_id "
         f"WHERE document.conversation_id IN ({placeholders}) "
-        "ORDER BY document.conversation_id, document.id, revision.sequence",
+        "ORDER BY document.conversation_id, document.id, revision.sequence, revision.id",
         conversation_ids,
     ).fetchall()
     if not isinstance(rows, list) or not rows:

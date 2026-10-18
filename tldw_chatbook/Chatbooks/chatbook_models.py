@@ -17,6 +17,7 @@ from typing import Any
 
 from ..Canvas.archive import (
     CANVAS_ARCHIVE_EXTENSION_VERSION,
+    CANVAS_ARCHIVE_LEGACY_EXTENSION_VERSION,
     CANVAS_ARCHIVE_SUPPORTED_RUNTIME_PROFILE,
     MAX_CANVAS_ARCHIVE_CONVERSATION_ID_BYTES,
     MAX_CANVAS_ARCHIVE_DOCUMENTS,
@@ -51,14 +52,15 @@ class ChatbookVersion(Enum):
     V1 = "1.0"
     V2 = "2.0"
     V3 = "3.0"
+    V4 = "4.0"
 
 
 def select_chatbook_version(*, has_canvas_records: bool) -> ChatbookVersion:
-    """Select 3.0 only when the export actually contains Canvas records."""
+    """Select 4.0 only when the export actually contains Canvas records."""
 
     if type(has_canvas_records) is not bool:
         raise TypeError("has_canvas_records must be a bool")
-    return ChatbookVersion.V3 if has_canvas_records else ChatbookVersion.V2
+    return ChatbookVersion.V4 if has_canvas_records else ChatbookVersion.V2
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,11 +201,15 @@ class CanvasArchiveDocument:
             isinstance(revision, CanvasArchiveRevision) for revision in self.revisions
         ):
             raise CanvasArchiveValidationError("invalid_revision")
-        ordered = sorted(self.revisions, key=lambda revision: revision.sequence)
-        if [revision.sequence for revision in ordered] != list(
-            range(1, len(ordered) + 1)
-        ):
+        ordered = sorted(
+            self.revisions,
+            key=lambda revision: (revision.sequence, revision.revision_id),
+        )
+        distinct_sequences = sorted({revision.sequence for revision in ordered})
+        if distinct_sequences != list(range(1, distinct_sequences[-1] + 1)):
             raise CanvasArchiveValidationError("invalid_revision_sequence")
+        if sum(revision.parent_revision_id is None for revision in ordered) != 1:
+            raise CanvasArchiveValidationError("invalid_root_parent")
         revisions_by_id: dict[str, CanvasArchiveRevision] = {}
         for revision in ordered:
             if revision.revision_id in revisions_by_id:
@@ -229,7 +235,8 @@ class CanvasArchiveDocument:
             "revisions": [
                 revision.to_dict()
                 for revision in sorted(
-                    self.revisions, key=lambda revision: revision.sequence
+                    self.revisions,
+                    key=lambda revision: (revision.sequence, revision.revision_id),
                 )
             ],
         }
@@ -301,7 +308,7 @@ class CanvasArchiveReopenHint:
 
 @dataclass(frozen=True, slots=True)
 class CanvasArchiveManifest:
-    """Bounded Canvas extension metadata embedded in a Chatbook 3.0 manifest."""
+    """Bounded current or legacy Canvas extension metadata in a manifest."""
 
     extension_version: str
     total_source_bytes: int
@@ -309,7 +316,10 @@ class CanvasArchiveManifest:
     reopen_hints: tuple[CanvasArchiveReopenHint, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.extension_version != CANVAS_ARCHIVE_EXTENSION_VERSION:
+        if type(self.extension_version) is not str or self.extension_version not in {
+            CANVAS_ARCHIVE_LEGACY_EXTENSION_VERSION,
+            CANVAS_ARCHIVE_EXTENSION_VERSION,
+        }:
             raise CanvasArchiveValidationError("unsupported_extension_version")
         validate_non_negative_int(
             self.total_source_bytes,
@@ -335,6 +345,12 @@ class CanvasArchiveManifest:
         for document in self.documents:
             if not isinstance(document, CanvasArchiveDocument):
                 raise CanvasArchiveValidationError("invalid_document")
+            if (
+                self.extension_version == CANVAS_ARCHIVE_LEGACY_EXTENSION_VERSION
+                and len({revision.sequence for revision in document.revisions})
+                != len(document.revisions)
+            ):
+                raise CanvasArchiveValidationError("invalid_revision_sequence")
             if document.canvas_id in all_stable_ids:
                 raise CanvasArchiveValidationError("duplicate_stable_id")
             all_stable_ids.add(document.canvas_id)
@@ -562,11 +578,20 @@ class ChatbookManifest:
     canvas_archive: CanvasArchiveManifest | None = None
 
     def __post_init__(self) -> None:
-        if self.version is ChatbookVersion.V3:
+        if self.version in {ChatbookVersion.V3, ChatbookVersion.V4}:
             if self.canvas_archive is None:
-                raise ValueError("Chatbook 3.0 requires Canvas records")
+                raise ValueError(
+                    f"Chatbook {self.version.value} requires Canvas records"
+                )
+            expected = (
+                CANVAS_ARCHIVE_LEGACY_EXTENSION_VERSION
+                if self.version is ChatbookVersion.V3
+                else CANVAS_ARCHIVE_EXTENSION_VERSION
+            )
+            if self.canvas_archive.extension_version != expected:
+                raise CanvasArchiveValidationError("mismatched_extension_version")
         elif self.canvas_archive is not None:
-            raise ValueError("Canvas records require Chatbook 3.0")
+            raise ValueError("Canvas records require Chatbook 3.0 or 4.0")
 
     def to_dict(self) -> dict:
         """Convert manifest to dictionary for JSON serialization."""
@@ -596,7 +621,7 @@ class ChatbookManifest:
             "language": self.language,
             "license": self.license,
         }
-        if self.version is ChatbookVersion.V3:
+        if self.version in {ChatbookVersion.V3, ChatbookVersion.V4}:
             assert self.canvas_archive is not None
             result["canvas"] = self.canvas_archive.to_dict()
         return result
@@ -611,10 +636,12 @@ class ChatbookManifest:
             version_value = ChatbookVersion.V1.value
         version = ChatbookVersion(version_value)
         canvas_archive = None
-        if version is ChatbookVersion.V3:
+        if version in {ChatbookVersion.V3, ChatbookVersion.V4}:
             if "canvas" not in data:
-                raise ValueError("Chatbook 3.0 requires Canvas records")
+                raise ValueError(f"Chatbook {version.value} requires Canvas records")
             canvas_archive = CanvasArchiveManifest.from_dict(data["canvas"])
+        elif "canvas" in data:
+            raise CanvasArchiveValidationError("unsupported_container_version")
         manifest = cls(
             version=version,
             name=data["name"],

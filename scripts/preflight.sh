@@ -24,9 +24,10 @@
 #         PYTHON=.venv/bin/python ./scripts/preflight.sh
 #         TLDW_CANVAS_MERMAID_INPUT_DIR=/verified/cache ./scripts/preflight.sh
 #
-# The Mermaid check downloads its declared hash/size-pinned public inputs by
-# default. Set TLDW_CANVAS_MERMAID_INPUT_DIR to reuse an existing offline cache;
-# missing or mismatched cached inputs fail closed rather than skipping the check.
+# The Mermaid check verifies repository-vendored inputs offline by default.
+# TLDW_CANVAS_MERMAID_INPUT_DIR can select another verified cache; missing or
+# mismatched inputs fail closed. Explicit input refresh is documented in
+# vendor/canvas-mermaid-inputs/README.md.
 #
 # Exits 0 when every check passes, 1 otherwise. Every check runs even after one
 # fails, so a single pass reports all of the drift.

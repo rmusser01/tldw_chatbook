@@ -24,6 +24,7 @@ LANES = (
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
+    "Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection",
     "Tests/MCP/test_approval_timeout_policy.py",
     "Tests/MCP/test_control_plane_bridge.py",
     "Tests/MCP/test_live_server_request_wiring.py",
@@ -114,6 +115,7 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[canvas-denied]",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_preview_runtime_roster_retires_only_its_worker_connection",
     # TASK-34406.7: pin the same six App/startup/served size controls.
     "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py]",
     "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/app.py]",
@@ -211,6 +213,7 @@ ADMISSION_TARGETS = (
     "Tests/DB/test_chachanotes_connection_quiescence.py",
     "Tests/DB/test_operation_owned_connection_retirement.py",
     "Tests/UI/test_console_runtime_ownership.py",
+    "Tests/UI/test_console_partial_resize.py",
     "Tests/Chat/test_console_viewless_hooks.py",
     "Tests/Agents/test_install_skill_runtime_tool.py",
     "Tests/Chat/test_console_chat_create_integration.py",

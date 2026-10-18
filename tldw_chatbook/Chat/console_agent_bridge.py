@@ -4812,9 +4812,11 @@ def _console_first_request_runtime_context(
     db: Any, budget: RunBudget
 ) -> tuple[tuple[AgentDefinition, ...], int]:
     """Return the exact named-agent roster and fleet gate for one turn."""
-    definitions = tuple(
-        definition_from_row(row) for row in db.list_agent_definitions(enabled_only=True)
-    )
+    with operation_owned_connection(db):
+        definitions = tuple(
+            definition_from_row(row)
+            for row in db.list_agent_definitions(enabled_only=True)
+        )
     max_live = agent_service_module._coerce_max_live_subagents(
         agent_service_module._setting(
             agent_service_module.MAX_LIVE_SUBAGENTS_KEY,

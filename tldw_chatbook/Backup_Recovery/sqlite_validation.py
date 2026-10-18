@@ -103,6 +103,7 @@ class _Restrictions:
         self.fleet_progress_migration = False
         self.browse_order_migration = False
         self.response_rules_migration = False
+        self.canvas_sibling_migration = False
         self.preparing_response_rules = False
         self.sargable_migration = False
         self.canvas_schema = False
@@ -381,6 +382,32 @@ class _Restrictions:
                         or action == sqlite3.SQLITE_REINDEX and first in indexes
                         or action == sqlite3.SQLITE_INSERT and first == "sqlite_master"
                         or action == sqlite3.SQLITE_UPDATE and first == "sqlite_master" and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                if (
+                    self.canvas_sibling_migration
+                    and database == "main"
+                    and source is None
+                ):
+                    indexes = {
+                        "idx_canvas_revisions_canvas_sequence",
+                        "uq_canvas_revisions_single_root",
+                    }
+                    allowed |= (
+                        action == sqlite3.SQLITE_DROP_INDEX
+                        and first == "idx_canvas_revisions_canvas_sequence"
+                        and second == "canvas_revisions"
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first in indexes
+                        and second == "canvas_revisions"
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in indexes
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_DELETE
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
                     )
                 allowed |= (
                     self.fleet_progress_migration
@@ -782,6 +809,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V79_SCHEMAS,
         CHACHANOTES_V80_SCHEMAS,
         CHACHANOTES_V81_SCHEMAS,
+        CHACHANOTES_V82_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -804,6 +832,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V79_SCHEMAS,
         *CHACHANOTES_V80_SCHEMAS,
         *CHACHANOTES_V81_SCHEMAS,
+        *CHACHANOTES_V82_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1030,6 +1059,7 @@ def _validate_candidate(
                         CHACHANOTES_V78_SCHEMAS,
                         CHACHANOTES_V79_SCHEMAS,
                         CHACHANOTES_V80_SCHEMAS,
+                        CHACHANOTES_V81_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1040,10 +1070,16 @@ def _validate_candidate(
                             *CHACHANOTES_V76_NATIVE_SCHEMAS,
                             *CHACHANOTES_V76_SHIPPED_SCHEMAS,
                         )
-                        or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
-                        or version == 78 and actual_sql in CHACHANOTES_V78_SCHEMAS
-                        or version == 79 and actual_sql in CHACHANOTES_V79_SCHEMAS
-                        or version == 80 and actual_sql in CHACHANOTES_V80_SCHEMAS
+                        or version == 77
+                        and actual_sql in CHACHANOTES_V77_SCHEMAS
+                        or version == 78
+                        and actual_sql in CHACHANOTES_V78_SCHEMAS
+                        or version == 79
+                        and actual_sql in CHACHANOTES_V79_SCHEMAS
+                        or version == 80
+                        and actual_sql in CHACHANOTES_V80_SCHEMAS
+                        or version == 81
+                        and actual_sql in CHACHANOTES_V81_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1063,14 +1099,16 @@ def _validate_candidate(
                         if (
                             shipped_checkpoint and version == 76
                             or installed.owner_id == "db.chachanotes.primary"
-                            and version in (77, 78, 79, 80)
+                            and version in (77, 78, 79, 80, 81)
                         ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
                                 / "DB"
                                 / "migrations"
                                 / (
-                                    "chachanotes_v77_to_v78_fleet_progress.sql"
+                                    "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
+                                    if version == 81
+                                    else "chachanotes_v77_to_v78_fleet_progress.sql"
                                     if version == 77
                                     else "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
                                     if version == 78
@@ -1086,6 +1124,7 @@ def _validate_candidate(
                             restrictions.sargable_migration = version == 78
                             restrictions.browse_order_migration = version == 79
                             restrictions.response_rules_migration = version == 80
+                            restrictions.canvas_sibling_migration = version == 81
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -1119,6 +1158,7 @@ def _validate_candidate(
                                 restrictions.sargable_migration = False
                                 restrictions.browse_order_migration = False
                                 restrictions.response_rules_migration = False
+                                restrictions.canvas_sibling_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

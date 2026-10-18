@@ -499,7 +499,7 @@ class ChatbookCreator:
                     canvas_db.close_connection()
                 if canvas_archive is not None:
                     manifest.canvas_archive = canvas_archive
-                    manifest.version = ChatbookVersion.V3
+                    manifest.version = ChatbookVersion.V4
 
             # Write manifest
             manifest_path = work_dir / "manifest.json"
@@ -525,7 +525,7 @@ class ChatbookCreator:
                     work_dir,
                     output_path,
                     partial_path,
-                    deterministic=manifest.version is ChatbookVersion.V3,
+                    deterministic=manifest.version is ChatbookVersion.V4,
                 )
             except OSError as error:
                 # task-32251 AC#4, narrowed by review F6: ONLY the packaging

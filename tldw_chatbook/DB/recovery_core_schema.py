@@ -994,3 +994,42 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_RULES_V80_TO_V81_SQL = (
     "UPDATE db_schema_version SET version=81 WHERE schema_name='rag_char_chat_schema' AND version=80",
 )
+
+# ADR-239: fixed successors for every accepted v81 catalog, without SQL normalization.
+CHACHANOTES_V82_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            tuple(
+                sql
+                for sql in schema
+                if sql
+                != (
+                    "CREATE UNIQUE INDEX idx_canvas_revisions_canvas_sequence\n"
+                    "  ON canvas_revisions(canvas_id, sequence)"
+                )
+            )
+            + (
+                (
+                    "CREATE INDEX idx_canvas_revisions_canvas_sequence\n"
+                    "  ON canvas_revisions(canvas_id, sequence, id)"
+                ),
+                (
+                    "CREATE UNIQUE INDEX uq_canvas_revisions_single_root\n"
+                    "  ON canvas_revisions(canvas_id) WHERE parent_revision_id IS NULL"
+                ),
+            ),
+            key=_installed_schema_order,
+        )
+    )
+    for schema in CHACHANOTES_V81_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V82_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 82, CHACHANOTES_V82_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_CANVAS_V81_TO_V82_SQL = (
+    "UPDATE db_schema_version SET version=82 WHERE schema_name='rag_char_chat_schema' AND version=81",
+)

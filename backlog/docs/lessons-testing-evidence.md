@@ -8813,6 +8813,19 @@ the database has migrated to the current schema; using it to populate an older
 fixture makes an unrelated future column addition break the fixture before the
 migration under test can run.
 
+**Recurrence (TASK-35376, PR #3153, 2026-10-18).** Canvas schema 82 correctly
+upgraded response-rule databases, but the required Console P0 step still
+expected the installed endpoint and frozen catalog to be v81 (five hosted
+failures). Running both response-rule migration/recovery modules exposed 16
+stale-pin failures, including a "future" refusal fixture now stamped with the
+valid current version. Compare runtime endpoints with the installed current
+version, keep exact ordered frozen-catalog comparisons for each historical
+lineage, and stamp refusal fixtures above the maximum supported version.
+The repair passed 223 focused checks. Independent review also caught a third
+CI selector registry missed when the endpoint-named test was renamed; its real
+contract failed until that reference moved too. Search every selector consumer,
+not just the workflow and the first matching registry.
+
 ## Removing a widget's border box activates the global focus outline on it (task-17651, 2026-08-17)
 
 **What happened.** Flattening the Console composer to a one-row dense-form bar
@@ -20173,6 +20186,17 @@ lease inventory. Passing bodies or a clean partial owner list cannot establish
 whole-population retirement. The same audit found native raw-command and test
 worker acquisitions: scopes must cover the complete callback, including its
 pre-run work-chain write, while borrowed connections remain caller-owned.
+
+**Canvas closeout, TASK-34968 (2026-10-17).** All 25 existing preview bodies
+passed while an original-handle observer found each passive roster read left
+a worker AgentRunsDB connection open. The shared first-request planning helper
+called `list_agent_definitions` outside an operation scope; live parity tests
+also bypassed the production maintenance-worker wrapper. Scope the shared
+finite read with `operation_owned_connection` and use the real dispatch wrapper
+in the fixture. Do not add a test-only preview guard that masks production
+retention. Cold-owner/active-borrower RED/GREEN controls and 27 final native
+children then observed 608 original connections retired on their own threads,
+with no observer cleanup. Budget parity alone is not lifetime evidence.
 
 
 ### Runtime fixture imports can invalidate a pre-bootstrap restore test (PR2921)

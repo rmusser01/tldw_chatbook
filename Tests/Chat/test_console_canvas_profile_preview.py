@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import sqlite3
 import threading
 from dataclasses import replace
 from types import SimpleNamespace
@@ -305,7 +306,7 @@ async def test_canvas_inspector_reserves_the_dispatched_request_budget(
         return original_build(context_request)
 
     monkeypatch.setattr(live_builder, "build_snapshot", build_live)
-    _run_id, outcome = await asyncio.to_thread(
+    _run_id, outcome = await rig.controller._run_maintenance_agent_call(
         rig.bridge.run_reply,
         conversation_id=rig.session.id,
         session_id=rig.session.id,
@@ -364,6 +365,46 @@ async def test_canvas_inspector_reserves_the_dispatched_request_budget(
     else:
         assert '"value":"concise ' not in rig.sent[0][0][0]["content"]
     assert rig.sent[0][0][-1]["content"] == inputs["agent_messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("borrowed", [False, True])
+@private_profile_test
+async def test_preview_runtime_roster_retires_only_its_worker_connection(
+    request, monkeypatch, borrowed
+):
+    """Pure request planning must not strand a newly acquired native owner."""
+    rig = request.getfixturevalue("preview_rig")
+    observed = []
+    original = rig.db.list_agent_definitions
+
+    def definitions(**kwargs):
+        rows = original(**kwargs)
+        observed.append(rig.db._thread_local.conn)
+        return rows
+
+    monkeypatch.setattr(rig.db, "list_agent_definitions", definitions)
+
+    def inspect():
+        previous = rig.db._held_connection() if borrowed else None
+        try:
+            if previous is not None:
+                previous.execute("BEGIN")
+            bridge_module._console_first_request_runtime_context(
+                rig.db, bridge_module.console_run_budget()
+            )
+            assert len(observed) == 1
+            if borrowed:
+                assert observed[0] is previous
+                assert previous.in_transaction
+                assert previous.execute("SELECT 1").fetchone()[0] == 1
+            else:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    observed[0].execute("SELECT 1")
+        finally:
+            rig.db.close()
+
+    await asyncio.to_thread(inspect)
 
 
 @pytest.mark.asyncio

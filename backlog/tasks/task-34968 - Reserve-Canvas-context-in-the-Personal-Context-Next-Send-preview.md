@@ -1,15 +1,15 @@
 ---
 id: TASK-34968
 title: Reserve Canvas context in the Personal Context Next Send preview
-status: In Progress
+status: Done
 assignee:
-  - '@codex'
-created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 15:15'
+- '@codex'
+created_date: 2026-10-11 23:58
+updated_date: 2026-10-18 05:01
 labels:
-  - memory
-  - canvas
-  - context-budget
+- memory
+- canvas
+- context-budget
 dependencies: []
 priority: medium
 ---
@@ -22,11 +22,12 @@ When Canvas tools are enabled and the model input budget is tight, the Personal 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A native production preview regression reproduces the Canvas-enabled budget mismatch before the fix.
-- [ ] #2 With identical profile, model, message and tool inputs, the Inspector and dispatched request agree on selected records and their available input budget, including Canvas schemas and runtime guidance.
-- [ ] #3 Preview does not register an executable Canvas run, create staging records, grant mutation authority, or change the selected Canvas.
-- [ ] #4 Disabled, unavailable and stale Canvas states preserve their existing fail-closed behavior, with native Python >=3.12 targeted verification and a recorded ADR check.
-- [ ] #5 Current Goal/Canvas preview budget parity and post-await Canvas ownership regressions execute in required PR checks.
+- [x] #1 A native production preview regression reproduces the Canvas-enabled budget mismatch before the fix.
+- [x] #2 With identical profile, model, message and tool inputs, the Inspector and dispatched request agree on selected records and their available input budget, including Canvas schemas and runtime guidance.
+- [x] #3 Preview does not register an executable Canvas run, create staging records, grant mutation authority, or change the selected Canvas.
+- [x] #4 Disabled, unavailable and stale Canvas states preserve their existing fail-closed behavior, with native Python >=3.12 targeted verification and a recorded ADR check.
+- [x] #5 Current Goal/Canvas preview budget parity and post-await Canvas ownership regressions execute in required PR checks.
+- [x] #6 The shared passive roster read retires native database connections opened for that operation while preserving pre-existing borrowed connections.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,11 +51,12 @@ Task4: reconcile independently cleared feature-only range onto actual merged Goa
 Task5: preserve actualdev352 concurrentNotes-sync inode/containment fix and executable fast sandbox containment target while rebasing reviewed PC feature-only range; qualify only affected CI/nativeNotes/dependency controls and exact sourcebindings. Existing ADRs; no new ADR/authority/storage/permission/cap. FinalactualpostFocus/latestdev andprotectedhostedCI remain rootgates.
 
 Task6: preserve accepteddf4985 Buddy/Library/Settings owners while retaining all reviewed PC contracts. ADR required:no new; direct existing boundary preservation. Full Task6plan in Docs/superpowers/plans/2026-10-11-pr2862-current-dev-integration.md.
+2026-10-17 Canvas closeout: rerun the complete current native preview suite and required regression-membership/currentness checks under isolated profiles. If the preview test fixture dispatches outside the production worker ownership wrapper, correct that fixture only, preserve original lifetime observations, and prove original handles retire without borrower cleanup or changed runtime limits. Attribute unrelated Personal Context/Notes qualification debt separately; close this task only against its five Canvas criteria.
+Current native lifetime observation traced a production cause: _console_first_request_runtime_context reads list_agent_definitions without a native operation scope. Before closing this task, wrap that shared roster read in the existing operation_owned_connection(db) context, add native owner-versus-borrower RED/GREEN controls, and rerun the complete Canvas preview and required-membership/currentness populations. This supersedes the earlier test-only assumption; no authority, budget, caps or unrelated DB lifecycle changes are selected.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Historical source implementation evidence (source49c5ebf4eec858df40b56c65e46b5d94414ccb7a; current integration remains In Progress):
 
 Corrected disposable Personal Context budgeting using the existing Canvas owner profile, ordered catalog metadata and a lazy read-only schema loader inside the shared guarded planner. Live Canvas provider authentication and execution authority remain unchanged. One shared currentness callback fences exact session identity, Canvas enablement/controller/interactive owner and branch through final snapshot publication and later Inspector validation; diagnostic sidecars publish only after that fence.
@@ -78,8 +80,8 @@ Task4 final independent specPASS/qualityPASS at31eb with all227feature paths/cur
 Task5 independently cleared specPASS/qualityPASS onb750, no newsourcefinding. Inherited native Notes settlement debt reproduces exact352 and staysRED. Latestdevdf4985 preservation/boundedchanged-owner qualification nowTask6; no latestbase/hosted/Done claim.
 
 Task6 private latest-owner transplant (2026-10-12): exact actual dev df4985eca6c3e7e09bd1eca60536411c6faa3720; runtime-qualified head 7142222f2df59f8e666e9b2ac155b53b471de886. All14 feature/governance patches range-diff identical,227 feature paths retained, all51 accepted Buddy/Library/Settings changes preserved; only Settings discovery method and append-only lessons overlap. Fresh bounded candidate78pass/1 inherited pre-body config-source refusal across79 selected cases; exactdf targeted controls15pass/1same refusal. NativeNotes9 zero process leases. Changed Library behavior15pass and factory8 original owners retire, while Notes12 dead-thread leases/34physicalFDs match exactdf on same4relative paths. Settings32/normalization16pass; six boot/import controls pass original caps (payload552/558,417200/425347LOC;boot678/686;UIready1031/1033). Fulloffline12preflight pass112.763s with verified Mermaidcache. Changed Settings Ruff119 per-file findings and formatRED match reviewed and actualbase; existing static/size/deadline/17-node Notes debt retained. One invalid native-observer path setup reached no tests and remains separately recorded. At the Task6 final audit, 1,200 of 1,201 inherited frozen files remain unchanged; the root-owned live sequence-state.json change is recorded separately. The original manifest is retained, immutable PC receipts remain unchanged, and original Task5 live-root chronology remains intact. ADR required:no new; existing accepted ownership/memory/custody decisions. No runtime repair, GC, cap change, full suite or hosted claim. Task6report and exact argv/raw/XML/source/native/seal evidence in pr2862-task6-current-owners-integration. Root independent review, actual post-Focus/latestbase, hosted qualification/publication/protected merge remain; status and open AC retained.
-<!-- SECTION:NOTES:END -->
-
+2026-10-17 Canvas-scoped closeout on current dev base 272cad956855feda4d78efb9db9fce7e909d53db: all six Canvas criteria have evidence. Historical budget reproductions and integration notes above are retained, not relabeled as current runs. PR2862 is confirmed merged (e8260d4ed4d76b916963423c6ae526b743c0372f, 2026-10-12) with successful PR Fast Lane and required Derived Artifacts aggregate; that resolves the historical publication gate, not fresh hosted qualification for this correction. Current native qualification discovered a real unretired AgentRunsDB connection in the shared first-request roster read. The existing operation_owned_connection now scopes that read; the added cold-owner regression failed before correction while the borrowed active-transaction control passed. The test live-dispatch fixture now uses the production maintenance worker wrapper. Final complete native Canvas preview population: 27 passed, no errors/skips, natural exit 0; 608 original SQLite connection observations across 27 isolated child processes were natively closed on their creating threads, zero survivors/wrong imports, without observer cleanup. Existing parity, authority/currentness, deadlines and caps remain unchanged. Required-membership/Inspector controls: 20 passed; additional project-preview shared callers: 2 passed; root final checker/workflow/required-membership selection: 137 passed. New lifetime target is gated in the existing required PR contract and both inventories. Independent context review found no remaining findings. Test Ruff check/format and whitespace pass; bridge retains the exact 28 pre-existing Ruff findings and queue-contract formatting debt remains unchanged. Living architecture and testing-incident lesson updated. Existing ADR121/202/228/126 apply; no new authority/storage/schema policy. Docs/superpowers/reviews/2026-10-17-canvas-followups.md records scope, verification and limits; raw evidence is /private/tmp/chatbook-canvas-followups.FrzDFL. No full suite, cross-platform or fresh hosted-CI claim; unrelated Personal Context/Notes debt is not closed by this task.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
 The source Personal Context Canvas task used TASK-33165, which collides with the older Dreams query-angle task retained on dev. This new CLI-allocated identity preserves all four source acceptance criteria, the original plan and clearly historical implementation notes. Its criteria are reopened until the current integration is qualified. Source `49c5ebf4eec858df40b56c65e46b5d94414ccb7a` and the frozen source branch preserve the original completed record; live Personal Context references use this task's new identity.
