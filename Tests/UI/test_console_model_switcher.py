@@ -1566,6 +1566,28 @@ async def test_find_with_an_unused_legacy_alias_id_ranks_as_any_text(
     ] == [expected]
 
 
+@pytest.mark.parametrize(
+    "query", ["llama.cpp (legacy alias)", "Mistral AI (legacy alias)"]
+)
+async def test_find_with_an_unused_legacy_alias_name_offers_no_typed_id(query) -> None:
+    """TASK-33641.9 (round-3 review): only an unused alias's id is ordinary
+    text; its name ends in "(legacy alias)", which no search word collides
+    with. With the alias out of the name test too, the name matched the
+    canonical provider's name and a space, and "(legacy alias)" was offered,
+    highlighted, as that provider's TYPED MODEL ID, which Enter applied."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(recorder))
+        await pilot.press(*query)
+        await _settle(app, pilot)
+        assert [row for row in switcher._rows if row.kind == "typed"] == []
+        assert switcher.highlighted_row() is None
+        await pilot.press("enter")
+        await pilot.pause()
+    assert recorder.submissions == []
+
+
 async def test_a_list_reopened_with_no_pair_waits_for_readiness_too() -> None:
     """TASK-33008.2: before readiness RECENT can already list the
     aggregator's id, and it is Find's best match there too. A list reopened

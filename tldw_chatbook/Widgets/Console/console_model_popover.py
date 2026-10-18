@@ -1570,8 +1570,12 @@ class ConsoleModelPopover(
         if not tokens:
             return []
         folded = query.casefold()
-        providers = self._readiness_targets()  # no unused legacy alias
-        if any(self._names(folded, key) for key in providers):
+        # Every provider's name, but no unused legacy alias's id: only an id
+        # ("mistral") is a search word; an alias's name ends "(legacy alias)".
+        providers = (*self._provider_order, *sorted(self._used_provider_keys()))
+        if folded in {self._display(key).casefold() for key in providers} | {
+            key.casefold() for key in self._readiness_targets()
+        }:
             return []  # a provider's name or id is a search, not a model id
         named = [
             key
