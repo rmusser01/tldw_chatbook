@@ -229,26 +229,53 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
             ), name
 
 
+#: The provider-choice rows (Reasoning effort, Reasoning summary, Verbosity,
+#: Thinking) each registry family shows (TASK-33003.13).
+_CHOICE_ROWS = ("reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort")
+
+
+@pytest.mark.parametrize(
+    ("slug", "name", "family", "family_key", "shown_choices"),
+    [
+        ("gpu-box", "GPU box", "llama_cpp", "llama_cpp", {"reasoning_effort"}),
+        ("lab", "Lab", "ollama", "ollama", set()),
+        ("gateway", "Gateway", "openai_compatible", "custom", {"reasoning_effort"}),
+    ],
+)
 @pytest.mark.asyncio
-async def test_a_registry_endpoint_hides_what_its_family_hides() -> None:
+async def test_a_registry_endpoint_hides_what_its_family_hides(
+    slug, name, family, family_key, shown_choices
+) -> None:
     """AC#3 (review fix): a ``custom-ep`` entry is decided as its family, so
-    a llama.cpp entry shows no control that Apply would then clear."""
+    a llama.cpp entry shows no control that Apply would then clear.
+
+    TASK-33003.13, owner ruling 2026-10-09: a custom endpoint shows exactly
+    the provider-choice rows its registry family supports, the rule the
+    request follows; pinned over every family (``ENDPOINT_FAMILIES``)."""
     app = CoreFirstHarness()
-    modal = _modal(app, _settings("custom-ep:gpu-box", "model-a", temperature=0.7))
+    app.app_config["custom_endpoints"].setdefault(
+        slug,
+        {
+            "display_name": name,
+            "family": family,
+            "base_url": "http://192.168.1.9:8080",
+            "models": ["model-a"],
+        },
+    )
+    assert app.app_config["custom_endpoints"][slug]["family"] == family
+    provider = f"custom-ep:{slug}"
+    modal = _modal(app, _settings(provider, "model-a", temperature=0.7))
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
-        family_hidden = _shared_hidden(app.app_config, "llama_cpp", "model-a")
+        family_hidden = _shared_hidden(app.app_config, family_key, "model-a")
         assert {"reasoning_summary", "verbosity", "thinking_effort"} <= set(
             family_hidden
         )
         assert _hidden_rows(modal) == family_hidden
+        assert set(_CHOICE_ROWS) - set(_hidden_rows(modal)) == shown_choices
         shown = set(FIELD_ROW_FIELDS) - set(family_hidden)
-        assert shown <= supported_generation_fields(
-            "custom-ep:gpu-box", "model-a", app.app_config
-        )
-        assert _sampling_title(modal) == _expected_line(
-            "llama_cpp", family_hidden, "GPU box"
-        )
+        assert shown <= supported_generation_fields(provider, "model-a", app.app_config)
+        assert _sampling_title(modal) == _expected_line(family_key, family_hidden, name)
 
 
 @pytest.mark.parametrize("name", ["Lab [gpu]", "Lab [/b] box"])
