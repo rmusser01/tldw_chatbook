@@ -140,8 +140,7 @@ def test_excludes_non_agent_and_non_approved_decisions():
     records = [
         _record("local:docs", "search", "approved", initiator="test"),
         _record("local:docs", "search", "allowed"),
-        _record("local:docs", "search", "approved-session"),
-        _record("local:docs", "search", "approved-session"),
+        _record("local:docs", "search", "downgraded"),
         _record("local:docs", "search", "denied"),
         _record("local:docs", "search", "denied-timeout"),
     ]
@@ -152,6 +151,31 @@ def test_excludes_non_agent_and_non_approved_decisions():
     assert report.recommendations == []
     assert report.approval_records == 0
     assert ("local:docs", "search") not in report.excluded
+
+
+def test_counts_approved_session_decisions_as_human_approvals():
+    """TASK-18928: "Approve for session" is as explicit a human approval as
+    "Approve once" -- repeated session approvals must mine into suggestions
+    just like repeated once approvals (and the two mix into one count)."""
+    tool = _tool("local:docs", "search")
+    records = [
+        _record("local:docs", "search", "approved", ts="2026-08-01T20:00:00+00:00"),
+        _record("local:docs", "search", "approved-session", ts="2026-08-01T20:05:00+00:00"),
+        _record("local:docs", "other", "approved-session", ts="2026-08-01T20:06:00+00:00"),
+    ]
+    states = {
+        ("local:docs", "search"): _state("ask"),
+        ("local:docs", "other"): _state("ask"),
+    }
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert [
+        (r.server_key, r.tool_name, r.approved_count) for r in report.recommendations
+    ] == [("local:docs", "search", 2)]
+    assert report.approval_records == 3
+    # "other" saw one session approval only: below threshold, not promoted.
+    assert report.excluded[("local:docs", "other")] == "below-threshold"
 
 
 def test_excludes_missing_stale_or_unexecutable_live_tools():

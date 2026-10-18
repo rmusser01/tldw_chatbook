@@ -88,6 +88,11 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
+#: TASK-18928: optional top-level map of suggestion dismissals, keyed by
+#: ``"<server_key>::<tool_name>"`` -> dismissed-at ISO timestamp. Pure
+#: bookkeeping for the "Always allow" suggestion surface; never consulted
+#: by permission resolution. Omitted from the payload while empty.
+SUGGESTION_DISMISSALS_KEY = "suggestion_dismissals"
 #: Sentinel key set only by _fail_closed_payload() to mark a store whose
 #: policy file could not be READ; raw getters deny on it (TASK-32806.3).
 _UNREADABLE_MARKER = "__unreadable__"
@@ -527,7 +532,11 @@ def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) ->
 
 def _validate_strict_payload(payload: Any) -> bool:
     if not isinstance(payload, Mapping) or set(payload) - {
-        "schema_version", "kill_switch", "profiles", "updated_at"
+        "schema_version",
+        "kill_switch",
+        "profiles",
+        "updated_at",
+        SUGGESTION_DISMISSALS_KEY,
     }:
         return False
     if type(payload.get("schema_version")) is not int or payload.get(
@@ -537,6 +546,10 @@ def _validate_strict_payload(payload: Any) -> bool:
     if not isinstance(payload.get("kill_switch"), bool) or not isinstance(payload.get("profiles"), Mapping):
         return False
     if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+    if SUGGESTION_DISMISSALS_KEY in payload and not _is_dismissal_map(
+        payload[SUGGESTION_DISMISSALS_KEY]
+    ):
         return False
     profiles = payload["profiles"]
     if _DEFAULT_PROFILE_ID not in profiles:
@@ -557,6 +570,7 @@ def _validate_profile_inventory_payload(payload: Any) -> bool:
         "kill_switch",
         "profiles",
         "updated_at",
+        SUGGESTION_DISMISSALS_KEY,
     }:
         return False
     if (
@@ -569,6 +583,10 @@ def _validate_profile_inventory_payload(payload: Any) -> bool:
     ):
         return False
     if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+    if SUGGESTION_DISMISSALS_KEY in payload and not _is_dismissal_map(
+        payload[SUGGESTION_DISMISSALS_KEY]
+    ):
         return False
 
     profiles = payload["profiles"]
@@ -666,7 +684,21 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
     for named in profiles.values():
         if isinstance(named, Mapping):
             named["servers"] = _as_mapping(named.get("servers"))
+    # TASK-18928: a hand-corrupted suggestion-dismissal map is nuisance
+    # data, not policy -- drop it in place rather than treating the file
+    # as corrupt (same rationale as the ``servers`` coercion above).
+    dismissals = payload.get(SUGGESTION_DISMISSALS_KEY)
+    if dismissals is not None and not _is_dismissal_map(dismissals):
+        del payload[SUGGESTION_DISMISSALS_KEY]
     return payload
+
+
+def _is_dismissal_map(value: Any) -> bool:
+    """Return whether ``value`` is a valid ``suggestion_dismissals`` map."""
+    return isinstance(value, Mapping) and all(
+        isinstance(key, str) and bool(key) and isinstance(when, str)
+        for key, when in value.items()
+    )
 
 
 def _profile_chain_ids(payload: dict[str, Any], profile_id: str) -> list[str]:
@@ -1457,6 +1489,69 @@ class MCPPermissionStore:
             if payload.get("kill_switch") is normalized:
                 return False
             payload["kill_switch"] = normalized
+            return True
+
+        self._mutate_locked(change)
+
+    # -- suggestion dismissals (TASK-18928) ----------------------------------
+
+    def list_suggestion_dismissals(self) -> dict[str, str]:
+        """Return a copy of the dismissed-suggestion map (tool id -> ISO ts).
+
+        Pure bookkeeping for the approval-history suggestion surface; never
+        consulted by permission resolution.
+        """
+        dismissals = self.load().get(SUGGESTION_DISMISSALS_KEY)
+        if not _is_dismissal_map(dismissals):
+            return {}
+        return dict(dismissals)
+
+    @mcp_sources.guarded
+    def dismiss_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Remember that the user dismissed this tool's allow suggestion.
+
+        Args:
+            server_key: The suggestion's server key.
+            tool_name: The suggestion's tool name.
+        """
+        tool_id = f"{server_key}::{tool_name}"
+
+        def change(payload: dict[str, Any]) -> bool:
+            dismissals = payload.setdefault(SUGGESTION_DISMISSALS_KEY, {})
+            if not _is_dismissal_map(dismissals):
+                dismissals = {}
+                payload[SUGGESTION_DISMISSALS_KEY] = dismissals
+            if dismissals.get(tool_id) and dismissals[tool_id] == _iso_utc_now():
+                return False
+            dismissals[tool_id] = _iso_utc_now()
+            return True
+
+        self._mutate_locked(change)
+
+    @mcp_sources.guarded
+    def restore_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Forget one dismissal so the suggestion may be proposed again."""
+        tool_id = f"{server_key}::{tool_name}"
+
+        def change(payload: dict[str, Any]) -> bool:
+            dismissals = payload.get(SUGGESTION_DISMISSALS_KEY)
+            if not _is_dismissal_map(dismissals) or tool_id not in dismissals:
+                return False
+            del dismissals[tool_id]
+            if not dismissals:
+                del payload[SUGGESTION_DISMISSALS_KEY]
+            return True
+
+        self._mutate_locked(change)
+
+    @mcp_sources.guarded
+    def clear_suggestion_dismissals(self) -> None:
+        """Forget every dismissal (the surface's "clear" review action)."""
+
+        def change(payload: dict[str, Any]) -> bool:
+            if SUGGESTION_DISMISSALS_KEY not in payload:
+                return False
+            del payload[SUGGESTION_DISMISSALS_KEY]
             return True
 
         self._mutate_locked(change)

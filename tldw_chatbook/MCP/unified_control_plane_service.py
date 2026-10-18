@@ -4748,7 +4748,42 @@ class UnifiedMCPControlPlaneService:
             states,
             min_approved_count=min_approved_count,
         )
+        # TASK-18928: one choke point -- dismissed suggestions are absent
+        # from every surface of this engine (report, apply, the Settings
+        # review list), so "dismissed" cannot mean different things in
+        # different places.
+        dismissed = self._suggestion_dismissal_ids()
+        if dismissed:
+            report = replace(
+                report,
+                recommendations=[
+                    item
+                    for item in report.recommendations
+                    if item.tool_id not in dismissed
+                ],
+            )
         return report, {(tool.server_key, tool.name): tool for tool in tools}
+
+    def _suggestion_dismissal_ids(self) -> frozenset[str]:
+        """Read dismissed suggestion ids defensively (bookkeeping only)."""
+        try:
+            store = self.permission_store
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion dismissal store access failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return frozenset()
+        if store is None:
+            return frozenset()
+        try:
+            return frozenset(store.list_suggestion_dismissals())
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion dismissal read failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return frozenset()
 
     async def permission_prompt_recommendations(
         self,
@@ -4827,6 +4862,51 @@ class UnifiedMCPControlPlaneService:
             )
         self.set_tool_state(normalized_key, normalized_tool, "allow", tool=tool)
         return recommendation
+
+    # -- suggestion dismissals (TASK-18928) ----------------------------------
+
+    def _suggestion_store(self):
+        """The permission store for suggestion bookkeeping, or None."""
+        try:
+            return self.permission_store
+        except Exception:
+            return None
+
+    def dismiss_permission_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Remember a dismissed "Always allow" suggestion (not re-proposed).
+
+        Args:
+            server_key: The suggestion's server key.
+            tool_name: The suggestion's tool name.
+
+        Raises:
+            RuntimeError: If the MCP permission store is unavailable.
+        """
+        store = self._suggestion_store()
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
+        store.dismiss_suggestion(server_key, tool_name)
+
+    def restore_permission_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Forget one dismissal so the suggestion may be proposed again."""
+        store = self._suggestion_store()
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
+        store.restore_suggestion(server_key, tool_name)
+
+    def clear_permission_suggestion_dismissals(self) -> None:
+        """Forget every dismissal (the surface's review/clear action)."""
+        store = self._suggestion_store()
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
+        store.clear_suggestion_dismissals()
+
+    def list_permission_suggestion_dismissals(self) -> dict[str, str]:
+        """Return the dismissed-suggestion map (tool id -> dismissed-at)."""
+        store = self._suggestion_store()
+        if store is None:
+            return {}
+        return store.list_suggestion_dismissals()
 
     @staticmethod
     def _normalize_batch_requests(requests: list[Any]) -> list[dict[str, Any]]:
