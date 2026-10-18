@@ -17,16 +17,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _is_main_guard(node: ast.stmt) -> bool:
+    """A top-level ``if __name__ == "__main__":``, either operand order."""
     test = getattr(node, "test", None)
-    return (
-        isinstance(node, ast.If)
-        and isinstance(test, ast.Compare)
-        and isinstance(test.left, ast.Name)
-        and test.left.id == "__name__"
-        and len(test.comparators) == 1
-        and isinstance(test.comparators[0], ast.Constant)
-        and test.comparators[0].value == "__main__"
-    )
+    if not isinstance(node, ast.If) or not isinstance(test, ast.Compare):
+        return False
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    operands = (test.left, test.comparators[0])
+    name = any(isinstance(o, ast.Name) and o.id == "__name__" for o in operands)
+    main = any(isinstance(o, ast.Constant) and o.value == "__main__" for o in operands)
+    return name and main
 
 
 def test_nothing_at_module_level_follows_app_main_block():
@@ -34,6 +34,14 @@ def test_nothing_at_module_level_follows_app_main_block():
     last = max(index for index, node in enumerate(body) if _is_main_guard(node))
     after = [f"line {node.lineno}" for node in body[last + 1 :]]
     assert not after, f"app.py runs code after its main block: {after}"
+    assigned = {
+        target.id
+        for node in body[:last]
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert "_CONSOLE_SKILL_APP_SOURCE" in assigned
 
 
 @pytest.mark.parametrize("record", [None, ("not", "the", "stock", "record")])

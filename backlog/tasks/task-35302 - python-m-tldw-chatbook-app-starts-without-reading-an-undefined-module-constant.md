@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: '2026-10-17 09:11'
-updated_date: '2026-10-19 00:10'
+updated_date: '2026-10-19 00:35'
 labels:
 - follow-up
 - startup
@@ -52,7 +52,7 @@ Review of #3133 (by @Csavoldi): its guard is correct and stops the crash, but it
 Fix: app.py defines _CONSOLE_SKILL_APP_SOURCE before the main block (moved, so app.py stays at its 5,710-line budget). app_collections_wiring reads the record with vars(...).get() and returns None, the existing fallback, unless it is the 5-tuple, like app_skill_wiring.py and UI/Console_Modules/skill.py.
 
 Evidence:
-- Tests/CI/test_app_module_entry_contract.py (the PR Fast Lane runs Tests/CI): the check that nothing at module level follows app.py's last main block fails on dev ('line 5704'); the reader test, with a stand-in app module, fails on dev with the AttributeError (record missing) and a ValueError (record malformed). All three pass here.
+- Tests/CI/test_app_module_entry_contract.py (the PR Fast Lane runs Tests/CI): the check that nothing at module level follows app.py's last main block (either operand order of the guard), and that the record is assigned before it, fails on dev ('line 5704') and fails if the assignment is deleted; the reader test, with a stand-in app module, fails on dev with the AttributeError (record missing) and a ValueError (record malformed). All three pass here.
 - A probe that runs app.py through runpy as `-m` does, with the hand-off to app_entry._run_module_main replaced: dev 'record_defined=False'; this branch 'record_defined=True stock_record_matches=True'.
 - Live, under a sandboxed scratch profile: `python -m tldw_chatbook.app` on dev 5eb9a37b34 crashed at startup (AttributeError: module '__main__' has no attribute '_CONSOLE_SKILL_APP_SOURCE'); on this branch the Console reached 'Setup complete ... Ready', ran 35 s with no error and quit cleanly. `python -m tldw_chatbook` did the same.
 - Related suites (startup unlock, recovery entry points, startup hygiene, collections and skill wiring, 15 files) and all of Tests/CI, on dev and here: the same 17 failures in both, all in three files that fail on dev on this machine (test_recovery_entrypoints.py, test_console_skill_commands.py and one test of test_console_skill_trust_stock_owned.py); dev also failed test_stock_console_skill_setup_has_original_owned_lifetime[send_enter] once, a load flake that passed twice alone on each side. Tests/CI: 995 passed on dev, 998 here (the three new tests).
