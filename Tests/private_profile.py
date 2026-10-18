@@ -78,6 +78,18 @@ def _child_failure_report(report: Path) -> str:
     return quoted or _NO_CHILD_FAILURE
 
 
+def _child_finished(report: Path) -> bool:
+    """Whether the child's session ended: pytest writes the JUnit report then.
+
+    A hung test or teardown has not got that far, so this never takes one for
+    a child that was only exiting.
+    """
+    try:
+        return any(True for _ in ET.parse(report).iter("testcase"))  # nosec B314
+    except (OSError, ET.ParseError):
+        return False
+
+
 def _extend_own_alarm(armed: float) -> float:
     """Move the parent's own pytest-timeout ``_CHILD_LEAD_SECONDS`` later.
 
@@ -358,6 +370,17 @@ def private_profile_test(function):
             elif killed:
                 ending = f"(killed: still running after {wait:.0f}s"
                 ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif (
+                asked
+                and process.returncode == -signal.SIGUSR1
+                and _child_finished(report)
+            ):
+                # Its session had ended and interpreter shutdown had already
+                # put the handler back to the default (TASK-35027).
+                ending = (
+                    f"(still running after {wait:.0f}s; its test had ended "
+                    "and it was exiting when the ask for its stacks ended it)\n"
+                )
             elif asked and process.returncode == -signal.SIGUSR1:
                 # No handler yet (still starting up, or the module imported
                 # off the main thread): the signal's default action ended it.

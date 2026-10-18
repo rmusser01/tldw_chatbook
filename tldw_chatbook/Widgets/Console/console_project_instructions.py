@@ -312,11 +312,19 @@ class ConsoleProjectInstructionStatusRow(Widget):
         )
 
     def sync_state(self, state: ConsoleProjectInstructionState) -> None:
-        """Refresh controlled status copy without recomposing the rail."""
+        """Refresh controlled status copy without recomposing the rail.
+
+        A row attached before its compose has run has no button yet; compose
+        builds it from the state kept here.
+        """
         self._state = state
-        self.query_one(
-            "#console-project-instruction-status-button", Button
-        ).label = f"{state.status} · Project"
+        try:
+            button = self.query_one(
+                "#console-project-instruction-status-button", Button
+            )
+        except QueryError:
+            return
+        button.label = f"{state.status} · Project"
 
     @on(Button.Pressed, "#console-project-instruction-status-button")
     def _open_context(self, event: Button.Pressed) -> None:
