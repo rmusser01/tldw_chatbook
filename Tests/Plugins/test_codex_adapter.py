@@ -49,10 +49,16 @@ def test_portable_inline_overlay_removes_compatibility_guard_and_keeps_locations
     assert set(inspect_package(root, dialect="openai").inventory) == {"skill:review"}
     manifest["extensions"].pop("com.openai")
     path.write_text(json.dumps(manifest))
-    assert (
-        "guard_scope_unknown"
-        in inspect_package(root, dialect="openai").activation_blockers
-    )
+    inherited = inspect_package(root, dialect="openai")
+    assert inherited.adapter_version == "chatbook-codex/2"
+    assert not inherited.activation_blockers
+    guards = {
+        key
+        for key, component in inherited.inventory.items()
+        if component.kind == "hook" and component.support == "adapted"
+    }
+    assert guards
+    assert guards <= set(inherited.inventory["skill:review"].dependencies)
 
 
 def test_codex_manual_only_policy_is_preserved_and_conflicts_refuse(interop_package):

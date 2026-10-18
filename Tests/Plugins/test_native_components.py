@@ -930,7 +930,9 @@ async def test_actual_console_owned_mcp_dispatch_uses_host_run_binding(
     )
     registry.ensure_default_workspace()
     registry.create_workspace(workspace_id="a", name="Actual MCP")
-    store = persisted_console_store(workspace_registry=registry)
+    store = persisted_console_store(
+        workspace_registry=registry, db_path=tmp_path / "owned-mcp-console.sqlite"
+    )
     session = store.create_session(workspace_id="a")
     name = case.providers["a"].list_catalog()[0].name
 
@@ -1771,6 +1773,7 @@ async def test_mixed_builtin_and_mcp_aliases_retain_exact_owner_forms(
     shared_connection_case, monkeypatch
 ):
     """Different labels coexist; the same label cannot compete across forms."""
+    import asyncio
     import json
     from dataclasses import replace
 
@@ -1838,7 +1841,8 @@ async def test_mixed_builtin_and_mcp_aliases_retain_exact_owner_forms(
     builtin_registry = ToolCatalogRegistry()
     builtin_registry.register_provider(BuiltinToolProvider())
     assert "calculator" in definition.tool_allowlist
-    result = builtin_registry.invoke_by_name(
+    result = await asyncio.to_thread(
+        builtin_registry.invoke_by_name,
         "calculator",
         {"expression": "2+2"},
         expected_definition=builtin_registry.snapshot_for_hook("calculator"),
@@ -2262,7 +2266,10 @@ async def test_unscoped_hook_retains_real_scratch_lease_until_child_terminal(
         assert not json.loads(snapshot.data_roots_json)
         manager.close("actual-session")
         assert not manager.is_live(scratch) and scratch.root.exists()
-        assert not native.current(native.definitions[0], event(), "accept")
+        from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+        with pytest.raises(PluginUnavailable, match="plugin_scratch_unavailable"):
+            native.host_environment(native.definitions[0], event())
         assert not (await engine.fire_async(event(runtime="other"))).allowed
         assert len(engine.processes.records) == 1 and not task.done()
         release.touch()

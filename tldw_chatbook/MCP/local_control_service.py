@@ -312,9 +312,13 @@ class LocalMCPControlService:
         token = definition["command"]
         if token.startswith("./"):
             command = str(Path(root) / token)
+        elif Path(token).is_absolute():
+            command = shutil.which(token)
         else:
             host_cwd = Path.cwd()
             lookup_path = baseline.get("PATH", "")
+            if not lookup_path:
+                raise ValueError("plugin_executable_unavailable")
             # Anchor empty and relative host entries before child cwd/PATH.
             lookup_path = os.pathsep.join(
                 str(host_cwd / entry) for entry in lookup_path.split(os.pathsep)

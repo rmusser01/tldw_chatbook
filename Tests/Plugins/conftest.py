@@ -147,7 +147,9 @@ async def native_console(tmp_path, native_package):
     )
     skills = SkillsScopeService(local_service=local)
     gateway = _RecordingGateway()
-    store = persisted_console_store(workspace_registry=registry)
+    store = persisted_console_store(
+        workspace_registry=registry, db_path=tmp_path / "console.sqlite"
+    )
     session = store.create_session(workspace_id="workspace-a")
     controller = ConsoleChatController(
         store=store,

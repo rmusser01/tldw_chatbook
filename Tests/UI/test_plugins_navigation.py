@@ -4,6 +4,7 @@ import pytest
 from textual import on
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.app import TabNavigationProvider, TldwCli
 from tldw_chatbook.UI.Navigation.main_navigation import (
@@ -73,8 +74,10 @@ def test_actual_factory_constructs_fresh_plugin_screen_without_starting_services
     assert not hasattr(app, "_plugin_source_service")
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_production_app_f8_and_settings_link_mount_same_lazy_destination(
+    request,
     monkeypatch,
 ):
     from Tests.UI.app_factory import _build_test_app

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 
 def acquire(stack, source, operation="candidate"):
     from tldw_chatbook.Plugins.acquisition import acquire_snapshot
@@ -293,10 +295,11 @@ async def test_public_service_retains_materializer_after_waiter_cancel(
         await service.aclose()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("probe_error", [False, True])
 async def test_actual_git_tree_cancel_retains_slot_until_terminal(
-    plugin_stack, native_package, tmp_path, monkeypatch, probe_error
+    request, plugin_stack, native_package, tmp_path, monkeypatch, probe_error
 ):
     import asyncio
     import json
@@ -371,8 +374,9 @@ async def test_actual_git_tree_cancel_retains_slot_until_terminal(
         future.cancel()
 
 
+@private_profile_test
 def test_native_restart_cleans_only_released_terminal_receipt(
-    plugin_stack, native_package
+    request, plugin_stack, native_package
 ):
     import subprocess
 
@@ -565,9 +569,10 @@ async def test_uninitialized_and_locked_service_leave_no_acquisition_custody(
         await service.aclose()
 
 
+@private_profile_test
 @pytest.mark.parametrize("mode", ["quota", "deadline", "output"])
 def test_live_process_limits_terminate_actual_producer(
-    plugin_stack, native_package, tmp_path, monkeypatch, mode
+    request, plugin_stack, native_package, tmp_path, monkeypatch, mode
 ):
     import shlex
     import time
@@ -845,7 +850,18 @@ def test_checkpoint_materialization_preserves_expected_recipe(
     assert checkpoints
     assert actual.adapter_version == expected.adapter_version
     assert actual.effective_digest == expected.effective_digest
-    assert actual.inventory == expected.inventory
+    assert actual.inventory.keys() == expected.inventory.keys()
+    for key, component in expected.inventory.items():
+        observed = actual.inventory[key]
+        assert observed.model_dump(exclude={"evidence"}) == component.model_dump(
+            exclude={"evidence"}
+        )
+        assert [
+            item.model_dump(exclude={"observed_at"}) for item in observed.evidence
+        ] == [item.model_dump(exclude={"observed_at"}) for item in component.evidence]
+        assert all(
+            item.observed_at for item in (*observed.evidence, *component.evidence)
+        )
     assert actual.materialized_identity == str(destination)
     assert (destination / "plugin.json").read_bytes() == (
         source / "plugin.json"

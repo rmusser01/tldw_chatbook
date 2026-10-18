@@ -5,6 +5,65 @@ import json
 from dataclasses import replace
 
 
+def _native_provider_entries(maximum, messages, skill_bindings):
+    """Keep exact checked native producers on the direct provider effect lane."""
+    from tldw_chatbook.Agents.agent_models import PluginContextText, check_host_context
+
+    check_host_context(messages, strip=False)
+    entries = tuple(
+        row for row in maximum.get("available_skills", ()) if row.get("plugin_owned")
+    )
+    selected = {
+        index
+        for index, row in enumerate(entries)
+        if row.get("name") in skill_bindings or row.get("plugin_constraint_only")
+    }
+    for message in messages:
+        content = message.get("content")
+        parts = (
+            [part.get("text") for part in content if isinstance(part, dict)]
+            if isinstance(content, list)
+            else [content]
+        )
+        for text in parts:
+            if not isinstance(text, PluginContextText):
+                continue
+            for origin in text.checked_origins():
+                matches = [
+                    index
+                    for index, row in enumerate(entries)
+                    if (
+                        row.get("plugin_installation_id"),
+                        row.get("plugin_revision"),
+                        row.get("plugin_component_id"),
+                    )
+                    == (origin.installation_id, origin.revision, origin.component_id)
+                ]
+                if len(matches) != 1:
+                    raise PermissionError("plugin_context_producer_unavailable")
+                selected.add(matches[0])
+    pending = list(selected)
+    while pending:
+        row = entries[pending.pop()]
+        for dependency in row.get("plugin_dependencies", ()):
+            matches = [
+                index
+                for index, candidate in enumerate(entries)
+                if candidate.get("plugin_installation_id")
+                == row["plugin_installation_id"]
+                and candidate.get("plugin_revision") == row["plugin_revision"]
+                and candidate.get("plugin_component_id") == dependency
+            ]
+            if len(matches) != 1:
+                raise PermissionError("plugin_context_dependency_unavailable")
+            if matches[0] not in selected:
+                selected.add(matches[0])
+                pending.append(matches[0])
+    return dict(
+        maximum, available_skills=[entries[index] for index in sorted(selected)]
+    )
+
+
 def _native_selector(source, entries):
     from . import console_chat_controller as _owner
 

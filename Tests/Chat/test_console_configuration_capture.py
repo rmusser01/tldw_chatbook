@@ -498,7 +498,7 @@ async def test_both_adapters_use_original_producer_and_preserve_distinct_inputs(
     assert calls == [(case.app, case.store, case.session.id)] * 2
     assert len(returns) == 2
     assert returns[0] is runtime_snapshot and returns[1] is mounted_snapshot
-    assert skill_workspaces == [case.session.workspace_id, None]
+    assert skill_workspaces == [case.session.workspace_id, case.session.workspace_id]
     assert runtime_snapshot.rag_defaults == {"top_k": runtime_top_k}
     assert mounted_snapshot.rag_defaults == {
         "source_types": ("notes",),

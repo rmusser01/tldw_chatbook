@@ -211,7 +211,12 @@ async def test_native_plugin_capture_precedes_hook_absence_decision(
     native = SimpleNamespace(signature=("native",), definitions=definitions)
     captures = []
 
-    async def hook_configuration(captured_maximum):
+    async def hook_configuration(
+        captured_maximum, *, scratch_manager, scratch_snapshot
+    ):
+        assert (scratch_manager is None) == (scratch_snapshot is None)
+        if scratch_manager is not None:
+            assert scratch_manager.is_live(scratch_snapshot)
         captures.append(captured_maximum)
         return native
 

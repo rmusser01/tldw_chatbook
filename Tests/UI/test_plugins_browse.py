@@ -9,6 +9,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.Plugins.test_source_service import marketplace as _marketplace
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Plugins.source_service import SourceService
@@ -67,10 +68,11 @@ def paint(screen):
     )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_keyboard_details_back_resize_and_restore_keep_stable_selection(
-    native_console, size
+    request, native_console, size
 ):
     rig = native_console
     review = await rig.install()
@@ -123,9 +125,10 @@ async def test_keyboard_details_back_resize_and_restore_keep_stable_selection(
         assert fresh.focused.id == "plugins-list"
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_real_source_add_and_import_preview_are_keyboard_reachable(
-    native_console, native_package
+    request, native_console, native_package
 ):
     app = BrowseApp(native_console)
     package = native_package()
@@ -156,9 +159,10 @@ async def test_real_source_add_and_import_preview_are_keyboard_reachable(
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_changed_workspace_refuses_pending_readme_and_refreshes_scope(
-    native_console, monkeypatch
+    request, native_console, monkeypatch
 ):
     rig = native_console
     await rig.install()
@@ -193,9 +197,10 @@ async def test_changed_workspace_refuses_pending_readme_and_refreshes_scope(
         assert "Disabled" in str(screen.query_one("#plugins-detail", Static).render())
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_reordered_rows_and_obsolete_search_keep_explicit_source_selection(
-    native_console, native_package, monkeypatch
+    request, native_console, native_package, monkeypatch
 ):
     from tldw_chatbook.Plugins.git_source import select_local_source
 
@@ -240,9 +245,10 @@ async def test_reordered_rows_and_obsolete_search_keep_explicit_source_selection
         assert screen.query_one("#plugins-refresh", Button).disabled
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_live_catalog_refresh_preview_and_stale_failure_preserve_source_identity(
-    native_console, marketplace
+    request, native_console, marketplace
 ):
     from tldw_chatbook.Plugins.git_source import select_local_source
 
@@ -286,9 +292,10 @@ async def test_live_catalog_refresh_preview_and_stale_failure_preserve_source_id
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_selected_repository_preview_captures_real_snapshot_without_install(
-    native_console, native_package
+    request, native_console, native_package
 ):
     app = BrowseApp(native_console)
     package = native_package()
@@ -310,9 +317,10 @@ async def test_selected_repository_preview_captures_real_snapshot_without_instal
         assert not app.plugin_source_service.list_sources()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_editing_import_location_refuses_pending_preview(
-    native_console, native_package, monkeypatch
+    request, native_console, native_package, monkeypatch
 ):
     import threading
 
@@ -349,10 +357,11 @@ async def test_editing_import_location_refuses_pending_preview(
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transition", ["back", "form"])
 async def test_back_replaces_held_load_without_old_completion_clearing_new_owner(
-    native_console, monkeypatch, transition
+    request, native_console, monkeypatch, transition
 ):
     rig = native_console
     await rig.install()

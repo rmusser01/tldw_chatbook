@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 
 async def test_update_candidate_cannot_be_submitted_for_a_different_installation(
     source_stack, native_package
@@ -685,8 +687,9 @@ async def test_source_limit_is_independent_of_installations(source_stack, market
     ]
 
 
+@private_profile_test
 async def test_selected_remote_entry_requires_exact_displayed_origin_before_network(
-    source_stack, marketplace, native_package, tmp_path
+    request, source_stack, marketplace, native_package, tmp_path
 ):
     import os
     import shlex

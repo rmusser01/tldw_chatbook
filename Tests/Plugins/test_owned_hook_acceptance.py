@@ -93,6 +93,7 @@ async def _native_engine(service, installation, run_id, budget=None, *, enabled=
         host_environment=native.host_environment,
         event_projector=native.project_event,
         dependency_required=native.dependency_required,
+        effect_authority_check=native.effects_current,
         command_launch=native.command_launch,
     )
     native.engine = engine
@@ -555,10 +556,13 @@ async def _owned_peer(
                 package,
                 ("mcp:peer", *["hook:" + row["id"] for row in handlers]),
             )
+            data_review = await service.review_data_creation(installed.installation_id)
+            data_root = await service.create_data(data_review, data_review.operation_id)
             inspection = await service._call(
-                lambda: retained_inspections(service._coordinator.published_snapshot())[
-                    (installed.installation_id, installed.inspection.effective_digest)
-                ]
+                lambda: retained_inspections(
+                    service._coordinator.published_snapshot(),
+                    coordinator=service._coordinator,
+                )[(installed.installation_id, installed.inspection.effective_digest)]
             )
             profile = local.save_owned_profile(
                 installation_id=installed.installation_id,
@@ -567,6 +571,7 @@ async def _owned_peer(
                 session_isolation="request_independent",
                 protocol_version="2025-03-26",
                 development_loopback=transport == "http",
+                data_root=data_root,
             )
             profile_id = profile["profile_id"]
             configured = await service.review_configuration(
@@ -673,7 +678,6 @@ async def test_installed_mcp_hook_normalization(
     from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
     from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
     from tldw_chatbook.Agents.mcp_tool_provider import capture_mcp_result
-    from tldw_chatbook.Plugins.components import tool_hook_requirements
 
     body = {"version": 2, "decision": "pass"}
     payload = {"content": []}
@@ -737,7 +741,7 @@ async def test_installed_mcp_hook_normalization(
         )
         event = lifecycle.event("SessionStart", data={"reason": "startup"})
         current = lambda: all(
-            engine.native_plugins.current(handler, event, "accept")
+            engine.native_plugins.effects_current(handler, event, "accept")
             for handler in engine.definitions
         )
         engine.mcp_executor.bind_context(
@@ -749,7 +753,9 @@ async def test_installed_mcp_hook_normalization(
                 "owned-case",
                 frozenset({case.name}),
                 current,
-                lambda definition: tool_hook_requirements(case.registry, definition),
+                lambda definition: engine.native_plugins.definition_requirements(
+                    definition, case.registry
+                ),
                 workspace_id="workspace-a",
             )
         )
@@ -1327,8 +1333,16 @@ async def _installed_compaction_case(
             assert_released()
             assert runtime.get_hooks_v2(session.id) is None
             if automatic:
-                assert len(automatic_observations) == 2
+                assert [row[0] for row in automatic_observations] == [
+                    "decision",
+                    "hooks",
+                    "hooks",
+                ]
                 assert automatic_observations[0][1].value == "automatic"
+                assert all(
+                    row[1] == (None, None, session.id)
+                    for row in automatic_observations[1:]
+                )
                 assert payloads and controller.provider_gateway.calls == 1
                 assert controller.run_state_for(session.id).is_send_allowed
             return
@@ -1599,10 +1613,21 @@ async def test_installed_provisional_mcp_initialization(
             assert set(snapshot.selection) == {"command:independent"}
             maximum = case.service.capture_maximum("workspace-a")
             assert {
-                row["plugin_component_id"] for row in maximum["available_skills"]
+                row["plugin_component_id"]
+                for row in maximum["available_skills"]
+                if not row.get("plugin_constraint_only")
             } == {"command:independent"}
+            assert {
+                row["plugin_component_id"]
+                for row in maximum["available_skills"]
+                if row.get("plugin_constraint_only")
+            } == {"hook:initial"}
             admitted = await case.service.admit(maximum, "cycle-exclusion")
-            independent = admitted["available_skills"][0]
+            independent = next(
+                row
+                for row in admitted["available_skills"]
+                if row["plugin_component_id"] == "command:independent"
+            )
             blocked = dict(
                 independent,
                 record_id=f"plugin:{case.installed.installation_id}:command:dependent",
@@ -1764,7 +1789,6 @@ async def test_installed_final_arguments_reach_normal_permission_and_dispatch(
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Chat.console_chat_controller import build_mcp_review_hook
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-    from tldw_chatbook.Plugins.components import tool_hook_requirements
 
     order = tmp_path / "transform-order"
     payload = {"content": [{"type": "text", "text": "B payload"}]}
@@ -1893,8 +1917,10 @@ async def test_installed_final_arguments_reach_normal_permission_and_dispatch(
             hooks_v2_session_id="owned-case",
             hooks_v2_turn_id="final-turn",
             hooks_v2_render_context=engine.native_plugins.render_context,
-            hooks_v2_tool_requirements=lambda definition: tool_hook_requirements(
-                case.registry, definition
+            hooks_v2_definition_requirements=lambda definition, messages: (
+                engine.native_plugins.requirements_for(
+                    definition, case.registry, messages
+                )
             ),
         )
         before = len(case.unified.execution_log.read_recent())

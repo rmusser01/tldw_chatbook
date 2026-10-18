@@ -5,16 +5,18 @@ from textual.widgets import Button, OptionList
 
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_plugins_browse import BrowseApp, settled
 
 native_console = _native_console
 native_package = _native_package
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_review_growth_keeps_focused_action_painted(
-    native_console, native_package, size
+    request, native_console, native_package, size
 ):
     from Tests.UI.test_plugins_browse import paint
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
@@ -64,10 +66,11 @@ async def test_review_growth_keeps_focused_action_painted(
         assert "Review action" in paint(modal)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_refresh_growth_keeps_focused_action_and_cleaned_status_painted(
-    native_console, size
+    request, native_console, size
 ):
     from Tests.UI.test_plugins_browse import paint
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
@@ -116,8 +119,11 @@ async def test_refresh_growth_keeps_focused_action_and_cleaned_status_painted(
         assert "Cleaned — saved data removed; users: ()" in painted
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_mounted_management_opens_exact_review_without_committing(native_console):
+async def test_mounted_management_opens_exact_review_without_committing(
+    request, native_console
+):
     rig = native_console
     installed = await rig.install(enable=False)
     rig.registry.set_active_workspace("workspace-a")
@@ -176,8 +182,11 @@ def test_persistence_failure_is_not_a_durable_disable():
     )
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_mounted_review_is_invalidated_by_changed_selection(native_console):
+async def test_mounted_review_is_invalidated_by_changed_selection(
+    request, native_console
+):
     from textual.widgets import Select, SelectionList
 
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
@@ -213,9 +222,10 @@ async def test_mounted_review_is_invalidated_by_changed_selection(native_console
         assert not (await rig.service.lookup_operation(original.operation_id)).committed
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
-async def test_actual_first_use_setup_through_masked_dialog(tmp_path, size):
+async def test_actual_first_use_setup_through_masked_dialog(request, tmp_path, size):
     from types import SimpleNamespace
 
     from textual.widgets import Input
@@ -267,8 +277,9 @@ async def test_actual_first_use_setup_through_masked_dialog(tmp_path, size):
         await service.aclose()
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_close_reopen_preserves_synthetic_data_and_focus(native_console):
+async def test_close_reopen_preserves_synthetic_data_and_focus(request, native_console):
     from textual.widgets import Select, TextArea
 
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
@@ -312,8 +323,11 @@ async def test_close_reopen_preserves_synthetic_data_and_focus(native_console):
         assert app.focused is field
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_unlock_wrong_password_stays_in_masked_flow_then_correct_unlock(tmp_path):
+async def test_unlock_wrong_password_stays_in_masked_flow_then_correct_unlock(
+    request, tmp_path
+):
     from types import SimpleNamespace
 
     from textual.widgets import Input
@@ -391,8 +405,9 @@ async def test_authority_reset_requires_exact_current_review(native_console):
     assert await service.authority_status() == "needs_setup"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_status_refresh_sees_new_retained_root(native_console):
+async def test_status_refresh_sees_new_retained_root(request, native_console):
     from textual.widgets import Static
 
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
@@ -420,9 +435,10 @@ async def test_status_refresh_sees_new_retained_root(native_console):
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_mounted_exact_reviews_cover_installed_lifecycle(
-    native_console, native_package
+    request, native_console, native_package
 ):
     import asyncio
 
@@ -560,9 +576,12 @@ async def test_mounted_exact_reviews_cover_installed_lifecycle(
         assert not any(row.installation_id == identity for row in rows)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
-async def test_uninstall_retained_data_status_and_history_cleanup(native_console, size):
+async def test_uninstall_retained_data_status_and_history_cleanup(
+    request, native_console, size
+):
     import asyncio
 
     from textual.widgets import Input, Select
@@ -650,9 +669,11 @@ async def test_uninstall_retained_data_status_and_history_cleanup(native_console
         assert not (await rig.service.management_snapshot("workspace-a"))
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["added", "settled", "generation"])
 async def test_root_review_discloses_two_workspaces_and_rejects_changed_users(
+    request,
     native_console,
     change,
 ):
@@ -742,12 +763,13 @@ async def test_root_review_discloses_two_workspaces_and_rejects_changed_users(
             )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "fault", ["missing-completeness", "incomplete", "unknown-coverage", "oversized"]
 )
 async def test_root_impact_never_confirms_incomplete_or_unknown_projection(
-    native_console, monkeypatch, fault
+    request, native_console, monkeypatch, fault
 ):
     from textual.widgets import Select
 
@@ -881,6 +903,7 @@ async def test_installed_manager_collects_all_51_exact_root_refs(
     assert calls == [(51, 50, 0), (51, 50, 50)]
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size,retained,change",
@@ -895,7 +918,7 @@ async def test_installed_manager_collects_all_51_exact_root_refs(
     ],
 )
 async def test_reboot_reconciliation_uses_current_refs_before_proposed_targets(
-    native_console, monkeypatch, retained, size, change
+    request, native_console, monkeypatch, retained, size, change
 ):
     """Actual qualified-owner proof simulation, not an OS reboot/keychain claim."""
     import asyncio
@@ -1129,12 +1152,13 @@ async def _current_mapping_case(rig, native_package, tmp_path, aliases):
     return installed, local, binding, values
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "aliases", ["legacy", "canonical", "builtin", "mixed", "competing", "unknown-key"]
 )
 async def test_management_configuration_keeps_closed_complete_reference_inputs(
-    native_console, native_package, tmp_path, aliases
+    request, native_console, native_package, tmp_path, aliases
 ):
     import json
 
@@ -1199,12 +1223,13 @@ async def test_management_configuration_keeps_closed_complete_reference_inputs(
         assert not rig.gateway.payloads
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "state", ["empty", "builtin", "mixed", "refresh-failed", "newer-draft"]
 )
 async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
-    native_console, native_package, tmp_path, monkeypatch, state
+    request, native_console, native_package, tmp_path, monkeypatch, state
 ):
     import asyncio
     import json
@@ -1301,10 +1326,11 @@ async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
         assert not rig.gateway.payloads
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_action_inputs_hide_without_losing_drafts_or_keyboard_focus(
-    native_console, size
+    request, native_console, size
 ):
     from textual.widgets import Input, Select, SelectionList, TextArea
 
@@ -1377,10 +1403,11 @@ async def test_action_inputs_hide_without_losing_drafts_or_keyboard_focus(
         assert app.focused is reopened.query_one("#plugin-review-test-data", TextArea)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_fresh_install_inputs_are_visible_before_action_changes(
-    native_console, native_package, size
+    request, native_console, native_package, size
 ):
     from textual.widgets import Input, Select, SelectionList, TextArea
 
@@ -1470,9 +1497,12 @@ from Tests.Plugins.test_declared_variables import variable_case as _variable_cas
 variable_case = _variable_case
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
-async def test_declared_value_keyboard_mask_review_and_revoke(variable_case, size):
+async def test_declared_value_keyboard_mask_review_and_revoke(
+    request, variable_case, size
+):
     import asyncio
     import json
 
@@ -1584,9 +1614,10 @@ async def test_declared_value_keyboard_mask_review_and_revoke(variable_case, siz
         assert app.screen is modal and field.value == ""
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_declared_value_invalid_type_and_navigation_clear_transient_input(
-    variable_case, monkeypatch
+    request, variable_case, monkeypatch
 ):
     import asyncio
 
@@ -1658,8 +1689,10 @@ async def test_declared_value_invalid_type_and_navigation_clear_transient_input(
         await pilot.press("escape")
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_value_configuration_preserves_existing_connection_and_model(
+    request,
     variable_case,
 ):
     import json
@@ -1872,10 +1905,11 @@ async def test_complete_prefill_refuses_unrepresentable_whole_set(
     assert not rig.gateway.payloads
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["saved", "refresh-failed", "newer-draft"])
 async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(
-    variable_case, monkeypatch, state
+    request, variable_case, monkeypatch, state
 ):
     import asyncio
     import json

@@ -496,6 +496,7 @@ async def test_vendor_transform_runs_once_then_native_final_guard(tmp_path):
     definition = ToolDefinitionSnapshot.from_schema(
         replace(CALC, id="local:test"), "local", 1, 1
     )
+    original["data"]["operation"] = definition.operation
     try:
         with pytest.raises(HookPreparationError):
             await prepare_tool(parse_event(original), engine, definition=definition)
@@ -641,10 +642,20 @@ async def test_actual_admission_keeps_guard_selection_and_final_phase_constraint
             installed.installation_id, "workspace-a", "guard-selection"
         )
         assert ("skill:review" in snapshot.selection) is admitted
+    rows = native_console.service.capture_maximum("workspace-a")["available_skills"]
     assert (
-        bool(native_console.service.capture_maximum("workspace-a")["available_skills"])
+        any(
+            row["plugin_component_id"] == "skill:review"
+            and not row.get("plugin_constraint_only")
+            for row in rows
+        )
         is admitted
     )
+    if selected and not admitted:
+        assert any(
+            row["plugin_component_id"] == hook_id and row.get("plugin_constraint_only")
+            for row in rows
+        )
 
 
 @platform_support.vendor_command

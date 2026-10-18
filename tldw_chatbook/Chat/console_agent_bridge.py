@@ -6375,6 +6375,7 @@ class ConsoleAgentBridge:
                 )
         if plugin_service is not None and (
             context.get("plugin_resume_constraint") is not None
+            or context.get("_plugin_requirement_ceiling")
             or any(
                 item.get("plugin_owned") for item in context.get("available_skills", ())
             )

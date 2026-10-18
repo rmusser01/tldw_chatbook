@@ -199,11 +199,13 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         ),
         lambda *_: True,
     )
-    entered, release = asyncio.Event(), asyncio.Event()
+    from concurrent.futures import Future
+
+    entered, release = Future(), Future()
 
     async def stream(*args, **kwargs):
-        entered.set()
-        await release.wait()
+        entered.set_result(None)
+        await asyncio.wrap_future(release)
         yield "done"
 
     gateway.stream_chat = stream
@@ -223,7 +225,7 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
             )
             turn = runtime.accept_turn(request)
             pending = asyncio.create_task(runtime.wait_for_turn(turn))
-            await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(asyncio.wrap_future(entered), 10)
             await screen._stop_console_generation_from_visible_action()
             await pending
             for _ in range(200):
@@ -237,7 +239,8 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         await runtime.close_hooks_v2()
         assert not engine.cleanup_pending
     finally:
-        release.set()
+        if not release.done():
+            release.set_result(None)
         async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
             pass
 

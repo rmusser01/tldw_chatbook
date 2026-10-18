@@ -338,7 +338,8 @@ async def test_skill_lookup_keeps_component_kind(
         assert (await service.commit(configured, configured.operation_id)).committed
         assert not client.sessions, "saved ownership is not a connected transport"
     admitted = await service.admit(
-        service.capture_maximum("workspace-a"), "pending:collision"
+        dict(service.capture_maximum("workspace-a"), plugin_run_id="pending:collision"),
+        "pending:collision",
     )
     skill = next(
         row for row in admitted["available_skills"] if row["plugin_kind"] == "skill"
