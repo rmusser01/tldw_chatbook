@@ -1055,25 +1055,38 @@ class ConsoleCharacterContextController:
         )
         self._scope_checked = None
         invalidations = self._scope_invalidations
-        try:
-            snapshot = await self._capture_scope()
-        except _ConsoleCharacterScopeChanged:
-            self.invalidate_scope()
-            invalidations = self._scope_invalidations
-        except _ConsoleCharacterScopeReadError:
-            if (
-                _presentation_is_current is not None
-                and _stock_character_presentation(self)
-            ):
-                await self.refresh(_presentation_is_current=_presentation_is_current)
-            else:
-                await self.refresh()
-            self._mark_checked(started, invalidations)
-            return True
-        else:
-            if not force and snapshot.fingerprint == self.state.scope_fingerprint:
+        fingerprint = self.state.scope_fingerprint
+        # A changed open chat already requires the stock fully checked refresh.
+        known_changed = (
+            not force
+            and _presentation_is_current is not None
+            and type(fingerprint) is ConsoleCharacterScopeFingerprint
+            and fingerprint.open_conversation_id != started[3]
+            and _stock_character_refresh_readers(
+                self, _presentation_is_current, self._generation
+            )
+            is not None
+        )
+        if not known_changed:
+            try:
+                snapshot = await self._capture_scope()
+            except _ConsoleCharacterScopeChanged:
+                self.invalidate_scope()
+                invalidations = self._scope_invalidations
+            except _ConsoleCharacterScopeReadError:
+                if (
+                    _presentation_is_current is not None
+                    and _stock_character_presentation(self)
+                ):
+                    await self.refresh(_presentation_is_current=_presentation_is_current)
+                else:
+                    await self.refresh()
                 self._mark_checked(started, invalidations)
-                return False
+                return True
+            else:
+                if not force and snapshot.fingerprint == self.state.scope_fingerprint:
+                    self._mark_checked(started, invalidations)
+                    return False
         if (
             _presentation_is_current is not None
             and _stock_character_presentation(self)
