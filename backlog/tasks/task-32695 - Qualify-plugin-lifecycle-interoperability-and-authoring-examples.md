@@ -1,11 +1,11 @@
 ---
 id: TASK-32695
 title: Qualify plugin lifecycle interoperability and authoring examples
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 16:21'
+updated_date: '2026-10-18 16:36'
 labels:
   - plugins
   - implementation
@@ -47,6 +47,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #18 The remaining relevant module-size and CSS-dimension gates pass without increasing ratchet ceilings, formatting compression, blanket exclusions or changed visual values.
 - [x] #19 Relevant affected regression, static and integration checks pass on the repaired source; remaining limits and review disposition are documented and the existing draft PR is updated safely.
 - [x] #20 Observed published-head CI bootstrap, plugin timestamp, diagnostic-inventory and worker/markup gate blockers are repaired or explicitly bounded by native platform evidence, preserving guards and currentness rather than suppressing checks.
+- [ ] #21 Observed CI failures on PR3148 head40d61b3 are diagnosed and repaired without weaker native/profile/network/SQLite guards; relevant targeted checks and updated CI outcomes are recorded and safely published.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -242,6 +243,10 @@ Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and 
 97. Phase52 has6passes including both real operation-import failures/coordinator/three controls, but exact banner remains1==0 after outer True. Source and independent review establish the transcript six-field cheap gate returns before selector/reconciliation when the test only mutates its private current_effective callback; outer True is not proof the pipeline ran. Bind banner-idle-refresh-repair/accepted.json exact current test and actual childXML. Add only the documented _sync_native_console_transcript(force=True) call when the existing local helper obtains real True, matching this fixture direct presentation mutation without a store revision. Preserve all12 original counts/identity/text/session assertions,400/.01 bound and real full-sync calls; no token/cache manipulation or production gate/performance change. Renew exact banner and existing presentation controls from stable freeze. Real reset/undo idle liveness is not exercised by this synthetic fixture and is not claimed qualified. No new ADR for test use of existing idle refresh contract.
 
 98. Actual frozen9b1c976d phase54 is4/4passed; all11 real prune regression outcomes now have passing terminal/no-cancel/retired-DOM evidence (10phase51 plus renewed snapshot-error), with all30otherphase51 outcomes and sixphase52 runtime controls accounted. Update only the bound W002 census proposal:12 individually reviewed keys/57sites, transfer the exact1site MCP old-owner row, preserve every other row and W001/W003 policies/censuses/checker bytes. Seven positive/refusal/census-note controls already passedphase53. Then run actual worker checker, bind final targeted accounting/static/review limits, update QA/lesson/task and existing draftPR safely. Original failed phases remain; no newADR/cap/exclusion/guard or platform claim.
+
+99. Preserve current40d61b3 Actions logs/JUnit and exact case accounting; investigate the bootstrap socketpair/marked-loopback cascade separately from native platform prerequisites, SQLite ownership inventories and deferred startup composition. User explicitly authorizes CI repairs. Use targeted checks only, standard private profiles/null keyring/network guards and actual supported platforms; no installation, fake OS, blanket skip, cap increase or merge. Reopen this existing qualification task with AC21. ADR required: no new ADR for routine CI/fixture repairs under existing ADR097/107/126/162/163; any real ownership/interface fix must use the existing owner seam and be scoped before writes.
+
+100. Bind workflow-scope.json before edits. First add one actual workflow-prefix regression: execute the literal lifecycle prefix in a fresh isolated child with the selected private profile, create a real asyncio loop, then run the existing marked numeric-loopback guard control under real pytest; require original profile identity and successful completion. Observe RED on current strict child bootstrap. Then replace only the workflow bootstrap import/call with canonical Tests network_guard and real_profile_guard installation before product/keyring imports plus the same checkout/null-backend/data-root assertions. Keep strict hook child bootstrap untouched and all21 workflow file selections intact. Verify RED-to-GREEN, network refusal/owned-loopback controls and Tests/CI; document native Windows execution only from actual CI.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
