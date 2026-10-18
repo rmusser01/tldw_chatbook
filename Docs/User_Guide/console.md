@@ -661,7 +661,10 @@ is never sent, is cleared from the chat by **Apply**, and is not written by
 `config.toml` untouched. A cleared **Top P** (Custom OpenAI-compatible #2
 does not accept it) reads *provider* in the chat's settings summary. A reasoning or thinking control whose support for
 this model is not known stays visible, and its help line starts with "Support
-not verified for this model."
+not verified for this model." For **ONNX Runtime (local)** and
+**Transformers (local)**, whose requests have no parameter map, no field's
+support is known, so every field stays visible and each help line starts
+that way.
 
 Focus opens on **Temperature**, or, for a model that does not take it, on
 the next core field shown (**Change** when none is). **Tab** walks the core fields, the four

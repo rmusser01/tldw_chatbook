@@ -485,9 +485,48 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
             # TASK-33006.12: at 211x44 the marker leaves the field's own help
             # painted whole beside it, not cut off by the row's ellipsis.
             assert MODEL_CONFIG_FIELDS[name].help in painted[row.region.y], name
-        # Known support keeps the field table's plain help.
+        # Known support keeps the field table's plain help. Rewritten on
+        # purpose by TASK-33006.11: a provider with no request map has no
+        # known support, so its samplers carry the neutral copy too.
         temperature_help = modal.query_one("#console-settings-temperature-help", Static)
-        assert GENERATION_CONTROL_UNKNOWN_COPY not in str(temperature_help.content)
+        assert (GENERATION_CONTROL_UNKNOWN_COPY in str(temperature_help.content)) is (
+            provider not in PROVIDER_PARAM_MAP
+        )
+
+
+@pytest.mark.parametrize("provider", ["local_onnx", "local_transformers"])
+@pytest.mark.asyncio
+async def test_a_provider_without_a_request_map_says_its_samplers_are_unverified(
+    provider,
+) -> None:
+    """TASK-33006.11: local_onnx and local_transformers have no
+    ``PROVIDER_PARAM_MAP`` entry (and no chat handler), so no request decides
+    which samplers they take. Every row stays shown, and each one's help line
+    leads with the neutral copy instead of reading as supported; at 211x44
+    the field's own help still paints whole beside it."""
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
+
+    assert provider not in PROVIDER_PARAM_MAP
+    assert provider not in API_CALL_HANDLERS
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(provider, "model-x", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert _hidden_rows(modal) == ()
+        assert generation_field_support(provider, "model-x", app.app_config) == (
+            (),
+            frozenset(FIELD_ROW_FIELDS),
+        )
+        painted = _painted(app.screen)
+        for name in ("temperature", "max_tokens", "streaming"):
+            row = modal.query_one(f"#{field_control_id(name)}-row")
+            assert GENERATION_CONTROL_UNKNOWN_COPY in painted[row.region.y], name
+            assert MODEL_CONFIG_FIELDS[name].help in painted[row.region.y], name
+        for name in FIELD_ROW_FIELDS:
+            help_line = modal.query_one(f"#{field_control_id(name)}-help", Static)
+            text = str(help_line.content)
+            assert text.startswith(GENERATION_CONTROL_UNKNOWN_COPY), (name, text)
+            assert MODEL_CONFIG_FIELDS[name].help in text, name
 
 
 @pytest.mark.asyncio

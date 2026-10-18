@@ -451,6 +451,28 @@ def reasoning_effort_values_sent(
     )
 
 
+def provider_request_keys(
+    provider: str | None, app_config: Mapping[str, object] | None = None
+) -> Mapping[str, str] | None:
+    """Return the ``PROVIDER_PARAM_MAP`` entry a request for ``provider`` uses.
+
+    Args:
+        provider: Provider identity, config key or ``custom-ep`` id.
+        app_config: Config holding the ADR-146 endpoint registry.
+
+    Returns:
+        The entry, or ``None`` when no request map decides the provider's
+        fields: local_onnx and local_transformers have none, nor a chat
+        handler (TASK-33006.11).
+    """
+    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+
+    provider_key = provider_config_key(_registry_family_provider(provider, app_config))
+    return PROVIDER_PARAM_MAP.get(
+        resolve_console_provider_identity(provider_key).execution_key
+    )
+
+
 def supported_generation_fields(
     provider: str | None,
     model: str | None,
@@ -476,13 +498,9 @@ def supported_generation_fields(
         Names of the supported fields, drawn from
         ``GENERATION_FIELD_REQUEST_KEYS``.
     """
-    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
-
     provider_key = provider_config_key(_registry_family_provider(provider, app_config))
     capable = _capability_generation_fields(provider_key, model)
-    request_keys = PROVIDER_PARAM_MAP.get(
-        resolve_console_provider_identity(provider_key).execution_key
-    )
+    request_keys = provider_request_keys(provider, app_config)
     if request_keys is None:
         return capable
     return frozenset(

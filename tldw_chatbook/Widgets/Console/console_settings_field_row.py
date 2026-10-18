@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     console_generation_control_support,
+    provider_request_keys,
     supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -291,7 +292,9 @@ def generation_field_support(
 
     Samplers follow the shared ``supported_generation_fields``; the reasoning
     and thinking controls hide only on an authoritative "unsupported", and an
-    "unknown" one stays visible (TASK-30012 AC#3).
+    "unknown" one stays visible (TASK-30012 AC#3). A provider no request map
+    decides (``provider_request_keys`` is None) keeps every sampler, each
+    unknown too (TASK-33006.11).
 
     Args:
         provider: The draft's provider.
@@ -300,9 +303,10 @@ def generation_field_support(
 
     Returns:
         ``(hidden, unknown)``: the hidden field names in Sampling-line order,
-        and the shown controls whose support is unknown.
+        and the shown fields whose support is unknown.
     """
     supported = supported_generation_fields(provider, model, app_config)
+    unmapped = provider_request_keys(provider, app_config) is None
     hidden: list[str] = []
     unknown: set[str] = set()
     for name in SAMPLING_FIELDS + CORE_FIELDS:
@@ -315,6 +319,8 @@ def generation_field_support(
                 unknown.add(name)
         else:
             shown = name in supported
+            if shown and unmapped:
+                unknown.add(name)
         if not shown:
             hidden.append(name)
     return tuple(hidden), frozenset(unknown)
@@ -959,7 +965,7 @@ class ConsoleSettingsFieldRowsMixin:
 
         Returns:
             The field table's help, prefixed for a blank optional field; a
-            blank required field names its valid range instead. A control
+            blank required field names its valid range instead. A field
             whose support is unknown leads with the neutral copy.
         """
         field = MODEL_CONFIG_FIELDS[name]
