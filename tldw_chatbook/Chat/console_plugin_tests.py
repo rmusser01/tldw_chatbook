@@ -72,8 +72,11 @@ class ConsolePluginTests:
         configuration = await controller.capture_turn_configuration_snapshot(session_id)
         current_controller, current_session = self._session(session_id)
         current = (
-            current_controller, current_session, current_controller.store,
-            current_controller.app, current_controller._skills_service.local_service.plugin_service,
+            current_controller,
+            current_session,
+            current_controller.store,
+            current_controller.app,
+            current_controller._skills_service.local_service.plugin_service,
         )
         if any(actual is not expected for actual, expected in zip(current, owners)):
             raise PermissionError("plugin_test_session_changed")
@@ -126,7 +129,9 @@ class ConsolePluginTests:
             encoded,
             now + 900,
         )
-        self._owners = {key: value for key, value in self._owners.items() if key in self.reviews}
+        self._owners = {
+            key: value for key, value in self._owners.items() if key in self.reviews
+        }
         self.reviews[review.token] = review
         self._owners[review.token] = owners
         return review
@@ -168,7 +173,7 @@ class ConsolePluginTests:
         return await asyncio.shield(task)
 
     async def _execute(self, review):
-        controller, session, service = self._current(review)
+        controller, _session, service = self._current(review)
         details = await service.management_details(
             review.installation_id, workspace_id=review.workspace_id
         )
@@ -202,12 +207,16 @@ class ConsolePluginTests:
                     from tldw_chatbook.Plugins.hooks import hook_id
 
                     native = getattr(engine, "native_plugins", None)
-                    matches = [
-                        (identity, snapshot)
-                        for identity, (snapshot, key) in native.owners.items()
-                        if snapshot.installation_id == review.installation_id
-                        and key == review.component_id
-                    ] if native is not None else []
+                    matches = (
+                        [
+                            (identity, snapshot)
+                            for identity, (snapshot, key) in native.owners.items()
+                            if snapshot.installation_id == review.installation_id
+                            and key == review.component_id
+                        ]
+                        if native is not None
+                        else []
+                    )
                     if len(matches) != 1:
                         raise PermissionError("plugin_test_hook_not_admitted")
                     handler_id, snapshot = matches[0]
@@ -231,7 +240,10 @@ class ConsolePluginTests:
                 policy = parse_persona_policy_from_rules(
                     review.configuration.persona_policy_rules
                 )
-                from tldw_chatbook.Plugins.mcp_provider import MCPProviderGroup, PluginMCPProvider
+                from tldw_chatbook.Plugins.mcp_provider import (
+                    MCPProviderGroup,
+                    PluginMCPProvider,
+                )
 
                 providers = await controller._compose_mcp_provider(
                     review.session_id,
@@ -328,7 +340,9 @@ async def plugin_test_admission(self, configuration):
                 if lifecycle.turn_scope is scope:
                     lifecycle.turn_scope = None
         try:
-            created = getattr(runtime, "_plugin_test_created_engines", {}).pop(task, None)
+            created = getattr(runtime, "_plugin_test_created_engines", {}).pop(
+                task, None
+            )
             if (
                 prior_engine is None
                 and created is not None

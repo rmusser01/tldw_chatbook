@@ -1056,49 +1056,88 @@ async def _current_mapping_case(rig, native_package, tmp_path, aliases):
         store=LocalMCPStore(tmp_path / "management-mcp.json"),
         credential_service=credentials,
     )
-    local.save_external_profile({
-        "profile_id": "remote", "transport": "streamable_http",
-        "url": "https://mcp.example/rpc",
-        "credential_reference": binding.reference_id,
-        "credential_generation": binding.authority_generation,
-    })
-    local.store.save_discovery_snapshot("remote", {
-        "tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}],
-    })
+    local.save_external_profile(
+        {
+            "profile_id": "remote",
+            "transport": "streamable_http",
+            "url": "https://mcp.example/rpc",
+            "credential_reference": binding.reference_id,
+            "credential_generation": binding.authority_generation,
+        }
+    )
+    local.store.save_discovery_snapshot(
+        "remote",
+        {
+            "tools": [
+                {
+                    "name": "echo",
+                    "description": "Echo",
+                    "inputSchema": {"type": "object"},
+                }
+            ],
+        },
+    )
     rig.service._mcp_mapping_owner = local
-    await rig.service._call(lambda: setattr(rig.service._coordinator, "mcp_mapping_owner", local))
-    root = native_package(extension={
-        "version": 1, "agents": ["agent.md"],
-        "requires": {"agent:reader": ["mcp:remote"]},
-    })
+    await rig.service._call(
+        lambda: setattr(rig.service._coordinator, "mcp_mapping_owner", local)
+    )
+    root = native_package(
+        extension={
+            "version": 1,
+            "agents": ["agent.md"],
+            "requires": {"agent:reader": ["mcp:remote"]},
+        }
+    )
     names = ["search", "arithmetic"]
     (root / "agent.md").write_text(
-        "---\nname: reader\ndescription: Read\ntools: " + json.dumps(names) + "\n---\nRead."
+        "---\nname: reader\ndescription: Read\ntools: "
+        + json.dumps(names)
+        + "\n---\nRead."
     )
-    (root / "mcp.json").write_text(json.dumps({
-        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-        "mcpServers": {"remote": {"type": "streamable-http", "url": "https://mcp.example/rpc"}},
-    }))
+    (root / "mcp.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "https://mcp.example/rpc",
+                    }
+                },
+            }
+        )
+    )
     installed = await rig.service.review_install(
-        root, selection=("skill:review", "agent:reader", "mcp:remote"),
+        root,
+        selection=("skill:review", "agent:reader", "mcp:remote"),
         workspace_id="workspace-a",
     )
     await rig.service.commit(installed, installed.operation_id)
-    values = {"connections": {"mcp:remote": "remote"}, "tools": {"mcp:remote": ["echo"]}}
+    values = {
+        "connections": {"mcp:remote": "remote"},
+        "tools": {"mcp:remote": ["echo"]},
+    }
     if aliases in {"builtin", "mixed"}:
-        values["tool_references"] = {"agent:reader": {"arithmetic": "builtin:calculator"}}
+        values["tool_references"] = {
+            "agent:reader": {"arithmetic": "builtin:calculator"}
+        }
     if aliases in {"legacy", "canonical", "mixed"}:
         key = "tool_references" if aliases == "legacy" else "component_tools"
-        values.setdefault(key, {}).setdefault("agent:reader", {})["search"] = "mcp:remote::echo"
+        values.setdefault(key, {}).setdefault("agent:reader", {})[
+            "search"
+        ] = "mcp:remote::echo"
     return installed, local, binding, values
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("aliases", ["legacy", "canonical", "builtin", "mixed", "competing", "unknown-key"])
+@pytest.mark.parametrize(
+    "aliases", ["legacy", "canonical", "builtin", "mixed", "competing", "unknown-key"]
+)
 async def test_management_configuration_keeps_closed_complete_reference_inputs(
     native_console, native_package, tmp_path, aliases
 ):
     import json
+
     from textual.widgets import Input, Select
 
     from tldw_chatbook.Plugins.host_references import mapping_id, tool_constraint_id
@@ -1106,7 +1145,10 @@ async def test_management_configuration_keeps_closed_complete_reference_inputs(
 
     rig = native_console
     installed, local, _, values = await _current_mapping_case(
-        rig, native_package, tmp_path, "mixed" if aliases in {"competing", "unknown-key"} else aliases
+        rig,
+        native_package,
+        tmp_path,
+        "mixed" if aliases in {"competing", "unknown-key"} else aliases,
     )
     if aliases == "competing":
         values["component_tools"]["agent:reader"]["arithmetic"] = "builtin:calculator"
@@ -1116,10 +1158,13 @@ async def test_management_configuration_keeps_closed_complete_reference_inputs(
     app.local_mcp_control_service = local
     async with app.run_test(size=(120, 35)) as pilot:
         await settled(pilot, app.screen)
-        await app.push_screen(PluginReviewModal(
-            app.plugin_source_service, installation_id=installed.installation_id,
-            workspace_id="workspace-a",
-        ))
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
         modal = app.screen
         await modal.workers.wait_for_complete()
         modal.query_one("#plugin-review-action", Select).value = "configure"
@@ -1129,9 +1174,11 @@ async def test_management_configuration_keeps_closed_complete_reference_inputs(
             with pytest.raises(ValueError):
                 await modal._prepare()
             assert modal.draft.review is None
-            assert not (await rig.service.management_details(
-                installed.installation_id, workspace_id="workspace-a"
-            ))["mappings"]
+            assert not (
+                await rig.service.management_details(
+                    installed.installation_id, workspace_id="workspace-a"
+                )
+            )["mappings"]
             return
         await modal._prepare()
         review = modal.draft.review
@@ -1153,13 +1200,16 @@ async def test_management_configuration_keeps_closed_complete_reference_inputs(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["empty", "builtin", "mixed", "refresh-failed", "newer-draft"])
+@pytest.mark.parametrize(
+    "state", ["empty", "builtin", "mixed", "refresh-failed", "newer-draft"]
+)
 async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
     native_console, native_package, tmp_path, monkeypatch, state
 ):
     import asyncio
     import json
     from uuid import uuid4
+
     from textual.widgets import Input, Select, Static
 
     from tldw_chatbook.UI.Plugins_Modules.review import PluginConnectionDraft
@@ -1170,17 +1220,24 @@ async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
         rig, native_package, tmp_path, state
     )
     if state in {"builtin", "mixed"}:
-        configured = await rig.service.review_configuration(installed.installation_id, **values)
+        configured = await rig.service.review_configuration(
+            installed.installation_id, **values
+        )
         await rig.service.commit(configured, configured.operation_id)
-    details = await rig.service.management_details(installed.installation_id, workspace_id="workspace-a")
+    details = await rig.service.management_details(
+        installed.installation_id, workspace_id="workspace-a"
+    )
     app = BrowseApp(rig)
     app.local_mcp_control_service = local
     async with app.run_test(size=(120, 35)) as pilot:
         await settled(pilot, app.screen)
-        await app.push_screen(PluginReviewModal(
-            app.plugin_source_service, installation_id=installed.installation_id,
-            workspace_id="workspace-a",
-        ))
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service,
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
         modal = app.screen
         await modal.workers.wait_for_complete()
         modal.query_one("#plugin-review-action", Select).value = "save-profile"
@@ -1188,8 +1245,12 @@ async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
         field.value = "original exact draft"
         await pilot.pause()
         draft = PluginConnectionDraft(
-            uuid4().hex, installed.installation_id, "workspace-a", "mcp:remote",
-            details["inspection"], credential_reference=binding.reference_id,
+            uuid4().hex,
+            installed.installation_id,
+            "workspace-a",
+            "mcp:remote",
+            details["inspection"],
+            credential_reference=binding.reference_id,
             credential_generation=binding.authority_generation,
         )
         modal.draft.review = draft
@@ -1225,9 +1286,15 @@ async def test_profile_save_prefills_only_fresh_empty_unchanged_draft(
         status = str(modal.query_one("#plugin-review-status", Static).render())
         assert saved["profile_id"] in status and "saved without connecting" in status
         if state == "empty":
-            assert json.loads(field.value) == {"connections": {"mcp:remote": saved["profile_id"]}}
+            assert json.loads(field.value) == {
+                "connections": {"mcp:remote": saved["profile_id"]}
+            }
         else:
-            assert field.value == ("newer exact user draft" if state == "newer-draft" else "original exact draft")
+            assert field.value == (
+                "newer exact user draft"
+                if state == "newer-draft"
+                else "original exact draft"
+            )
             assert "Draft preserved" in status
         current = await original(installed.installation_id, workspace_id="workspace-a")
         assert current["mappings"] == details["mappings"]
@@ -1392,7 +1459,10 @@ async def test_console_ui_capture_uses_owning_plugin_workspace(native_console):
     for session in (other, global_session):
         context = builder._build_console_turn_execution_context(session.id)
         assert not context.skill_context_maximum["available_skills"]
-        assert not any(row.get("plugin_owned") for row in context.skill_context_maximum["available_skills"])
+        assert not any(
+            row.get("plugin_owned")
+            for row in context.skill_context_maximum["available_skills"]
+        )
 
 
 from Tests.Plugins.test_declared_variables import variable_case as _variable_case
@@ -1670,7 +1740,6 @@ async def test_value_configuration_preserves_existing_connection_and_model(
     assert owner.client is None  # Configuration is metadata, never a connection.
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("aliases", ["legacy", "canonical", "builtin", "mixed"])
 async def test_complete_prefill_roundtrips_actual_reviewed_reference_forms(
@@ -1679,38 +1748,82 @@ async def test_complete_prefill_roundtrips_actual_reviewed_reference_forms(
     from tldw_chatbook.Widgets.plugin_review_modal import _configuration_references
 
     rig = native_console
-    installed, _local, _binding, values = await _current_mapping_case(rig, native_package, tmp_path, aliases)
+    installed, _local, _binding, values = await _current_mapping_case(
+        rig, native_package, tmp_path, aliases
+    )
     review = await rig.service.review_configuration(installed.installation_id, **values)
     assert (await rig.service.commit(review, review.operation_id)).committed
-    details = await rig.service.management_details(installed.installation_id, workspace_id="workspace-a")
+    details = await rig.service.management_details(
+        installed.installation_id, workspace_id="workspace-a"
+    )
     projected = _configuration_references(details)
-    expected = {key: values.get(key, {}) for key in (
-        "connections", "tools", "models", "component_tools", "tool_references", "variables"
-    )}
+    expected = {
+        key: values.get(key, {})
+        for key in (
+            "connections",
+            "tools",
+            "models",
+            "component_tools",
+            "tool_references",
+            "variables",
+        )
+    }
     if aliases == "legacy":
         # Fresh MCP aliases use canonical rows even through the old input spelling.
-        expected["component_tools"], expected["tool_references"] = expected["tool_references"], {}
-        from tldw_chatbook.Plugins.host_references import capture_reference, tool_constraint_id
+        expected["component_tools"], expected["tool_references"] = (
+            expected["tool_references"],
+            {},
+        )
+        from tldw_chatbook.Plugins.host_references import (
+            capture_reference,
+            tool_constraint_id,
+        )
+
         rows = list(details["mappings"])
-        source = next(row for row in rows if row["component_id"] == "mcp:remote" and row["kind"] == "tool")
-        historical = capture_reference(installed.installation_id, details["inspection"],
-            "agent:reader", "tool", source["target_reference"], label="search", mappings=rows)
-        old_rows = [row for row in rows if row["mapping_id"] != tool_constraint_id("agent:reader", "search")]
+        source = next(
+            row
+            for row in rows
+            if row["component_id"] == "mcp:remote" and row["kind"] == "tool"
+        )
+        historical = capture_reference(
+            installed.installation_id,
+            details["inspection"],
+            "agent:reader",
+            "tool",
+            source["target_reference"],
+            label="search",
+            mappings=rows,
+        )
+        old_rows = [
+            row
+            for row in rows
+            if row["mapping_id"] != tool_constraint_id("agent:reader", "search")
+        ]
         old_rows.append(historical)
         old_projection = _configuration_references(dict(details, mappings=old_rows))
         assert old_projection["tool_references"] == values["tool_references"]
         assert old_projection["component_tools"] == {}
         # Projection has no authority write: protected current rows remain unchanged.
-        assert details["mappings"] == (await rig.service.management_details(
-            installed.installation_id, workspace_id="workspace-a"))["mappings"]
+        assert (
+            details["mappings"]
+            == (
+                await rig.service.management_details(
+                    installed.installation_id, workspace_id="workspace-a"
+                )
+            )["mappings"]
+        )
     assert projected == expected
-    repeated = await rig.service.review_configuration(installed.installation_id, **projected)
+    repeated = await rig.service.review_configuration(
+        installed.installation_id, **projected
+    )
     assert repeated.mappings_json == review.mappings_json
     assert not rig.gateway.payloads
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("corruption", ["unknown", "duplicate", "revision", "connection", "competing"])
+@pytest.mark.parametrize(
+    "corruption", ["unknown", "duplicate", "revision", "connection", "competing"]
+)
 async def test_complete_prefill_refuses_unrepresentable_whole_set(
     native_console, native_package, tmp_path, corruption
 ):
@@ -1720,10 +1833,14 @@ async def test_complete_prefill_refuses_unrepresentable_whole_set(
     from tldw_chatbook.Widgets.plugin_review_modal import _configuration_references
 
     rig = native_console
-    installed, _local, _binding, values = await _current_mapping_case(rig, native_package, tmp_path, "mixed")
+    installed, _local, _binding, values = await _current_mapping_case(
+        rig, native_package, tmp_path, "mixed"
+    )
     review = await rig.service.review_configuration(installed.installation_id, **values)
     assert (await rig.service.commit(review, review.operation_id)).committed
-    details = await rig.service.management_details(installed.installation_id, workspace_id="workspace-a")
+    details = await rig.service.management_details(
+        installed.installation_id, workspace_id="workspace-a"
+    )
     rows = deepcopy(list(details["mappings"]))
     if corruption == "unknown":
         rows.append(dict(rows[0], mapping_id="unrecognized-reference"))
@@ -1734,11 +1851,22 @@ async def test_complete_prefill_refuses_unrepresentable_whole_set(
     elif corruption == "connection":
         rows = [row for row in rows if row["kind"] != "connection"]
     else:
-        builtin = next(row for row in rows if row["target_reference"] == "builtin:calculator")
-        source = next(row for row in rows if row["component_id"] == "mcp:remote" and row["kind"] == "tool")
-        rows.append(dict(builtin, kind="configuration",
-                         mapping_id=tool_constraint_id("agent:reader", "arithmetic"),
-                         target_reference=source["mapping_id"]))
+        builtin = next(
+            row for row in rows if row["target_reference"] == "builtin:calculator"
+        )
+        source = next(
+            row
+            for row in rows
+            if row["component_id"] == "mcp:remote" and row["kind"] == "tool"
+        )
+        rows.append(
+            dict(
+                builtin,
+                kind="configuration",
+                mapping_id=tool_constraint_id("agent:reader", "arithmetic"),
+                target_reference=source["mapping_id"],
+            )
+        )
     with pytest.raises((ValueError, PermissionError)):
         _configuration_references(dict(details, mappings=rows))
     assert not rig.gateway.payloads
@@ -1746,26 +1874,40 @@ async def test_complete_prefill_refuses_unrepresentable_whole_set(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["saved", "refresh-failed", "newer-draft"])
-async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(variable_case, monkeypatch, state):
+async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(
+    variable_case, monkeypatch, state
+):
     import asyncio
     import json
 
     from textual.widgets import Input, Static
-    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+
     from Tests.Plugins.test_native_components import install_components
+    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
     from tldw_chatbook.Plugins.source_service import SourceService
     from tldw_chatbook.Plugins.variables import handle
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
 
     case = variable_case
-    installed = await install_components(case.service, case.package, ("skill:review", "hook:guard"))
-    metadata = await case.service.create_variable_reference(installed.installation_id, "TOKEN", "protected-fixture")
+    installed = await install_components(
+        case.service, case.package, ("skill:review", "hook:guard")
+    )
+    metadata = await case.service.create_variable_reference(
+        installed.installation_id, "TOKEN", "protected-fixture"
+    )
+
     class App(ConsolidatedCSSApp):
         CSS_PATH = BUNDLED_STYLESHEET
+
     app = App()
     async with app.run_test(size=(120, 35)) as pilot:
-        await app.push_screen(PluginReviewModal(SourceService(case.service),
-            installation_id=installed.installation_id, workspace_id="workspace-a"))
+        await app.push_screen(
+            PluginReviewModal(
+                SourceService(case.service),
+                installation_id=installed.installation_id,
+                workspace_id="workspace-a",
+            )
+        )
         modal = app.screen
         await modal.workers.wait_for_complete()
         field = modal.query_one("#plugin-review-reference", Input)
@@ -1773,6 +1915,7 @@ async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(variabl
         await pilot.pause()
         reached, release = asyncio.Event(), asyncio.Event()
         original = case.service.management_details
+
         async def refresh(*args, **kwargs):
             result = await original(*args, **kwargs)
             reached.set()
@@ -1781,6 +1924,7 @@ async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(variabl
             if state == "newer-draft":
                 await release.wait()
             return result
+
         monkeypatch.setattr(case.service, "management_details", refresh)
         task = asyncio.create_task(modal._variable_result(("saved", "TOKEN", metadata)))
         try:
@@ -1798,7 +1942,13 @@ async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(variabl
         if state == "saved":
             assert json.loads(field.value)["variables"] == {"TOKEN": handle(metadata)}
         else:
-            assert field.value == ("newer exact user draft" if state == "newer-draft" else "original exact draft")
+            assert field.value == (
+                "newer exact user draft"
+                if state == "newer-draft"
+                else "original exact draft"
+            )
             assert "preserved" in status.lower()
         assert "protected-fixture" not in field.value + status
-        assert not (await original(installed.installation_id, workspace_id="workspace-a"))["mappings"]
+        assert not (
+            await original(installed.installation_id, workspace_id="workspace-a")
+        )["mappings"]

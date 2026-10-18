@@ -11147,14 +11147,14 @@ RecoveryPassphraseDialog {
 
 PluginReviewModal, PluginStatusModal, PluginAuthorityResetModal { align: center middle; }
 #plugin-review-shell {
-    width: 90%; height: 90%; background: $ds-surface-raised;
+    width: $ds-percent-90; height: $ds-percent-90; background: $ds-surface-raised;
     border: solid $ds-grid-line; padding: $ds-space-inset;
     color: $ds-text-primary;
 }
 #plugin-review-shell .dialog-title, #plugin-review-status, #plugin-review-body { height: auto; color: $ds-text-primary; }
 #plugin-review-selection { height: $ds-textarea-min-height; }
 #plugin-review-shell .dialog-buttons { height: $ds-control-height; }
-#plugin-review-shell Button { width: 1fr; min-width: 0; }
+#plugin-review-shell Button { width: $ds-width-fill; min-width: $ds-size-0; }
 
 #plugin-review-test-data { height: $ds-textarea-min-height; }
 

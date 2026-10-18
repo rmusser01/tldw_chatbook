@@ -17,7 +17,6 @@ from uuid import uuid4
 
 from .authority import PluginMarker, snapshot_digest
 from .authority_store import PluginAuthorityStore
-from .inspection import inspect_package
 from .models import PackageInspection
 from .package_files import canonical_json, capture_package, materialize_package
 from .registry import PluginRegistry
@@ -588,8 +587,15 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not (connections or tool_references or models or component_tools or variables)
-            or len(connections) + len(tool_references or {}) + len(models or {}) + len(component_tools or {}) + len(variables or {}) > 512
+            not (
+                connections or tool_references or models or component_tools or variables
+            )
+            or len(connections)
+            + len(tool_references or {})
+            + len(models or {})
+            + len(component_tools or {})
+            + len(variables or {})
+            > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -607,7 +613,11 @@ class PluginCoordinator:
             mappings.append(mapping)
             for name in sorted(set((tools or {}).get(component_id, ()))):
                 mappings.append(owner.capture_tool_mapping(mapping, inspection, name))
-        from .host_references import capture_reference, capture_model_mapping, capture_tool_constraint
+        from .host_references import (
+            capture_model_mapping,
+            capture_reference,
+            capture_tool_constraint,
+        )
 
         declarations = {}
         for source in (tool_references or {}, component_tools or {}):
@@ -622,19 +632,37 @@ class PluginCoordinator:
                 raise PermissionError("plugin_component_not_selected")
             if target.startswith("builtin:"):
                 # R12: current fresh builtin aliases retain their actual schema owner.
-                mappings.append(capture_reference(installation_id, inspection, component_id,
-                    "tool", target, label=label, mappings=mappings))
+                mappings.append(
+                    capture_reference(
+                        installation_id,
+                        inspection,
+                        component_id,
+                        "tool",
+                        target,
+                        label=label,
+                        mappings=mappings,
+                    )
+                )
                 continue
             target_component, separator, raw_name = target.partition("::")
-            targets = [row for row in mappings if row["kind"] == "tool"
-                       and row["component_id"] in selection
-                       and (row["target_reference"] == target
-                            or row["component_id"] == target_component
-                            and row["target_reference"].partition("::")[2] == raw_name)]
+            targets = [
+                row
+                for row in mappings
+                if row["kind"] == "tool"
+                and row["component_id"] in selection
+                and (
+                    row["target_reference"] == target
+                    or row["component_id"] == target_component
+                    and row["target_reference"].partition("::")[2] == raw_name
+                )
+            ]
             if not separator or len(targets) != 1:
                 raise ValueError("plugin_tool_mapping_invalid")
-            mappings.append(capture_tool_constraint(self, installation_id, inspection,
-                component_id, label, targets[0]))
+            mappings.append(
+                capture_tool_constraint(
+                    self, installation_id, inspection, component_id, label, targets[0]
+                )
+            )
         for component_id, target in sorted((models or {}).items()):
             if component_id not in selection:
                 raise PermissionError("plugin_component_not_selected")
@@ -643,8 +671,15 @@ class PluginCoordinator:
             if "::" in target:
                 provider, model = target.split("::", 1)
                 target = provider + "/" + model
-            mappings.append(capture_model_mapping(self.model_mapping_owner,
-                installation_id, inspection, component_id, target))
+            mappings.append(
+                capture_model_mapping(
+                    self.model_mapping_owner,
+                    installation_id,
+                    inspection,
+                    component_id,
+                    target,
+                )
+            )
         from .variables import capture_mapping, consumed
 
         for name, target in sorted((variables or {}).items()):
@@ -670,28 +705,53 @@ class PluginCoordinator:
 
             validate_mapping(self, mapping, inspection)
             return
-        from .host_references import (_reference_form, declared_tools, mapping_id,
-                                      tool_constraint_id, validate_reference,
-                                      validate_canonical_reference)
+        from .host_references import (
+            _reference_form,
+            declared_tools,
+            mapping_id,
+            tool_constraint_id,
+            validate_canonical_reference,
+            validate_reference,
+        )
 
-        owned = [row for row in mappings
-                 if row["installation_id"] == mapping["installation_id"]
-                 and row["revision_digest"] == mapping["revision_digest"]]
+        owned = [
+            row
+            for row in mappings
+            if row["installation_id"] == mapping["installation_id"]
+            and row["revision_digest"] == mapping["revision_digest"]
+        ]
         form = _reference_form(mapping, inspection)
         component = inspection.inventory[mapping["component_id"]]
         if form != "mcp":
             if form.endswith("model"):
-                peers = [row for row in owned if row["component_id"] == component.component_id
-                         and row["kind"] == "model"]
+                peers = [
+                    row
+                    for row in owned
+                    if row["component_id"] == component.component_id
+                    and row["kind"] == "model"
+                ]
             else:
-                labels = [label for label in declared_tools(component) or ()
-                          if mapping["mapping_id"] in {mapping_id(component.component_id, label),
-                                                       tool_constraint_id(component.component_id, label)}]
+                labels = [
+                    label
+                    for label in declared_tools(component) or ()
+                    if mapping["mapping_id"]
+                    in {
+                        mapping_id(component.component_id, label),
+                        tool_constraint_id(component.component_id, label),
+                    }
+                ]
                 if len(labels) != 1:
                     raise PermissionError("plugin_tool_mapping_invalid")
-                ids = {mapping_id(component.component_id, labels[0]), tool_constraint_id(component.component_id, labels[0])}
-                peers = [row for row in owned if row["component_id"] == component.component_id
-                         and row["mapping_id"] in ids]
+                ids = {
+                    mapping_id(component.component_id, labels[0]),
+                    tool_constraint_id(component.component_id, labels[0]),
+                }
+                peers = [
+                    row
+                    for row in owned
+                    if row["component_id"] == component.component_id
+                    and row["mapping_id"] in ids
+                ]
             if len(peers) != 1:
                 raise PermissionError("plugin_reference_ambiguous")
         if form.startswith("dev_"):
@@ -700,6 +760,7 @@ class PluginCoordinator:
             validate_canonical_reference(self, mapping, inspection, owned)
         else:
             from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
             if not isinstance(self.mcp_mapping_owner, LocalMCPControlService):
                 raise PermissionError("plugin_mapping_owner_unavailable")
             self.mcp_mapping_owner.validate_connection_mapping(mapping, inspection)
@@ -1105,7 +1166,12 @@ class PluginCoordinator:
             update={"materialized_identity": str(destination)}
         )
         if not os.path.lexists(destination):
-            copied = materialize_package(source, destination, dialect=review.inspection.dialect, expected=review.inspection)
+            copied = materialize_package(
+                source,
+                destination,
+                dialect=review.inspection.dialect,
+                expected=review.inspection,
+            )
             if copied.content_digest != retained.content_digest:
                 raise ValueError("stale package during materialization")
         reinspect(retained, destination)

@@ -5,7 +5,6 @@ import json
 import pytest
 
 from tldw_chatbook.Plugins.adapters.vendor_hooks import normalize_vendor_hook
-from tldw_chatbook.Plugins.inspection import inspect_package
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -139,7 +138,6 @@ def test_observer_cannot_hide_required_or_unknown_guard_constraints(location):
 # Qualified /2 controls use the same current host owners.
 """Real bounded child execution and producer semantics for vendor hook subsets."""
 
-import json
 import shlex
 
 import pytest
@@ -515,7 +513,7 @@ async def test_admitted_vendor_hook_uses_original_native_process_owner_and_root(
 
     from Tests.Plugins.test_codex_adapter import write_json
     from Tests.Plugins.test_native_components import install_components
-    from tldw_chatbook.Plugins.hooks import _NativeHookProcessOwner, NativeHooks
+    from tldw_chatbook.Plugins.hooks import NativeHooks, _NativeHookProcessOwner
 
     package = native_package()
     (package / "plugin.json").unlink()
@@ -869,11 +867,20 @@ def test_fresh_qualified_observer_cannot_hide_unknown_scope(tmp_path, location):
     handler = {"command": "python3 observe.py"}
     group = {"hooks": [handler]}
     document = {"hooks": {"PostToolUse": [group]}}
-    {"root": document, "group": group, "handler": handler}[location]["requiredGuard"] = True
-    write_json(tmp_path, ".codex-plugin/plugin.json", {"name": "unknown-scope", "hooks": document})
+    {"root": document, "group": group, "handler": handler}[location][
+        "requiredGuard"
+    ] = True
+    write_json(
+        tmp_path,
+        ".codex-plugin/plugin.json",
+        {"name": "unknown-scope", "hooks": document},
+    )
     result = inspect_package(tmp_path, dialect="openai")
     assert result.inventory["skill:example"].activation_blockers
-    assert not any(row.kind == "hook" and row.support == "adapted" for row in result.inventory.values())
+    assert not any(
+        row.kind == "hook" and row.support == "adapted"
+        for row in result.inventory.values()
+    )
 
 
 @pytest.mark.skipif(

@@ -31,7 +31,8 @@ async def test_always_rule_and_manual_command_reach_final_provider(
     )
     literal = "$other /another @agent"
     result = await rig.controller.submit_draft(
-        "/" + command["name"].replace(":command:", ":", 1) + " " + literal, session_id=rig.session.id
+        "/" + command["name"].replace(":command:", ":", 1) + " " + literal,
+        session_id=rig.session.id,
     )
     assert result.accepted
     payload = rig.gateway.payloads[-1]
@@ -284,7 +285,9 @@ def test_production_app_plugin_factory_uses_same_lazy_owners(tmp_path, monkeypat
         local_llm_provider_catalog_service=model,
         workspace_registry_service=SimpleNamespace(get_workspace=lambda _: None),
     )
-    monkeypatch.setattr(wiring_module, "get_user_data_dir", lambda: tmp_path / "unstarted")
+    monkeypatch.setattr(
+        wiring_module, "get_user_data_dir", lambda: tmp_path / "unstarted"
+    )
     service = app_module.TldwCli._build_plugin_service(app)
     assert service is app_module.TldwCli._build_plugin_service(app)
     assert service._mcp_mapping_owner is local and service._model_mapping_owner is model
@@ -613,19 +616,23 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("spelling,arguments,accepted", [
-    ("legacy", '  {"literal": "$other @file /other"}', True),
-    ("legacy", "", True),
-    ("current", '{"query":"strict named value"}', True),
-    ("current", 'opaque remainder', False),
-    ("current", '{"other":"wrong key"}', False),
-    ("unknown", 'opaque remainder', False),
-    ("wrong_kind", 'opaque remainder', False),
-])
+@pytest.mark.parametrize(
+    "spelling,arguments,accepted",
+    [
+        ("legacy", '  {"literal": "$other @file /other"}', True),
+        ("legacy", "", True),
+        ("current", '{"query":"strict named value"}', True),
+        ("current", "opaque remainder", False),
+        ("current", '{"other":"wrong key"}', False),
+        ("unknown", "opaque remainder", False),
+        ("wrong_kind", "opaque remainder", False),
+    ],
+)
 async def test_command_selector_keeps_closed_argument_contract(
     native_console, native_package, monkeypatch, spelling, arguments, accepted
 ):
     import json
+
     import tldw_chatbook.Chat.console_references as references
 
     package = native_package(extension={"version": 1, "commands": ["command.md"]})
@@ -642,22 +649,29 @@ async def test_command_selector_keeps_closed_argument_contract(
         return await execute(name, **kwargs)
 
     monkeypatch.setattr(rig.service, "execute_skill", observe)
-    monkeypatch.setattr(references, "build_console_reference_resolver",
-                        lambda: lambda token: reads.append(token))
+    monkeypatch.setattr(
+        references,
+        "build_console_reference_resolver",
+        lambda: lambda token: reads.append(token),
+    )
     selector = {
         "legacy": f"/{installed.alias}:review",
         "current": f"${installed.alias}:command:review",
         "unknown": f"/{installed.alias}:missing",
         "wrong_kind": f"@{installed.alias}:review",
     }[spelling]
-    result = await rig.controller.submit_draft(selector + " " + arguments, session_id=rig.session.id)
+    result = await rig.controller.submit_draft(
+        selector + " " + arguments, session_id=rig.session.id
+    )
     assert result.accepted is accepted
     assert not reads
     if not accepted:
         assert not rig.gateway.payloads
         return
     rows = rig.gateway.payloads[-1]
-    text = "\n".join(str(row.get("content", "")) for row in rows if row["role"] == "user")
+    text = "\n".join(
+        str(row.get("content", "")) for row in rows if row["role"] == "user"
+    )
     assert text.count("CLOSED COMMAND BODY.") == 1
     expected = {"query": arguments} if spelling == "legacy" else json.loads(arguments)
     assert json.loads(calls[-1]) == expected
@@ -667,21 +681,31 @@ async def test_command_selector_keeps_closed_argument_contract(
 def test_legacy_rule_selector_refuses_unknown_other_kind_and_ambiguous_rows(rows):
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
-    entries = [{"name": f"alias:{kind}:same", "plugin_owned": True,
-                "plugin_kind": kind, "plugin_rule_mode": "manual"} for kind in rows]
+    entries = [
+        {
+            "name": f"alias:{kind}:same",
+            "plugin_owned": True,
+            "plugin_kind": kind,
+            "plugin_rule_mode": "manual",
+        }
+        for kind in rows
+    ]
     with pytest.raises(PermissionError, match="selector_unavailable|agent_child_only"):
         ConsoleChatController._native_selector("@alias:same untouched", entries)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy", [False, True])
-@pytest.mark.parametrize("declared,arguments,accepted", [
-    ([], "", True),
-    (["a", "b"], '{"a":"one","b":"two"}', True),
-    (["a", "b"], '{"a":"one"}', False),
-    (["a", "b"], '{"a":"one","b":3}', False),
-    (["a", "b"], '{"a":"one","a":"duplicate","b":"two"}', False),
-])
+@pytest.mark.parametrize(
+    "declared,arguments,accepted",
+    [
+        ([], "", True),
+        (["a", "b"], '{"a":"one","b":"two"}', True),
+        (["a", "b"], '{"a":"one"}', False),
+        (["a", "b"], '{"a":"one","b":3}', False),
+        (["a", "b"], '{"a":"one","a":"duplicate","b":"two"}', False),
+    ],
+)
 async def test_zero_and_multiple_command_arguments_share_strict_renderer(
     native_console, native_package, legacy, declared, arguments, accepted
 ):
@@ -691,11 +715,16 @@ async def test_zero_and_multiple_command_arguments_share_strict_renderer(
     package = native_package(extension={"version": 1, "commands": ["command.md"]})
     (package / "command.md").write_text(
         "---\nname: review\ndescription: Review\narguments: "
-        + json.dumps(declared) + "\n---\nSTRICT COMMAND BODY."
+        + json.dumps(declared)
+        + "\n---\nSTRICT COMMAND BODY."
     )
     installed = await install_components(rig.service, package, ("command:review",))
-    selector = f"/{installed.alias}:review" if legacy else f"${installed.alias}:command:review"
-    result = await rig.controller.submit_draft(selector + " " + arguments, session_id=rig.session.id)
+    selector = (
+        f"/{installed.alias}:review" if legacy else f"${installed.alias}:command:review"
+    )
+    result = await rig.controller.submit_draft(
+        selector + " " + arguments, session_id=rig.session.id
+    )
     assert result.accepted is accepted
     if accepted:
         assert "STRICT COMMAND BODY." in str(rig.gateway.payloads[-1])

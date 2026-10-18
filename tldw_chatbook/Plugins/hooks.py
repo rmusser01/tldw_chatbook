@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from .models import PackageInspection
 
@@ -48,11 +49,14 @@ def _parse_hook_declaration(
     handler = parse_handlers(
         [raw], declared_variable_names=set(json.loads(inspection.variables_json))
     )[0]
-    return handler.model_copy(update={
-        "id": "plugin_hook_" + hashlib.sha256(
-            f"{installation_id}:{component_id}".encode()
-        ).hexdigest()[:48]
-    })
+    return handler.model_copy(
+        update={
+            "id": "plugin_hook_"
+            + hashlib.sha256(f"{installation_id}:{component_id}".encode()).hexdigest()[
+                :48
+            ]
+        }
+    )
 
 
 def project_hook_definition(
@@ -77,9 +81,13 @@ def project_hook_definition(
     else:
         server = raw["server"]
         server = server if server.startswith("mcp:") else "mcp:" + server
-        targets = [row for row in mappings
-                   if row["component_id"] == server and row["kind"] == "tool"
-                   and row["target_reference"].endswith("::" + raw["tool"])]
+        targets = [
+            row
+            for row in mappings
+            if row["component_id"] == server
+            and row["kind"] == "tool"
+            and row["target_reference"].endswith("::" + raw["tool"])
+        ]
         if len(targets) != 1:
             raise PluginUnavailable("plugin_hook_tool_mapping_required")
         raw["server"], raw["tool"] = targets[0]["target_reference"].split("::", 1)
@@ -92,10 +100,16 @@ def project_hook_definition(
 def register_hook_definitions(snapshot: RunPluginSnapshot) -> tuple[HookHandler, ...]:
     """Keep restrictive occurrences separate from executable projections."""
     return tuple(
-        _parse_hook_declaration(snapshot.inspection, snapshot.installation_id, key)
-        if key in snapshot.unavailable_hooks else project_hook_definition(
-            snapshot.inspection, snapshot.installation_id, key,
-            json.loads(snapshot.data_roots_json), json.loads(snapshot.mappings_json)
+        (
+            _parse_hook_declaration(snapshot.inspection, snapshot.installation_id, key)
+            if key in snapshot.unavailable_hooks
+            else project_hook_definition(
+                snapshot.inspection,
+                snapshot.installation_id,
+                key,
+                json.loads(snapshot.data_roots_json),
+                json.loads(snapshot.mappings_json),
+            )
         )
         for key in (*snapshot.selection, *snapshot.unavailable_hooks)
         if snapshot.inspection.inventory[key].kind == "hook"
@@ -106,8 +120,12 @@ class NativeHooks:
     """One immutable native hook set; standalone hooks retain their existing owner."""
 
     def __init__(
-        self, service: PluginService, snapshots: tuple[RunPluginSnapshot, ...],
-        *, scratch_manager=None, scratch_snapshot=None,
+        self,
+        service: PluginService,
+        snapshots: tuple[RunPluginSnapshot, ...],
+        *,
+        scratch_manager=None,
+        scratch_snapshot=None,
     ) -> None:
         if (scratch_manager is None) != (scratch_snapshot is None):
             raise ValueError("plugin_scratch_capability_pair_required")
@@ -126,7 +144,8 @@ class NativeHooks:
             if snapshot.inspection.inventory[key].kind == "hook"
         }
         self.unavailable = frozenset(
-            hook_id(snapshot, key) for snapshot in snapshots
+            hook_id(snapshot, key)
+            for snapshot in snapshots
             for key in snapshot.unavailable_hooks
         )
         self.standalone = HostProcessOwner()
@@ -449,17 +468,28 @@ class NativeHooks:
             return None
         snapshot, component = owner
         if (event.owner_installation_id, event.owner_component_id) != (
-            snapshot.installation_id, component
+            snapshot.installation_id,
+            component,
         ):
             raise PluginUnavailable("plugin_hook_owner_changed")
         return _NativeHookProcessOwner(
-            self, snapshot, component, cancel,
-            scratch_manager=self.scratch_manager if snapshot.workspace_id is None else None,
-            scratch_snapshot=self.scratch_snapshot if snapshot.workspace_id is None else None,
+            self,
+            snapshot,
+            component,
+            cancel,
+            scratch_manager=(
+                self.scratch_manager if snapshot.workspace_id is None else None
+            ),
+            scratch_snapshot=(
+                self.scratch_snapshot if snapshot.workspace_id is None else None
+            ),
         )
 
     def render_context(self, event: HookEvent, handler_id: str, block) -> str:
-        from tldw_chatbook.Agents.agent_models import PluginContextOrigin, PluginContextText
+        from tldw_chatbook.Agents.agent_models import (
+            PluginContextOrigin,
+            PluginContextText,
+        )
         from tldw_chatbook.Agents.hooks_v2.context import ContextLedger
 
         text = ContextLedger.render(event, handler_id, block)
@@ -469,10 +499,14 @@ class NativeHooks:
         snapshot, component = owner
         return PluginContextText(
             text,
-            (PluginContextOrigin(
-                snapshot.installation_id, component, snapshot.revision_digest,
-                len(text.encode("utf-8")),
-            ),),
+            (
+                PluginContextOrigin(
+                    snapshot.installation_id,
+                    component,
+                    snapshot.revision_digest,
+                    len(text.encode("utf-8")),
+                ),
+            ),
         )
 
     def reserve_launch(self, event: HookEvent) -> str:
@@ -578,7 +612,9 @@ class _NativeHookProcessOwner:
         snapshot: RunPluginSnapshot,
         component_id: str,
         cancel: Callable[[], None],
-        *, scratch_manager=None, scratch_snapshot=None,
+        *,
+        scratch_manager=None,
+        scratch_snapshot=None,
     ) -> None:
         import asyncio
 
@@ -593,8 +629,11 @@ class _NativeHookProcessOwner:
 
     def reserve_launch(self, event: HookEvent) -> str:
         self.event = event
-        lease = (self.scratch_manager.lease(self.scratch_snapshot)
-                 if self.scratch_manager is not None else None)
+        lease = (
+            self.scratch_manager.lease(self.scratch_snapshot)
+            if self.scratch_manager is not None
+            else None
+        )
         if lease is not None:
             lease.__enter__()
         try:
@@ -611,6 +650,7 @@ class _NativeHookProcessOwner:
 
     def publish_process(self, token: str, provenance: dict) -> None:
         service = self.facade.service
+
         def publish():
             service.check_effect_actor(
                 self.snapshot, self.component_id, run_id=self.event.run_id

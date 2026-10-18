@@ -1,8 +1,7 @@
 """Independent OpenAI precedence and retained interpretation controls."""
 
-from tldw_chatbook.Plugins.inspection import inspect_package
-
 from Tests.Plugins import platform_support
+from tldw_chatbook.Plugins.inspection import inspect_package
 
 
 def test_inline_overlay_replaces_compatibility_wholesale():
@@ -109,8 +108,6 @@ def test_unconfigured_vendor_variables_never_become_inherited_defaults(interop_p
 """Codex package adaptation through immutable package inspection."""
 
 
-
-
 @platform_support.package_capture
 def test_portable_inventory_positive_control(native_package):
     from tldw_chatbook.Plugins.inspection import inspect_package
@@ -126,7 +123,6 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Plugins.inspection import inspect_package
 from tldw_chatbook.Plugins.schemas import PLUGIN_SCHEMA
 
 UPSTREAM = Path(__file__).parent / "fixtures/interop/upstream"

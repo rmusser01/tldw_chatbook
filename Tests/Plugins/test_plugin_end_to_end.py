@@ -265,7 +265,11 @@ async def test_skill_lookup_keeps_component_kind(
     package = native_package(
         extension={
             "version": 1,
-            **({"commands": ["command.md"]} if kind == "command" else {"rules": ["rule.md"]} if kind == "rule" else {}),
+            **(
+                {"commands": ["command.md"]}
+                if kind == "command"
+                else {"rules": ["rule.md"]} if kind == "rule" else {}
+            ),
         }
     )
     (package / "skills/review/reference.txt").write_text("Actual skill reference.")
@@ -305,7 +309,9 @@ async def test_skill_lookup_keeps_component_kind(
     if kind == "mcp":
         unconfigured = service.capture_maximum("workspace-a")
         assert len(unconfigured["available_skills"]) == 1
-        assert all(row["plugin_kind"] == "skill" for row in unconfigured["available_skills"])
+        assert all(
+            row["plugin_kind"] == "skill" for row in unconfigured["available_skills"]
+        )
         client = MCPClient()
         local = LocalMCPControlService(
             store=LocalMCPStore(tmp_path / "collision-mcp.json"),
@@ -316,9 +322,10 @@ async def test_skill_lookup_keeps_component_kind(
             lambda: setattr(service._coordinator, "mcp_mapping_owner", local)
         )
         inspection = await service._call(
-            lambda: retained_inspections(service._coordinator.published_snapshot(), coordinator=service._coordinator)[
-                (review.installation_id, review.inspection.effective_digest)
-            ]
+            lambda: retained_inspections(
+                service._coordinator.published_snapshot(),
+                coordinator=service._coordinator,
+            )[(review.installation_id, review.inspection.effective_digest)]
         )
         profile = local.save_owned_profile(
             installation_id=review.installation_id,
@@ -333,8 +340,12 @@ async def test_skill_lookup_keeps_component_kind(
     admitted = await service.admit(
         service.capture_maximum("workspace-a"), "pending:collision"
     )
-    skill = next(row for row in admitted["available_skills"] if row["plugin_kind"] == "skill")
-    native = next(row for row in admitted["available_skills"] if row["plugin_kind"] == kind)
+    skill = next(
+        row for row in admitted["available_skills"] if row["plugin_kind"] == "skill"
+    )
+    native = next(
+        row for row in admitted["available_skills"] if row["plugin_kind"] == kind
+    )
     assert skill["name"] != native["name"]
     assert native["plugin_component_id"] == component_id
     assert skill["record_id"] != native["record_id"]
@@ -344,7 +355,8 @@ async def test_skill_lookup_keeps_component_kind(
     assert component_id in snapshots[0].selection
     if kind == "command":
         rendered = await service.execute_skill(
-            native["name"], admission_token=native["plugin_admission"],
+            native["name"],
+            admission_token=native["plugin_admission"],
             args=json.dumps({"query": "controlled"}),
         )
         assert "Native command body." in repr(rendered)
@@ -376,19 +388,39 @@ async def test_skill_lookup_keeps_component_kind(
         await invoke(identity)
     for identity in (native["record_id"], native["tool_name"], native["name"]):
         if operation == "read":
-            with pytest.raises(PluginUnavailable, match="plugin_component_not_admitted"):
-                await service.read_skill_file(identity, "reference.txt", admission_token=native["plugin_admission"])
+            with pytest.raises(
+                PluginUnavailable, match="plugin_component_not_admitted"
+            ):
+                await service.read_skill_file(
+                    identity,
+                    "reference.txt",
+                    admission_token=native["plugin_admission"],
+                )
         elif operation == "definition":
-            assert await asyncio.to_thread(service.current_definition, identity, native["plugin_admission"]) == native["definition_digest"]
+            assert (
+                await asyncio.to_thread(
+                    service.current_definition, identity, native["plugin_admission"]
+                )
+                == native["definition_digest"]
+            )
         elif kind == "mcp":
-            with pytest.raises(PluginUnavailable, match="plugin_manual_component_unavailable"):
-                await service.execute_skill(identity, admission_token=native["plugin_admission"])
+            with pytest.raises(
+                PluginUnavailable, match="plugin_manual_component_unavailable"
+            ):
+                await service.execute_skill(
+                    identity, admission_token=native["plugin_admission"]
+                )
         else:
             result = await service.execute_skill(
-                identity, admission_token=native["plugin_admission"],
+                identity,
+                admission_token=native["plugin_admission"],
                 args=json.dumps({"query": "controlled"}) if kind == "command" else "",
             )
-            assert ("Native command body." if kind == "command" else "Native manual rule body.") in result["rendered_prompt"]
+            assert (
+                "Native command body."
+                if kind == "command"
+                else "Native manual rule body."
+            ) in result["rendered_prompt"]
             assert "Actual skill reference." not in result["rendered_prompt"]
     await service.retire_pending("pending:collision")
     with pytest.raises(PluginUnavailable, match="plugin_turn_retired"):

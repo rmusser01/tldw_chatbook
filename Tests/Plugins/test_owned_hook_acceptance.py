@@ -188,7 +188,10 @@ async def test_installed_required_effect_admission(
             await rig.service.capture_mcp_snapshot(
                 rejected.installation_id, "workspace-a", "invalid-required"
             )
-        assert not any(row.get("plugin_kind") == "hook" for row in rig.service.capture_maximum("workspace-a")["available_skills"])
+        assert not any(
+            row.get("plugin_kind") == "hook"
+            for row in rig.service.capture_maximum("workspace-a")["available_skills"]
+        )
         control = await rig.install()
         async with _runtime(rig):
             sent = await rig.controller.submit_draft(
@@ -1126,9 +1129,9 @@ async def _installed_compaction_case(
             summary_max_tokens=100,
         ),
     )
-    maximum = (await controller.capture_turn_configuration_snapshot(
-        session.id
-    )).skill_context_maximum
+    maximum = (
+        await controller.capture_turn_configuration_snapshot(session.id)
+    ).skill_context_maximum
     assert any(
         row["plugin_installation_id"] == installed.installation_id
         for row in maximum["available_skills"]
@@ -1608,8 +1611,16 @@ async def test_installed_provisional_mcp_initialization(
             with pytest.raises(
                 PluginUnavailable, match="plugin_component_not_admitted"
             ):
-                await case.service.execute_skill(blocked["name"], admission_token=blocked["plugin_admission"], args="{}")
-            body = await case.service.execute_skill(independent["name"], admission_token=independent["plugin_admission"], args="{}")
+                await case.service.execute_skill(
+                    blocked["name"],
+                    admission_token=blocked["plugin_admission"],
+                    args="{}",
+                )
+            body = await case.service.execute_skill(
+                independent["name"],
+                admission_token=independent["plugin_admission"],
+                args="{}",
+            )
             assert "independent body." in str(body)
             assert (
                 not accepted and not terminal and not stops and not rig.gateway.payloads
@@ -2071,31 +2082,44 @@ async def test_standalone_compaction_checks_actual_slot_before_hook_publication(
 
     rig = native_console
     async with _runtime(rig):
-        configuration = await rig.controller.capture_turn_configuration_snapshot(rig.session.id)
+        configuration = await rig.controller.capture_turn_configuration_snapshot(
+            rig.session.id
+        )
         resolution = await rig.gateway.resolve_for_send(
             rig.controller._provider_selection_for_session(rig.session.id)
         )
         claim = None
         busy_sessions = []
         if occupied == "received":
-            claim = rig.store.claim_received_turn(rig.session.id, "ordinary-received-turn")
+            claim = rig.store.claim_received_turn(
+                rig.session.id, "ordinary-received-turn"
+            )
             assert claim is not None
         else:
             busy_sessions = (
                 [rig.session]
                 if occupied == "same-session"
-                else [rig.store.create_session(workspace_id="workspace-a")
-                      for _ in range(rig.controller.max_parallel_runs)]
+                else [
+                    rig.store.create_session(workspace_id="workspace-a")
+                    for _ in range(rig.controller.max_parallel_runs)
+                ]
             )
             for session in busy_sessions:
                 rig.controller._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.VALIDATING, "Ordinary preparation"),
+                    ConsoleRunState(
+                        ConsoleRunStatus.VALIDATING, "Ordinary preparation"
+                    ),
                     session_id=session.id,
                 )
         try:
-            with pytest.raises(RuntimeError, match="console_(received_turn_pending|session_busy)"):
+            with pytest.raises(
+                RuntimeError, match="console_(received_turn_pending|session_busy)"
+            ):
                 await rig.controller._hooks_for_compaction(
-                    rig.session.id, resolution, reason="manual", current=lambda: True,
+                    rig.session.id,
+                    resolution,
+                    reason="manual",
+                    current=lambda: True,
                     configuration=configuration,
                 )
             assert not getattr(rig.controller, "_hooks_v2_submissions", {})

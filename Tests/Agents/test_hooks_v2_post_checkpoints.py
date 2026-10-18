@@ -6,8 +6,8 @@ import threading
 import pytest
 
 from Tests.Agents.test_hooks_v2_execution import event
-from tldw_chatbook.Agents.activation import worker_guard
 from Tests.Plugins import platform_support
+from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.Agents.hooks_v2.engine import HookEventOutcome, HookFailure
 from tldw_chatbook.Agents.hooks_v2.models import ContextBlock, HookResult
 

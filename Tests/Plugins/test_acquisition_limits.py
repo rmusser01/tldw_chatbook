@@ -847,7 +847,9 @@ def test_checkpoint_materialization_preserves_expected_recipe(
     assert actual.effective_digest == expected.effective_digest
     assert actual.inventory == expected.inventory
     assert actual.materialized_identity == str(destination)
-    assert (destination / "plugin.json").read_bytes() == (source / "plugin.json").read_bytes()
+    assert (destination / "plugin.json").read_bytes() == (
+        source / "plugin.json"
+    ).read_bytes()
 
 
 @pytest.mark.parametrize("mismatch", ["dialect", "source"])

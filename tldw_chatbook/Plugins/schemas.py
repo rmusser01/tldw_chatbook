@@ -308,17 +308,9 @@ def validate_mcp(value: object, capture) -> dict:
         env = value.get("env", {})
         require(
             isinstance(env, dict)
-            and not (env.keys() & _reserved_variables(_recipe))
+            and not (env.keys() & RESERVED_VARIABLES)
             and all(
-                validate_env_var_reference(k) and (
-                    isinstance(v, str) if _recipe == "dev_20261001" else (
-                        (isinstance(v, str) and "\0" not in v)
-                        or (isinstance(v, dict) and set(v) == {"variable"}
-                            and isinstance(v["variable"], str)
-                            and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", v["variable"]) is not None
-                            and v["variable"] not in _reserved_variables(_recipe))
-                    )
-                ) and "\x00" not in v
+                validate_env_var_reference(k) and isinstance(v, str) and "\x00" not in v
                 for k, v in env.items()
             )
         )
@@ -452,13 +444,20 @@ def validate_hook(value: object, capture, *, _recipe: str = "integrated_2") -> d
             isinstance(env, dict)
             and not (env.keys() & _reserved_variables(_recipe))
             and all(
-                validate_env_var_reference(k) and (
-                    isinstance(v, str) if _recipe == "dev_20261001" else (
+                validate_env_var_reference(k)
+                and (
+                    isinstance(v, str)
+                    if _recipe == "dev_20261001"
+                    else (
                         (isinstance(v, str) and "\0" not in v)
-                        or (isinstance(v, dict) and set(v) == {"variable"}
+                        or (
+                            isinstance(v, dict)
+                            and set(v) == {"variable"}
                             and isinstance(v["variable"], str)
-                            and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", v["variable"]) is not None
-                            and v["variable"] not in _reserved_variables(_recipe))
+                            and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", v["variable"])
+                            is not None
+                            and v["variable"] not in _reserved_variables(_recipe)
+                        )
                     )
                 )
                 for k, v in env.items()
@@ -480,4 +479,8 @@ def validate_hook(value: object, capture, *, _recipe: str = "integrated_2") -> d
 
 
 def _reserved_variables(recipe: str) -> set[str]:
-    return RESERVED_VARIABLES if recipe == "dev_20261001" else RESERVED_VARIABLES | {"CHATBOOK_WORKSPACE_DATA"}
+    return (
+        RESERVED_VARIABLES
+        if recipe == "dev_20261001"
+        else RESERVED_VARIABLES | {"CHATBOOK_WORKSPACE_DATA"}
+    )

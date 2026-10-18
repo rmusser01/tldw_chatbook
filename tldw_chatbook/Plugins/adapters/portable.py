@@ -73,11 +73,19 @@ def inventory_package(
         )
 
     for record in vendor_records:
-        add(record.kind, record.local_id, record.path, json.loads(record.definition_json),
-            record.activation_blockers, record.support)
+        add(
+            record.kind,
+            record.local_id,
+            record.path,
+            json.loads(record.definition_json),
+            record.activation_blockers,
+            record.support,
+        )
     if discover_portable:
         if "skills" in capture.files:
-            diagnostics.append(Diagnostic(code="skills_location_invalid", path="skills"))
+            diagnostics.append(
+                Diagnostic(code="skills_location_invalid", path="skills")
+            )
         if skill_paths is None:
             skill_paths = [
                 path
@@ -265,7 +273,8 @@ def inventory_package(
     source_guards = {
         row.component_id: json.loads(row.definition_json)
         for row in vendor_records
-        if row.kind == "hook" and row.support == "adapted"
+        if row.kind == "hook"
+        and row.support == "adapted"
         and "deny" in json.loads(row.definition_json).get("effects", ())
     }
     for key, row in inventory.items():
@@ -279,7 +288,11 @@ def inventory_package(
         global_blockers.append("dependency_scope_unknown")
     for key, component in list(inventory.items()):
         blockers = set(component.activation_blockers) | set(global_blockers)
-        if component.kind == "hook" and (component.support != "invalid" if _recipe == "dev_20261001" else component.support in {"supported", "adapted"}):
+        if component.kind == "hook" and (
+            component.support != "invalid"
+            if _recipe == "dev_20261001"
+            else component.support in {"supported", "adapted"}
+        ):
             definition = json.loads(component.definition_json)
             if isinstance(definition, dict):
                 values = [
@@ -288,20 +301,35 @@ def inventory_package(
                     *([definition.get("cwd", "")] if _recipe != "dev_20261001" else []),
                 ]
                 for value in values:
-                    if (_recipe != "dev_20261001" and isinstance(value, dict)
-                        and set(value) == {"variable"} and value["variable"] not in variables):
+                    if (
+                        _recipe != "dev_20261001"
+                        and isinstance(value, dict)
+                        and set(value) == {"variable"}
+                        and value["variable"] not in variables
+                    ):
                         blockers.add(f"variable_undeclared:{value['variable']}")
                     if isinstance(value, str):
                         for variable in re.findall(
                             r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value
                         ):
                             if (
-                                variable not in ({"PLUGIN_ROOT", "PLUGIN_DATA"} | ({"CHATBOOK_WORKSPACE_DATA"} if _recipe != "dev_20261001" else set()))
+                                variable
+                                not in (
+                                    {"PLUGIN_ROOT", "PLUGIN_DATA"}
+                                    | (
+                                        {"CHATBOOK_WORKSPACE_DATA"}
+                                        if _recipe != "dev_20261001"
+                                        else set()
+                                    )
+                                )
                                 and variable not in variables
                             ):
                                 blockers.add(f"variable_undeclared:{variable}")
         for dep in edges.get(key, ()):
-            if dep in source_guards and "updated_input" in source_guards[dep]["effects"]:
+            if (
+                dep in source_guards
+                and "updated_input" in source_guards[dep]["effects"]
+            ):
                 blockers.add(f"dependency_guard_unqualified:{dep}")
             if dep not in inventory:
                 blockers.add(f"dependency_missing:{dep}")

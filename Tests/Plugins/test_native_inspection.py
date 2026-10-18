@@ -310,6 +310,43 @@ def test_bad_skill_and_mcp_entry_do_not_disable_siblings(native_package):
 
 
 @pytest.mark.parametrize(
+    "env",
+    [
+        {"VALUE": "contains\x00nul"},
+        {"VALUE": 7},
+        {"VALUE": {"variable": "TOKEN"}},
+        {"invalid-name": "value"},
+        {"PLUGIN_ROOT": "replacement"},
+        {"PLUGIN_DATA": "replacement"},
+    ],
+)
+def test_mcp_environment_refusals_preserve_valid_siblings(native_package, env):
+    root = native_package()
+    valid_env = {"VALUE": "literal value", "EMPTY": ""}
+    (root / "mcp.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "good": {
+                        "type": "stdio",
+                        "command": "python3",
+                        "env": valid_env,
+                    },
+                    "bad": {"type": "stdio", "command": "python3", "env": env},
+                },
+            }
+        )
+    )
+    result = inspect_package(root)
+    assert result.inventory["mcp:bad"].support == "invalid"
+    good = result.inventory["mcp:good"]
+    assert good.support == "supported"
+    assert json.loads(good.definition_json)["env"] == valid_env
+    assert not result.inventory["skill:review"].activation_blockers
+
+
+@pytest.mark.parametrize(
     "invalid",
     [
         {"headers": {"X-Trace": "a", "x-trace": "b"}},

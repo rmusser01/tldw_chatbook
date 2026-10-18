@@ -3584,7 +3584,8 @@ class ConsoleRuntime:
                 if service is None:
                     raise PermissionError("plugin_hook_authority_unavailable")
                 native = await service.hook_configuration(
-                    maximum, scratch_manager=self._scratch_spaces,
+                    maximum,
+                    scratch_manager=self._scratch_spaces,
                     scratch_snapshot=self._scratch_spaces.snapshot(session_id),
                 )
                 self._require_hook_preparation_source(source)
@@ -3759,7 +3760,9 @@ class ConsoleRuntime:
                 launch_guard=launch_guard,
                 effect_authority_check=effects_current,
                 enabled=configured.enabled or bool(native and native.definitions),
-                invalid_admissions=configured.v2_invalid_admissions if configured.enabled else (),
+                invalid_admissions=(
+                    configured.v2_invalid_admissions if configured.enabled else ()
+                ),
             )
             if test_only:
                 created = getattr(self, "_plugin_test_created_engines", None)
@@ -3792,7 +3795,9 @@ class ConsoleRuntime:
                     return False
 
             lifecycle = HookSessionLifecycle(
-                engine, session_id, current=current,
+                engine,
+                session_id,
+                current=current,
                 render_context=native.render_context if native is not None else None,
             )
             lifecycle.context_key = context_key

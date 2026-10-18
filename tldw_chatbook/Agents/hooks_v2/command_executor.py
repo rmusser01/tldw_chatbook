@@ -140,7 +140,9 @@ class CommandExecutor:
         command_launch: Callable | None = None,
     ) -> CommandJob:
         job = CommandJob(uuid4().hex, ticket)
-        job.owner = (process_owner_factory(job.stop) if process_owner_factory else None) or self.owner
+        job.owner = (
+            process_owner_factory(job.stop) if process_owner_factory else None
+        ) or self.owner
         self.records[job.id] = job
         job.task = asyncio.create_task(
             self._run(
@@ -216,7 +218,9 @@ class CommandExecutor:
             if not isinstance(launch_values, CommandLaunchValues):
                 raise TypeError("invalid command launch values")
             if handler.vendor_protocol:
-                from tldw_chatbook.Plugins.adapters.vendor_hooks import encode_vendor_payload
+                from tldw_chatbook.Plugins.adapters.vendor_hooks import (
+                    encode_vendor_payload,
+                )
 
                 payload = encode_vendor_payload(handler, event)
             cwd = launch_values.cwd
@@ -300,7 +304,8 @@ class CommandExecutor:
                     outcome.failure = "cancelled" if job.cancel.is_set() else "timeout"
                     job.stop()
                 elif transport.get_returncode() != 0 and not (
-                    handler.vendor_protocol and transport.get_returncode() == 2
+                    handler.vendor_protocol
+                    and transport.get_returncode() == 2
                     and "deny" in handler.effects
                 ):
                     outcome.failure = "nonzero_exit"
@@ -315,13 +320,19 @@ class CommandExecutor:
                 else:
                     try:
                         if handler.vendor_protocol:
-                            from tldw_chatbook.Plugins.adapters.vendor_hooks import decode_vendor_result
+                            from tldw_chatbook.Plugins.adapters.vendor_hooks import (
+                                decode_vendor_result,
+                            )
 
                             outcome.result = decode_vendor_result(
-                                bytes(capture.stdout), handler, transport.get_returncode()
+                                bytes(capture.stdout),
+                                handler,
+                                transport.get_returncode(),
                             )
                         else:
-                            outcome.result = decode_result(bytes(capture.stdout), handler)
+                            outcome.result = decode_result(
+                                bytes(capture.stdout), handler
+                            )
                     except ValueError:
                         outcome.failure = "invalid_output"
             finally:

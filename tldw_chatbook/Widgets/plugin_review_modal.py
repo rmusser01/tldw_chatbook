@@ -35,8 +35,12 @@ def _configuration_references(details):
     import hashlib
 
     from ..Plugins.host_references import (
-        _reference_form, declared_tools, mapping_id as tool_mapping_id,
+        _reference_form,
+        declared_tools,
         tool_constraint_id,
+    )
+    from ..Plugins.host_references import (
+        mapping_id as tool_mapping_id,
     )
     from ..Plugins.variables import consumed, mapping_id, reference
 
@@ -44,27 +48,52 @@ def _configuration_references(details):
     installation_id = details["installation"]["installation_id"]
     rows = details["mappings"]
     if not isinstance(rows, (tuple, list)):
-        raise ValueError("plugin_configuration_unavailable")
-    result = {key: {} for key in (
-        "connections", "tools", "models", "component_tools", "tool_references", "variables"
-    )}
+        raise ValueError(
+            "plugin_configuration_unavailable"
+        )  # noqa: TRY004 -- stored projection uses the ValueError refusal boundary
+    result = {
+        key: {}
+        for key in (
+            "connections",
+            "tools",
+            "models",
+            "component_tools",
+            "tool_references",
+            "variables",
+        )
+    }
     declarations = json.loads(inspection.variables_json)
     by_id, forms, labels = {}, {}, set()
-    fields = {"installation_id", "revision_digest", "component_id", "mapping_id",
-              "kind", "target_reference", "definition_digest", "configuration_digest",
-              "credential_bindings"}
+    fields = {
+        "installation_id",
+        "revision_digest",
+        "component_id",
+        "mapping_id",
+        "kind",
+        "target_reference",
+        "definition_digest",
+        "configuration_digest",
+        "credential_bindings",
+    }
     for row in rows:
-        if (not isinstance(row, dict) or set(row) != fields
+        if (
+            not isinstance(row, dict)
+            or set(row) != fields
             or row["installation_id"] != installation_id
             or row["revision_digest"] != inspection.effective_digest
             or row["component_id"] not in inspection.inventory
             or not isinstance(row["mapping_id"], str)
             or not isinstance(row["target_reference"], str)
-            or row["mapping_id"] in by_id):
+            or row["mapping_id"] in by_id
+        ):
             raise ValueError("plugin_configuration_identity_invalid")
         identity = row["mapping_id"]
         by_id[identity] = row
-        forms[identity] = "variable" if identity.startswith("variable:") else _reference_form(row, inspection)
+        forms[identity] = (
+            "variable"
+            if identity.startswith("variable:")
+            else _reference_form(row, inspection)
+        )
 
     # A tool spelling is reconstructed only after joining its actual connection.
     connections = {}
@@ -73,7 +102,12 @@ def _configuration_references(details):
             continue
         component = row["component_id"]
         target = row["target_reference"]
-        if identity != component or component in connections or not target.startswith("local:") or not target[6:]:
+        if (
+            identity != component
+            or component in connections
+            or not target.startswith("local:")
+            or not target[6:]
+        ):
             raise ValueError("plugin_configuration_connection_invalid")
         connections[component] = row
         result["connections"][component] = target[6:]
@@ -86,12 +120,15 @@ def _configuration_references(details):
             raise ValueError("plugin_configuration_connection_required")
         prefix = connection["target_reference"] + "::"
         target = row["target_reference"]
-        if not target.startswith(prefix) or not target[len(prefix):]:
+        if not target.startswith(prefix) or not target[len(prefix) :]:
             raise ValueError("plugin_configuration_tool_invalid")
-        name = target[len(prefix):]
-        expected = "tool-" + hashlib.sha256(
-            (connection["mapping_id"] + "\0" + name).encode()
-        ).hexdigest()
+        name = target[len(prefix) :]
+        expected = (
+            "tool-"
+            + hashlib.sha256(
+                (connection["mapping_id"] + "\0" + name).encode()
+            ).hexdigest()
+        )
         if row["mapping_id"] != expected:
             raise ValueError("plugin_configuration_tool_invalid")
         return row["component_id"] + "::" + name, name
@@ -101,8 +138,11 @@ def _configuration_references(details):
         component_id, target = row["component_id"], row["target_reference"]
         component = inspection.inventory[component_id]
         if form == "variable":
-            names = [name for name in consumed(component) if name in declarations
-                     and mapping_id(component_id, name) == identity]
+            names = [
+                name
+                for name in consumed(component)
+                if name in declarations and mapping_id(component_id, name) == identity
+            ]
             if row["kind"] != "configuration" or len(names) != 1:
                 raise ValueError("plugin_configuration_variable_invalid")
             reference(target)
@@ -120,23 +160,35 @@ def _configuration_references(details):
                 raise ValueError("plugin_configuration_model_ambiguous")
             result["models"][component_id] = target
         elif form in {"canonical_tool", "dev_tool"}:
-            names = [name for name in declared_tools(component) or ()
-                     if identity == (tool_constraint_id(component_id, name)
-                                     if form == "canonical_tool"
-                                     else tool_mapping_id(component_id, name))]
+            names = [
+                name
+                for name in declared_tools(component) or ()
+                if identity
+                == (
+                    tool_constraint_id(component_id, name)
+                    if form == "canonical_tool"
+                    else tool_mapping_id(component_id, name)
+                )
+            ]
             if len(names) != 1 or (component_id, names[0]) in labels:
                 raise ValueError("plugin_configuration_alias_ambiguous")
             labels.add((component_id, names[0]))
             if form == "dev_tool" and target.startswith("builtin:"):
-                if not target[len("builtin:"):]:
+                if not target[len("builtin:") :]:
                     raise ValueError("plugin_configuration_alias_invalid")
                 projected = target
             else:
-                sources = ([by_id[target]] if target in by_id else []) if form == "canonical_tool" else [
-                    source for source in rows
-                    if forms[source["mapping_id"]] == "mcp"
-                    and source["kind"] == "tool" and source["target_reference"] == target
-                ]
+                sources = (
+                    ([by_id[target]] if target in by_id else [])
+                    if form == "canonical_tool"
+                    else [
+                        source
+                        for source in rows
+                        if forms[source["mapping_id"]] == "mcp"
+                        and source["kind"] == "tool"
+                        and source["target_reference"] == target
+                    ]
+                )
                 if len(sources) != 1:
                     raise ValueError("plugin_configuration_alias_ambiguous")
                 projected, _name = tool_target(sources[0])
@@ -1301,14 +1353,21 @@ class PluginReviewModal(ModalScreen):
             )
             from ..Plugins.review import inspection_identity
 
-            if inspection_identity(details["inspection"]) != inspection_identity(review.inspection):
+            if inspection_identity(details["inspection"]) != inspection_identity(
+                review.inspection
+            ):
                 raise ValueError("plugin_configuration_review_changed")
             mappings = details["mappings"]
             if not isinstance(mappings, (tuple, list)):
-                raise ValueError("plugin_configuration_unavailable")
+                raise ValueError(
+                    "plugin_configuration_unavailable"
+                )  # noqa: TRY004 -- stored projection uses the ValueError refusal boundary
         except (OSError, ValueError, RuntimeError, KeyError):
             if self.is_mounted:
-                self._status(saved + "Mapping refresh unavailable. Draft preserved; refresh and review the complete configuration.")
+                self._status(
+                    saved
+                    + "Mapping refresh unavailable. Draft preserved; refresh and review the complete configuration."
+                )
             return
         if not self.is_mounted:
             return
@@ -1319,13 +1378,19 @@ class PluginReviewModal(ModalScreen):
             and self.query_one("#plugin-review-reference", Input).value == original
         )
         if mappings or not same_draft:
-            self._status(saved + "Draft preserved. Supply and review the complete configuration, including every retained mapping.")
+            self._status(
+                saved
+                + "Draft preserved. Supply and review the complete configuration, including every retained mapping."
+            )
             return
         self.query_one("#plugin-review-action", Select).value = "configure"
         self.query_one("#plugin-review-reference", Input).value = json.dumps(
             {"connections": {review.component_id: result["profile_id"]}}
         )
-        self._status(saved + "Review the filled mapping separately; then connect/discover and review tool mappings.")
+        self._status(
+            saved
+            + "Review the filled mapping separately; then connect/discover and review tool mappings."
+        )
 
     async def _variable_result(self, result, *, request=None):
         if result is None or not self.is_mounted:
@@ -1333,8 +1398,11 @@ class PluginReviewModal(ModalScreen):
         action, name, metadata = result
         saved = "Reference saved. " if action == "saved" else "Reference revoked. "
         if request is None:
-            request = (self.draft, self._input_generation,
-                       self.query_one("#plugin-review-reference", Input).value)
+            request = (
+                self.draft,
+                self._input_generation,
+                self.query_one("#plugin-review-reference", Input).value,
+            )
         draft, generation, original = request
         try:
             details = await self.service.management_details(
@@ -1345,31 +1413,49 @@ class PluginReviewModal(ModalScreen):
                 from ..Plugins.variables import handle
 
                 declaration = json.loads(details["inspection"].variables_json).get(name)
-                if (declaration is None or metadata["installation_id"] != self.installation_id
-                    or metadata["name"] != name or metadata["value_type"] != declaration["type"]
-                    or metadata["secret"] != declaration["secret"]):
+                if (
+                    declaration is None
+                    or metadata["installation_id"] != self.installation_id
+                    or metadata["name"] != name
+                    or metadata["value_type"] != declaration["type"]
+                    or metadata["secret"] != declaration["secret"]
+                ):
                     raise ValueError("plugin_variable_identity_changed")
                 configuration["variables"][name] = handle(metadata)
         except (OSError, ValueError, RuntimeError, KeyError, TypeError):
             if self.is_mounted:
-                self._status(saved + "Complete mapping refresh unavailable. Draft preserved; refresh and review configuration.")
+                self._status(
+                    saved
+                    + "Complete mapping refresh unavailable. Draft preserved; refresh and review configuration."
+                )
             return
         if not self.is_mounted:
             return
-        if (self.draft is not draft or self._input_generation != generation
-            or self.query_one("#plugin-review-reference", Input).value != original):
-            self._status(saved + "Newer draft preserved. Review the complete configuration before confirming.")
+        if (
+            self.draft is not draft
+            or self._input_generation != generation
+            or self.query_one("#plugin-review-reference", Input).value != original
+        ):
+            self._status(
+                saved
+                + "Newer draft preserved. Review the complete configuration before confirming."
+            )
             return
         self._discard_pending_review()
         self.query_one("#plugin-review-confirm", Button).disabled = True
         self.query_one("#plugin-review-action", Select).value = "configure"
-        self.query_one("#plugin-review-reference", Input).value = json.dumps(configuration)
+        self.query_one("#plugin-review-reference", Input).value = json.dumps(
+            configuration
+        )
         self.query_one("#plugin-review-reference", Input).focus()
-        self._status(saved + (
-            "Review the complete mapping before confirming."
-            if action == "saved" else
-            "Its current mapping is unavailable; replace it before reviewing configuration."
-        ))
+        self._status(
+            saved
+            + (
+                "Review the complete mapping before confirming."
+                if action == "saved"
+                else "Its current mapping is unavailable; replace it before reviewing configuration."
+            )
+        )
 
     async def _execute_test(self, review):
         try:
@@ -1508,8 +1594,11 @@ class PluginReviewModal(ModalScreen):
                 ):
                     self._discard_pending_review()
                     self.query_one("#plugin-review-confirm", Button).disabled = True
-                    request = (self.draft, self._input_generation,
-                               self.query_one("#plugin-review-reference", Input).value)
+                    request = (
+                        self.draft,
+                        self._input_generation,
+                        self.query_one("#plugin-review-reference", Input).value,
+                    )
                     details = await self.service.management_details(
                         self.installation_id, workspace_id=self.workspace_id
                     )

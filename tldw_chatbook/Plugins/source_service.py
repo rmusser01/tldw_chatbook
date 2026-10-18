@@ -166,8 +166,10 @@ def _inspect_entry(root, entry, *, expected: PackageInspection | None = None):
         # A retained entry supplies its exact overlay to the same closed recipes.
         # This is comparison only; callers first verify signed producer custody.
         selected_overlay = (
-            None if expected.dialect == "portable"
-            and not executable.intersection(overlay or {}) else overlay
+            None
+            if expected.dialect == "portable"
+            and not executable.intersection(overlay or {})
+            else overlay
         )
         return _reinspect_expected(
             capture_package(root), expected, catalog_overlay=selected_overlay

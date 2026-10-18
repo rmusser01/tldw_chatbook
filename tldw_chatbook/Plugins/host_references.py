@@ -99,13 +99,16 @@ def capture_reference(
                 raise PermissionError("plugin_tool_reference_unavailable")
             configuration = asdict(owner.load_schema(target))
         else:
-            sources = [row for row in mappings
-                       if row["kind"] == "tool"
-                       and row["installation_id"] == installation_id
-                       and row["revision_digest"] == inspection.effective_digest
-                       and row["target_reference"] == target
-                       and row["component_id"] in inspection.inventory
-                       and inspection.inventory[row["component_id"]].kind == "mcp"]
+            sources = [
+                row
+                for row in mappings
+                if row["kind"] == "tool"
+                and row["installation_id"] == installation_id
+                and row["revision_digest"] == inspection.effective_digest
+                and row["target_reference"] == target
+                and row["component_id"] in inspection.inventory
+                and inspection.inventory[row["component_id"]].kind == "mcp"
+            ]
             if len(sources) != 1:
                 raise PermissionError("plugin_tool_reference_unavailable")
             source = sources[0]
@@ -162,7 +165,6 @@ def validate_reference(
         raise PermissionError("plugin_host_reference_changed")
 
 
-
 def capture_model_mapping(
     owner: Any,
     installation_id: str,
@@ -206,6 +208,7 @@ def capture_model_mapping(
         ).hexdigest(),
         "credential_bindings": [],
     }
+
 
 def capture_tool_constraint(
     coordinator,
@@ -271,14 +274,25 @@ def _reference_form(mapping: dict, inspection: PackageInspection) -> str:
         if kind == "model":
             if identity == component.component_id + ":model":
                 return "canonical_model"
-            if component.kind == "agent" and identity == "native-model-" + hashlib.sha256(component.component_id.encode()).hexdigest():
+            if (
+                component.kind == "agent"
+                and identity
+                == "native-model-"
+                + hashlib.sha256(component.component_id.encode()).hexdigest()
+            ):
                 return "dev_model"
         for label in declared_tools(component) or ():
             if kind == "tool" and identity == mapping_id(component.component_id, label):
                 return "dev_tool"
-            if kind == "configuration" and identity == tool_constraint_id(component.component_id, label):
+            if kind == "configuration" and identity == tool_constraint_id(
+                component.component_id, label
+            ):
                 return "canonical_tool"
-    elif component.kind == "mcp" and kind in {"connection", "tool"} and not identity.startswith("native-"):
+    elif (
+        component.kind == "mcp"
+        and kind in {"connection", "tool"}
+        and not identity.startswith("native-")
+    ):
         return "mcp"
     raise PermissionError("plugin_reference_identity_invalid")
 
@@ -286,40 +300,67 @@ def _reference_form(mapping: dict, inspection: PackageInspection) -> str:
 def validate_canonical_reference(coordinator, mapping, inspection, mappings) -> None:
     form = _reference_form(mapping, inspection)
     if form == "canonical_model":
-        current = capture_model_mapping(coordinator.model_mapping_owner,
-            mapping["installation_id"], inspection, mapping["component_id"], mapping["target_reference"])
+        current = capture_model_mapping(
+            coordinator.model_mapping_owner,
+            mapping["installation_id"],
+            inspection,
+            mapping["component_id"],
+            mapping["target_reference"],
+        )
     elif form == "canonical_tool":
         component = inspection.inventory[mapping["component_id"]]
-        labels = [label for label in declared_tools(component) or ()
-                  if tool_constraint_id(component.component_id, label) == mapping["mapping_id"]]
-        targets = [row for row in mappings
-                   if row["installation_id"] == mapping["installation_id"]
-                   and row["revision_digest"] == mapping["revision_digest"]
-                   and row["mapping_id"] == mapping["target_reference"]
-                   and row["kind"] == "tool"]
+        labels = [
+            label
+            for label in declared_tools(component) or ()
+            if tool_constraint_id(component.component_id, label)
+            == mapping["mapping_id"]
+        ]
+        targets = [
+            row
+            for row in mappings
+            if row["installation_id"] == mapping["installation_id"]
+            and row["revision_digest"] == mapping["revision_digest"]
+            and row["mapping_id"] == mapping["target_reference"]
+            and row["kind"] == "tool"
+        ]
         if len(labels) != 1 or len(targets) != 1:
             raise PermissionError("plugin_tool_mapping_invalid")
-        current = capture_tool_constraint(coordinator, mapping["installation_id"],
-            inspection, mapping["component_id"], labels[0], targets[0])
+        current = capture_tool_constraint(
+            coordinator,
+            mapping["installation_id"],
+            inspection,
+            mapping["component_id"],
+            labels[0],
+            targets[0],
+        )
     else:
         raise PermissionError("plugin_reference_identity_invalid")
     if current != mapping:
         raise PermissionError("plugin_host_reference_changed")
 
 
-def mapped_tools(installation_id: str, component: ComponentRecord,
-                 mappings: tuple[dict, ...] | list[dict]) -> tuple[str, ...] | None:
+def mapped_tools(
+    installation_id: str,
+    component: ComponentRecord,
+    mappings: tuple[dict, ...] | list[dict],
+) -> tuple[str, ...] | None:
     """Resolve protected references; direct canonical IDs still need the actual registry."""
     declared = declared_tools(component)
     if declared is None:
         return None
     resolved = []
     for label in declared:
-        choices = [row for row in mappings
-                   if row["installation_id"] == installation_id
-                   and row["component_id"] == component.component_id
-                   and row["mapping_id"] in {mapping_id(component.component_id, label),
-                                             tool_constraint_id(component.component_id, label)}]
+        choices = [
+            row
+            for row in mappings
+            if row["installation_id"] == installation_id
+            and row["component_id"] == component.component_id
+            and row["mapping_id"]
+            in {
+                mapping_id(component.component_id, label),
+                tool_constraint_id(component.component_id, label),
+            }
+        ]
         if not choices and label.startswith(("builtin:", "local:")):
             resolved.append(label)
             continue
@@ -332,6 +373,7 @@ def mapped_tools(installation_id: str, component: ComponentRecord,
                 raise PermissionError("plugin_tool_mapping_invalid")
             if target.startswith("builtin:"):
                 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
                 resolved.append(BuiltinToolProvider().load_schema(target).name)
                 continue
             sources = [row for row in mappings if row["target_reference"] == target]
@@ -339,30 +381,47 @@ def mapped_tools(installation_id: str, component: ComponentRecord,
             if mapping["kind"] != "configuration":
                 raise PermissionError("plugin_tool_mapping_invalid")
             sources = [row for row in mappings if row["mapping_id"] == target]
-        sources = [row for row in sources
-                   if row["installation_id"] == installation_id
-                   and row["revision_digest"] == mapping["revision_digest"]
-                   and row["kind"] == "tool" and row["component_id"].startswith("mcp:")]
+        sources = [
+            row
+            for row in sources
+            if row["installation_id"] == installation_id
+            and row["revision_digest"] == mapping["revision_digest"]
+            and row["kind"] == "tool"
+            and row["component_id"].startswith("mcp:")
+        ]
         if len(sources) != 1:
             raise PermissionError("plugin_tool_mapping_invalid")
         source = sources[0]
-        resolved.append(owned_mcp_tool_name(installation_id, source["component_id"],
-                                         source["target_reference"].partition("::")[2]))
+        resolved.append(
+            owned_mcp_tool_name(
+                installation_id,
+                source["component_id"],
+                source["target_reference"].partition("::")[2],
+            )
+        )
     return tuple(resolved)
 
 
-def mapped_model(component: ComponentRecord, mappings: tuple[dict, ...] | list[dict]) -> tuple[str, str]:
+def mapped_model(
+    component: ComponentRecord, mappings: tuple[dict, ...] | list[dict]
+) -> tuple[str, str]:
     definition = json.loads(component.definition_json)
     if not definition.get("model", definition.get("metadata", {}).get("model")):
         return "", ""
-    rows = [row for row in mappings
-            if row["component_id"] == component.component_id and row["kind"] == "model"]
+    rows = [
+        row
+        for row in mappings
+        if row["component_id"] == component.component_id and row["kind"] == "model"
+    ]
     if len(rows) != 1:
         raise PermissionError("plugin_model_mapping_required")
     row = rows[0]
     if row["mapping_id"] == component.component_id + ":model":
         provider, separator, model = row["target_reference"].partition("/")
-    elif row["mapping_id"] == "native-model-" + hashlib.sha256(component.component_id.encode()).hexdigest():
+    elif (
+        row["mapping_id"]
+        == "native-model-" + hashlib.sha256(component.component_id.encode()).hexdigest()
+    ):
         provider, separator, model = row["target_reference"].partition("::")
     else:
         raise PermissionError("plugin_model_mapping_invalid")
@@ -375,8 +434,15 @@ def resolve_tool_ceiling(values, registry, eligible: frozenset[str]) -> tuple[st
     """Resolve canonical IDs against the actual parent's catalog; never grant."""
     if values is None:
         return tuple(sorted(eligible))
-    ids = (dict(registry) if isinstance(registry, dict) else
-           {row.id: row.name for row in registry.list_catalog()} if registry is not None else {})
+    ids = (
+        dict(registry)
+        if isinstance(registry, dict)
+        else (
+            {row.id: row.name for row in registry.list_catalog()}
+            if registry is not None
+            else {}
+        )
+    )
     resolved = []
     for value in values:
         if value.startswith(("builtin:", "local:")):

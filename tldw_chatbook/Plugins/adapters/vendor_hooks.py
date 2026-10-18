@@ -440,9 +440,19 @@ def _inventory_qualified_hooks(capture, overlay, dialect, *, _recipe="integrated
                         key = f"hook:{local_id}"
                         try:
                             require(isinstance(raw, dict))
-                            if _recipe == "integrated_2" and raw.get("failClosed") is True:
-                                protocol = ("codex/1" if dialect == "openai" else "cursor/1") + ":" + event
-                                require("deny" in PROTOCOLS.get(protocol, (None, ()))[1], "guard_scope_unknown")
+                            if (
+                                _recipe == "integrated_2"
+                                and raw.get("failClosed") is True
+                            ):
+                                protocol = (
+                                    ("codex/1" if dialect == "openai" else "cursor/1")
+                                    + ":"
+                                    + event
+                                )
+                                require(
+                                    "deny" in PROTOCOLS.get(protocol, (None, ()))[1],
+                                    "guard_scope_unknown",
+                                )
                             candidate = {**raw, "id": local_id, "event": event}
                             if dialect == "openai" and "matcher" in group:
                                 candidate["matcher"] = group["matcher"]
@@ -455,7 +465,9 @@ def _inventory_qualified_hooks(capture, overlay, dialect, *, _recipe="integrated
                                 for k, v in handler.model_dump().items()
                                 if v is not None
                             }
-                            definition = validate_hook(definition, capture, _recipe=_recipe)
+                            definition = validate_hook(
+                                definition, capture, _recipe=_recipe
+                            )
                             records.append(
                                 ComponentRecord(
                                     component_id=key,

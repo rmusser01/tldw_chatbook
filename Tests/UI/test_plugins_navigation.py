@@ -124,7 +124,9 @@ def test_plugins_feature_sheet_uses_current_route_owner():
 
     from tldw_chatbook.UI.Screens.plugins_screen import PluginsScreen
 
-    assert TldwCli._SCREEN_OWNED_ROUTE_CSS["plugins"] == ("screen_feature_plugins.tcss",)
+    assert TldwCli._SCREEN_OWNED_ROUTE_CSS["plugins"] == (
+        "screen_feature_plugins.tcss",
+    )
     paths = PluginsScreen.CSS_PATH
     entries = [paths] if isinstance(paths, (str, Path)) else list(paths or ())
     assert all(Path(entry).name != "screen_feature_plugins.tcss" for entry in entries)

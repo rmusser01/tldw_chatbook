@@ -153,8 +153,11 @@ async def test_installed_write_guard_keeps_nonmatch_and_uses_typed_secret_refere
         await case.service._call(
             lambda: case.service._checked(
                 requirement["record_id"],
-                next(row["plugin_admission"] for row in admitted["available_skills"]
-                     if row["plugin_component_id"] == "hook:guard"),
+                next(
+                    row["plugin_admission"]
+                    for row in admitted["available_skills"]
+                    if row["plugin_component_id"] == "hook:guard"
+                ),
             )
         )
     root = case.tmp_path / "tool-root"
@@ -399,10 +402,12 @@ async def test_unavailable_guard_survives_actual_child_and_sealed_resume(
     async def use(rows, actor):
         with use_run_actor(actor):
             await asyncio.to_thread(service.check_entries_from_agent, rows)
-            snapshots = await service.component_snapshots({
-                "available_skills": list(rows),
-                "plugin_run_id": rows[0]["plugin_run_id"],
-            })
+            snapshots = await service.component_snapshots(
+                {
+                    "available_skills": list(rows),
+                    "plugin_run_id": rows[0]["plugin_run_id"],
+                }
+            )
             assert len(snapshots) == 1 and snapshots[0].unavailable_hooks == (
                 "hook:guard",
             )
@@ -503,12 +508,13 @@ async def test_unavailable_guard_survives_actual_child_and_sealed_resume(
             omitted = await service.admit(
                 dict(fresh, available_skills=[]), "omitted-pending"
             )
-            assert any(row.get("plugin_constraint_only") for row in omitted["available_skills"])
+            assert any(
+                row.get("plugin_constraint_only") for row in omitted["available_skills"]
+            )
         unknown = dict(
             fresh,
             available_skills=[
-                dict(row, plugin_ceiling="unknown")
-                for row in fresh["available_skills"]
+                dict(row, plugin_ceiling="unknown") for row in fresh["available_skills"]
             ],
         )
         with pytest.raises(PermissionError):
@@ -579,7 +585,9 @@ async def test_requirement_metadata_refuses_actual_authority_transition(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["body", "cwd"])
-async def test_required_occurrence_survives_retained_material_failure(variable_case, failure):
+async def test_required_occurrence_survives_retained_material_failure(
+    variable_case, failure
+):
     from pathlib import Path
 
     from tldw_chatbook.Plugins.admission import PluginUnavailable
@@ -590,8 +598,12 @@ async def test_required_occurrence_survives_retained_material_failure(variable_c
         (case.package / "working").mkdir()
         (case.package / "working/keep").write_text("captured directory")
         case.hook["cwd"] = "working"
-        (case.package / "hooks.json").write_text(json.dumps({"version": 2, "hooks": [case.hook]}))
-    installed = await install_components(service, case.package, ("skill:review", "hook:guard"))
+        (case.package / "hooks.json").write_text(
+            json.dumps({"version": 2, "hooks": [case.hook]})
+        )
+    installed = await install_components(
+        service, case.package, ("skill:review", "hook:guard")
+    )
     prior = await capture(case, installed.installation_id)
     maximum = service.capture_maximum("workspace-a")
     retained = Path(prior.inspection.materialized_identity)
@@ -606,9 +618,13 @@ async def test_required_occurrence_survives_retained_material_failure(variable_c
         with pytest.raises(PluginUnavailable):
             native.process_owner(handler, None, lambda: None)
         await service._call(service._refresh)
-        with pytest.raises(PluginUnavailable, match="^plugin_constraint_verification_failed$"):
+        with pytest.raises(
+            PluginUnavailable, match="^plugin_constraint_verification_failed$"
+        ):
             service.capture_maximum("workspace-a")
-        with pytest.raises(PluginUnavailable, match="^plugin_constraint_verification_failed$"):
+        with pytest.raises(
+            PluginUnavailable, match="^plugin_constraint_verification_failed$"
+        ):
             await service.admit(maximum, "failed-material")
         assert not service.capture_maximum("workspace-b")["available_skills"]
         assert not service.live_runs() and not case.marker.exists()
@@ -620,8 +636,12 @@ async def test_required_occurrence_survives_retained_material_failure(variable_c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["no-installed", "disabled", "unselected", "revoked", "unknown"])
-async def test_catalog_failure_keeps_legitimate_empty_states(variable_case, monkeypatch, state):
+@pytest.mark.parametrize(
+    "state", ["no-installed", "disabled", "unselected", "revoked", "unknown"]
+)
+async def test_catalog_failure_keeps_legitimate_empty_states(
+    variable_case, monkeypatch, state
+):
     from tldw_chatbook.Plugins.admission import PluginUnavailable
     from tldw_chatbook.Plugins.revocation import RevocationTarget
 
@@ -629,24 +649,36 @@ async def test_catalog_failure_keeps_legitimate_empty_states(variable_case, monk
     assert not service.capture_maximum("workspace-a")["available_skills"]
     if state == "no-installed":
         return
-    installed = await install_components(service, case.package, ("skill:review", "hook:guard"))
+    installed = await install_components(
+        service, case.package, ("skill:review", "hook:guard")
+    )
     if state == "disabled":
-        review = await service.review_activation(installed.installation_id, workspace_id="workspace-a", intent="disabled")
+        review = await service.review_activation(
+            installed.installation_id, workspace_id="workspace-a", intent="disabled"
+        )
         assert (await service.commit(review, review.operation_id)).committed
     elif state == "unselected":
         review = await service.review_selection(installed.installation_id, selection=())
         assert (await service.apply_revision(review, review.operation_id)).committed
     elif state == "revoked":
-        request = service.begin_disable(RevocationTarget(installed.installation_id, "workspace-a", False))
+        request = service.begin_disable(
+            RevocationTarget(installed.installation_id, "workspace-a", False)
+        )
         await service.finish_revocation(request)
     else:
+
         def unavailable(*args, **kwargs):
             raise PermissionError("authenticated_records_unavailable")
+
         monkeypatch.setattr(service._coordinator, "recorded_inspections", unavailable)
         await service._call(service._refresh)
-        with pytest.raises(PluginUnavailable, match="^plugin_constraint_verification_failed$"):
+        with pytest.raises(
+            PluginUnavailable, match="^plugin_constraint_verification_failed$"
+        ):
             service.capture_maximum("workspace-a")
-        with pytest.raises(PluginUnavailable, match="^plugin_constraint_verification_failed$"):
+        with pytest.raises(
+            PluginUnavailable, match="^plugin_constraint_verification_failed$"
+        ):
             await service.admit({"available_skills": []}, "unknown-state")
         return
     assert not service.capture_maximum("workspace-a")["available_skills"]
@@ -654,25 +686,41 @@ async def test_catalog_failure_keeps_legitimate_empty_states(variable_case, monk
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", ["plugin_constraint_verification_failed", "optional_catalog_unavailable"])
-async def test_console_capture_translates_only_exact_constraint_failure(native_console, monkeypatch, code):
+@pytest.mark.parametrize(
+    "code", ["plugin_constraint_verification_failed", "optional_catalog_unavailable"]
+)
+async def test_console_capture_translates_only_exact_constraint_failure(
+    native_console, monkeypatch, code
+):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Chat.console_configuration_capture import capture_skill_context_maximum
+    from tldw_chatbook.Chat.console_configuration_capture import (
+        capture_skill_context_maximum,
+    )
     from tldw_chatbook.Plugins.admission import PluginUnavailable
 
     rig = native_console
+
     # Exercise the actual published service boundary and both real Console entry points.
     def unavailable(workspace_id):
         assert workspace_id == "workspace-a"
         raise PluginUnavailable(code)
+
     monkeypatch.setattr(rig.service, "capture_maximum", unavailable)
     if code == "plugin_constraint_verification_failed":
-        with pytest.raises(RecoveryRequired, match="^plugin_constraint_verification_failed$"):
+        with pytest.raises(
+            RecoveryRequired, match="^plugin_constraint_verification_failed$"
+        ):
             capture_skill_context_maximum(rig.controller.app, "workspace-a")
-        with pytest.raises(RecoveryRequired, match="^plugin_constraint_verification_failed$"):
+        with pytest.raises(
+            RecoveryRequired, match="^plugin_constraint_verification_failed$"
+        ):
             await rig.controller.capture_turn_configuration_snapshot(rig.session.id)
     else:
-        assert not capture_skill_context_maximum(rig.controller.app, "workspace-a")["available_skills"]
-        snapshot = await rig.controller.capture_turn_configuration_snapshot(rig.session.id)
+        assert not capture_skill_context_maximum(rig.controller.app, "workspace-a")[
+            "available_skills"
+        ]
+        snapshot = await rig.controller.capture_turn_configuration_snapshot(
+            rig.session.id
+        )
         assert not snapshot.skill_context_maximum["available_skills"]
     assert not rig.gateway.payloads and not rig.service.live_runs()

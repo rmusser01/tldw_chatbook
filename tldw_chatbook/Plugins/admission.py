@@ -336,8 +336,11 @@ class PluginAdmission:
                 component.kind
                 not in {"skill", "mcp", "command", "rule", "agent", "hook"}
                 or component.support not in {"supported", "adapted"}
-                or {code for code in component.activation_blockers
-                    if not code.startswith("dependency_blocked:")}
+                or {
+                    code
+                    for code in component.activation_blockers
+                    if not code.startswith("dependency_blocked:")
+                }
                 - {
                     "model_mapping_required",
                     "tool_mapping_required",
@@ -346,11 +349,17 @@ class PluginAdmission:
             ):
                 return False
             from tldw_chatbook.MCP.credential_bindings import CredentialError
+
             from .variables import values
 
             try:
-                values(self.coordinator, installation_id, inspection,
-                       component_id, owned_mappings)
+                values(
+                    self.coordinator,
+                    installation_id,
+                    inspection,
+                    component_id,
+                    owned_mappings,
+                )
             except (ValueError, PermissionError, CredentialError):
                 return False
             if component.kind in {"agent", "skill"}:
@@ -392,13 +401,10 @@ class PluginAdmission:
                 ]:
                     return False
             return all(
-                ready(dep, visiting | {component_id})
-                for dep in component.dependencies
+                ready(dep, visiting | {component_id}) for dep in component.dependencies
             )
 
-        eligible = tuple(
-            sorted(key for key in selection if ready(key, frozenset()))
-        )
+        eligible = tuple(sorted(key for key in selection if ready(key, frozenset())))
         return selection, eligible
 
     @staticmethod
@@ -408,15 +414,24 @@ class PluginAdmission:
         result = []
         for key in sorted(set(selection) - set(eligible)):
             component = inspection.inventory[key]
-            if component.kind != "hook" or component.support not in {"supported", "adapted"}:
+            if component.kind != "hook" or component.support not in {
+                "supported",
+                "adapted",
+            }:
                 continue
             try:
                 handler = _parse_hook_declaration(inspection, installation_id, key)
             except (ValueError, PermissionError) as error:
-                raise PluginUnavailable("plugin_constraint_verification_failed") from error
-            if (handler.required
-                or handler.event == "PreToolUse" and handler.effects & {"deny", "updated_input"}
-                or handler.event == "SubagentStart" and handler.effects & {"deny", "child_limits"}):
+                raise PluginUnavailable(
+                    "plugin_constraint_verification_failed"
+                ) from error
+            if (
+                handler.required
+                or handler.event == "PreToolUse"
+                and handler.effects & {"deny", "updated_input"}
+                or handler.event == "SubagentStart"
+                and handler.effects & {"deny", "child_limits"}
+            ):
                 result.append(key)
         return tuple(result)
 

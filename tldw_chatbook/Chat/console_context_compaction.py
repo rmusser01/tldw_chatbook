@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
+from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextCarryForwardMode,
@@ -3845,14 +3846,9 @@ class ConsoleCompactionPreflight:
                 honor_failure_latch=micro_compaction or not manual_action,
                 hooks=hooks,
             )
-            if hooks is not None:
-                try:
-                    await hooks.finish()
-                    await hooks.lifecycle.wait(hooks.owner)
-                except Exception:  # noqa: BLE001 -- hook boundary
-                    return provider_messages, blocked(
-                        "Required compaction hook failed; committed memory is retained."
-                    )
+            failure = await _finish_compaction_hooks(hooks)
+            if failure is not None:
+                return provider_messages, blocked(failure)
         finally:
             if hooks is not None:
                 self.read_controller__release_compaction_submission()(

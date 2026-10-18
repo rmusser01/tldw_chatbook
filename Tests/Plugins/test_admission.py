@@ -461,57 +461,89 @@ def test_recorded_mapped_eligibility_keeps_actual_owners_without_package_reads(
         store=LocalMCPStore(tmp_path / "recorded-mcp.json"),
         credential_service=credentials,
     )
-    local.save_external_profile({
-        "profile_id": "remote",
-        "transport": "streamable_http",
-        "url": "https://mcp.example/rpc",
-        "credential_reference": binding.reference_id,
-        "credential_generation": binding.authority_generation,
-    })
-    local.store.save_discovery_snapshot("remote", {
-        "tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}],
-    })
+    local.save_external_profile(
+        {
+            "profile_id": "remote",
+            "transport": "streamable_http",
+            "url": "https://mcp.example/rpc",
+            "credential_reference": binding.reference_id,
+            "credential_generation": binding.authority_generation,
+        }
+    )
+    local.store.save_discovery_snapshot(
+        "remote",
+        {
+            "tools": [
+                {
+                    "name": "echo",
+                    "description": "Echo",
+                    "inputSchema": {"type": "object"},
+                }
+            ],
+        },
+    )
     stack.call(lambda: setattr(stack.coordinator, "mcp_mapping_owner", local))
     names = {
         "builtin": ["arithmetic"],
         "canonical": ["search"],
         "mixed": ["search", "arithmetic"],
     }[aliases]
-    root = native_package(extension={
-        "version": 1,
-        "agents": ["agent.md"],
-        "requires": {"agent:reader": ["mcp:remote"]},
-    })
-    (root / "agent.md").write_text(
-        "---\nname: reader\ndescription: Read\ntools: " + json.dumps(names) + "\n---\nRead."
+    root = native_package(
+        extension={
+            "version": 1,
+            "agents": ["agent.md"],
+            "requires": {"agent:reader": ["mcp:remote"]},
+        }
     )
-    (root / "mcp.json").write_text(json.dumps({
-        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-        "mcpServers": {"remote": {"type": "streamable-http", "url": "https://mcp.example/rpc"}},
-    }))
+    (root / "agent.md").write_text(
+        "---\nname: reader\ndescription: Read\ntools: "
+        + json.dumps(names)
+        + "\n---\nRead."
+    )
+    (root / "mcp.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "https://mcp.example/rpc",
+                    }
+                },
+            }
+        )
+    )
     identity = install(stack, root)
     trust(stack, identity)
     activate(stack, identity, "workspace-a", "enabled")
-    configured = stack.call(lambda: stack.coordinator.review_configuration(
-        identity,
-        connections={"mcp:remote": "remote"},
-        tools={"mcp:remote": ("echo",)},
-        tool_references=(
-            {"agent:reader": {"arithmetic": "builtin:calculator"}}
-            if "arithmetic" in names else None
-        ),
-        component_tools=(
-            {"agent:reader": {"search": "mcp:remote::echo"}}
-            if "search" in names else None
-        ),
-    ))
+    configured = stack.call(
+        lambda: stack.coordinator.review_configuration(
+            identity,
+            connections={"mcp:remote": "remote"},
+            tools={"mcp:remote": ("echo",)},
+            tool_references=(
+                {"agent:reader": {"arithmetic": "builtin:calculator"}}
+                if "arithmetic" in names
+                else None
+            ),
+            component_tools=(
+                {"agent:reader": {"search": "mcp:remote::echo"}}
+                if "search" in names
+                else None
+            ),
+        )
+    )
     stack.call(lambda: stack.coordinator.commit(configured, configured.operation_id))
     gate = admission(stack)
-    runtime = stack.call(lambda: gate.capture(identity, "workspace-a", "mapped-control"))
+    runtime = stack.call(
+        lambda: gate.capture(identity, "workspace-a", "mapped-control")
+    )
     assert "agent:reader" in runtime.selection
 
     def forbidden(*args, **kwargs):
-        pytest.fail("recorded eligibility reached a package reader or execution snapshot")
+        pytest.fail(
+            "recorded eligibility reached a package reader or execution snapshot"
+        )
 
     with monkeypatch.context() as patch:
         patch.setattr(admission_module, "retained_inspections", forbidden)
@@ -520,29 +552,56 @@ def test_recorded_mapped_eligibility_keeps_actual_owners_without_package_reads(
         patch.setattr(package_files, "capture_package", forbidden)
         patch.setattr(package_files, "_directory_fd", forbidden)
         patch.setattr(package_files, "_member_fd", forbidden)
-        authority, records = stack.call(lambda: stack.coordinator.recorded_inspections(
-            ((identity, runtime.revision_digest),)
-        ))
+        authority, records = stack.call(
+            lambda: stack.coordinator.recorded_inspections(
+                ((identity, runtime.revision_digest),)
+            )
+        )
         recorded = records[(identity, runtime.revision_digest)]
 
         def display(projection=authority):
-            return stack.call(lambda: gate.recorded_eligibility(
-                identity, "workspace-a", authority=projection, inspection=recorded
-            ))
+            return stack.call(
+                lambda: gate.recorded_eligibility(
+                    identity, "workspace-a", authority=projection, inspection=recorded
+                )
+            )
 
         assert display() == runtime.selection
         rows = authority["mappings"]
         if "search" in names:
-            canonical = next(row for row in rows if row["mapping_id"] == tool_constraint_id("agent:reader", "search"))
-            target = next(row for row in rows if row["mapping_id"] == canonical["target_reference"])
-            legacy = capture_reference(identity, recorded, "agent:reader", "tool",
-                                       target["target_reference"], label="search", mappings=rows)
+            canonical = next(
+                row
+                for row in rows
+                if row["mapping_id"] == tool_constraint_id("agent:reader", "search")
+            )
+            target = next(
+                row
+                for row in rows
+                if row["mapping_id"] == canonical["target_reference"]
+            )
+            legacy = capture_reference(
+                identity,
+                recorded,
+                "agent:reader",
+                "tool",
+                target["target_reference"],
+                label="search",
+                mappings=rows,
+            )
             competing = deepcopy(authority)
             competing["mappings"].append(legacy)
             assert "agent:reader" not in display(competing)
-            for field in ("definition_digest", "configuration_digest", "target_reference"):
+            for field in (
+                "definition_digest",
+                "configuration_digest",
+                "target_reference",
+            ):
                 changed = deepcopy(authority)
-                row = next(row for row in changed["mappings"] if row["mapping_id"] == canonical["mapping_id"])
+                row = next(
+                    row
+                    for row in changed["mappings"]
+                    if row["mapping_id"] == canonical["mapping_id"]
+                )
                 row[field] = "tampered"
                 assert "agent:reader" not in display(changed)
             discovery = local.store.get_discovery_snapshot("remote")
@@ -552,13 +611,21 @@ def test_recorded_mapped_eligibility_keeps_actual_owners_without_package_reads(
             assert "agent:reader" not in display()
             local.store.save_discovery_snapshot("remote", discovery)
         if "arithmetic" in names:
-            builtin = next(row for row in rows if row["mapping_id"] == mapping_id("agent:reader", "arithmetic"))
+            builtin = next(
+                row
+                for row in rows
+                if row["mapping_id"] == mapping_id("agent:reader", "arithmetic")
+            )
             assert builtin["kind"] == "tool"
             original = BuiltinToolProvider.load_schema
             with monkeypatch.context() as schema_patch:
-                schema_patch.setattr(BuiltinToolProvider, "load_schema", lambda self, key: replace(
-                    original(self, key), description="Changed builtin schema"
-                ))
+                schema_patch.setattr(
+                    BuiltinToolProvider,
+                    "load_schema",
+                    lambda self, key: replace(
+                        original(self, key), description="Changed builtin schema"
+                    ),
+                )
                 assert "agent:reader" not in display()
         assert display() == runtime.selection
         credentials.revoke(binding.reference_id)

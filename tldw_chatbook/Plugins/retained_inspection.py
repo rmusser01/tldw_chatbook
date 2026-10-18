@@ -18,10 +18,21 @@ _RECIPES = {
     ("cursor", "chatbook-cursor/2"): ("integrated_2",),
 }
 _REVISION_FIELDS = (
-    "dialect", "format_version", "adapter_version", "root_manifest",
-    "overlay_identities", "content_digest", "activation_blockers", "rejected",
+    "dialect",
+    "format_version",
+    "adapter_version",
+    "root_manifest",
+    "overlay_identities",
+    "content_digest",
+    "activation_blockers",
+    "rejected",
 )
-_PROVENANCE = ("source_identity", "source_digest", "materialized_identity", "link_targets")
+_PROVENANCE = (
+    "source_identity",
+    "source_digest",
+    "materialized_identity",
+    "link_targets",
+)
 
 _UNSET_CATALOG = object()
 
@@ -29,8 +40,10 @@ _UNSET_CATALOG = object()
 def _source_bindings(revision: Mapping[str, Any]) -> dict[str, Any]:
     """Parse only the two closed provenance forms, without granting authority."""
     bindings = {}
-    for name, model in (("catalog_binding", CatalogBinding),
-                        ("acquisition_reference", AcquisitionReference)):
+    for name, model in (
+        ("catalog_binding", CatalogBinding),
+        ("acquisition_reference", AcquisitionReference),
+    ):
         if revision.get(name) is not None:
             bindings[name] = model.model_validate(revision[name])
     if len(bindings) > 1:
@@ -48,15 +61,20 @@ def _verify_retained_source(revision: Mapping[str, Any], coordinator) -> None:
     from .acquisition import verify_reference
 
     catalog = bindings.get("catalog_binding")
-    references = ((catalog.catalog, catalog.package) if catalog is not None
-                  else (bindings["acquisition_reference"],))
+    references = (
+        (catalog.catalog, catalog.package)
+        if catalog is not None
+        else (bindings["acquisition_reference"],)
+    )
     for reference in references:
         verify_reference(coordinator.owner, coordinator.authority, reference)
 
 
 def _retained_candidates(
-    capture: PackageCapture, revision: Mapping[str, Any],
-    *, catalog_overlay: Any = _UNSET_CATALOG,
+    capture: PackageCapture,
+    revision: Mapping[str, Any],
+    *,
+    catalog_overlay: Any = _UNSET_CATALOG,
 ) -> tuple[PackageInspection, ...]:
     """Try only interpretations issued under this exact stored identity."""
     recipes = _RECIPES.get((revision.get("dialect"), revision.get("adapter_version")))
@@ -68,10 +86,16 @@ def _retained_candidates(
         try:
             overlay = catalog_overlay
             if overlay is _UNSET_CATALOG:
-                overlay = (None if recipe == "dev_20261001"
-                           else catalog_overlay_from(revision["overlay_identities"]))
+                overlay = (
+                    None
+                    if recipe == "dev_20261001"
+                    else catalog_overlay_from(revision["overlay_identities"])
+                )
             candidate = _inspect_capture(
-                capture, dialect=revision["dialect"], catalog_overlay=overlay, recipe=recipe
+                capture,
+                dialect=revision["dialect"],
+                catalog_overlay=overlay,
+                recipe=recipe,
             )
             if bindings:
                 from .source_service import bind_source_inspection
@@ -108,15 +132,22 @@ def _unique_interpretation(matches: Sequence[PackageInspection]) -> PackageInspe
 
 def _matches_projection(revision, components, inspection) -> bool:
     from tldw_chatbook.Skills_Interop.skill_trust_crypto import (
-        canonical_json as authority_json, sha256_hex,
+        canonical_json as authority_json,
+    )
+    from tldw_chatbook.Skills_Interop.skill_trust_crypto import (
+        sha256_hex,
     )
 
     data = inspection.model_dump(mode="json")
     if any(data[key] != revision[key] for key in _REVISION_FIELDS):
         return False
-    if (inspection.effective_digest != revision["revision_digest"]
-        or sha256_hex(authority_json(parse_document(inspection.variables_json.encode())))
-        != revision["variables_digest"]):
+    if (
+        inspection.effective_digest != revision["revision_digest"]
+        or sha256_hex(
+            authority_json(parse_document(inspection.variables_json.encode()))
+        )
+        != revision["variables_digest"]
+    ):
         return False
     expected = {row["component_id"]: row for row in components}
     if len(expected) != len(components) or set(expected) != set(inspection.inventory):
@@ -128,9 +159,13 @@ def _matches_projection(revision, components, inspection) -> bool:
         row.update(
             installation_id=revision["installation_id"],
             revision_digest=revision["revision_digest"],
-            definition_digest=sha256_hex(authority_json(parse_document(
-                b'{"definition":' + component.definition_json.encode() + b'}'
-            )["definition"])),
+            definition_digest=sha256_hex(
+                authority_json(
+                    parse_document(
+                        b'{"definition":' + component.definition_json.encode() + b"}"
+                    )["definition"]
+                )
+            ),
         )
         if row != expected[component_id]:
             return False
@@ -138,19 +173,22 @@ def _matches_projection(revision, components, inspection) -> bool:
 
 
 def _select_retained(
-    revision: Mapping[str, Any], components: Sequence[Mapping[str, Any]],
+    revision: Mapping[str, Any],
+    components: Sequence[Mapping[str, Any]],
     candidates: Sequence[PackageInspection],
 ) -> PackageInspection:
     """Match all authenticated fields before restoring acquisition provenance."""
-    selected = _unique_interpretation([
-        item for item in candidates if _matches_projection(revision, components, item)
-    ])
+    selected = _unique_interpretation(
+        [item for item in candidates if _matches_projection(revision, components, item)]
+    )
     return selected.model_copy(update={key: revision[key] for key in _PROVENANCE})
 
 
 def _reinspect_expected(
-    capture: PackageCapture, expected: PackageInspection,
-    *, catalog_overlay: Any = _UNSET_CATALOG,
+    capture: PackageCapture,
+    expected: PackageInspection,
+    *,
+    catalog_overlay: Any = _UNSET_CATALOG,
 ) -> PackageInspection:
     """Bind an issued in-process review, including its original candidate menu."""
     from .review import inspection_identity
@@ -170,10 +208,14 @@ def _reinspect_expected(
         # Regular materialized files replace original links only after content matches.
         if candidate.content_digest != expected.content_digest:
             continue
-        candidate = candidate.model_copy(update={key: getattr(expected, key) for key in _PROVENANCE})
+        candidate = candidate.model_copy(
+            update={key: getattr(expected, key) for key in _PROVENANCE}
+        )
         if inspection_identity(candidate) == inspection_identity(expected):
             matches.append(candidate)
     try:
         return _unique_interpretation(matches)
     except ValueError as exc:
-        raise ValueError("stale review or changed retained package: " + str(exc)) from None
+        raise ValueError(
+            "stale review or changed retained package: " + str(exc)
+        ) from None

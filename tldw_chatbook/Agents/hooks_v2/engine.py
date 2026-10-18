@@ -727,8 +727,10 @@ class HookEngine:
                 deadline,
                 command_launch=self._command_launch,
                 process_owner_factory=(
-                    lambda cancel: self._process_owner_for(handler, event, cancel)
-                ) if self._process_owner_for is not None else None,
+                    (lambda cancel: self._process_owner_for(handler, event, cancel))
+                    if self._process_owner_for is not None
+                    else None
+                ),
             )
             result = await self.processes.wait(job, deadline)
             execution.active_seconds += result.duration
