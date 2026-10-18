@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Input
 
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.UI.Kanban.board_models import (
@@ -314,3 +315,105 @@ async def test_board_screen_moves_card_to_adjacent_column_via_store(
         await pilot.pause(0.2)
 
         assert moves == [(1, {"target_list_id": 71})]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_new_card_flow_bootstraps_and_creates_through_the_store(request) -> None:
+    """The honest-empty-start story end to end: on an empty store `n`
+    bootstraps exactly one board (double-tap guarded), the next `n` opens
+    the modal in the focused column, typing + Enter creates the card
+    through the store, and the refreshed board shows it."""
+    created_boards: list[dict] = []
+    created_lists: list[tuple[int, dict]] = []
+    created_cards: list[tuple[int, dict]] = []
+
+    class _RecordingService:
+        async def create_board(self, request_data: dict) -> dict:
+            created_boards.append(dict(request_data))
+            return {"id": 7, "name": request_data.get("name")}
+
+        async def create_list(self, board_id: int, request_data: dict) -> dict:
+            created_lists.append((board_id, dict(request_data)))
+            return {"id": 70 + len(created_lists), "name": request_data.get("name")}
+
+        async def create_card(self, list_id: int, request_data: dict) -> dict:
+            created_cards.append((list_id, dict(request_data)))
+            return {"id": 500 + len(created_cards), "title": request_data.get("title")}
+
+    service = _RecordingService()
+
+    def _snapshot() -> BoardSnapshot:
+        if not created_boards:
+            return BoardSnapshot(board_id=None, board_name="Kanban", statuses=(), columns={})
+        names = ("To Do", "Doing", "Done")
+        list_ids = {name: 70 + index for index, name in enumerate(names)}
+        columns = {name: () for name in names}
+        todo_cards = list(columns["To Do"])
+        for index, (list_id, data) in enumerate(created_cards):
+            todo_cards.append(
+                CardView(
+                    id=500 + index,
+                    list_id=list_id,
+                    title=str(data.get("title") or ""),
+                    status="To Do",
+                )
+            )
+        columns["To Do"] = tuple(todo_cards)
+        return BoardSnapshot(
+            board_id=7,
+            board_name="Personal",
+            statuses=names,
+            columns=columns,
+            list_ids=list_ids,
+        )
+
+    async def loader() -> BoardSnapshot:
+        return _snapshot()
+
+    app = _KanbanHarness(loader)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.query_one(KanbanBoardScreen)
+        for _ in range(50):
+            if screen.visible_snapshot is not None:
+                break
+            await pilot.pause(0.05)
+        screen.app_instance.local_kanban_service = service
+
+        # Empty store: n bootstraps; a double-tap must not create two boards.
+        screen.action_new_card()
+        screen.action_new_card()
+        await pilot.pause(0.3)
+        assert created_boards == [{"name": "Personal"}]
+        assert [data["name"] for _board, data in created_lists] == [
+            "To Do",
+            "Doing",
+            "Done",
+        ]
+        # The post-bootstrap refresh landed the new board.
+        for _ in range(50):
+            if screen.visible_snapshot and screen.visible_snapshot.statuses:
+                break
+            await pilot.pause(0.05)
+        assert screen.visible_snapshot is not None
+        assert screen.visible_snapshot.statuses == ("To Do", "Doing", "Done")
+
+        # Populated board: n opens the modal focused on the first column.
+        screen.action_new_card()
+        await pilot.pause(0.2)
+        # The modal is the current screen now; query through it (an
+        # app-level query_one resolves against the default screen).
+        from tldw_chatbook.UI.Kanban.kanban_board_screen import NewCardModal
+
+        modal = app.screen
+        assert isinstance(modal, NewCardModal)
+        assert modal.column_name == "To Do"
+        modal.query_one("#kanban-new-card-input", Input).focus()
+        await pilot.pause(0.1)
+        for character in "Hello":
+            await pilot.press(character)
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+
+        assert created_cards == [(70, {"title": "Hello"})]

@@ -72,6 +72,14 @@ class NewCardModal(ModalScreen[str | None]):
             )
             yield Input(placeholder="Card title", id="kanban-new-card-input")
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # The auto-focused Input's own enter→submit binding outranks this
+        # screen's BINDINGS entry, so Enter arrives here as Input.Submitted
+        # (the same pattern every Input-dialog screen in this app uses).
+        # Without this handler Enter does nothing at all.
+        event.stop()
+        self.action_confirm()
+
     def action_confirm(self) -> None:
         title = self.query_one("#kanban-new-card-input", Input).value.strip()
         self.dismiss(title or None)
@@ -169,6 +177,7 @@ class KanbanBoardScreen(BaseAppScreen):
         self.filter_state = FilterState()
         self.selection = SelectionState()
         self._reselect_card_id: int | None = None
+        self._bootstrap_in_flight = False
         #: Column name -> store list id (from the last loaded snapshot).
         self._list_ids_by_status: dict[str, int] = {}
         self._column_widget_counter: dict[str, int] = {}
@@ -214,6 +223,7 @@ class KanbanBoardScreen(BaseAppScreen):
         self.snapshot = snapshot
         self.visible_snapshot = filter_snapshot(snapshot, self.filter_state)
         self._list_ids_by_status = dict(snapshot.list_ids)
+        self._bootstrap_in_flight = False
         if self._reselect_card_id is not None:
             self.selection = select_after_refresh(
                 previous,
@@ -247,12 +257,21 @@ class KanbanBoardScreen(BaseAppScreen):
             lists_payload.get("lists") or [],
             key=lambda item: item.get("position") or 0,
         )
-        self._list_ids_by_status = {}
+        # The board keys columns by NAME, but nothing stops two lists from
+        # sharing one (the store has no UNIQUE(board_id, name)); suffix
+        # duplicates instead of letting the second silently swallow the
+        # first's cards.
+        list_ids: dict[str, int] = {}
         columns: dict[str, tuple[CardView, ...]] = {}
+        name_counts: dict[str, int] = {}
         for board_list in board_lists:
             list_id = int(board_list["id"])
             name = str(board_list.get("name") or f"List {list_id}")
-            self._list_ids_by_status[name] = list_id
+            count = name_counts.get(name, 0) + 1
+            name_counts[name] = count
+            if count > 1:
+                name = f"{name} ({count})"
+            list_ids[name] = list_id
             cards_payload = await service.list_cards(list_id)
             columns[name] = tuple(
                 CardView(
@@ -272,7 +291,7 @@ class KanbanBoardScreen(BaseAppScreen):
             board_name=str(board.get("name") or "Board"),
             statuses=tuple(columns),
             columns=columns,
-            list_ids=dict(self._list_ids_by_status),
+            list_ids=list_ids,
         )
 
     # -- render -------------------------------------------------------------------
@@ -318,9 +337,17 @@ class KanbanBoardScreen(BaseAppScreen):
             for character in status
         ).strip("-")
         base = f"kanban-column-{sanitized or 'column'}"
-        count = self._column_widget_counter.get(base, 0) + 1
-        self._column_widget_counter[base] = count
-        return base if count == 1 else f"{base}-{count}"
+        candidate = base
+        suffix = 1
+        # Uniqueness across this render pass, not just per distinct name:
+        # a pathological set ("To Do", "To Do", "To-Do-2") can still
+        # collide after suffixing, and a duplicate id raises DuplicateIds
+        # inside the refresh worker.
+        while candidate in self._column_widget_counter:
+            suffix += 1
+            candidate = f"{base}-{suffix}"
+        self._column_widget_counter[candidate] = 1
+        return candidate
 
     # -- selection ----------------------------------------------------------------
 
@@ -396,15 +423,25 @@ class KanbanBoardScreen(BaseAppScreen):
             self.visible_snapshot.statuses[0] if self.visible_snapshot and self.visible_snapshot.statuses else None
         )
         if status is None:
-            self.notify("Add a column (list) before cards.", severity="warning")
+            self.notify(
+                "This board has no columns yet (v1 columns come from the "
+                "board's lists; column management is future work).",
+                severity="warning",
+            )
             return
-        self.app.push_screen(NewCardModal(status), self._create_card_from_modal)
+        # Bind the RESOLVED status into the callback: re-reading
+        # ``self.selection`` on dismiss is wrong on a card-less board,
+        # where selection carries no status at all (the modal's own title
+        # is the contract the user saw).
+        self.app.push_screen(
+            NewCardModal(status),
+            lambda title: self._create_card_in_status(status, title),
+        )
 
-    def _create_card_from_modal(self, title: str | None) -> None:
+    def _create_card_in_status(self, status: str, title: str | None) -> None:
         if not title:
             return
-        status = self.selection.status
-        list_id = self._list_ids_by_status.get(status or "")
+        list_id = self._list_ids_by_status.get(status)
         if list_id is None:
             return
         self._run_mutation(self._create_card_operation(list_id, title), title)
@@ -440,7 +477,15 @@ class KanbanBoardScreen(BaseAppScreen):
             await service.move_card(card_id, {"target_list_id": target_list_id})
 
     def _bootstrap_first_board(self) -> None:
-        """User-initiated (n on an empty store): create the default board."""
+        """User-initiated (n on an empty store): create the default board.
+
+        Re-entrancy-guarded: until the post-mutation refresh lands, the
+        snapshot still reports no board, so an impatient double-tap (or
+        key repeat) would otherwise create a second "Personal" board.
+        """
+        if self._bootstrap_in_flight:
+            return
+        self._bootstrap_in_flight = True
         self._run_mutation(self._bootstrap_first_board_operation(), None)
 
     async def _bootstrap_first_board_operation(self) -> None:
@@ -461,6 +506,9 @@ class KanbanBoardScreen(BaseAppScreen):
             await operation
         except Exception as exc:  # noqa: BLE001 — mutations toast, never crash
             self.notify(f"Kanban change failed: {exc}", severity="error")
+            # A failed mutation triggers no refresh, so any in-flight
+            # bootstrap guard would otherwise stick forever.
+            self._bootstrap_in_flight = False
             return
         if isinstance(reselect_hint, int):
             self._reselect_card_id = reselect_hint

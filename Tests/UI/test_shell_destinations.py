@@ -24,6 +24,7 @@ def test_master_shell_destination_order_matches_spec(request):
         "Settings",
         "Research",
         "Meetings",
+        "Kanban",
     ]
 
 
