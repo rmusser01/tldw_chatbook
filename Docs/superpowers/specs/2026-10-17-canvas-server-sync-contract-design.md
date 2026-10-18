@@ -539,3 +539,13 @@ qualification. The twelve acceptance cases above remain the release matrix.
 No production sync or server change is activated by this approval record. Server
 repository selection, canonical contract adoption, real-server tests and release
 activation remain follow-up gates. Read-only server evidence is not a write grant.
+
+### Execution hold (2026-10-18)
+
+The user paused further Canvas synchronization work. TASK-35377–35383 remain
+To Do; neither the server work nor the next client outbox/inbox work should start
+without explicit resumption. Local Canvas UAT may continue without enabling sync.
+The separately filed TASK-35490 is a research spike to align this contract with
+`tldw_server` shared/project spaces; filing it does not authorize implementation
+or establish compatibility. The approved contract and completed TASK-35376 local
+storage/archive foundation remain recorded, not rolled back or reclassified.
