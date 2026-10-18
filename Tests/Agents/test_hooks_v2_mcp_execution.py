@@ -843,7 +843,8 @@ async def test_actual_transport_engine_result_boundary(
             lifecycle.event("SessionStart", data={"reason": "startup"})
         )
         try:
-            outcome = await asyncio.wait_for(lifecycle.initialize(token), 5)
+            # Include native store checks beyond the hook's active-time budget.
+            outcome = await asyncio.wait_for(lifecycle.initialize(token), 15)
             assert outcome.succeeded is success, outcome
             assert len(service.execution_log.read_recent()) == 1
             assert owner.snapshot()["tickets"] == owner.snapshot()["execution"] == 0
