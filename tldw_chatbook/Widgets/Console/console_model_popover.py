@@ -133,8 +133,8 @@ HIGHLIGHT_GLYPH = "▶"
 #: longest id shown, so ids render whole (spec: never truncated); a row too
 #: long for the list ends in an ellipsis (the list is ``nowrap``), so the
 #: note, then readiness, give way before any id does. The provider column
-#: grows to the longest name shown, cut only to what the list leaves beside
-#: the other columns, and never below this floor (TASK-33005.14).
+#: grows to the longest name shown as far as the list still fits the whole
+#: row, note included, and never shrinks below this (TASK-33005.14).
 _MODEL_COLUMNS = 28
 _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
@@ -1617,11 +1617,10 @@ class ConsoleModelPopover(
         pairs = self.query_one("#console-popover-pairs", OptionList)
         self._rows = self._build_rows()
         self._model_columns = _model_column_width(self._rows)
-        longest = max(
-            (len(self._display(row.provider)) for row in self._rows if row.provider),
-            default=0,
-        )
-        room = self._list_width() - self._model_columns - _OTHER_COLUMNS
+        columns = [row for row in self._rows if row.kind in {"pair", "setup", "typed"}]
+        longest = max((len(self._display(row.provider)) for row in columns), default=0)
+        note = max((len(row.note) for row in columns), default=0)
+        room = self._list_width() - self._model_columns - _OTHER_COLUMNS - note
         self._provider_columns = max(_PROVIDER_COLUMNS, min(longest, room))
         self._painted_index = None
         with pairs.prevent(OptionList.OptionHighlighted):

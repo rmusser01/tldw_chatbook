@@ -2152,20 +2152,19 @@ async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> N
     [
         ((211, 44), False),
         ((235, 52), False),
-        # A 98-column terminal leaves the list about 92 cells: room for the
-        # 24-cell name beside the model, context and readiness columns, not
-        # for the 27-cell one.
-        ((98, 44), True),
+        # 120 columns leave the list no room for a longer name beside the
+        # other columns and the 26-cell note: 20 cells, as before.
+        ((120, 44), True),
     ],
-    ids=["211x44", "235x52", "98x44"],
+    ids=["211x44", "235x52", "120x44"],
 )
 async def test_provider_names_show_whole_while_the_list_has_room(size, cut) -> None:
     """TASK-33005.14 AC#2: Switch model cut provider names at a fixed 20
     columns ("Custom OpenAI-co…ble", "Custom OpenAI-co… #2", captures 06 and
     12) though the 140-column box had room. The column fits the longest name
-    listed; only a list too narrow for it beside the other columns shortens
-    a name, in the middle, to the room left (never below 20), and the note
-    gives way first. Readiness stays in one column on every row."""
+    listed while the list fits the whole row, note included; only a list too
+    narrow for that shortens a name, in the middle, to the room left (never
+    below 20). Readiness and the notes stay whole, in one column each."""
     app = SwitcherHarness()
     async with app.run_test(size=size) as pilot:
         switcher = await open_switcher(app, pilot, build_switcher(Recorder()))
@@ -2174,10 +2173,11 @@ async def test_provider_names_show_whole_while_the_list_has_room(size, cut) -> N
         lines = [line for line in list_lines(app, switcher) if "Custom OpenAI" in line]
     first = next(line for line in lines if "#2" not in line)
     second = next(line for line in lines if "#2" in line)
-    assert "Custom OpenAI-compatible  " in first, first
+    assert ("Custom OpenAI-compatible  " not in first) is cut, first
     assert ("Custom OpenAI-compatible #2" not in second) is cut, second
     assert ("…" in second.split("Not ready")[0]) is cut, second  # in the middle
-    assert "Custom OpenAI-comp" in second and " #2 " in second, second
+    assert "Custom OpenAI-co" in second and " #2 " in second, second
+    assert all(line.endswith("Enter: add key in Settings") for line in lines), lines
     readiness = {line.index("Not ready · no key") for line in (first, second)}
     assert len(readiness) == 1, lines
 
