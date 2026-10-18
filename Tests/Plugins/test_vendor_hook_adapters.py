@@ -1,9 +1,11 @@
 """Source hooks need complete qualification; names and parser success grant nothing."""
 
 import json
+import sys
 
 import pytest
 
+from Tests.Plugins import platform_support
 from tldw_chatbook.Plugins.adapters.vendor_hooks import normalize_vendor_hook
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -23,7 +25,12 @@ def test_simple_source_hook_never_borrows_native_payload_output_or_timeout(
         {"event": event, "command": 'python3 "./safe path/guard.py"', "timeout": 5},
         dialect,
     )
-    assert value["proposed_argv"] == ["python3", "./safe path/guard.py"]
+    if sys.platform == "win32":
+        assert value["proposed_argv"] is None
+        assert value["reason"] == "vendor_hook_command_platform_unqualified"
+    else:
+        assert value["proposed_argv"] == ["python3", "./safe path/guard.py"]
+    assert value["qualification"]["argv"] is (sys.platform != "win32")
     assert value["target_event"] == "PreToolUse"
     assert value["guard_scope_unknown"]
     assert not value["qualification"]["payload"]
@@ -46,7 +53,11 @@ def test_source_shell_syntax_is_never_executed(command):
         {"event": "PreToolUse", "command": command}, "codex-hooks/2026-10-01"
     )
     assert value["proposed_argv"] is None
-    assert value["reason"] == "vendor_hook_shell_syntax_unsupported"
+    assert value["reason"] == (
+        "vendor_hook_command_platform_unqualified"
+        if sys.platform == "win32"
+        else "vendor_hook_shell_syntax_unsupported"
+    )
 
 
 def test_regex_and_success_only_source_timing_stay_unqualified():
@@ -64,6 +75,7 @@ def test_regex_and_success_only_source_timing_stay_unqualified():
     assert not value["guard_scope_unknown"]
 
 
+@platform_support.package_capture
 def test_guard_blocks_scope_and_optional_observer_remains_visible(interop_package):
     from tldw_chatbook.Plugins.inspection import _inspect_capture
     from tldw_chatbook.Plugins.package_files import capture_package
@@ -144,7 +156,6 @@ import pytest
 
 from Tests.Agents.test_hooks_v2_execution import event
 from Tests.hooks_v2_process_support import child_argv
-from Tests.Plugins import platform_support
 from tldw_chatbook.Agents.hooks_v2 import parse_handlers
 from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
 from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
@@ -876,6 +887,7 @@ def test_malformed_unqualified_hook_fields_are_blocked_without_parser_crash(
     assert result.inventory["skill:review"].activation_blockers
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("location", ["root", "group", "handler"])
 def test_fresh_qualified_observer_cannot_hide_unknown_scope(tmp_path, location):
     from Tests.Plugins.test_codex_adapter import write_json, write_skill
@@ -905,10 +917,10 @@ def test_fresh_qualified_observer_cannot_hide_unknown_scope(tmp_path, location):
     platform_support.VENDOR_COMMAND, reason="native unsupported vendor control"
 )
 def test_native_unsupported_vendor_command_refuses():
-    from tldw_chatbook.Plugins.adapters.vendor_hooks import normalize_vendor_hook
+    from tldw_chatbook.Plugins.adapters.vendor_hooks import _qualified_vendor_hook
 
-    with pytest.raises(ValueError, match="platform"):
-        normalize_vendor_hook(
+    with pytest.raises(ValueError, match="vendor_argv_platform_unqualified"):
+        _qualified_vendor_hook(
             {"id": "guard", "event": "preToolUse", "command": "python hook.py"},
             "cursor/1",
         )

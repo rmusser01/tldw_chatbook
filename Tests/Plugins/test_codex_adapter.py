@@ -13,6 +13,7 @@ def test_inline_overlay_replaces_compatibility_wholesale():
     assert overlay_for_openai(None, {"skills": ["old"]}) == {"skills": ["old"]}
 
 
+@platform_support.package_capture
 def test_standalone_codex_selected_skill_is_qualified_metadata(tmp_path):
     import json
 
@@ -32,6 +33,7 @@ def test_standalone_codex_selected_skill_is_qualified_metadata(tmp_path):
     assert result.inventory["skill:review"].support == "adapted"
 
 
+@platform_support.package_capture
 def test_portable_inline_overlay_removes_compatibility_guard_and_keeps_locations(
     interop_package,
 ):
@@ -47,6 +49,16 @@ def test_portable_inline_overlay_removes_compatibility_guard_and_keeps_locations
     manifest["extensions"]["com.openai"]["skills"] = []
     path.write_text(json.dumps(manifest))
     assert set(inspect_package(root, dialect="openai").inventory) == {"skill:review"}
+
+
+@platform_support.package_capture
+@platform_support.vendor_command
+def test_codex_compatibility_guard_is_retained_without_inline_overlay(interop_package):
+    import json
+
+    root = interop_package("portable-openai")
+    path = root / "plugin.json"
+    manifest = json.loads(path.read_text())
     manifest["extensions"].pop("com.openai")
     path.write_text(json.dumps(manifest))
     inherited = inspect_package(root, dialect="openai")
@@ -61,6 +73,7 @@ def test_portable_inline_overlay_removes_compatibility_guard_and_keeps_locations
     assert guards <= set(inherited.inventory["skill:review"].dependencies)
 
 
+@platform_support.package_capture
 def test_codex_manual_only_policy_is_preserved_and_conflicts_refuse(interop_package):
     import json
 
@@ -88,6 +101,7 @@ def test_codex_manual_only_policy_is_preserved_and_conflicts_refuse(interop_pack
     assert not result.inventory["command:note"].activation_blockers
 
 
+@platform_support.package_capture
 def test_unconfigured_vendor_variables_never_become_inherited_defaults(interop_package):
     import json
 

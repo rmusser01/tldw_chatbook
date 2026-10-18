@@ -4,11 +4,14 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins import platform_support
 from Tests.private_profile import private_profile_test
 
 
 @pytest.fixture(autouse=True)
 def private_host_auth(monkeypatch, tmp_path):
+    if not platform_support.MANAGED_RUNTIME:
+        return
     import os
 
     from tldw_chatbook.Plugins import acquisition

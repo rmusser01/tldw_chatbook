@@ -547,11 +547,9 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
     subsequent boot. The honest evidence is a configured ROOT in
     ``notes_sync_roots``.
 
-    Side-effect free by construction (the TASK-21112 rule): read-only URI
-    open, SELECT only. Never creates the file, never opens for write, never
-    migrates. Raises on a corrupt/unopenable store -- callers treat that as
-    fail-open (start attempt), the same safe direction the runtime's own
-    ``_start_once`` probe handling takes.
+    Use the notes owner for read-only SELECTs, without creating or migrating
+    the database; its private-path and permission checks still apply. Corrupt
+    or unopenable stores raise so callers attempt normal runtime startup.
 
     Args:
         state_path: The state DB path from ``get_notes_sync_state_db_path()``.
@@ -568,7 +566,9 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
         return False
     import sqlite3
 
-    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    connection = NotesDeviceStateStore(path)._connect(read_only=True, must_exist=True)
     try:
         row = connection.execute(
             "SELECT 1 FROM notes_sync_roots LIMIT 1"
