@@ -1,11 +1,11 @@
 ---
 id: TASK-32695
 title: Qualify plugin lifecycle interoperability and authoring examples
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 09:41'
+updated_date: '2026-10-18 09:56'
 labels:
   - plugins
   - implementation
@@ -41,7 +41,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #12 I6: PLUGIN_DATA remains the installation shared root, and reserved CHATBOOK_WORKSPACE_DATA resolves to the exact admitted workspace root or actual private scratch with current root grants and fences.
 - [x] #13 I7: Package PATH cannot change bare executable lookup for owned MCP or hooks; explicit contained package executables and unrelated permitted child environment values still work.
 - [x] #14 I8: Every explicit three-platform workflow selection respects production ownership, command and package-capture boundaries, retains applicable and genuine unsupported/refusal controls, and makes no unexecuted native-platform success claim.
-- [ ] #15 PR3148 is rebased onto the recorded current dev revision with conflicts resolved while preserving approved plugin/hook behavior and current host fixes; relevant targeted checks and independent code review cover the rebased source, and the verified update is published with an exact force-with-lease while original history/evidence remain recoverable.
+- [x] #15 PR3148 is rebased onto the recorded current dev revision with conflicts resolved while preserving approved plugin/hook behavior and current host fixes; relevant targeted checks and independent code review cover the rebased source, and the verified update is published with an exact force-with-lease while original history/evidence remain recoverable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -220,6 +220,14 @@ Earlier Task25 Console80/120, controlled Git/TLS, installed hooks and resource p
 
 ADR required: yes; existing backlog/decisions/162-managed-agent-plugins.md and163-expanded-console-hook-runtime.md govern the accepted contracts. No new ADR/API/schema/owner/dependency/platform support was introduced by the focused correction. All26 planned tasks are complete after CLI53. Native Linux/Windows runtime, real OS keychain/reboot, original vendor hosts, executable replacement races and arbitrary remote containment remain unqualified. No full suite, remote workflow, dependency installation, push, merge or PR was performed. The local branch, worktree and complete decision/evidence workspace remain preserved for the human integration choice.
 Reopened for the explicit2026-10-17 request to rebase PR3148 onto current dev, resolve conflicts, run relevant targeted checks and obtain independent requesting-code-review. Original published head7b4d5c501b and all prior14 completed criteria/evidence remain historical. New integration AC15 is open; no new-base qualification or readiness is claimed. The integration plan is Docs/superpowers/plans/2026-10-17-managed-plugins-dev-rebase.md.
+
+Completed the explicit PR3148 rebase integration on2026-10-18. Rebased33commits onto recorded devb07fc0425288fb51d17cde5f745051720a7c9db6, preserving current Console/MCP/hook/workspace/compaction/migration owners and authenticated historical interpretations under existing ADR162/163. Root verified full-object fold custody and original history/evidence remain protected. R31–R38 repaired reached authority/resume and exact fixture/expectation gaps; final five-test and single-envelope corrections do not change production.
+
+Targeted current-source renewals retain actual failed phases and source applicability: runtime/scratch29pass; newdev5pass; Plugins75pass/6fail/1skip then14pass/1fail/no skips; UI10pass/2fail then6pass; remaining row-removal refusal test1pass2.83s. Every mapped repair failure was renewed, including all three actual MCP authority lanes. Bounded static checks have no introduced Ruff/Black debt; inherited diagnostics and actual failed size/dimension gates remain documented, not relabelled green.
+
+One fresh independent requesting-code-review on141369945f reported0Critical/0Important/1Minor in inspected paths. It supports draft publication and does not establish merge readiness. P3candidate-confirmation visibility remains deferred;281Settings outcomes are unqualified, neither proven inherited nor new regressions. Full-suite/nativeLinux/Windows/keychain/reboot/vendor-host/custom-data-base limits remain. No merge or auto-merge.
+
+The reviewed source141369945f was published with exact original7b4d5c501b lease and remote head verified before checking AC15. Docs/QA/managed-plugins-pr3148-rebase-2026-10-18.md contains current evidence, review coverage, remaining limits and all38rulings with reasons/costs. This supersedes earlier unfinished checkpoint notes only for this integration outcome. Existing14historical criteria stay historical; no blanket feature/suite or merge-readiness claim. Final documentation/task closeout has exact unchanged product/test applicability and its own verified publication.
 <!-- SECTION:NOTES:END -->
 
 <!-- SECTION:PLAN:END -->
