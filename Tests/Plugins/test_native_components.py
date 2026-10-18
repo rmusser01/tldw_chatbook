@@ -2199,10 +2199,11 @@ async def test_native_hook_relative_host_path_is_anchored(
 
 @pytest.mark.asyncio
 async def test_unscoped_hook_retains_real_scratch_lease_until_child_terminal(
-    native_console, native_package, tmp_path
+    native_console, native_package, tmp_path, monkeypatch
 ):
     import asyncio
     import json
+    from dataclasses import replace
 
     from Tests.Agents.test_hooks_v2_execution import event
     from Tests.hooks_v2_process_support import child_argv
@@ -2253,7 +2254,18 @@ async def test_unscoped_hook_retains_real_scratch_lease_until_child_terminal(
         event_projector=native.project_event,
         host_environment=native.host_environment,
         command_launch=native.command_launch,
+        effect_authority_check=native.effects_current,
     )
+
+    def no_physical_probe(_snapshot):
+        raise AssertionError("effect lane performed filesystem identity IO")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(manager, "_identity_matches", no_physical_probe)
+        assert manager._published_current(scratch)
+        assert not manager._published_current(None)
+        assert not manager._published_current(replace(scratch, token="not-issued"))
+        assert native.effects_current(native.definitions[0], event(), "accept")
     task = asyncio.create_task(engine.fire_async(event()))
     try:
         for _ in range(500):
@@ -2266,6 +2278,10 @@ async def test_unscoped_hook_retains_real_scratch_lease_until_child_terminal(
         assert not json.loads(snapshot.data_roots_json)
         manager.close("actual-session")
         assert not manager.is_live(scratch) and scratch.root.exists()
+        with monkeypatch.context() as patch:
+            patch.setattr(manager, "_identity_matches", no_physical_probe)
+            assert not manager._published_current(scratch)
+            assert not native.effects_current(native.definitions[0], event(), "accept")
         from tldw_chatbook.Plugins.admission import PluginUnavailable
 
         with pytest.raises(PluginUnavailable, match="plugin_scratch_unavailable"):

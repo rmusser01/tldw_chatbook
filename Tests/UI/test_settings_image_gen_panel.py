@@ -399,6 +399,8 @@ default_model = "old-model"
         assert "*" in str(rail_button.label)
         assert not panel.query_one("#settings-imagegen-save", Button).disabled
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
@@ -540,6 +542,8 @@ api_key = "sk-saved-key"
         )
         assert str(source_line.renderable) == "missing"
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
@@ -670,6 +674,8 @@ default_theme = "textual-dark"
         model_input.value = "openai/gpt-5-image-mini"
         await pilot.pause()
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 

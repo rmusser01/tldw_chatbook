@@ -219,6 +219,10 @@ async def test_configuration_save_then_reviewed_connection_discovery_grants_no_t
     await rig.service.commit(install, install.operation_id)
     trust = await rig.service.review_trust(install.installation_id)
     await rig.service.commit(trust, trust.operation_id)
+    data_review = await rig.service.review_data_creation(
+        install.installation_id, workspace_id=None
+    )
+    created_root = await rig.service.create_data(data_review, data_review.operation_id)
     details = await rig.service.management_details(
         install.installation_id, workspace_id="workspace-a"
     )
@@ -229,6 +233,9 @@ async def test_configuration_save_then_reviewed_connection_discovery_grants_no_t
         "workspace-a",
         "mcp:shared",
         details["inspection"],
+        data_root=next(
+            root for root in details["roots"] if root.root_id == created_root.root_id
+        ),
         protocol_version="2025-03-26",
     )
     saved = await operations.save_profile(draft, local)
