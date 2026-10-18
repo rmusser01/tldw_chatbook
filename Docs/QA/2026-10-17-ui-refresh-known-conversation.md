@@ -16,8 +16,19 @@ Removing only the original final fingerprint equality made the real concurrent m
 
 Ruff lint passes for production and new tests. The new test is formatted; whole-controller formatting reports preexisting formatting debt also present on dev (recorded baseline/current formatter diffs), so unrelated whole-file formatting is excluded. `git diff --check` passes. Impeccable mechanical detector reports no findings. Independent read-only whole-path review reports zero actionable findings and exact before/after hashes for all reviewed sources.
 
-## Release gate (pending)
+## Actual first-send qualification
 
 Before acceptance, verify the actual candidate path with one qualified metadata-only diagnostic, then freeze eight unprofiled fresh-app/profile actual DeepSeek Flash first sends in B/C/C/B/B/C/C/B order. Every packet must qualify original supplied/expanded settings,27 ordered schemas, headers, exact input/reply, HTTP200, complete verified traces/checkpoints0, strict original logs for BOTH arms, source/helper maps and normal Quit/unmount/driver/server/PID/port cleanup before statistics. No exclusions, waivers, retries, resampling or observer in acceptance. Candidate Enter-to-HTTP median and all four matched pairs must improve. Post-save is diagnostic only. Otherwise retain unmerged. Required CI and resolved review threads/current-base rules follow a passing gate.
 
-No release claim yet. Targeted tests only; no full suite, Windows/native paint, OS-cold-cache, population p95 or broader provider/history coverage. Evidence resides in the local `pr-review-wave2` packet directory, outside repository source.
+Candidate29f27912eedbe24c8480b764e435dbde2b00b72c passed the prospective consistency gate on the unchanged current-dev runtime baseline. All eight original unprofiled requests qualified before statistics (`ui-overlap-paired-qualified-r1.json`); every helper/source map was stable, original clean logs held on both arms, and normal cleanup completed. No exclusions, reruns or allowances.
+
+| Actual first-send metric | Baseline median | Candidate median |
+| --- | ---: | ---: |
+| Enter to HTTP |2.204597104s |1.972269854s |
+| Post-save (diagnostic) |1188ms |1014ms |
+
+All four actual Enter-to-HTTP pairs improved:151.598ms,701.375ms,84.398ms and109.838ms. Median reduction232.327ms (10.54%). Post-save pairs improved76ms,348ms,153ms and tied0ms; the174ms median reduction is diagnostic and not a four-pair post-save improvement claim.
+
+The separately qualified candidate metadata-only live diagnostic confirms the intended route: no outer change-detection read in the stock display, with two original inner metadata pairs and one original recent-conversation read. Its instrumented times are excluded from the gate. The served CDP response screenshot was inspected: exact assistant reply, transcript, composer and controls remained visible. This does not establish native terminal paint.
+
+Current dev remained272cad956855feda4d78efb9db9fce7e909d53db at the pre-cohort fetch. Required CI, all review-thread and queue/current-base checks remain pending before merge. Targeted tests only; no full suite, Windows/native paint, OS-cold-cache, population p95 or broader provider/history coverage. Evidence resides in the local `pr-review-wave2` packet directory, outside repository source.
