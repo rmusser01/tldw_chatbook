@@ -19,7 +19,8 @@ This document describes Canvas: the conversation-owned, local-first artifact sys
 | Gateway | `Canvas/gateway.py` | loopback aiohttp app (`/api/boot`, `/api/frame`, `/render`, `/api/bridge/*`, …); refuses non-loopback hosts and non-zero ports |
 | Capabilities | `Canvas/capabilities.py` | `CanvasCapabilityStore` — single-use, 300 s TTL capabilities per action (shell_boot, renderer_load, render_plan, source_read, …) |
 | Native authority | `Canvas/native_authority.py` | app-owned browser authority for the native Console; gated auto-open receipts |
-| Runtime assets | `Canvas/runtime_assets.py`, `Canvas/static/`, `Canvas/mermaid/` | SHA-256-manifest-verified QuickJS runtime bundle, renderer/shell assets, vendored Mermaid subset |
+| Runtime assets | `Canvas/runtime_assets.py`, `Canvas/static/`, `Canvas/mermaid/` | SHA-256-manifest-verified QuickJS runtime bundle and renderer, trusted shell, vendored Mermaid subset; CI independently pins the shell assets |
+| Build inputs | `vendor/canvas-mermaid-inputs/`, `scripts/check_canvas_mermaid_assets.py` | exact original pinned sources for offline CI/preflight; explicit fetch-only refresh, outside installed package data (ADR-238) |
 | Served mode | `Canvas/control_protocol.py`, `web_auth.py`, `Web_Server/serve.py` | authenticated control channel for child processes; origin-wide browser auth (token env/keyring, session cookie, CSRF header) |
 | Persistence | `DB/migrations/chachanotes_v66_to_v67_canvas_revisions.sql`, `DB/canvas_payload_validation.py`, `DB/ChaChaNotes_DB.py` | `canvas_documents`/`canvas_revisions`/`canvas_conversation_hints` + 6 triggers; insert-time sha256/bytes CHECK via a custom DB function |
 | Message cards | `Chat/message_metadata.py` | `CanvasCardMetadata` / origin metadata |
