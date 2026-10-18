@@ -832,10 +832,6 @@ _PROVIDER_CHOICE_VALUES: dict[str, tuple[str, ...]] = {
     input_id: _SNAPSHOT_SETTING_CHOICE_DOMAINS[control]
     for _label, input_id, control in _PROVIDER_CHOICE_CONTROLS
 }
-PROVIDER_CHOICE_INPUTS = tuple(
-    (label, input_id, ", ".join(_SNAPSHOT_SETTING_CHOICE_DOMAINS[control]))
-    for label, input_id, control in _PROVIDER_CHOICE_CONTROLS
-)
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Applies to this chat only · saved with the conversation · defaults live in "
     "Settings ▸ Providers & Models (F4)"
@@ -4279,7 +4275,7 @@ class ConsoleSettingsModal(
 
     def _sync_provider_choice_placeholders(self) -> None:
         """Refresh constrained-choice help after the provider changes."""
-        for _label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
+        for input_id in _PROVIDER_CHOICE_VALUES:
             self.query_one(f"#{input_id}", Select).tooltip = self._choice_placeholder(
                 input_id
             )

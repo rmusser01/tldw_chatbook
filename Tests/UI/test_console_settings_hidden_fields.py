@@ -207,6 +207,8 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
         "_GENERATION_CONTROL_INPUTS",
         "PROVIDER_CHOICE_NO_EFFECT_SUFFIX",
         "GENERATION_CONTROL_UNKNOWN_COPY",
+        # Its domain-joined placeholders outlived their reader (TASK-33002.7).
+        "PROVIDER_CHOICE_INPUTS",
     ):
         assert not hasattr(modal_module, name), name
     app = CoreFirstHarness()
@@ -615,7 +617,12 @@ async def test_a_pick_re_lists_reasoning_effort_for_the_new_provider() -> None:
             await pilot.pause()
         assert select.value == "minimal"
         assert [value for _label, value in _reasoning_options(modal)] == [
-            "none", "low", "medium", "high", "xhigh", "minimal"
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "minimal",
         ]
         assert str(
             modal.query_one("#console-settings-reasoning-effort-help", Static).content
@@ -626,6 +633,45 @@ async def test_a_pick_re_lists_reasoning_effort_for_the_new_provider() -> None:
             await pilot.pause()
         assert [value for _label, value in _reasoning_options(modal)] == list(_LEVELS)
         assert UNSENT_CHOICE_SUFFIX not in str(_reasoning_options(modal))
+
+
+@pytest.mark.asyncio
+async def test_a_restored_draft_keeps_a_carried_level_the_request_drops() -> None:
+    """TASK-33002.7: reopening after a credential round trip restores a
+    "minimal" the draft carried onto llama.cpp; it stays selected and
+    labelled, rather than raising InvalidSelectValueError on a list that no
+    longer offers it."""
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+    )
+
+    app = CoreFirstHarness()
+    settings = _settings("llama_cpp", "model-a")
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-reasoning-effort": "minimal"},
+        provider_model_drafts={"llama_cpp": "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    modal = _modal(app, settings, suspended_draft=snapshot)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        select = modal.query_one("#console-settings-reasoning-effort", Select)
+        assert select.value == "minimal"
+        assert _reasoning_options(modal)[-1] == (
+            f"Minimal {UNSENT_CHOICE_SUFFIX}",
+            "minimal",
+        )
+        help_line = modal.query_one("#console-settings-reasoning-effort-help", Static)
+        assert str(help_line.content) == UNSENT_CHOICE_COPY.format(level="Minimal")
 
 
 @pytest.mark.asyncio
