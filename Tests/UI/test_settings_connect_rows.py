@@ -591,6 +591,15 @@ _RELEASED_FIELDS = {
     "console-behavior": ("#settings-console-paste-collapse-threshold", "777"),
 }
 
+#: The first row of each category's field guide while no setting has focus.
+_NO_FOCUS_GUIDE = {
+    "providers-models": ("#settings-provider-field-guide-0", "None — Tab to a setting"),
+    "console-behavior": (
+        "#settings-console-behavior-field-guide-0",
+        "Focus a Console Behavior field for setting-specific guidance.",
+    ),
+}
+
 
 @pytest.mark.asyncio
 @private_profile_test
@@ -629,8 +638,19 @@ async def test_the_revert_dialog_leaves_focus_off_the_navigation_bar(
             await _until(pilot, lambda: host.screen is screen)
             await pilot.pause()
 
-        await pilot.press("escape", "r")
+        guide_id, no_focus_copy = _NO_FOCUS_GUIDE[category]
+
+        def guide() -> str:
+            return str(screen.query_one(guide_id, Static).renderable)
+
+        # Capture phase: once Esc releases the field, the guide stops naming it.
+        assert no_focus_copy not in guide()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert no_focus_copy in guide(), guide()
+        await pilot.press("r")
         await revert_dialog_answered(("enter",) if keep else ("tab", "enter"))
+        assert no_focus_copy in guide(), guide()
 
         focused = host.focused
         assert focused is None or not any(

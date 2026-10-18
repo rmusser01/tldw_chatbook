@@ -34788,7 +34788,6 @@ class SettingsScreen(BaseAppScreen):
         self._confirm_reindex_then_save(
             values, pending_activate, _definition_action=action
         )
-        return
 
     def _confirm_reindex_then_save(
         self,
@@ -35696,12 +35695,13 @@ class SettingsScreen(BaseAppScreen):
             and isinstance(focused, (Input, TextArea))
             and not self._category_search_has_focus()
         ):
-            # task-1560: Esc releases field focus so the footer's advertised
-            # "Esc, s save category" chain is true for EVERY text-entry
-            # field -- previously only the filter input handled Esc, so
-            # keys after Esc kept feeding the field (the critique's silent
-            # no-op trap, one level deeper).
+            # task-1560: Esc releases field focus, so the footer's "Esc, s save
+            # category" chain holds for EVERY text field (only the filter
+            # input used to handle Esc; later keys kept feeding the field).
             self.set_focus(None)
+            self._active_settings_field_id = None  # TASK-33007.11: nor its guide
+            for k in ("provider", "appearance", "storage", "rag", "console_behavior"):
+                getattr(self, f"_refresh_{k}_field_guidance")()  # off-category: no-op
             self._register_footer_shortcuts()
             event.stop()
             event.prevent_default()
