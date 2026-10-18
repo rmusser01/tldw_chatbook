@@ -75,3 +75,25 @@ installed parsers passed sixteen refusal and four no-Canvas controls each.
 The final model bytes match the fresh sdist and both wheels; package manifest
 validation, scoped Ruff, formatter and whitespace checks passed. New evidence is
 under the original evidence root's fix1-* paths; earlier receipts are retained.
+
+## Independent closeout
+
+The task review and scoped I1 re-review are complete. A fresh whole-branch review
+of `272cad956855..346687690cde` found no Critical or Important issue. Its sole
+remaining Minor finding was a stale approval-status paragraph in the earlier
+maintenance closeout; commit `ee778b9e29ce` labels that historical snapshot and
+records the current approved contract. A scoped re-review found M2 addressed,
+with no new breakage or remaining findings.
+
+The controller independently reran 30 final-parser/version-pairing/legacy-import
+controls: all passed without warnings. Source/package identity was checked for
+the fixed model across the working tree, sdist and both direct/rebuilt wheels
+(SHA-256 `27f2d46087a7a8726d58f0ececdf52d3d791dcaf3953085ec6d1897b8b8f0160`).
+All 5,504 task records pass identity/path/readability checks. Renderer assets and
+their pinned input manifest are unchanged from the branch base.
+
+TASK-35376 is the completed local foundation; TASK-35377–35383 remain separate
+server/client transport and conformance work. These local checks do not establish
+server compatibility, current-head hosted checks or permission to migrate the
+normal user profile. Schema/archive allocations must be revalidated before
+integration; the branch and its evidence remain local and unmerged.
