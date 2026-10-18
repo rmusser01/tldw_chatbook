@@ -669,7 +669,7 @@ Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoi
 Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint
 # TASK-35190: the rebaser keeps the chat's URL for an unseen model on its provider, but a registry entry keeps its own (2 cases, <1 s).
 Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry
-# TASK-35190 AC#4: Switch model's real probe and readiness read the session endpoint while the configured one is down, a pick keeps it, and Make default saves no endpoint (~6 s, private profile).
+# TASK-35190 AC#4: Switch model's real probe and readiness read the session endpoint while the configured one is down, a pick keeps it, and (review round 2) the open's probe of the configured one makes Ctrl+N refuse, naming it (~6 s, private profile).
 Tests/UI/test_console_endpoint_discovery.py::test_switch_model_keeps_the_chats_session_endpoint_and_saves_none
 # Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial.
 # TASK-35190: an unseen pick takes the endpoint its provider's drafts had most recently, after a detour too (2 cases, ~12 s).
@@ -678,3 +678,6 @@ Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_
 Tests/UI/test_console_endpoint_discovery.py::test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down
 # TASK-35190: after a Settings round trip a pick on the chat's provider still keeps the session endpoint (~10 s, private profile).
 Tests/UI/test_console_endpoint_discovery.py::test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider
+# Phase 9 Task 18 review round 2 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
+# TASK-35190 AC#4: Ctrl+N saves a pair the configured server can send while this chat's endpoint is down, and no endpoint; the configured server is probed only when local (2 cases, ~11 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_reads_the_configured_endpoint

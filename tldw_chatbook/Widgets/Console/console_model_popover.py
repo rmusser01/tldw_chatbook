@@ -43,6 +43,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
@@ -533,6 +534,7 @@ class ConsoleModelPopover(
         highlight_pair: tuple[str, str] | None = None,
         reopened_provider: str | None = None,
         enter_sets_default: bool = False,
+        new_chat_readiness_resolver: DefaultReadinessResolver | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -554,6 +556,10 @@ class ConsoleModelPopover(
             default_readiness_resolver: Configuration-only readiness for one
                 provider/model target; called once per provider per open, in
                 a worker thread.
+            new_chat_readiness_resolver: Ctrl+N's check: the readiness of
+                the connection new chats use, where the rows read another
+                (this chat's Endpoint, TASK-35190);
+                ``default_readiness_resolver`` if None.
             recent_pairs_loader: Reads RECENT after the switcher opens.
             previous_pair: Picks PREVIOUS from RECENT (and process memory).
             catalog_loader: Resolves one provider's cached catalog.
@@ -623,6 +629,7 @@ class ConsoleModelPopover(
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
         self._default_readiness_resolver = default_readiness_resolver
+        self._new_chat_readiness_resolver = new_chat_readiness_resolver
         self._recent_pairs_loader = recent_pairs_loader
         self._previous_pair = previous_pair
         self._catalog_loader = catalog_loader
@@ -2319,12 +2326,24 @@ class ConsoleModelPopover(
         draft = self._validated_draft()
         if draft is None:
             return
-        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
-            readiness = self._default_readiness_resolver(
-                draft.settings.provider, draft.settings.model
+        # Ctrl+N, or any action while Enter also sets the new-chat default.
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT or (
+            self._enter_sets_default and action != _FULL_SETTINGS_ACTION
+        ):
+            provider, model = draft.settings.provider, draft.settings.model
+            resolver = (
+                self._new_chat_readiness_resolver or self._default_readiness_resolver
             )
+            readiness = resolver(provider, model)
             if not readiness.native_send_supported:
-                self._set_error(f"Unavailable: {readiness.detail}")
+                # Named where the rows read another connection (TASK-35190).
+                tested = readiness.connection
+                rows = self._readiness.get(provider_key(provider))
+                where = ""
+                if tested is not None and getattr(rows, "connection", None) != tested:
+                    endpoint = safe_endpoint_display(tested.connection_identity[1])
+                    where = f" for new chats ({endpoint})"
+                self._set_error(f"Unavailable{where}: {readiness.detail}")
                 return
 
         self._release_mouse_capture()

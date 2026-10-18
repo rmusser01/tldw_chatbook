@@ -402,8 +402,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # model keeps it and saves none (TASK-35190): 358. Its review round 1
 # appends three node ids, each 3 of 3 serial: a pick takes its provider's
 # latest endpoint, pick mode reads the session endpoint, and a Settings
-# round trip keeps it (TASK-35190): 361.
-MINIMUM_FILES = 361
+# round trip keeps it (TASK-35190): 361. Its review round 2 appends one
+# node id, 3 of 3 serial: Ctrl+N reads the configured endpoint, never
+# probed on a public host (TASK-35190): 362.
+MINIMUM_FILES = 362
 
 
 def read_census(path: Path) -> list[str]:

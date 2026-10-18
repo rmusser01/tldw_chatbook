@@ -1681,14 +1681,15 @@ async def _probed(switcher, pilot, provider):
     pytest.fail(f"Switch model never probed {provider}")
 
 
-def _on_9200(monkeypatch, listed):
+def _on_9200(monkeypatch, listed, configured=None):
     """Run the switcher's real probe over a network where the configured
-    :9099 refuses and this chat's :9200 lists ``listed``; return the probed
-    URLs."""
+    :9099 lists ``configured`` and this chat's :9200 lists ``listed`` (None:
+    refuses); return the probed URLs."""
     monkeypatch.setattr(
         connection_probe, "switcher_connection_prober", _REAL_SWITCHER_PROBER
     )
-    return _stub_llama_network(monkeypatch, {"up": True}, {9099: None, 9200: listed})
+    listings = {9099: configured, 9200: listed}
+    return _stub_llama_network(monkeypatch, {"up": True}, listings)
 
 
 async def _console_on_9200(harness, pilot):
@@ -1711,13 +1712,16 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
 ):
     """TASK-35190 AC#4: Switch model (Alt+M) on a llama.cpp chat on :9200
     while the configured :9099 is down. A pick on llama.cpp lands on :9200,
-    so Switch model's readiness and its own probe (the real one, over a
-    stubbed network) read :9200, never :9099 (review round 1): llama.cpp is
-    READY and its rows are what :9200 listed, served-y and not the saved
-    model-c. Picked after a detour through vLLM, model-b keeps :9200, as
-    Chat settings does (AC#1). Make default for new chats then saves the pair
-    and never the Endpoint; new chats use :9099, so once :9099 is known
-    refused it refuses, as before."""
+    so Switch model's readiness and its rows (the real probe, over a stubbed
+    network) read :9200, never :9099 (review round 1): llama.cpp is READY and
+    its rows are what :9200 listed, served-y and not the saved model-c.
+    Picked after a detour through vLLM, model-b keeps :9200, as Chat settings
+    does (AC#1). New chats use :9099, so the open probes it too (review round
+    2), and Make default for new chats on a READY row is refused in words
+    that name :9099, as is Enter in a list reopened from Settings, where it
+    sets the default too while none works. Nothing is saved; the save itself
+    (no Endpoint) is
+    test_make_default_for_new_chats_reads_the_configured_endpoint's."""
     import tomllib
 
     from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -1728,6 +1732,7 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
         _persisted_console_app,
     )
     from tldw_chatbook.config import get_cli_config_path
+    from tldw_chatbook.UI.Console_Modules.model_switcher import reopen_model_switcher
 
     listed = ("model-a", "model-b", "served-y")
     probed = _on_9200(monkeypatch, listed)
@@ -1761,37 +1766,119 @@ async def test_switch_model_keeps_the_chats_session_endpoint_and_saves_none(
             SESSION_URL,
         )
 
-        quick = await _open_provider_popover(console, harness, pilot)
-        await _highlight(quick, pilot, "served-y")
-        quick.action_make_new_chat_default()
-        await pilot.pause()
-        await _drain_settings_tasks(app)
-        assert harness.screen is console
-        applied = store.session_settings(session_id)
-        assert (applied.model, applied.base_url) == ("served-y", SESSION_URL)
-
         config = console._provider_readiness_app_config()
         configured = console_send_connection(
             build_target_default_console_session_settings(config, "llama_cpp", None),
             app_config=config,
         )
-        provider_connection_evidence(harness).publish(
-            ProviderTestEvidence(
-                configured, "unreachable", (), category="connection_refused"
-            ),
-            order=1,
-        )
         quick = await _open_provider_popover(console, harness, pilot)
-        await _highlight(quick, pilot, "model-b")
+        for _ in range(60):  # The open's probe of :9099, by no hand publish.
+            if provider_connection_evidence(harness).evidence_for(configured):
+                break
+            await pilot.pause(0.05)
+        row = await _highlight(quick, pilot, "served-y")
+        assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "served-y")
         quick.action_make_new_chat_default()
         await pilot.pause()
         assert harness.screen is quick
-        assert quick._error.startswith("Unavailable")
-    assert all(":9099" not in url for url in probed)
+        refusal = (
+            "Unavailable for new chats (http://127.0.0.1:9099): llama.cpp failed "
+            "its last connection test (connection refused)."
+        )
+        assert quick._error == refusal
+        llama = quick._readiness["llama_cpp"]
+        assert llama.blocker is None
+        assert llama.connection.connection_identity[1] == SESSION_URL
+        assert quick._models_for("llama_cpp") == listed
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert harness.screen is console
+        reopen_model_switcher(console, "llama_cpp", "model-b")
+        await pilot.pause()
+        await harness.workers.wait_for_complete()
+        await pilot.pause()
+        quick = harness.screen
+        assert quick._enter_sets_default
+        row = await _highlight(quick, pilot, "model-b")
+        assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-b")
+        quick._activate(row)  # Enter
+        await pilot.pause()
+        assert harness.screen is quick
+        assert quick._error == refusal
+        applied = store.session_settings(session_id)
+        assert (applied.model, applied.base_url) == ("model-b", SESSION_URL)
+    assert any(":9099" in url for url in probed)
     saved = config_path.read_text(encoding="utf-8")
-    assert tomllib.loads(saved)["chat_defaults"]["model"] == "served-y"
+    assert tomllib.loads(saved)["chat_defaults"]["model"] == "model-a"
     assert tomllib.loads(saved)["api_settings"]["llama_cpp"]["api_url"] == (
         "http://127.0.0.1:9099"
+    )
+    assert "127.0.0.1:9200" not in saved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_url",
+    ["http://127.0.0.1:9099", "http://8.8.8.8:9099"],
+    ids=["local", "public"],
+)
+@private_profile_test
+async def test_make_default_for_new_chats_reads_the_configured_endpoint(
+    request, monkeypatch, configured_url
+):
+    """TASK-35190 review round 2: Switch model on a llama.cpp chat whose :9200
+    is down, while the configured server lists model-a and model-b. The rows
+    read :9200, so llama.cpp is under NEEDS SETUP, but new chats use the
+    configured server, so Make default for new chats on model-b saves the
+    pair, and no Endpoint (AC#4). The open probes the configured server too,
+    under the switcher's own rules: a local one is checked, a public one is
+    never contacted."""
+    import tomllib
+
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _drain_settings_tasks,
+        _highlight,
+        _open_provider_popover,
+        _persisted_console_app,
+    )
+    from tldw_chatbook.config import get_cli_config_path
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+
+    probed = _on_9200(monkeypatch, None, configured=("model-a", "model-b"))
+    app = _persisted_console_app()
+    app.providers_models = {"llama_cpp": ["model-a", "model-b"]}
+    assert SettingsConfigAdapter().save_sections(
+        {"api_settings.llama_cpp": {"api_url": configured_url}}
+    )
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _console_on_9200(harness, pilot)
+        config = console._provider_readiness_app_config()
+        assert config["api_settings"]["llama_cpp"]["api_url"] == configured_url
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        quick = await _open_provider_popover(console, harness, pilot)
+        assert (await _probed(quick, pilot, "llama_cpp")).blocker is not None
+        await harness.workers.wait_for_complete()  # Both of the open's probes.
+        row = await _highlight(quick, pilot, "model-b")
+        assert (row.kind, row.provider, row.model) == ("setup", "llama_cpp", "model-b")
+        quick.action_make_new_chat_default()
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+        assert harness.screen is console
+        applied = store.session_settings(session_id)
+        assert (applied.model, applied.base_url) == ("model-b", SESSION_URL)
+    assert any(":9200" in url for url in probed)
+    if configured_url.startswith("http://127."):
+        assert any(configured_url in url for url in probed)
+    assert not any("8.8.8.8" in url for url in probed)
+    saved = get_cli_config_path().read_text(encoding="utf-8")
+    assert tomllib.loads(saved)["chat_defaults"]["model"] == "model-b"
+    assert tomllib.loads(saved)["api_settings"]["llama_cpp"]["api_url"] == (
+        configured_url
     )
     assert "127.0.0.1:9200" not in saved
 

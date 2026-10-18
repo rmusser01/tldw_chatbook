@@ -461,6 +461,9 @@ def _switcher_sources(
     Endpoint a pick on it lands on (``pick_base_url``, the rebaser's own
     rule), in memory only, as R12 does for a detected server. The rebaser
     keeps ``app_config``, so a default it saves names no session Endpoint.
+    Where that moves an endpoint, the probe checks the configured one too
+    (not in pick mode, which has no Ctrl+N): new chats use it, and Ctrl+N's
+    check reads it.
 
     Args:
         screen: The Console screen that owns the chat.
@@ -493,9 +496,11 @@ def _switcher_sources(
             if url:
                 key = provider_config_key(provider)
                 landing = with_provider_endpoint(landing, key, url)
+    probes = [switcher_connection_prober(screen.app, landing)]
     if landing is not app_config:
         readiness = partial(readiness, app_config=landing)
-    probe = switcher_connection_prober(screen.app, landing)
+        if not full_surface:
+            probes.append(switcher_connection_prober(screen.app, app_config))
 
     async def connection_prober(
         targets: Mapping[str, str | None], settled: Callable[[str], None]
@@ -510,7 +515,7 @@ def _switcher_sources(
                 screen._sync_console_settings_summary()
                 screen._sync_console_control_bar()
 
-        await probe(targets, settled_here_and_under)
+        await asyncio.gather(*(run(targets, settled_here_and_under) for run in probes))
 
     async def catalog_loader(provider: str) -> list[str]:
         if listing is not None and provider == listing[0]:
@@ -738,15 +743,12 @@ def _open_switcher(
     def commit(submission):  # type: ignore[no-untyped-def]
         chosen = submission.draft.settings
         adopt = server is not None and provider_config_key(chosen.provider) == detected
-        default = submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
-        if sets_default or default:
-            # As Ctrl+N: a pair that cannot send never becomes the default. New
-            # chats use the configured endpoint, so this is its readiness, not
-            # that of the chat's Endpoint the rows read (TASK-35190).
+        if sets_default:
+            # As Ctrl+N: a pair that cannot send never becomes the default.
             verdict = readiness(chosen.provider, chosen.model)
             if not verdict.native_send_supported:
                 raise ValueError(f"Unavailable: {verdict.detail}")
-            if sets_default and not adopt:
+            if not adopt:
                 # Whichever action commits the pick, as the scope line says.
                 # Ctrl+N's writes the model's defaults too, so Save as model
                 # default loses nothing by running as it.
@@ -815,6 +817,9 @@ def _open_switcher(
                 else highlight
             ),
             reopened_provider=reopened,
+            # New chats use the configured endpoint, not the one the rows
+            # read (TASK-35190).
+            new_chat_readiness_resolver=readiness,
             **_switcher_sources(
                 screen,
                 session.id,
