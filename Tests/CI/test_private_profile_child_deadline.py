@@ -405,7 +405,7 @@ async def test_a_child_ended_by_the_ask_while_exiting_is_reported_as_exiting(
 
     text = str(failure.value)
     assert (
-        "it had finished its test and was exiting when the ask for its stacks "
+        "its test had ended and it was exiting when the ask for its stacks "
         "ended it)" in text
     )
     assert "before it could answer" not in text and "(killed" not in text

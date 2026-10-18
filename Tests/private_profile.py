@@ -378,8 +378,8 @@ def private_profile_test(function):
                 # Its session had ended and interpreter shutdown had already
                 # put the handler back to the default (TASK-35027).
                 ending = (
-                    f"(still running after {wait:.0f}s; it had finished its "
-                    "test and was exiting when the ask for its stacks ended it)\n"
+                    f"(still running after {wait:.0f}s; its test had ended "
+                    "and it was exiting when the ask for its stacks ended it)\n"
                 )
             elif asked and process.returncode == -signal.SIGUSR1:
                 # No handler yet (still starting up, or the module imported

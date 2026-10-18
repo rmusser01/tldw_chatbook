@@ -37,7 +37,7 @@ When a private-profile child is still running at the parent's wait deadline, the
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-The child's JUnit report is that signal: pytest writes it when the session ends, and Python puts signal handlers back to their defaults only later, while the interpreter shuts down (checked: atexit runs before that reset, and a SIGUSR1 in the finalizer phase ends the child with -30). So when the ask's default action ended the child (-SIGUSR1) and the report already records a test case, the child had finished and was exiting; Tests/private_profile.py now says 'it had finished its test and was exiting when the ask for its stacks ended it'. A hung test or teardown has not written the report, so it cannot be reported as exiting; with no report the start-up wording is unchanged. New helper _child_finished(report) (a report that does not parse counts as not finished).
+The child's JUnit report is that signal: pytest writes it when the session ends, and Python puts signal handlers back to their defaults only later, while the interpreter shuts down (checked: atexit runs before that reset, and a SIGUSR1 in the finalizer phase ends the child with -30). So when the ask's default action ended the child (-SIGUSR1) and the report already records a test case, the child had finished and was exiting; Tests/private_profile.py now says 'its test had ended and it was exiting when the ask for its stacks ended it' (ended, not finished: a test that failed, even by its own timeout, has a report too). A hung test or teardown has not written the report, so it cannot be reported as exiting; with no report the start-up wording is unchanged. New helper _child_finished(report) (a report that does not parse counts as not finished).
 
 Tests (Tests/CI/test_private_profile_child_deadline.py): a stand-in child that writes a report, resets SIGUSR1 to the default and keeps running is reported as exiting (fails without the change: it got the start-up wording); the existing start-up test now also asserts it is not called exiting. Tests/CI and the private-profile wrapper tests: 993 passed, 1 skipped.
 
@@ -47,7 +47,7 @@ Files: Tests/private_profile.py, Tests/CI/test_private_profile_child_deadline.py
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-A private-profile child that the parent's stack request ends after its test finished is now reported as exiting, not as starting up; the start-up wording is unchanged.
+A private-profile child that the parent's stack request ends after its test ended is now reported as exiting, not as starting up; the start-up wording is unchanged.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
