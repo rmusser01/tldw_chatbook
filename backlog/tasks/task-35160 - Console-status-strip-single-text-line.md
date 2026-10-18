@@ -102,4 +102,15 @@ Two 2-cell Buttons flank the scroll viewport. State lives in the strip (`_page_v
 - `$ds-size-2` exists; the "undefined variable" seen in standalone probes was the missing theme registration, not the token.
 
 Tests: arrow paging/end-dimming (press dispatched via `Button.Pressed` -- `pilot.click` on a 2-cell button is delivery-flaky headless), hidden-when-fits, geometry flanking in the collapse file. 43 strip tests green twice consecutively. Still: /tmp/tokps-demo/arrows.png.
+
+### Follow-up 7 (2026-10-18): chip-id test sweep + PR CI state
+
+The PR's CI lanes 7/9 failed on tests outside the conversion's original set: 16 test files still queried removed chip widget ids (~61 sites). All converted to the strip's public read seam (segment_text/segment_visible) or segment spans; ten env-sensitive files got the bootstrap_profile marker; message-path activation where screen syncs race a staged cursor walk.
+
+OPEN for the next session (auto-merge DISARMED so nothing lands broken):
+1. UI lanes 9/10: Tests/UI/test_console_response_rules.py rule_phase_events (3 params) -- `No nodes match '#console-status-chips' on ChatScreen(shell-header-compact)`: the strip is NOT MOUNTED in that test's screen state. Find when ChatScreen skips composing the strip and fix the harness/mount condition.
+2. Derived-artifacts lane: drift reported on the committed bundle/inventory; locally preflight is green -- compare CI's committed-vs-rebuild report (run 39094864018) before regenerating.
+3. Local-only clusters to classify (env vs conversion): inspector_compact_access rail-display (6; pure-dev baseline fails 12/12 -- environmental), response_rules/blocked_send/prompts.
+NOTE: the implementation-notes sections in this file got reordered across the queue's rebase of the branch; content is all present, ordering is cosmetic.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
