@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-17 11:17
-updated_date: '2026-10-18 13:20'
+updated_date: '2026-10-18 16:10'
 dependencies:
 - TASK-33006.19
 labels:
@@ -19,6 +19,7 @@ references:
 - tldw_chatbook/Widgets/Console/console_settings_field_row.py
 - tldw_chatbook/Chat/console_settings_apply.py
 - tldw_chatbook/UI/Console_Modules/model_switcher.py
+- tldw_chatbook/UI/Console_Modules/connection_probe.py
 - tldw_chatbook/UI/Screens/chat_screen.py
 - Tests/UI/test_console_endpoint_discovery.py
 ---
@@ -79,9 +80,9 @@ Review round 2 (Ctrl+N read the wrong connection, or one nothing tested):
 
 Review round 3: round 2's second prober built its own `asyncio.Semaphore(SWITCHER_PROBES_IN_FLIGHT)`, so one open on a moved endpoint could run up to six probes, not three. `switcher_connection_prober` takes an optional `gate=` (a new semaphore when None) and `_switcher_sources` passes one to both probers, so connection_probe.py's comment, console.md's "at most three at a time" and TASK-33005.5's note hold again. The two stand-ins that replace the factory (Tests/conftest.py's `_no_switcher_probe` lambda and test_console_setup_card_switcher.py's `stub_only`) accept the keyword. New node `Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap` drives `_switcher_sources`' own `connection_prober` (a stand-in screen, the real prober, a held fake network) for a llama.cpp chat on :8200 with :8101, :8102 and :8103 configured: four servers, at most three in flight. With two gates again it fails `assert 4 == 3`; census 362 -> 363, 3 of 3 serial. Verification: the switcher, setup-card, endpoint-discovery, probe-target, model-switcher and model-change files (xdist, test_app_instance_warning.py deselected): 1 failed / 281 passed; the failure, `test_shared_evidence_change_refreshes_the_console_once`, also fails serially at 8261078227 (3 of 3, `assert 1 == 2`, the same as at head). Ratchets, serial: the same 11 rows as 8261078227. Tests/CI: 962 passed, 1 skipped. `./scripts/preflight.sh` under a scratch HOME: rc 0. ruff on the touched files: the same findings as 8261078227. Modified: connection_probe.py, model_switcher.py, Tests/conftest.py, Tests/UI/test_console_setup_card_switcher.py, Tests/UI/test_console_switcher_local_probe.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py.
 
-Census: three node ids appended (MINIMUM_FILES 355 -> 358) and two renamed in place; review round 1 appends three more (358 -> 361), review round 2 one more (361 -> 362) and rewords the AC#4 line. Docs: Docs/User_Guide/console.md (pick mode's Endpoint paragraph and Switch model's listing paragraph; review round 1: that paragraph's readiness and background check, and the Ctrl+N bullet; review round 2: the background check covers the configured server too, and the Ctrl+N bullet's save and refusal). Lessons: backlog/docs/lessons-testing-evidence.md (a pick test that goes straight to its target skips the switcher's rebases; review round 2: a hand-published result can stand in for a probe the product no longer runs).
+Census: three node ids appended (MINIMUM_FILES 355 -> 358) and two renamed in place; review round 1 appends three more (358 -> 361), review round 2 one more (361 -> 362) and rewords the AC#4 line, and review round 3 one more (362 -> 363). Docs: Docs/User_Guide/console.md (pick mode's Endpoint paragraph and Switch model's listing paragraph; review round 1: that paragraph's readiness and background check, and the Ctrl+N bullet; review round 2: the background check covers the configured server too, and the Ctrl+N bullet's save and refusal). Lessons: backlog/docs/lessons-testing-evidence.md (a pick test that goes straight to its target skips the switcher's rebases; review round 2: a hand-published result can stand in for a probe the product no longer runs).
 
-Modified: tldw_chatbook/Chat/console_settings_apply.py, tldw_chatbook/Chat/console_chat_controller.py, tldw_chatbook/Widgets/Console/console_model_popover.py, tldw_chatbook/Widgets/Console/console_settings_field_row.py, tldw_chatbook/UI/Console_Modules/model_switcher.py (review round 1), tldw_chatbook/UI/Screens/chat_screen.py (review round 1), Tests/UI/test_console_endpoint_discovery.py, Tests/UI/test_console_settings_model_change.py (review round 1: its `_switcher_sources` stand-in takes the new keywords), Tests/Architecture/test_module_size_ratchet.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py, Docs/User_Guide/console.md, backlog/docs/lessons-testing-evidence.md.
+Modified: tldw_chatbook/Chat/console_settings_apply.py, tldw_chatbook/Chat/console_chat_controller.py, tldw_chatbook/Widgets/Console/console_model_popover.py, tldw_chatbook/Widgets/Console/console_settings_field_row.py, tldw_chatbook/UI/Console_Modules/model_switcher.py (review round 1), tldw_chatbook/UI/Screens/chat_screen.py (review round 1), Tests/UI/test_console_endpoint_discovery.py, Tests/UI/test_console_settings_model_change.py (review round 1: its `_switcher_sources` stand-in takes the new keywords), tldw_chatbook/UI/Console_Modules/connection_probe.py, Tests/conftest.py, Tests/UI/test_console_setup_card_switcher.py and Tests/UI/test_console_switcher_local_probe.py (review round 3), Tests/Architecture/test_module_size_ratchet.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py, Docs/User_Guide/console.md, backlog/docs/lessons-testing-evidence.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
