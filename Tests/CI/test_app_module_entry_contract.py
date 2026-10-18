@@ -37,8 +37,8 @@ def test_nothing_at_module_level_follows_app_main_block():
     assigned = {
         target.id
         for node in body[:last]
-        if isinstance(node, ast.Assign)
-        for target in node.targets
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in getattr(node, "targets", [getattr(node, "target", None)])
         if isinstance(target, ast.Name)
     }
     assert "_CONSOLE_SKILL_APP_SOURCE" in assigned
