@@ -73,13 +73,18 @@ is `.superpowers/canvas-followups-2026-10-17/context-closeout.md`.
 No full suite, cross-platform run, live provider call or fresh hosted check was run.
 Unrelated Personal Context/Notes qualification debt remains outside this closeout.
 
-## Roadmap and open decision
+## Roadmap and open decision (pre-approval snapshot)
 
 Created six independent To Do tasks: TASK-35370 React, TASK-35371 D3,
 TASK-35372 multi-file V3/VFS, TASK-35373 network, TASK-35374 filesystem,
 TASK-35375 partitioned cookies/persistent state. Future capability work requires
 its own bounded design/ADR, explicit authority and adversarial qualification.
 The current zero-egress runtime remains unchanged.
+
+The following paragraph records the first local closeout, before the user’s later
+2026-10-17 approval. Current status: TASK-31003 is Done as a contract-design task,
+ADR-239 is Accepted, and the approved design’s delivery map tracks the separate
+client/server implementation tasks.
 
 TASK-31003 remains In Progress with all original criteria open. The
 [sync contract proposal](../specs/2026-10-17-canvas-server-sync-contract-design.md)
