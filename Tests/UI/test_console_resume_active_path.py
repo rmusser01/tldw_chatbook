@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.app import ComposeResult
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -650,7 +651,10 @@ def _transcript_message_snapshot(
         ("sibling", EffectiveMemoryKind.RAW, None, None, None),
     ],
 )
+@pytest.mark.asyncio
+@private_profile_test
 def test_restart_memory_banner_matches_dispatch_effective_state(
+    request,
     tmp_path,
     case,
     expected_kind,
@@ -708,7 +712,11 @@ def test_restart_memory_banner_matches_dispatch_effective_state(
         restarted_db.close_connection()
 
 
-def test_restart_legacy_prefix_banner_matches_dispatch_effective_state(tmp_path):
+@pytest.mark.asyncio
+@private_profile_test
+def test_restart_legacy_prefix_banner_matches_dispatch_effective_state(
+    request, tmp_path
+):
     db_path = tmp_path / "memory-banner-legacy.sqlite"
     initial_db = CharactersRAGDB(db_path, "memory-banner-legacy-initial")
     conversation_id, ids = _persist_memory_banner_conversation(initial_db)
@@ -755,7 +763,10 @@ def test_restart_legacy_prefix_banner_matches_dispatch_effective_state(tmp_path)
         ("sibling", "a3-alt", EffectiveMemoryKind.GENERATED_PREFIX),
     ],
 )
+@pytest.mark.asyncio
+@private_profile_test
 def test_restart_hides_off_lineage_banner_and_returning_restores_it(
+    request,
     tmp_path,
     case,
     off_lineage_leaf,
@@ -816,7 +827,9 @@ def test_restart_hides_off_lineage_banner_and_returning_restores_it(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_file_backed_banner_add_replace_clear_restore_is_presentation_only(
+    request,
     tmp_path,
 ):
     """Mounted banner lifecycle cannot mutate or reconstruct transcript data."""
@@ -910,7 +923,9 @@ async def test_file_backed_banner_add_replace_clear_restore_is_presentation_only
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_file_backed_sibling_navigation_clears_and_restores_banner(
+    request,
     tmp_path,
 ):
     """Real branch navigation keeps shared rows while scope follows lineage."""

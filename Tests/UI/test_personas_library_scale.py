@@ -33,6 +33,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     PersonasLibraryPane,
 )
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_personas_dictionaries import PersonasTestApp
 
 pytestmark = pytest.mark.asyncio
@@ -78,7 +79,8 @@ async def _personas(mock_app_instance, db, monkeypatch):
         yield pilot, pilot.app.screen
 
 
-async def test_first_page_and_next(mock_app_instance, scaled_db, monkeypatch):
+@private_profile_test
+async def test_first_page_and_next(request, mock_app_instance, scaled_db, monkeypatch):
     baseline = scaled_db.count_character_cards()
     _seed(scaled_db, 130)
     total = baseline + 130
@@ -133,7 +135,10 @@ async def test_tag_filter_narrows_count_and_resets_offset(
         assert screen._character_total == scaled_db.count_character_cards()
 
 
-async def test_sort_change_resets_offset(mock_app_instance, scaled_db, monkeypatch):
+@private_profile_test
+async def test_sort_change_resets_offset(
+    request, mock_app_instance, scaled_db, monkeypatch
+):
     _seed(scaled_db, 130)
     async with _personas(mock_app_instance, scaled_db, monkeypatch) as (
         pilot,
@@ -186,8 +191,9 @@ async def test_character_page_reads_run_off_the_event_loop(
         assert all(seen is False for seen in on_loop)
 
 
+@private_profile_test
 async def test_character_search_defaults_to_relevance_sort(
-    mock_app_instance, scaled_db, monkeypatch
+    request, mock_app_instance, scaled_db, monkeypatch
 ):
     from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
         PersonaSearchChanged,
@@ -205,8 +211,9 @@ async def test_character_search_defaults_to_relevance_sort(
         await pilot.pause()
 
 
+@private_profile_test
 async def test_sort_cycle_excludes_relevance_outside_characters_mode(
-    mock_app_instance, scaled_db, monkeypatch
+    request, mock_app_instance, scaled_db, monkeypatch
 ):
     """task-463 #4: personas page in-memory (no FTS), so a searching
     non-characters mode must not offer a "Relevance" option that would be

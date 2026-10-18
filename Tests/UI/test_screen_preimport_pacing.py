@@ -27,6 +27,7 @@ import pytest
 from tldw_chatbook import app as app_module
 from tldw_chatbook.UI.Navigation import screen_registry
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 
 # Real app construction reads the collection-bound private config source.
@@ -51,7 +52,7 @@ def sleep_spy(monkeypatch):
 
     clock = SimpleNamespace(**vars(time))
     clock.sleep = fake_sleep
-    monkeypatch.setattr(app_module, "time", clock)
+    set_app_global(monkeypatch, "time", clock)
     return recorded
 
 

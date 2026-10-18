@@ -1345,6 +1345,8 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope(re
         SettingsCategoryId.PERSONAS,
         SettingsCategoryId.SKILLS,
         SettingsCategoryId.SCHEDULES,
+        SettingsCategoryId.DREAMS,
+        SettingsCategoryId.GUARDIAN,
         SettingsCategoryId.WATCHLISTS,
         SettingsCategoryId.WORKFLOWS,
         SettingsCategoryId.MCP_DEFAULTS,
@@ -1352,12 +1354,12 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope(re
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
     }
-    # LIBRARY_RAG, SCHEDULES, and IMAGE_GENERATION are the "Domain Defaults" members
-    # with a full self-owned editor (Settings genuinely persists their
-    # config) rather than a pure view-only pointer to another destination.
+    # These Domain Defaults members own configuration that Settings persists.
     mutable_categories = {
         SettingsCategoryId.LIBRARY_RAG,
         SettingsCategoryId.SCHEDULES,
+        SettingsCategoryId.DREAMS,
+        SettingsCategoryId.GUARDIAN,
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
     }
@@ -1735,6 +1737,8 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records(reque
         SettingsCategoryId.PERSONAS,
         SettingsCategoryId.SKILLS,
         SettingsCategoryId.SCHEDULES,
+        SettingsCategoryId.DREAMS,
+        SettingsCategoryId.GUARDIAN,
         SettingsCategoryId.WATCHLISTS,
         SettingsCategoryId.WORKFLOWS,
         SettingsCategoryId.MCP_DEFAULTS,
@@ -1752,11 +1756,25 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records(reque
 
     assert domain_categories <= grouped_categories
     assert domain_categories <= set(records)
+    mutable_config_sections = {
+        SettingsCategoryId.SCHEDULES: ("scheduling.briefing_schedules_enabled",),
+        SettingsCategoryId.DREAMS: (
+            "dreams.enabled",
+            "dreams.provider",
+            "dreams.model",
+            "dreams.region",
+        ),
+        SettingsCategoryId.GUARDIAN: ("guardian.enabled",),
+    }
     for category in domain_categories:
         record = records[category]
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
             assert "active RAG profile" in " ".join(record.owns_config_sections)
+        elif category in mutable_config_sections:
+            assert record.writes_allowed
+            assert not record.read_only_reason
+            assert record.owns_config_sections == mutable_config_sections[category]
         else:
             assert not record.writes_allowed
             assert record.read_only_reason
