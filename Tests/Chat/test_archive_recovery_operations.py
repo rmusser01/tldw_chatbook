@@ -305,3 +305,43 @@ async def test_explicit_recovery_fixture_closes_real_worker_connections(
         fixture.close()
         with db.quiesce_connections(timeout_seconds=2.0):
             pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "archived_at",
+    [
+        "2026-09-20T12:00:00+00:00",
+        "2026-09-20T12:00:00Z",
+        "2026-09-20T13:00:00+01:00",
+        "invalid legacy time",
+        None,
+    ],
+)
+async def test_searched_workspace_target_uses_same_time_normalization_for_restore(
+    recovery_stores, archived_at
+):
+    from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveSearchRequest
+    from tldw_chatbook.Chat.archive_recovery.search_service import ArchiveSearchService
+
+    app, cid, _ = recovery_stores
+    with app.workspace_registry_service.db.transaction() as conn:
+        conn.execute(
+            "UPDATE workspace_records SET archived_at = ? WHERE workspace_id = ?",
+            (archived_at, "project"),
+        )
+    page = ArchiveSearchService(
+        app.local_chat_conversation_service, app.workspace_registry_service
+    ).search(ArchiveSearchRequest())
+    target = page.items[0].target
+    current = await read_recovery_target(app, cid)
+    assert current == target
+    outcome = await execute_restore(
+        app,
+        target,
+        "chat_and_workspace",
+        replacement_name=None,
+        cancel_event=threading.Event(),
+    )
+    assert outcome.status == "restored"
+    assert outcome.workspace_changed and outcome.chat_changed

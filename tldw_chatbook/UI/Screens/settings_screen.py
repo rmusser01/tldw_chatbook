@@ -27410,92 +27410,11 @@ class SettingsScreen(BaseAppScreen):
         Args:
             event: The Undo archive button event.
         """
-        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
+        from tldw_chatbook.UI.Settings_Modules.workspace_archive import (
+            undo_workspace_archive,
+        )
 
-        event.stop()
-        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if receipt is None or registry is None:
-            return
-        request = object()
-        self._settings_workspace_undo_request = request
-        selected_id = self._settings_selected_workspace_id
-
-        def _owns_receipt() -> bool:
-            return (
-                self._settings_workspace_undo_request is request
-                and self._settings_workspace_archive_receipt is receipt
-            )
-
-        def _visible() -> bool:
-            return self.is_mounted and self.app.screen is self
-
-        async def _undo() -> None:
-            try:
-                current = await storage_call(
-                    registry, "get_workspace", receipt.workspace_id
-                )
-                if not _owns_receipt() or not _visible():
-                    return
-                if current != receipt:
-                    self._set_settings_workspaces_result(
-                        "Workspace changed since archive. Use View archived to review before restoring."
-                    )
-                    return
-            except WorkspaceRegistryServiceError as exc:
-                if _owns_receipt() and _visible():
-                    self._set_settings_workspaces_result(
-                        f"Could not restore workspace: {exc}. Retry Undo; use View archived "
-                        "and Restore as if the name is in use."
-                    )
-                return
-            operation = asyncio.create_task(_complete_undo())
-            operations = getattr(
-                self.app_instance, "_workspace_lifecycle_operations", None
-            )
-            if operations is None:
-                operations = self.app_instance._workspace_lifecycle_operations = set()
-            operations.add(operation)
-            operation.add_done_callback(operations.discard)
-            operation.add_done_callback(
-                lambda task: None if task.cancelled() else task.exception()
-            )
-            await asyncio.shield(operation)
-
-        async def _complete_undo() -> None:
-            # Keep receipt completion coupled to a write even if a newer
-            # exclusive worker cancels its predecessor's await.
-            try:
-                restored = await storage_call(
-                    registry,
-                    "unarchive_workspace",
-                    receipt.workspace_id,
-                    expected_archive_revision=receipt.archive_revision,
-                    expected_name=receipt.name,
-                )
-            except WorkspaceRegistryServiceError as exc:
-                if _owns_receipt() and _visible():
-                    self._set_settings_workspaces_result(
-                        f"Could not restore workspace: {exc}. Retry Undo; use View archived "
-                        "and Restore as if the name is in use."
-                    )
-                return
-            if self._settings_workspace_archive_receipt is not receipt:
-                return
-            self._settings_workspace_archive_receipt = None
-            self._settings_workspaces_result = (
-                f"Restored {restored.name}. Active workspace unchanged."
-            )
-            if _visible():
-                if self._settings_selected_workspace_id == selected_id:
-                    self._settings_selected_workspace_id = restored.workspace_id
-                    self._set_settings_workspaces_result(
-                        self._settings_workspaces_result,
-                        control_id="settings-workspace-set-active",
-                    )
-                self._refresh_settings_workspaces_pane()
-
-        self.app.run_worker(_undo(), group="settings-workspace-undo", exclusive=True)
+        undo_workspace_archive(self, event)
 
     @on(Button.Pressed, "#settings-workspace-unarchive")
     def handle_workspace_unarchive(self, event: Button.Pressed) -> None:

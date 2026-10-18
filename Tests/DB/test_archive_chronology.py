@@ -165,7 +165,12 @@ def test_archive_chronology_index_orders_mixed_inventory_without_temp_sort(tmp_p
                     for index in range(500)
                 ],
             )
-            conn.execute("ANALYZE")
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
+                ).fetchone()
+                is None
+            )
             plan = conn.execute(
                 "EXPLAIN QUERY PLAN SELECT id FROM conversations WHERE deleted=0 AND archived=1 ORDER BY archived_at DESC, id LIMIT 20"
             ).fetchall()

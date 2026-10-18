@@ -3262,6 +3262,8 @@ DELETE FROM keywords
                 and time.monotonic() >= operation_deadline
             ):
                 if opened_here:
+                    # Setup reset the timeout before publication; expiry owns this close.
+                    conn.execute("PRAGMA busy_timeout = 0")
                     self.close_connection()
                 raise TimeoutError("Conversation connection budget exhausted")
             self._local.conn_last_used = time.monotonic()

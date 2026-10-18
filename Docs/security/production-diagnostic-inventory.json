@@ -37,7 +37,7 @@
     },
     {
       "call_count": 12,
-      "diagnostic_digest": "fa132b556464fa42d57e",
+      "diagnostic_digest": "a4d8406a77b1a3d9a821",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/agent_runtime.py",
       "reason": "remaining Chatbook production diagnostic owner"

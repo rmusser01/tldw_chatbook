@@ -19,14 +19,16 @@ if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
-def normalized_archive_time(value: str | None) -> str | None:
-    """Normalize an observed qualified archive time; invalid legacy values stay unknown."""
+def normalized_archive_time(value: str | None, assume_utc: bool = False) -> str | None:
+    """Normalize UTC; only legacy last-modified values may assume a UTC offset."""
     if not value:
         return None
     try:
         date = datetime.fromisoformat(value)
         if date.tzinfo is None or date.utcoffset() is None:
-            return None
+            if not assume_utc:
+                return None
+            date = date.replace(tzinfo=UTC)
         return date.astimezone(UTC).isoformat(timespec="microseconds")
     except (ValueError, TypeError, AttributeError):
         return None
@@ -59,6 +61,7 @@ WITH workspace AS (
 ), eligible AS (
     SELECT c.id, c.version, substr(c.title,1,1025) AS title,
            c.archived, c.scope_type, c.workspace_id,
+           archive_recovery_utc(c.last_modified, 1) AS modified_at,
            CASE WHEN c.archived = 1 THEN archive_recovery_utc(c.archived_at) END AS chat_at,
            CASE WHEN w.archived = 1 THEN archive_recovery_utc(w.archived_at) END AS workspace_at,
            w.archived AS workspace_archived,
@@ -87,8 +90,10 @@ WITH workspace AS (
     FROM eligible
 ), ordered AS (
     SELECT *, CASE WHEN chat_match OR workspace_match THEN 0 ELSE 1 END AS sort_group,
-           max(CASE WHEN chat_match THEN chat_at ELSE '' END,
-               CASE WHEN workspace_match THEN workspace_at ELSE '' END) AS sort_time
+           CASE WHEN chat_match OR workspace_match THEN
+               max(CASE WHEN chat_match THEN chat_at ELSE '' END,
+                   CASE WHEN workspace_match THEN workspace_at ELSE '' END)
+               ELSE coalesce(modified_at, '') END AS sort_time
     FROM events
     WHERE :dated = 0 OR chat_match OR workspace_match OR (:include_unknown = 1 AND unknown_time)
 )
@@ -175,6 +180,9 @@ def query_archive_recovery_page(
     try:
         conn.create_function(
             "archive_recovery_utc", 1, normalized_archive_time, deterministic=True
+        )
+        conn.create_function(
+            "archive_recovery_utc", 2, normalized_archive_time, deterministic=True
         )
         conn.set_progress_handler(lambda: int(monotonic() >= deadline), 100)
         check()
@@ -272,4 +280,5 @@ def query_archive_recovery_page(
     finally:
         conn.set_progress_handler(None, 0)
         conn.create_function("archive_recovery_utc", 1, None)
+        conn.create_function("archive_recovery_utc", 2, None)
         conn.execute(f"PRAGMA busy_timeout = {old_timeout}")

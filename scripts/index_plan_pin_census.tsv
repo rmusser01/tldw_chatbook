@@ -363,3 +363,6 @@ idx_dream_feedback_story	plan-pinned	Tests/Dreams/test_schema_lineage.py::test_h
 idx_machine_followup_receipts_conversation	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
 idx_response_rule_assessments_source	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
 idx_response_rule_drafts_scope	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+
+# ADR-166: current local archive episode inventory without ANALYZE.
+idx_conversations_archive_chronology	plan-pinned	Tests/DB/test_archive_chronology.py::test_archive_chronology_index_orders_mixed_inventory_without_temp_sort

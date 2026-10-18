@@ -144,9 +144,13 @@ def test_query_plan_and_bounded_projection_on_representative_rows(tmp_path, caps
         conn.create_function(
             "archive_recovery_utc", 1, normalized_archive_time, deterministic=True
         )
+        conn.create_function(
+            "archive_recovery_utc", 2, normalized_archive_time, deterministic=True
+        )
         page_sql = next(sql for sql in statements if "SELECT * FROM ordered" in sql)
         plan = [r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + page_sql)]
         conn.create_function("archive_recovery_utc", 1, None)
+        conn.create_function("archive_recovery_utc", 2, None)
         assert any("INDEX" in detail and "messages" in detail for detail in plan), plan
         assert any("json_each" in detail for detail in plan), plan
         print(
