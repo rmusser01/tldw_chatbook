@@ -104,9 +104,11 @@ async def wait_for_plugin_prune(parent, control, hold):
     """Observe the installed Textual lifecycle rather than simulating flags."""
     await asyncio.wait_for(hold.entered.wait(), 3)
     async with asyncio.timeout(3):
-        while not control.is_detached or parent.is_running:
+        while control.is_attached or parent.is_running:
             await asyncio.sleep(0.01)
-    assert control.is_detached
+    assert not control.is_attached
+    assert parent.is_attached
+    assert parent.app.is_running
     assert not parent.is_running
     assert not hold.release.is_set()
 
@@ -491,7 +493,7 @@ async def test_navigation_during_child_prune_settles_original_load(
             worker = next(w for w in screen.workers if w.group == "plugins-load")
             app.switch_screen(Screen())
             await wait_for_plugin_prune(screen, scope, hold)
-            assert listing.is_detached
+            assert not listing.is_attached
             if boundary == "snapshot-error":
                 await rig.service.aclose()
             gate.release.set()
