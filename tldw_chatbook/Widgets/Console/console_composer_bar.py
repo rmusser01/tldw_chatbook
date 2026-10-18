@@ -590,9 +590,9 @@ class ConsoleComposerBar(Horizontal):
     # Fits the 51-cell shared-executor busy copy plus the chip's cell of
     # horizontal padding on each side at ordinary Console widths.
     VOICE_CHIP_MAX_WIDTH = 53
-    #: Cell cap for the inline `#console-send-disabled-reason` strip. The
-    #: longest copy `build_console_disabled_reason` emits is 49 cells, so 52
-    #: renders every reason whole at common widths. TASK-24415: this is only
+    #: Cell cap for the `#console-send-disabled-reason` strip, its padding
+    #: (0 1) included: a reason shows whole only at <= 50 cells, or 48 for a
+    #: setup blocker, which adds " ›". TASK-24415: this is only
     #: the UPPER bound -- the effective cap is `_send_reason_width_cap`,
     #: derived from the live row width so the strip ellipsizes (or hides,
     #: below `SEND_REASON_MIN_LEGIBLE_WIDTH`) instead of starving the draft;

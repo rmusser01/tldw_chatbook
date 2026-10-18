@@ -684,6 +684,8 @@ Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_rea
 # Phase 9 Task 18 review round 3 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
 # TASK-35190: an open on a moved endpoint runs two probers under one in-flight cap, four local servers at most SWITCHER_PROBES_IN_FLIGHT at a time (~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap
-# Phase 9 capture fix wave (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
+# Phase 9 capture fix wave (2026-10-18) appends entries no lane ran, each 3 of 3 serial.
 # TASK-33641.4 AC#1: a dispatched weekly reminder's painted queue row holds its relative next run at 211x44 and 235x52 (2 cases, ~8 s).
 Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run
+# TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
+Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole

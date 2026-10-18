@@ -1382,11 +1382,11 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         ),
         (
             "Provider setup needed: configure endpoint",
-            "Send blocked — configure the endpoint to continue",
+            "Send blocked — set the endpoint to continue",
         ),
         (
             "Provider setup needed: llama.cpp endpoint unavailable",
-            "Send blocked — configure the endpoint to continue",
+            "Send blocked — set the endpoint to continue",
         ),
         (
             "Provider setup needed: verify local runtime",
@@ -1402,12 +1402,12 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         ),
         (
             "Save provider endpoint in Settings > Providers & Models before sending.",
-            "Send blocked — configure the endpoint to continue",
+            "Send blocked — set the endpoint to continue",
         ),
         # TASK-33005.7: a rejected key is never "add an API key".
         (
             "API key rejected. Update it in Settings > Providers & Models.",
-            "Send blocked — key rejected; update the API key to continue",
+            "Send blocked — key rejected; update the API key",
         ),
     ),
 )

@@ -359,8 +359,8 @@ for example, "Not ready · refused :9099" (the header badge, the Model
 section, the Chat settings rows, the Inspector's **Setup** row and this
 card's "Reconnect the provider server" step), and the composer reads "Send
 blocked — retry the connection to continue". After a 401 ("Not ready · key
-rejected") it reads "Send blocked — key rejected; update the API key to
-continue", never "add an API key". **Retry connection** tests that same server again
+rejected") it reads "Send blocked — key rejected; update the API key",
+never "add an API key". **Retry connection** tests that same server again
 in place; it opens no settings. If the server now answers, the chat is Ready and Send
 unlocks; if not, a "still unreachable" notice says so. A cloud provider's
 key check (Settings **t**) that timed out or could not connect is the

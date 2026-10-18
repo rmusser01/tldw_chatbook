@@ -335,11 +335,11 @@ def build_console_disabled_reason(
         # "model" substring match swallowed the missing-key state and
         # named the wrong blocker.
         if "key rejected" in setup_reason_lower:  # TASK-33005.7: never "add"
-            return "Send blocked — key rejected; update the API key to continue"
+            return "Send blocked — key rejected; update the API key"
         if "api key" in setup_reason_lower:
             return "Send blocked — add an API key to continue"
         if "endpoint" in setup_reason_lower:
-            return "Send blocked — configure the endpoint to continue"
+            return "Send blocked — set the endpoint to continue"
         if "model" in setup_reason_lower:
             return "Send blocked — choose a model to continue"
         if (

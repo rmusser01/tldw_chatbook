@@ -1063,7 +1063,7 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         (
             "unauthorized",
             "Not ready · key rejected",
-            "Send blocked — key rejected; update the API key to continue",
+            "Send blocked — key rejected; update the API key",
         ),
     ),
     ids=("refused", "key-rejected"),
