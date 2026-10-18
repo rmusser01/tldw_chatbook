@@ -760,8 +760,13 @@ from the **Alt+M** popover. Changing a value back to what the chat already
 uses is not an edit. Clearing **Temperature** or **Top P** is one. A chat
 whose **Streaming** follows its default shows the value it inherits and where
 it comes from; picking On or Off pins it for this chat, which counts as an
-edit even when it matches the inherited value. Switching model can return it
-to following its default, which counts too.
+edit even when it matches the inherited value. A model you pick with
+**Change** counts as one edit, **Model**: what the switch itself changes is
+not counted, such as the new model's defaults, **Streaming** following its
+default again, or a field the new provider does not accept being cleared.
+An edit you made before the switch still counts when the new model keeps
+it, and picking the original model back counts only the edits you made to
+it.
 With edits, **Esc** and a click outside the modal
 open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**

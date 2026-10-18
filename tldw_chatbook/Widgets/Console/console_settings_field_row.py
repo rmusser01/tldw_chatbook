@@ -795,7 +795,7 @@ class ConsoleSettingsFieldRowsMixin:
             )
             if (provider_config_key(provider), model) != current:
                 self._cancel_connection_probe()
-                if self._rebase_to(provider, model):
+                if self._rebase_to_pick(provider, model):
                     self._advance_model_generation_preserving_current_listing()
                     self._defer_pending_entry_discovery(provider)
         if self.is_attached:

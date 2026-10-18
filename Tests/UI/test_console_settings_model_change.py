@@ -709,3 +709,71 @@ async def test_a_listing_feeds_pick_mode_but_never_picks() -> None:
             "llama_cpp",
             "served-y",
         )
+
+
+async def _type(pilot, modal, name: str, value: str) -> None:
+    """Edit one field row's Input as a user would leave it."""
+    modal.query_one(f"#{field_control_id(name)}", Input).value = value
+    for _ in range(3):
+        await pilot.pause()
+
+
+async def _esc_prompt(pilot, modal) -> str:
+    """Press Esc and return the first line of the unsaved prompt it opens."""
+    modal.query_one(f"#{MODEL_CHANGE_ID}", Button).focus()
+    await pilot.press("escape")
+    await pilot.pause()
+    await pilot.pause()
+    message = modal.query_one("#console-settings-close-message", Static)
+    return str(message.content).split("\n")[0]
+
+
+@pytest.mark.asyncio
+async def test_a_pick_alone_is_one_edit_named_model() -> None:
+    """TASK-33006.16 AC#1/#2: a pick re-bases the draft onto the new pair's
+    values, but only the pair is the user's edit. The prompt and the title
+    count Model alone: not the new model's defaults, not Streaming
+    following its default again, and not the Min P the new provider rejects
+    and the rebase blanked."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(min_p=0.05))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert modal._unsaved_field_labels() == ()
+        await pick(pilot, app, modal, "claude-sonnet")
+        assert modal._build_draft().min_p is None  # Anthropic rejects Min P
+        assert modal._unsaved_field_labels() == ("Model",)
+        title = modal.query_one("#console-settings-modal-title", Static)
+        assert str(title.content).endswith("· 1 unsaved edit")
+        assert await _esc_prompt(pilot, modal) == "1 unsaved edit to this chat: Model."
+
+
+@pytest.mark.asyncio
+async def test_a_pick_keeps_the_edits_it_carries_and_drops_the_rest() -> None:
+    """TASK-33006.16 AC#2: an edit the rebase carries to the new pair still
+    counts; one it blanks because the new provider rejects it does not. Back
+    on the opened pair, its own edits count again and Model does not; a
+    Streaming pick after the switch is still named (TASK-33003.10)."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await _type(pilot, modal, "temperature", "0.9")
+        await _type(pilot, modal, "min_p", "0.1")
+        assert modal._unsaved_field_labels() == ("Temperature", "Min P")
+
+        await pick(pilot, app, modal, "claude-sonnet")
+        assert modal._unsaved_field_labels() == ("Model", "Temperature")
+
+        streaming = modal.query_one("#console-settings-streaming", Select)
+        streaming.value = "off" if streaming.value == "on" else "on"
+        for _ in range(3):
+            await pilot.pause()
+        assert modal._unsaved_field_labels() == ("Model", "Temperature", "Streaming")
+
+        await pick(pilot, app, modal, "model-a")
+        assert (modal._draft.settings.provider, modal._current_model_value()) == (
+            "llama_cpp",
+            "model-a",
+        )
+        assert modal._unsaved_field_labels() == ("Temperature", "Min P")

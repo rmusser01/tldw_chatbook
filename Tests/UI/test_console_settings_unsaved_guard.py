@@ -735,15 +735,16 @@ async def test_quick_surface_edit_carried_in_asks_then_applies_to_this_chat(
 
 @pytest.mark.parametrize("edit", ["temperature", "model"])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
-    monkeypatch, edit: str
+    request, monkeypatch, edit: str
 ):
     """Real router: Configure credential -> Settings -> Return keeps the ask.
 
     The returned modal is rebuilt from the suspended draft; the edits made
     before the handoff must still count, and nothing else may. The reopened
     modal composes Model from the draft, so only the first modal knows its
-    unedited value.
+    unedited value. A private profile: the production app builds its config.
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
@@ -785,14 +786,12 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         await _settle(pilot, first)
         await _round_trip_edit(pilot, first, edit)
         labels = first._unsaved_field_labels()
-        # Switching model re-bases Streaming's explicit On to Inherit, which
-        # counts: Inherit is a draft value of its own (Qodo #2937). The model
-        # case checks a subset: a fresh profile's switch also re-bases the
-        # other sampling fields, so the exact tuple depends on run order.
-        if edit == "temperature":
-            assert labels == ("Temperature",)
-        else:
-            assert {"Model", "Streaming"} <= set(labels)
+        # Rewritten on purpose by TASK-33006.16: what the pick's rebase
+        # changes (Streaming's explicit On re-based to Inherit, the sampling
+        # fields re-based to model-b's values) is not the user's edit, so the
+        # model case names Model alone. It used to check a subset under Qodo
+        # #2937's ruling that the Streaming re-base counted.
+        assert labels == (("Temperature",) if edit == "temperature" else ("Model",))
         await pilot.click("#console-settings-configure-credential")
 
         settings = None

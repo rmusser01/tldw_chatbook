@@ -386,7 +386,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # file in place (TASK-33002.17, no count change): 350, after Task 12's 346,
 # in the Wave 5 integration. Its review round 1 appends the Image Gen
 # real-CSS backend-row node (TASK-33641.3), now a private-profile test: 351.
-MINIMUM_FILES = 351
+# Phase 9 Task 15 appends the credential round-trip node (TASK-33006.16),
+# now a private-profile test, 3 of 3 serial: 352.
+MINIMUM_FILES = 352
 
 
 def read_census(path: Path) -> list[str]:

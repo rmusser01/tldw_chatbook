@@ -654,3 +654,6 @@ Tests/UI/test_library_skills_builtin_rows.py
 Tests/UI/test_settings_configuration_hub.py::test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table
 # TASK-33641.3 (ledger R11, review round 1): the backend rows' controls stay inside their rows and clickable under the app stylesheet at 235x52 and 120x45 (2 cases, ~30 s, private profile).
 Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and_clickable_under_real_css
+# Phase 9 Task 15 (2026-10-18) appends one entry no lane ran, 3 of 3 serial (and 10 of 10, TASK-33003.21's bar).
+# TASK-33006.16: through a real credential round trip a pick still names Model alone, and a Temperature edit still asks (2 cases, ~40 s, private profile).
+Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
