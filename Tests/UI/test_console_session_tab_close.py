@@ -1750,41 +1750,17 @@ async def test_session_close_failure_and_retry_journeys(
                 gc.collect()
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_session_close_pending_race_and_fleet_journeys(
-    request: pytest.FixtureRequest,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+async def _run_scenarios(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, scenarios
 ) -> None:
-    """Run pending, race, geometry and fleet scenarios with fresh owners.
+    """Run ``(verify, kwargs)`` scenarios one by one, each with fresh owners.
 
     Args:
         request: Pytest request selecting the isolated private-profile child.
-        tmp_path: Parent directory for the fleet scenarios' private databases.
         monkeypatch: Fixture providing a separate patch context per scenario.
+        scenarios: Pairs of an async verify function and its keyword arguments.
     """
-    fleet_dir = tmp_path / "fleet-close"
-    fleet_dir.mkdir()
-    for verify, kwargs in (
-        (
-            _verify_background_pending_close_names_consequences_and_cancels_only_its_owner,
-            {},
-        ),
-        (_verify_background_pending_close_releases_round_without_an_active_turn, {}),
-        (
-            _verify_chat_create_enrichment_cannot_arm_after_its_session_closes,
-            {"monkeypatch": monkeypatch},
-        ),
-        (
-            _verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24,
-            {},
-        ),
-        (
-            _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry,
-            {"tmp_path": fleet_dir, "monkeypatch": monkeypatch},
-        ),
-    ):
+    for verify, kwargs in scenarios:
         try:
             with monkeypatch.context() as patch:
                 if "monkeypatch" in kwargs:
@@ -1797,3 +1773,68 @@ async def test_session_close_pending_race_and_fleet_journeys(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ResourceWarning)
                 gc.collect()
+
+
+# TASK-35026: these five scenarios were one test that reached its lane's 180 s
+# limit in CI (about 183 s); split in two of about the same time.
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_close_pending_journeys(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the two background pending-close scenarios with fresh owners.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        monkeypatch: Fixture providing a separate patch context per scenario.
+    """
+    await _run_scenarios(
+        request,
+        monkeypatch,
+        (
+            (
+                _verify_background_pending_close_names_consequences_and_cancels_only_its_owner,
+                {},
+            ),
+            (
+                _verify_background_pending_close_releases_round_without_an_active_turn,
+                {},
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_close_race_geometry_and_fleet_journeys(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run the race, geometry and fleet scenarios with fresh owners.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Parent directory for the fleet scenario's private databases.
+        monkeypatch: Fixture providing a separate patch context per scenario.
+    """
+    fleet_dir = tmp_path / "fleet-close"
+    fleet_dir.mkdir()
+    await _run_scenarios(
+        request,
+        monkeypatch,
+        (
+            (
+                _verify_chat_create_enrichment_cannot_arm_after_its_session_closes,
+                {"monkeypatch": monkeypatch},
+            ),
+            (
+                _verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24,
+                {},
+            ),
+            (
+                _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry,
+                {"tmp_path": fleet_dir, "monkeypatch": monkeypatch},
+            ),
+        ),
+    )

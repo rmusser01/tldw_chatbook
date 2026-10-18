@@ -335,7 +335,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # The owner's decisions on its open questions (2026-10-17) raised it by 2, to
 # 322: decision D2's keyless-403 hint in Settings' Test rows and in Chat
 # settings' Test connection, appended last (1-2 s each), each 3 of 3 serial.
-MINIMUM_FILES = 322
+# TASK-35413 raised it by 1, to 323: the project-instruction status row's
+# sync-before-compose pin, appended last (no app; well under 1 s).
+MINIMUM_FILES = 323
 
 
 def read_census(path: Path) -> list[str]:

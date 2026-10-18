@@ -566,3 +566,5 @@ Tests/UI/test_console_local_server_discovery_card.py::test_a_card_unblocked_and_
 Tests/UI/test_settings_provider_test_draft.py::test_a_keyless_403_listing_suggests_a_key_on_the_endpoint_row
 # TASK-33008 owner decision D2: Chat settings' Test connection says the same, naming Settings (2 s).
 Tests/UI/test_console_session_settings.py::test_a_keyless_403_to_test_connection_suggests_a_key_in_settings
+# TASK-35413: a project-instruction status sync before the row is built paints the synced status (well under 1 s).
+Tests/UI/test_console_project_instruction_choose_folder.py::test_status_row_synced_before_its_compose_runs_paints_that_state

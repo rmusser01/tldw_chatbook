@@ -370,6 +370,45 @@ async def test_a_child_ended_by_the_ask_itself_is_reported_as_such(
     text = str(failure.value)
     assert "ended by the ask for its stacks before it could answer)" in text
     assert "exited by itself" not in text and "(killed" not in text
+    assert "was exiting" not in text
+
+
+#: Has written its JUnit report (its session ended), then has its SIGUSR1
+#: handler put back to the default, as interpreter shutdown does, and is
+#: still running when the parent asks.
+_EXITING_ONCE_REPORTED = """
+import os, pathlib, signal, time
+pathlib.Path({report!r}).write_text(
+    '<testsuites><testsuite><testcase classname="zq" name="zq"/></testsuite></testsuites>'
+)
+signal.signal(signal.SIGUSR1, signal.SIG_DFL)
+pathlib.Path(os.environ[{ready!r}]).touch()
+for _ in range(1200):  # at most 60 s
+    time.sleep(0.05)
+"""
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
+async def test_a_child_ended_by_the_ask_while_exiting_is_reported_as_exiting(
+    request, tmp_path, monkeypatch
+):
+    """TASK-35027: the default action ending a child whose session had ended
+    is a slow exit, not a child still starting up."""
+    _ask_once_the_child_is_ready(monkeypatch, tmp_path)
+    report = tmp_path / "private-profile-process" / "pytest.xml"
+    script = _EXITING_ONCE_REPORTED.format(report=str(report), ready=_READY)
+    _watch_the_spawn(monkeypatch, {}, script)
+    child = test_child_whose_worker_never_answers
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert (
+        "it had finished its test and was exiting when the ask for its stacks "
+        "ended it)" in text
+    )
+    assert "before it could answer" not in text and "(killed" not in text
 
 
 #: Ends its log one byte into a two-byte character, as a kill between two
