@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 
 import pytest
@@ -19,6 +19,83 @@ from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.tool_results import decode_protocol_frame, parse_tool_result
+
+
+@contextmanager
+def _observe_mcp_timeout(delay):
+    import sys
+    import threading
+    import time
+
+    if delay is None:
+        yield
+        return
+    owner = threading.get_ident()
+    started = time.monotonic()
+    source_root = __file__.rsplit("Tests", 1)[0]
+
+    def sample():
+        copied = []
+        frames = sys._current_frames()
+        frame = None
+        try:
+            identities = [owner] + [
+                identity
+                for identity in frames
+                if identity not in {owner, threading.get_ident()}
+            ]
+            for identity in identities:
+                frame = frames.get(identity)
+                stack = []
+                for _ in range(20):
+                    if frame is None:
+                        break
+                    stack.append((frame.f_code, frame.f_lineno))
+                    frame = frame.f_back
+                frame = None
+                if identity == owner or any(
+                    code.co_filename.startswith(source_root) for code, _line in stack
+                ):
+                    copied.append(("owner" if identity == owner else "worker", stack))
+                    if len(copied) == 8:
+                        break
+        finally:
+            frame = None
+            frames.clear()
+            del frames
+        stacks = []
+        for role, stack in copied:
+            rows = []
+            for code, line in stack:
+                filename = code.co_filename
+                label = (
+                    filename[len(source_root) :].replace("\\", "/")
+                    if filename.startswith(source_root)
+                    else "<external>"
+                )
+                rows.append((label, code.co_name, line))
+            stacks.append((role, rows))
+        message = json.dumps(
+            {
+                "diagnostic": "mcp-timeout",
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+                "stacks": stacks,
+            }
+        )
+        if len(message) > 32600:
+            message = '{"diagnostic":"mcp-timeout","limit_exceeded":true}'
+        sys.stderr.write(message + "\n")
+
+    timer = threading.Timer(delay, sample)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+        timer.join(timeout=0.5)
+        if timer.is_alive():
+            sys.stderr.write('{"diagnostic":"mcp-timeout","sampler_pending":true}\n')
 
 
 def wire_result(decision="pass"):
@@ -499,9 +576,7 @@ async def test_actual_stdio_required_initializer_runs_through_existing_tool_pipe
             required_handler_ids=lambda _definition: (
                 None
                 if mode == "unknown_dependencies"
-                else ("initializer",)
-                if mode == "depends_on_initializer"
-                else ()
+                else ("initializer",) if mode == "depends_on_initializer" else ()
             ),
         )
         engine.mcp_executor.bind_context(context)
@@ -511,7 +586,8 @@ async def test_actual_stdio_required_initializer_runs_through_existing_tool_pipe
             lifecycle.event("SessionStart", data={"reason": "startup"})
         )
         try:
-            result = await asyncio.wait_for(lifecycle.initialize(token), 5)
+            with _observe_mcp_timeout(4.0 if mode == "success" else None):
+                result = await asyncio.wait_for(lifecycle.initialize(token), 5)
             if mode != "success":
                 assert not result.allowed and not result.accepted
                 if mode == "disconnected":
@@ -975,16 +1051,17 @@ async def test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_con
             hooks_v2_turn_id="turn",
         )
         try:
-            _run_id, result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    service.run_turn,
-                    conversation_id="conversation",
-                    messages=[{"role": "user", "content": "calculate"}],
-                    config=replace(CFG, allowed_tools=("calculator", name)),
-                    api_endpoint="test",
-                ),
-                10,
-            )
+            with _observe_mcp_timeout(9.0):
+                _run_id, result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        service.run_turn,
+                        conversation_id="conversation",
+                        messages=[{"role": "user", "content": "calculate"}],
+                        config=replace(CFG, allowed_tools=("calculator", name)),
+                        api_endpoint="test",
+                    ),
+                    10,
+                )
             assert result.status == "done", result
             assert len(normal_service.execution_log.read_recent()) == 1
             assert "Admitted MCP review context" in str(chat.calls[-1])
@@ -1301,9 +1378,9 @@ async def test_original_mcp_result_rechecks_normal_authority_after_post_and_at_a
             counter = await client.call_tool_result(
                 "fixture", "fixture", {"counter": True}
             )
-            assert counter.content[0]["text"] == "2", (
-                "acceptance replayed the original tool"
-            )
+            assert (
+                counter.content[0]["text"] == "2"
+            ), "acceptance replayed the original tool"
         finally:
             release.touch()
             accept_release.set()

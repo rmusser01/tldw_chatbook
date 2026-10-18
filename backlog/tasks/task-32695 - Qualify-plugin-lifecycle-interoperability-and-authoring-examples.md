@@ -3,17 +3,17 @@ id: TASK-32695
 title: Qualify plugin lifecycle interoperability and authoring examples
 status: In Progress
 assignee:
-  - '@codex'
-created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 17:32'
+- '@codex'
+created_date: 2026-09-16 04:34
+updated_date: 2026-10-18 17:59
 labels:
-  - plugins
-  - implementation
-  - delivery
+- plugins
+- implementation
+- delivery
 dependencies:
-  - TASK-32694
+- TASK-32694
 documentation:
-  - Docs/superpowers/plans/2026-09-15-plugin-marketplaces-and-ui.md
+- Docs/superpowers/plans/2026-09-15-plugin-marketplaces-and-ui.md
 priority: medium
 ---
 
@@ -267,8 +267,8 @@ Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and 
 109. Authorize tests-first only for ordinary MCP import repair: add test_mcp_connection_health_import_keeps_native_cleanup_deferred to existing selected Tests/Performance/test_app_startup_performance.py using _run_isolated_python unchanged. Fresh child installs canonical network/profile guards before actual cold ConnectionOwnership import, verifies plain healthy and _closed unavailable SimpleNamespace, and asserts Plugins.data_cleanup stays unloaded; no conftest prewarm, JSON mirror, fake OS or new helper. Existing helper preserves selected private config/admission env. Root freezes and observes genuine eager-native-import RED on actual Darwin before any MCP product edit. After RED root separately authorizes moving only root_ref import into existing _reserve non-None data_root branch in MCP/connection_ownership.py; exact native helper/matching/reservation behavior unchanged, no native flags fallback, modulecapraise, API or authority change. First Windows trace directly proves eager-import failure; other14generic failures require fresh actual renewal, no claimtheiroriginalexceptionsrecovered. Existing ADR162/163, no new ADR.
 
 110. Actual frozen3030 ci08 is genuine RED: the fresh guarded child successfully imports/executes both health assertions then fails only because Plugins.data_cleanup is loaded (childline13),1FAIL0.97s; inputsunchanged0unexpected. Accept exact prospective-product.diff: only MCP/connection_ownership.py removes module-level root_ref import and imports the same function inside existing _reserve if root is not None branch. Preserve every root matching/currentness/reservation/authority/terminal statement, imports of types and public APIs; no fallbackflags/platformguard relaxation or extrahelper. Module622to623,no caprow. Rootprovennative ordinaryMCPdirecttrace + bounded14inference; renew actual15throughfour existingfunctions includinginitializerrefusals, typed/unified health controls, pureconnectionidentity module and actual installed stdio/HTTP withrealdataRoot. Source-service42andportablelegacy2run independently on same immutable testsfreeze. Existing ADR162/163, no newADR/amendment. Before freeze06 retry, previous extractionfailedENOSPC with no runtime; removed only this task completed extractedsourcecopies after archive/manifest/hashverification plus incompletecopy, retaining allarchives/manifests/results. Records recoverable-source-cleanup.json/freeze05-prelaunch-failure.json; no foreign/userdata deleted. Root owns runtime/commit/Git; agent exactoneproductfile source/static only.
+111. Temporary bounded observer only in existing Tests/Agents/test_hooks_v2_mcp_execution.py under prospective-observer.diff helper774a5ad2 and original4ca040d9. One-shot timers4s/9s around exactly two original5s/10s waits; preserve deadlines/assertions/guards/peers/product. Max8threads x20frames and32KiB, code+lineno only; release all frames before format/IO per TASK33620.15. No locals/source/payload/env/threadnames/absolute paths, repeating/global tracer or workflow change. Root stdlib selfcheck/static/nativeDarwin controls/review then exactlease publication and hostedWindows observation; remove temporary observer after diagnosis. Current2ab Windows306PASS466SKIP2TimeoutError0setupERROR; cause unknown, no timeout/production fix justified. ADR required:no, existing ADR148/163; no contract/platform/dependency change. AC21 open; no fullsuite/install/merge/gateweakening. Missing Node cache CLI replaced by existing backlog-py CLI.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->

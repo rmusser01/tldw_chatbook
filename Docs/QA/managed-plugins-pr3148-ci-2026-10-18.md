@@ -175,3 +175,11 @@ Second independent review: **0 Critical / 0 Important / 0 Minor**, report
 The reviewer independently verified exact diff/AST scope, real RED, both completed
 GREEN phases and frozen source equality. It reran no tests and makes no native
 Windows-success or merge-readiness claim. Existing ADR-148/162/163 apply; no new ADR.
+
+## Second published repair: native results and remaining diagnosis
+
+Published head `2ab43a146fc7f2cf14bec23de6760e64c90cab23`, qualification run39150110865, actual merge checkout `a73741b7240ca6aa81ef3701741c5e87375cfd6c`: macOS771PASS3SKIP, Linux461PASS313SKIP, Windows306PASS466SKIP2FAIL0setupERROR. Prior source fixture, native import and portable shutdown failures are genuinely renewed green. Windows retains only initializer[success] original5s and admitted AgentService original10s outer TimeoutError. Their cancellation traces do not identify the running worker stage; a late cleanup disconnect is not evidence of the original cause. No product repair or deadline increase is justified yet.
+
+Backlog plan111 authorizes one temporary, bounded, one-shot test observer at4s/9s in the existing selected MCP test file. It preserves original deadlines, assertions, cleanup, peers and profile/network/native guards. It copies only code objects and line numbers, drops all frame references before formatting/I/O, and emits at most8stacks x20frames /32KiB without source, locals, payloads or private paths. The existing diagnostics plugin was rejected because it retains frames while formatting source, matching the documented TASK33620.15 SQLite sampler trap. The observer will be removed after native diagnosis. This is diagnostic publication, not a fix or merge-readiness claim.
+
+Raw second-run logs/artifacts and exact identities remain in `.superpowers/pr3148-ci-20261018-02/`; macOS artifact12145089569 ZIP SHA25645033d77b6f751758d477a6061489343524c6082ad0c17798a3b324c519dcdc9. Full suite, platform support expansion and merge remain out of scope. AC21 stays open pending diagnosis, repair and renewed native results.
