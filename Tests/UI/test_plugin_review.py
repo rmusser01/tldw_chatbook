@@ -2247,7 +2247,7 @@ async def test_confirmed_profile_save_survives_close_during_child_prune(
             assert modal.draft.review is review
             modal.query_one("#plugin-review-close", Button).press()
             await wait_for_plugin_prune(modal, reference, hold)
-            assert status.is_detached
+            assert not status.is_attached
             assert app.screen is owner
             assert modal.draft.configuration == configuration
             if boundary in {"save-error", "refresh-error"}:
@@ -2397,7 +2397,7 @@ async def test_confirmed_explicit_test_survives_close_during_child_prune(
                 worker = next(w for w in modal.workers if w.group == "plugin-test-view")
                 modal.query_one("#plugin-review-close", Button).press()
                 await wait_for_plugin_prune(modal, body, hold)
-                assert status.is_detached
+                assert not status.is_attached
                 assert app.screen is owner
                 if outcome == "error":
                     runtime.discard_plugin_test(review)

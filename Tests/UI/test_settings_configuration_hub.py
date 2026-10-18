@@ -6426,7 +6426,7 @@ async def test_settings_category_search_filters_and_enter_opens_first_match(requ
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+            "Filter: priv | 3 matches | Enter opens Privacy & Security",
         )
 
         assert screen.query_one("#settings-category-privacy-security").display
@@ -6457,13 +6457,18 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+            "Filter: priv | 3 matches | Enter opens Privacy & Security",
         )
 
         visible_text = _visible_text(screen)
         assert (
-            "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text
+            "Filter: priv | 3 matches | Enter opens Privacy & Security" in visible_text
         )
+        assert screen._filtered_category_values() == [
+            SettingsCategoryId.PRIVACY_SECURITY.value,
+            SettingsCategoryId.OVERVIEW.value,
+            SettingsCategoryId.PERSONAL_CONTEXT.value,
+        ]
         assert screen.query_one("#settings-category-privacy-security").has_class(
             "settings-primary-search-match"
         )
@@ -12416,11 +12421,15 @@ async def test_settings_privacy_security_recovery_actions_navigate_to_existing_c
         await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
 
-        await pilot.click("#settings-open-provider-credentials")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-open-provider-credentials"
+        )
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
         await _open_settings_category(pilot, "#settings-category-privacy-security")
-        await pilot.click("#settings-open-advanced-config")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-open-advanced-config"
+        )
         assert screen.active_category == SettingsCategoryId.ADVANCED_CONFIG.value
 
 

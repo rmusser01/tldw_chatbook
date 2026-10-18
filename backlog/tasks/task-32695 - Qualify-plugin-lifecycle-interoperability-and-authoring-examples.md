@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 15:33'
+updated_date: '2026-10-18 15:40'
 labels:
   - plugins
   - implementation
@@ -230,6 +230,8 @@ Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and 
 91. Following the independent exact diagnostic-statement/sink and fixed888ca82 reviews, regenerate only production-diagnostic-inventory.json for the six reviewed owner rows: same1/2/24 log statements moved into existing helpers, no text/level/value/sink change. Relocate only the two existing markup census rows (2sites each) to the already-escaped mcp_profile_actions functions, preserving all other rows and total count. Keep scripts/checker policies unchanged. W002 remains pending the actual prune regression and running-fence repair before its individually reviewed census update. Native MCP hostile-name control and all relevant static checks must pass; no new ADR for reviewed metadata relocation.
 
 92. Repair the completed known failure cohorts while immutable freeze03 continues full286 accounting (this supersedes provisional instruction to wait before editing live copies). In the exact seven bound test paths, reuse existing real scrolling/click helper at14 proven offscreen Save/Revert sites, suppress irrelevant7s splash with existing _cli_no_splash flag for the two realCSS parameter cases without changing5s bound, and align only the two domain/ownership oracles to current explicit Dreams/Guardian/Schedules contracts. For the19 affected-owner outcomes, add existing private-profile lifetime/request/necessary asyncio marks to only12 defining functions, preserving bodies/assertions/fixture closure. Fix the independent shared-clock hygiene finding through existing set_app_global using the same copied SimpleNamespace, leaving stdlib/subprocess clocks real. No production/global-fixture/guard/assertion weakening, direct handlers, raised timeout/caps or new ADR. Verify source-body/oracle scope, then rerun every failed node plus existing helper/clock positive controls; later newly reached outcomes return for exact attribution.
+
+93. After the complete286-case run confirms266passes/20failures, bind the final three hub failures to settings-round2/stage2/scope.json. Correct only three old priv-match count literals from2to3, pin exact actual/source-ranked IDs PrivacySecurity→Overview→MyProfile, and scroll to the two actual privacy-recovery buttons before their existing real clicks. Preserve Enter target and all assertions/classes; no changed search/routing/visibility product behavior, guard, timeout or new ADR. Renew those3exactnodes plus existing filter-reset/rank/real-recovery controls; all otherSettings outcomes remain accounted from immutable original and known17repair renewal.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
