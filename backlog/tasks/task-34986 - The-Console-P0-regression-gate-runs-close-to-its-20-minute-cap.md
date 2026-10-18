@@ -1,7 +1,7 @@
 ---
 id: TASK-34986
 title: The Console P0 regression gate runs close to its 20-minute cap
-status: In Progress
+status: Done
 created_date: 2026-10-14 16:13
 labels:
 - ci
@@ -9,7 +9,7 @@ labels:
 priority: medium
 assignee:
 - '@claude'
-updated_date: 2026-10-15 15:32
+updated_date: 2026-10-18 07:30
 ---
 
 ## Description
@@ -20,7 +20,7 @@ The Console P0 regression gate is one of the jobs behind the required check, wit
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The gate's slowest run over at least 20 pull-request runs leaves at least 4 minutes under its cap
+- [x] #1 The gate's slowest run over at least 20 pull-request runs leaves at least 4 minutes under its cap
 - [x] #2 No test is dropped from the required check to achieve it
 - [x] #3 The contract tests that pin the gate reflect the new layout
 <!-- AC:END -->
@@ -56,11 +56,12 @@ Tests: Tests/CI + Tests/Packaging/test_python_runtime_floor.py 930 passed, 1 ski
 
 Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, Tests/CI/test_response_rules_critical_gate.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
 Review of #3117, item 1 (re-check on later data): over the 43 runs since #3106 merged in which the gate finished every step, the replay gives the two Console P0 steps plus setup median 11.4 / max 13.6 min. On dev the gate itself kept reaching for its cap meanwhile: median 16.0 / max 19.5 over 48 finished runs, and one more cancelled at 20.1 min (38671778432, whose Console steps took 13.0 min). Both figures checked with the scratchpad's measure2.py-style replay against gh api jobs data.
+AC#1 measured, 2026-10-18. Data: every completed attempt of the pull_request runs of derived-artifacts.yml created from 2026-10-15 16:27Z (#3117 merged) to 2026-10-18 06:33Z: 90 runs, 124 attempts, read with gh api .../runs/<id>/attempts/<n>/jobs and the failed jobs' logs. 'Console P0 regression gate', every job that finished (success or failure): n=94, median 12.4 / p90 13.7 / max 14.7 min (run 38849278078, green), 5.3 min under the 20-min cap; the AC asks 4. Two of the 94 failed on a test; four more jobs were cancelled after 0.9-11.5 min by a newer push to their branch, none at the cap. Before the split the gate measured median 16.1 / max 18.7 with two runs cancelled at 20.3 min.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Split the Console P0 regression gate along its two owners: the Dreams/Guardian boundary steps run in their own required job (dreams-boundary, PR #3117) with their argv unchanged. Its slowest run over 94 finished PR-run jobs is now 14.7 min against its 20-min cap (it was 18.7, with runs cancelled at the cap).
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
