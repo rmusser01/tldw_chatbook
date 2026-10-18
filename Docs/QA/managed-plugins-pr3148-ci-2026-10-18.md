@@ -211,3 +211,63 @@ Plan114 aligns this boundary's outer watchdog to15s across its ten real stdio/HT
 Process deviation: the Backlog114 CLI was invoked before the source edit but yielded a running session; the edit occurred2.238s before the plan file actually persisted. Root then awaited completion and verified the exact accepted plan before any freeze/runtime/commit/publication. Source stayed inside the predeclared one-literal/comment scope. The write-order receipt is plan114-write-order-deviation.json; subsequent dependent CLI work waits for completion.
 
 Final typed-watchdog source1fefc73e59504c484a4a743d95ccdab26b8a13fb: frozen ci13 full modified MCP module **48PASS26.46s**, input manifest unchanged,91known bytecode cache outputs/0unexpected outputs. This includes all transport, normalization, preflight refusal, cancellation, post-event custody and final-authority recheck cases. The seven legacy controls retain the same exact source and also passed native Windows in run39155307353. Fresh scoped review **0C/0I/0M**, SHA256`95802a28c024757d62c5802856b84aaeb5666812ca52918ab4b12f4ee87fafce`. Current MCP source SHA260b0cc365d9b36f640a7814e7309eefa86d1ee760bf836952f3bded684457f6; Ruff/Black pass. All3262 production/script/security inputs remain identical to the prior four passing static gates. New fixture-publication and watchdog incidents are recorded in lessons-testing-evidence.md. Publication/native renewal remain pending at this receipt; no full suite or merge claim.
+
+
+## Windows GGUF renewal and setup-failure ownership
+
+Published head `681b45a83d` completes plugin qualification run39157596686:
+macOS **771 passed / 3 skipped**, Linux **461 passed / 313 skipped**, Windows
+**308 passed / 466 skipped**, with zero failures or setup errors. All three
+artifacts identify actual merge checkout `7dde7e5cad0`; repaired source and
+workflow identities are attested separately. Skipped boundaries stay unqualified.
+
+Windows GGUF run39157596676 attempt1 reaches its 20-minute job limit after the
+claim-authority case fails during initial `_mount_models` readiness, before its
+claim/recomposition body. The entered app context is not returned to the caller,
+so the caller's later `finally` cannot close it; executor shutdown and profile
+retirement then fail. This is a job timeout, not a concurrency cancellation.
+The complete original log is retained. The preceding six native GGUF runs passed.
+An unchanged-head targeted Windows retry, attempt2/job117772482998, passes all
+**31 source/lifecycle controls and seven full-app cases**. That passing retry
+does not identify the historical readiness cause, which remains unknown.
+
+Plan115 repairs the independently reproduced context-ownership defect only in
+`Tests/UI/test_llm_gguf_source_modes.py`: post-entry setup closes its existing
+context on `BaseException`, then re-raises. All 24 original callers, success-path
+AST, authority/selection/paint assertions and ten-second readiness bounds remain.
+A real-app regression injects a setup `RuntimeError` or `CancelledError` after
+actual Models mounting, checks exact exception identity and positive app-task
+settlement, and rescues baseline cleanup so the RED run does not itself leak.
+No production, workflow, platform prerequisite or guard changes are involved.
+
+| Frozen-source phase | Actual result |
+| --- | --- |
+| freeze11 / ci14 original claim and helper controls | 3 passed in 20.50s |
+| freeze12 / ci15 regression before repair | 2 genuine failures in 47.24s: app task still pending; no setup errors |
+| freeze13 / ci16 regression and helper controls | 4 passed in 49.34s |
+| freeze13 / ci17 seven full-app workflow cases | 7 passed in 271.09s |
+
+Every phase retains unchanged source inputs and zero unexpected outputs.
+Qualified repair source is `4f7faee4bd004d9b07cb91ec3ed95bf6388c76bd`, test SHA-256
+`ef9c0b937a876c4cbbfbebf62dee6989c0bbeb3fa9ab47d6eb0cf9291ef21155`.
+Per-file Ruff introduces no findings; all nine baseline findings are unchanged.
+Changed helper/regression lines95–188 pass Black with Python3.12 target.
+All 3,259 production/script files and every workflow are identical to the prior
+published source; earlier static-gate evidence remains applicable. Existing
+ADR-025 TASK-2062 amendment and ADR-162/163 apply; no new ADR is required.
+The incident extends the existing harness-ownership testing lesson.
+
+Independent scoped requesting-code-review: **0 Critical / 0 Important / 0 Minor**,
+report `.superpowers/pr3148-ci-20261018-02/review/gguf-cleanup-review.md`, SHA-256
+`d6c2ecbb7c31f17c33e787a5fcec3c40f7623e51432d62be248204565f83907f`.
+The reviewer independently inspected source, connected Textual shutdown and all
+four terminal receipts; it did not execute tests or qualify native Windows repair.
+
+At this receipt the preceding required run39155307305 has 16 successful test and
+artifact jobs, with only its final Merge queue tick queued. The required run on
+head681,39157596723, remains pending behind it. Neither was cancelled or manually
+dispatched. Final cleanup publication/native renewal remains pending here;
+subsequent outcomes belong to their exact published head. AC21 remains open.
+No full suite, install, merge, new platform support or diagnosed readiness cause
+is claimed. Raw logs, source manifests and receipts remain under
+`.superpowers/pr3148-ci-20261018-02/` and the named frozen-source phases.
