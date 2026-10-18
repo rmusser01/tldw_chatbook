@@ -2807,6 +2807,22 @@ the click answered nothing and the test timed out five seconds later at "Quit
 anyway to answer". Before clicking a widget on a screen that was just pushed, wait
 until its `region.area > 0`.
 
+**Same trap, layout-shift variant (TASK-33003.12, 2026-10-17).** A rider said a
+click on a control below an open picker list "lands on whatever moved under the
+pointer" once the blur collapses the list. `pilot.click` agreed, 3 of 3: on
+Settings ▸ Providers & Models it opened the Collapsible that the collapse moved
+under the pressed title. A terminal cannot do that. Pilot forwards MouseDown,
+MouseUp and its own Click one at a time with a pause between, and the screen
+hit-tests each one again, so its Click went to the new occupant. The driver
+sends only MouseDown and MouseUp, and `App.on_event` makes a Click only when
+both land on one widget. Posted that way (`app.post_message` with
+`textual.pilot._get_mouse_message_arguments`), the pressed control was focused
+and nothing else toggled at every hold from 0 to 400 ms. When a click races a
+layout change, post the press and release as the driver does before you call
+the product wrong. Then keep `pilot.click` as the negative control.
+`Tests/UI/test_settings_default_model_picker.py::test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none`
+is the worked example.
+
 ---
 
 ## A restored bounded reader needs a mount-time request re-kick
