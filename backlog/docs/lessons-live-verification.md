@@ -4137,3 +4137,44 @@ child cannot inherit the real one. Afterwards, diff the real user data dir
 by mtime to confirm nothing leaked.
 
 PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
+
+## Canvas UAT needs independent startup, terminal-paint and status-history evidence (TASK-35520–35522, 2026-10-18)
+
+**Incident.** The Canvas native/served startup failure showed `NoMatches` for a
+missing Console rail, but that was a secondary Resize exception after the
+scripted provider omitted the live Console's offline `cached_context_window`
+contract. Five actual partial-subtree tests reproduced the unsafe lookup or
+premature width-band consumption. Guard the entire required subtree before
+consuming the transition, and inspect the original composition failure too;
+reuse the existing ready-provider double rather than suppressing readiness.
+
+The two TLS journeys received and visibly painted `CANVAS_LIVE_REOPENED` while
+`#terminal.textContent` stayed empty: the existing performant xterm renderer uses
+Canvas layers. Observe fresh received terminal content and independent visible
+text-layer paint, excluding cursor/selection changes. Do not switch renderers
+to satisfy a DOM-text assertion. Retaining the collection-admitted profile also
+moved inherited `XDG_DATA_HOME`; child receipts appeared outside the per-stack
+directory the test watched. Give only the freshly spawned test child its owned
+data root; do not retarget the parent's admitted config source.
+
+The timer corpus exposed a separate observer race. A delayed real-browser probe
+proved trusted `execution-started → ready → timer-rate-limit` messages in both
+profiles, with the same nonce, unchanged quotas and zero generated egress. A
+second round trip reading only mutable latest status lost the intermediate
+receipt. Return the retained initial outcome for fresh-page startup assertions,
+while independently requiring the actual terminal failure and disabled scripts;
+if a future caller reuses a page, scope that lookup to its execution identity.
+
+## Classify a superseded navigation result without replaying it (TASK-35552, 2026-10-18)
+
+**Incident.** Once the Canvas UAT harness reached real create/update, one natural
+run permanently disconnected at `api/navigate` even though the child remained
+connected and its selection request succeeded. Parent reconciliation advanced
+the selection epoch while navigation awaited the child; the old-scope completion
+became `503 navigation_unavailable`. A deterministic route test also showed the
+same-revision epoch change could be overwritten with a stale result. Recognize
+the existing stale-selection response only when the same conversation's current
+browser-session object is independently live and available; discard the result
+without replay. Keep revoked, expired, replaced, unavailable and foreign-session
+controls refused, and leave unrelated authority exceptions on their original
+failure paths. A later passing natural run alone did not disprove this race.
