@@ -35,6 +35,10 @@ ACTION_BUDDY = "buddy"
 #: `@on(Button.Pressed, "#console-<id>")` handlers stay the one
 #: implementation and the menu just becomes a second way in.
 ACTION_ATTACH_CONTEXT = "attach-context"
+#: TASK-35160 follow-up: the status line's Library policy readout moved
+#: here; the entry opens the same two-axis policy editor the line's
+#: segment click used to open.
+ACTION_LIBRARY_ACCESS = "library-access"
 #: Matches the `EPHEMERAL_BLOCKED_ACTIONS` registry key, so the
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
@@ -139,6 +143,11 @@ def build_composer_menu_entries(
             ACTION_ATTACH_CONTEXT,
             "Attach file",
             "Attach a file to the draft",
+        ),
+        ComposerMenuEntry(
+            ACTION_LIBRARY_ACCESS,
+            "Library access…",
+            "View and edit this conversation's Library policy",
         ),
         ComposerMenuEntry(
             ACTION_SAVE_CHATBOOK,

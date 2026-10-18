@@ -13,7 +13,6 @@ from Tests.UI.test_console_character_activation_presentation import (
     activation_library,  # noqa: F401
 )
 from Tests.UI.test_console_character_switcher_geometry import _GeometryApp
-from Tests.UI.test_console_native_chat_flow import _static_plain_text
 from Tests.UI.test_console_scope_row import (
     _AlwaysExistsMediaDB,
     _open_inspector_and_get_row,
@@ -34,6 +33,7 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -348,7 +348,13 @@ async def test_history_reuse_refreshes_changed_workspace_scope(activation_librar
         await pilot.pause()
         assert store.active_session_id == target.id
         assert chat._console_effective_scope_cache["exact"].item_count == 2
-        assert _static_plain_text(chat.query_one("#console-scope-chip")) == "Scope: 2"
+        # TASK-35160: the scope chip is the strip line's "scope" segment.
+        assert (
+            chat.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            ).segment_text("scope")
+            == "Scope: 2"
+        )
 
 
 @pytest.mark.asyncio

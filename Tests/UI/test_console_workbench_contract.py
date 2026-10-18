@@ -1,4 +1,8 @@
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 
@@ -35,8 +39,15 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    build_composer_menu_entries,
+)
 from tldw_chatbook.Widgets.Console.console_control_bar import _summary_line
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
@@ -383,37 +394,34 @@ async def test_console_control_bar_renders_visible_state_chips():
         control_bar = console.query_one("#console-control-bar")
         assert _is_displayed(control_bar)
 
-        expected_selectors = (
-            "#console-provider-chip",
-            "#console-model-chip",
-            "#console-assistant-chip",
-            "#console-library-chip",
-            "#console-sources-chip",
-            "#console-approvals-chip",
-        )
-        # Chips now live in the #console-status-chips strip below the composer,
-        # not inside #console-control-bar; query them by global id.
-        visible_chip_text = []
-        for selector in expected_selectors:
-            chip = console.query_one(selector)
-            assert _is_displayed(chip), selector
-            visible_chip_text.append(_widget_text(chip))
+        # TASK-35160: the readiness chips are segments of one text line now;
+        # the per-chip selector list becomes the segment contract.
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+        line = strip.query_one("#console-status-text", ConsoleStatusText)
+        for name in ("provider", "model", "assistant", "sources", "approvals"):
+            assert strip.segment_visible(name), name
+        assert _is_displayed(line)
 
-        # TX-04 (TASK-2154.12): the tools chip HIDES at a zero tool count
+        # TX-04 (TASK-2154.12): the tools segment HIDES at a zero tool count
         # instead of showing the "not loaded" lazy-loading placeholder.
-        tools_chip = console.query_one("#console-tools-chip")
-        assert not _is_displayed(tools_chip)
+        assert not strip.segment_visible("tools")
 
-        assert any("Provider:" in text for text in visible_chip_text)
-        assert any("Model:" in text for text in visible_chip_text)
-        assert [text for text in visible_chip_text if "Assistant:" in text] == [
-            "Assistant: General"
-        ]
+        line_text = line.renderable.plain
+        assert line_text.count("Provider:") == 1
+        assert line_text.count("Model:") == 1
+        assert line_text.count("Assistant:") == 1
+        assert strip.segment_text("assistant") == "Assistant: General"
         assert not console.query("#console-character-chip")
         assert not console.query("#console-persona-chip")
-        assert any("Library · Auto " in text for text in visible_chip_text)
-        assert any("Sources:" in text for text in visible_chip_text)
-        assert any("Approvals:" in text for text in visible_chip_text)
+        # TASK-35160 follow-up: the Library policy readout LEFT the line --
+        # it lives behind the composer menu's "Library access..." entry,
+        # which opens the same policy editor the segment click used to.
+        assert "Library" not in line_text
+        assert "Library access…" in [
+            entry.label for entry in build_composer_menu_entries()
+        ]
+        assert line_text.count("Sources:") == 1
+        assert line_text.count("Approvals:") == 1
 
 
 @pytest.mark.asyncio
@@ -422,22 +430,24 @@ async def test_console_counter_chips_dim_when_zero():
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-sources-chip")
-        for chip_id in (
-            "#console-sources-chip",
-            "#console-tools-chip",
-            "#console-approvals-chip",
-        ):
-            chip = console.query_one(chip_id)
-            assert chip.has_class("console-chip-dim"), chip_id
-            assert not chip.has_class("console-chip-alert"), chip_id
-        assert not console.query_one("#console-provider-chip").has_class(
-            "console-chip-dim"
-        )
+        await _wait_for_selector(console, pilot, "#console-status-text")
+        # TASK-35160: the counter chips' dim/alert classes are the segments'
+        # dim/alert fields now; the zero-count tools segment is OFF the line
+        # (TX-04) and its segment state carries the same low emphasis.
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+        segments = {segment.name: segment for segment in strip._build_segments()}
+        for name in ("sources", "tools", "approvals"):
+            assert segments[name].dim is True, name
+            assert segments[name].alert is False, name
+        assert segments["provider"].dim is False
 
 
 @pytest.mark.asyncio
-async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focus():
+async def test_console_status_line_is_focusable_and_never_caps_the_model_label():
+    """TASK-35160 successor of the chips' focus/ellipsis contract: the strip
+    is one focusable line, and the full model label renders uncapped -- the
+    chip era's 22-cell cap with a focus reveal is gone (overflow scrolls).
+    """
     long_model = "very-long-local-model-name-for-ellipsis"
     app = _build_test_app()
     _configure_native_ready_console(app, model=long_model)
@@ -445,29 +455,19 @@ async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focu
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-control-bar")
+        await _wait_for_selector(console, pilot, "#console-status-text")
 
-        chip_ids = (
-            "#console-provider-chip",
-            "#console-model-chip",
-            "#console-assistant-chip",
-            "#console-library-chip",
-            "#console-sources-chip",
-            "#console-tools-chip",
-            "#console-approvals-chip",
-        )
-        for chip_id in chip_ids:
-            chip = console.query_one(chip_id)
-            assert chip.can_focus, chip_id
-            chip.focus()
-            await pilot.pause()
-            assert chip.has_focus, chip_id
-
-        # Chips ellipsize at 22 cells; focus lifts the cap so the full label
-        # is reachable by keyboard (the tooltip carries the same full text).
-        model_chip = console.query_one("#console-model-chip")
-        assert long_model in str(model_chip.tooltip)
-        assert model_chip.region.width > 22
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+        line = strip.query_one("#console-status-text", ConsoleStatusText)
+        assert line.can_focus
+        line.focus()
+        await pilot.pause()
+        assert line.has_focus
+        # No ellipsis cap to lift: the full label is on the line.
+        assert long_model in strip.segment_text("model")
+        # Per-chip tooltips (which carried the full label) are gone; the one
+        # line tooltip teaches the strip interaction.
+        assert str(line.tooltip)
 
 
 @pytest.mark.asyncio
@@ -506,9 +506,16 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
         )
         await pilot.pause(0.1)
 
-        chip = console.query_one("#console-approvals-chip")
-        chip.focus()
+        # TASK-35160: focus the status line, walk its segment cursor to the
+        # approvals segment, activate with Space (the chip's focus+Space).
+        line = console.query_one("#console-status-text", ConsoleStatusText)
+        line.focus()
         await pilot.pause()
+        for _ in range(len(line.segment_spans)):
+            if line.segment_spans[line._cursor][0] == "approvals":
+                break
+            await pilot.press("right")
+        assert line.segment_spans[line._cursor][0] == "approvals"
         await pilot.press("space")
         await pilot.pause(0.1)
 
@@ -532,9 +539,16 @@ async def test_console_approvals_chip_activation_without_pending_approval_notifi
         await _wait_for_selector(console, pilot, "#console-control-bar")
 
         host.notify = Mock()
-        chip = console.query_one("#console-approvals-chip")
-        chip.focus()
+        # TASK-35160: focus the line, walk the cursor to the approvals
+        # segment, activate with Enter (the chip's focus+Enter).
+        line = console.query_one("#console-status-text", ConsoleStatusText)
+        line.focus()
         await pilot.pause()
+        for _ in range(len(line.segment_spans)):
+            if line.segment_spans[line._cursor][0] == "approvals":
+                break
+            await pilot.press("right")
+        assert line.segment_spans[line._cursor][0] == "approvals"
         await pilot.press("enter")
         await pilot.pause(0.1)
 

@@ -8,6 +8,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
@@ -35,6 +39,7 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Utils.token_counter import resolve_context_window
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 QUESTIONS = [
@@ -129,7 +134,10 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
     transcript = console.query_one(ConsoleTranscript)
     text = _rendered_row_text(transcript, assistant_id)
     assert copy in text, text
-    assert str(console.query_one("#console-run-chip").render()) == f"Run: {copy}."
+    # TASK-35160: the run chip is the strip's "run" segment now.
+    assert console.query_one(
+        "#console-status-chips", ConsoleStatusChips
+    ).segment_text("run") == f"Run: {copy}."
     inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)
 
     # A busy config lifetime returns False and queues a fresh trailing sync;

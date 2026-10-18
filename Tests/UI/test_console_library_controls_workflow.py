@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.app import ComposeResult
 from textual.widgets import RadioButton, Static
 
@@ -24,6 +28,9 @@ from tldw_chatbook.Chat.console_library_policy import (
 )
 from tldw_chatbook.UI.Workbench import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    build_composer_menu_entries,
+)
 from tldw_chatbook.Widgets.Console.console_library_access_modal import (
     ConsoleLibraryAccessModal,
     ConsoleLibraryPolicySaveOutcome,
@@ -31,7 +38,10 @@ from tldw_chatbook.Widgets.Console.console_library_access_modal import (
 from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     ConsoleLibrarySearchModal,
 )
-from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 
 
 def _snapshot(
@@ -87,8 +97,22 @@ async def test_four_policy_states_render_exactly_and_open_independent_axes(
     app = _ChipApp(snapshot)
 
     async with app.run_test(size=(120, 35)) as pilot:
-        chip = app.query_one("#console-library-chip")
-        assert str(chip.render()) == label
+        await pilot.pause()
+        # TASK-35160 follow-up: the Library policy readout LEFT the status
+        # line (honestly: the four-state label is no longer rendered on the
+        # strip). Its exact-label contract lives on the control state -- the
+        # readout's renderer seam -- and the strip's former click route is
+        # the composer menu's "Library access..." entry, which opens the
+        # same two-axis editor the modal assertions below exercise.
+        strip = app.query_one("#console-status-chips", ConsoleStatusChips)
+        line = strip.query_one("#console-status-text", ConsoleStatusText)
+        assert "Library" not in line.renderable.plain
+        assert (
+            ConsoleControlState.from_values(library_policy=snapshot).rag_label
+            == label
+        )
+        menu_labels = [entry.label for entry in build_composer_menu_entries()]
+        assert "Library access…" in menu_labels
 
         async def save(candidate) -> ConsoleLibraryPolicySaveOutcome:
             return ConsoleLibraryPolicySaveOutcome("saved", snapshot, "Saved.")

@@ -168,39 +168,15 @@
     width:auto;height:$ds-size-1;min-height:$ds-size-1;max-height:$ds-size-1;margin:$ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
-#console-status-chips {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    layout: horizontal;
-    border: none;
-    padding: $ds-space-0 $ds-space-1;
-    /* TASK-17650: cancel .ds-panel's bottom margin — it rendered as a
-       permanent blank row between the chips and the footer. */
-    margin: $ds-space-0;
-}
+/* TASK-35160 follow-up: the Status collapsible is gone -- the expanded/
+   collapsed presentations, the Status ▾/▴ toggle buttons and the collapsed
+   copy rule died with it. The scroll viewport below is the whole strip. */
 
-/* TASK-15704: both mounted presentations stay one row high. The fixed restore
-   control leads; the copy or scroll viewport consumes only the remaining
-   width, so neither can push past the strip at narrow terminal sizes. */
-#console-status-expanded,
-#console-status-collapsed {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    layout: horizontal;
-    align: left middle;
-}
-
-/* TASK-2154.5 (LY-03): expanded chip overflow scrolls horizontally (focus
-   auto-scroll for keyboard, Shift+wheel / trackpad swipe for mouse) instead
-   of silently clipping later chips. The scrollbar itself is hidden because
-   the inner viewport is a single row -- same contract as the native tab
-   strip. */
+/* TASK-2154.5 (LY-03): line overflow scrolls horizontally (segment cursor
+   + Shift+arrows for keyboard, wheel / Shift+wheel / trackpad swipe for
+   mouse) instead of silently clipping. The scrollbar itself is hidden
+   because the inner viewport is a single row -- same contract as the
+   native tab strip. */
 #console-status-chip-scroll {
     width: $ds-width-fill;
     min-width: $ds-size-0;
@@ -215,94 +191,72 @@
     scrollbar-size-horizontal: 0;
 }
 
-#console-status-collapse,
-#console-status-expand {
-    width: $ds-size-9;
-    min-width: $ds-size-9;
-    max-width: $ds-size-9;
+/* TASK-35160 follow-up: the ◀ ▶ click-to-page arrows flanking the line.
+   Click-only (no tab stops -- the line owns keyboard paging), hidden when
+   the line fits, dimmed at the line's ends. */
+.console-status-arrow {
+    width: $ds-size-2;
+    min-width: $ds-size-2;
+    max-width: $ds-size-2;
     height: $ds-size-1;
     min-height: $ds-size-1;
     max-height: $ds-size-1;
     border: none;
     padding: $ds-space-0;
+    margin: $ds-space-0;
+    background: transparent;
+    color: $ds-text-muted;
 }
 
-#console-status-collapsed-copy {
-    width: $ds-width-fill;
+.console-status-arrow:hover {
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.console-status-arrow:disabled {
+    color: $ds-text-muted;
+    background: transparent;
+}
+
+/* TASK-35160: the strip shell's id rule (supersedes the pre-35160 rule
+   further up this sheet -- the status-row contract test pins these exact
+   declarations, and two rules for one id made the first match win). */
+#console-status-chips {
+    width: $ds-width-full;
     min-width: $ds-size-0;
     height: $ds-size-1;
     min-height: $ds-size-1;
-    color: $ds-text-muted;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
+    max-height: $ds-size-1;
+    layout: horizontal;
+    border: none;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
 }
 
-.console-control-chip {
+/* TASK-35160: the strip is one clickable text line (ConsoleStatusText) --
+   the per-chip background/padding/margin/ellipsis rules above its era are
+   gone; segment emphasis rides markup styles (dim/bold/reverse) and the
+   [@click] hover underline is Textual's link styling. */
+
+.console-status-text {
     width: auto;
-    /* RAG-46: a ~10x1-cell hit target is easy to miss with mouse/touch. Raised
-       from 7 to 12 (min-width) and the horizontal padding from `0 1` to `0 2`
-       to widen both the box and its clickable interior; short labels like
-       "RAG: off" now render with more breathing room instead of a
-       near-flush-to-edge fit. */
-    min-width: $ds-size-12;
-    /* task-1671: 22 cut model ids mid-token ("Model: claude-3-hai…").
-       The ask was 25 chars of the MODEL NAME, and the "Model: " prefix
-       costs 7 with 2 more for padding -- hence 34. Chips are width:auto,
-       so this cap only bites long labels: "Library search: off" and
-       friends are unchanged. Focus still lifts the cap entirely. */
-    max-width: $ds-size-34;
     height: $ds-size-1;
     min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
-    padding: $ds-space-0 $ds-space-2;
-    background: $ds-surface-raised;
+    max-height: $ds-size-1;
     color: $ds-text-primary;
-    text-overflow: ellipsis;
     text-wrap: nowrap;
 }
 
-#console-cost-chip {
-    max-width: $ds-width-full;
-}
-
-.console-chip-dim {
-    color: $ds-text-muted;
-}
-
-.console-chip-alert {
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* task-4 (PR3 cost ticker): the cost chip's "cache expired" state -- not
-   an alert (nothing needs the user's attention) and not a plain dim
-   readiness pill either, so it gets its own informational color rather
-   than reusing either. */
-.console-chip-cold {
-    color: $ds-status-info;
-}
-
-/* task-7: the temporary-chat chip -- distinct from the neutral readiness
-   chips above so "this chat is not saved" reads as a state worth noticing,
-   not just another setting pill. */
-#console-temporary-chip {
-    color: $warning;
-    text-style: italic;
-}
-
-/* Keyboard reachability: chips ellipsize at 22 cells, so focusing a chip
-   lifts the width cap to reveal the full label (the tooltip carries the
-   same text on hover). Later chips clip under the bar's hidden overflow. */
-.console-control-chip:focus {
-    max-width: $ds-width-full;
+/* Keyboard reachability: the strip's segment cursor (reverse video) is the
+   in-line position cue; focusing the line itself gets a non-obscuring cue. */
+.console-status-text:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold underline;
+    text-style: bold;
     /* TASK-383: the global `*:focus { outline: solid }` fallback OVERLAYS a box
-       onto this height-1 chip, replacing the label with border glyphs (the
-       "empty outlined box" defect). The high-contrast bg/fg + bold underline
-       above already give a non-obscuring focus cue, so suppress the outline
-       that would otherwise hide the label. */
+       onto this height-1 row, replacing the label with border glyphs (the
+       "empty outlined box" defect). The high-contrast bg/fg + bold above
+       already give a non-obscuring focus cue, so suppress the outline. */
     outline: none;
 }
 

@@ -13,6 +13,10 @@ from types import SimpleNamespace
 
 import pytest
 
+# The harness imports the real app/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -97,11 +101,22 @@ async def test_popover_apply_refreshes_the_provider_chip():
         from textual.css.query import NoMatches
 
         def chip_text() -> str:
+            # TASK-35160: the provider readout lives on the one-line status
+            # strip; read the whole line.
+            from tldw_chatbook.Widgets.Console.console_status_chips import (
+                ConsoleStatusText,
+            )
+
             try:
-                chip = chat_screen.query_one("#console-provider-chip", Static)
+                line = chat_screen.query_one("#console-status-text", ConsoleStatusText)
             except NoMatches:
                 return ""
-            return str(chip.renderable)
+            renderable = line.renderable
+            return (
+                renderable.plain
+                if hasattr(renderable, "plain")
+                else str(line.render())
+            )
 
         await _wait_for(pilot, chip_text, "initial provider chip")
 
