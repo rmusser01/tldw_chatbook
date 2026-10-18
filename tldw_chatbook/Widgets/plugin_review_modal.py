@@ -48,9 +48,9 @@ def _configuration_references(details):
     installation_id = details["installation"]["installation_id"]
     rows = details["mappings"]
     if not isinstance(rows, (tuple, list)):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 -- stable refusal API
             "plugin_configuration_unavailable"
-        )  # noqa: TRY004 -- stored projection uses the ValueError refusal boundary
+        )
     result = {
         key: {}
         for key in (
@@ -1359,9 +1359,9 @@ class PluginReviewModal(ModalScreen):
                 raise ValueError("plugin_configuration_review_changed")
             mappings = details["mappings"]
             if not isinstance(mappings, (tuple, list)):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004 -- stable refusal API
                     "plugin_configuration_unavailable"
-                )  # noqa: TRY004 -- stored projection uses the ValueError refusal boundary
+                )
         except (OSError, ValueError, RuntimeError, KeyError):
             if self.is_mounted:
                 self._status(
