@@ -42,3 +42,6 @@ Premise re-verified against origin/dev (2026-10-12): 25 `transaction()` definiti
 
 
 Migration 3 (2026-10-14): AgentRuns_DB onto the kernel (BaseDB provenance, busy_timeout-first policy, no transaction override — kernel immediate default matches). Same PR lands the tri-state _transaction_immediate_default decision from the workspace-PR review and simplifies Workspace to the class attribute. Direct battery 125/125.
+
+
+Migration 4 (2026-10-16): Library_Collections_DB onto the kernel. Deltas preserved as overrides: the WAL-retry helper (_enable_wal, concurrent-opener tolerance), the guarded read_transaction (BEGIN DEFERRED snapshot + total_changes write-guard), and the busy-safe PRAGMA policy; the standard transaction()/close()/held-connection machinery deleted (kernel default BEGIN IMMEDIATE matches the store's cross-process MCP rationale, noted at the owner attribute). Battery: collections capture migration + offline store + capture extraction/app wiring + kernel + pragma suites 135/135.
