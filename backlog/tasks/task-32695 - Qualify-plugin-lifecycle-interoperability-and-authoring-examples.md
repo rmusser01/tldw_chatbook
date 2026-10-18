@@ -1,11 +1,11 @@
 ---
 id: TASK-32695
 title: Qualify plugin lifecycle interoperability and authoring examples
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:34'
-updated_date: '2026-10-18 09:56'
+updated_date: '2026-10-18 14:47'
 labels:
   - plugins
   - implementation
@@ -42,6 +42,10 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #13 I7: Package PATH cannot change bare executable lookup for owned MCP or hooks; explicit contained package executables and unrelated permitted child environment values still work.
 - [x] #14 I8: Every explicit three-platform workflow selection respects production ownership, command and package-capture boundaries, retains applicable and genuine unsupported/refusal controls, and makes no unexecuted native-platform success claim.
 - [x] #15 PR3148 is rebased onto the recorded current dev revision with conflicts resolved while preserving approved plugin/hook behavior and current host fixes; relevant targeted checks and independent code review cover the rebased source, and the verified update is published with an exact force-with-lease while original history/evidence remain recoverable.
+- [ ] #16 Candidate-discard confirmation is invalidated before paging or refreshing its list, including a failed reload; a fresh exact review is required before reference release.
+- [ ] #17 Previously unqualified Settings cases have current-source targeted execution evidence; diagnosed fixture or production blockers are repaired without weakening profile, permission or persistence guards.
+- [ ] #18 The remaining relevant module-size and CSS-dimension gates pass without increasing ratchet ceilings, formatting compression, blanket exclusions or changed visual values.
+- [ ] #19 Relevant affected regression, static and integration checks pass on the repaired source; remaining limits and review disposition are documented and the existing draft PR is updated safely.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -203,6 +207,12 @@ Current final-source replay (TASK32695 AC15): original6e/844/285 task plans and 
 78. Ruling: R37 — accept test-only proposal1e31110b/scopeb5465758 at76ac: five existing test files correct all eight closed failures and the accidental live-keyword setup skip. Assert both real automatic compaction decisions and four history units; compare the frozen maximum at first admission while retaining fresh IDs and exact private carrier identity at later narrowed admissions; remove stale file.read from the calculator event; enter the existing guarded plugin_test_admission owner and inspect lifecycle.engine; settle and scroll the real keyboard target before existing visibility/Enter assertions; rename only the owned positive lane parameter to current. Reason: exact current traces and reached source show fixture/expectation errors, not additional product changes. Cost if wrong: restore these five captured inputs and renew affected actual positive/refusal assertions; no production/guard/skip-policy/stylesheet/golden/cap change, --run-live, direct button invocation or synthetic permission. ADR required: no new ADR; direct test correction under existing ADR162/163/R31–R36. Root commits/freezes and renews affected failures plus listed controls, then dispatches the fresh independent review; no full suite or merge.
 
 79. Ruling: R38 — correct only the row-removal test envelope with the existing HookEvent.model_dump data projection before lifecycle.event, preserving matching refusal, nonmatch allowance, required-only engine, no provider/live work and reservation cleanup. Reason: closed phase28 reaches the real engine but shallow source.data copying retains nested immutable mappings that the strict JSON parser correctly refuses; the existing tool pipeline uses this same serializer. Cost if wrong: restore the one captured test file and rerun its actual positive/refusal case; no production/parser/authority change, manual reservation or assertion loss. ADR required: no new ADR, test-only use of existing ADR163 event contract. Phase28 retains14passes/1failure/no skips and phase29sixpasses88.48s, all33388inputs unchanged/zero unexpected outputs. Root will commit/freeze and run only the remaining node before the independent review; full-suite/publication limits remain.
+
+80. Follow-up explicitly requested2026-10-18: verify P3 and diagnose remaining Settings/static blockers on source661856c9, retaining prior rebase evidence and original publication. Read-only Settings and static investigations may proceed independently; no source edits by those investigators. Root implements the verified minimal fixes, preserving existing authority and profile owners.
+81. Reproduce P3 with a focused mounted regression, then clear the pending review and disable confirmation before each status-list reload, including refusal. Retain real review/discard and paging behavior.
+82. Read the exact prior Settings failures and current private-profile fixtures; reproduce representative causes with unchanged guards, repair at the shared existing fixture/owner, then execute all remaining mapped Settings cases and affected neighbors. Do not equate identical defining AST with proof of an inherited failure.
+83. Measure all currently failing size rows and numeric CSS offenders. Reuse existing helpers and boundaries for minimal pure moves/removal of verified dead duplication; preserve signatures, patch points, lazy imports, error handling and source-body semantics. Tokenize CSS with equal existing values and rebuild through the canonical builder. Never raise caps or compress whitespace to satisfy them; lower rows when a real extraction shrinks a governed module.
+84. Run only relevant targeted checks, bounded lint/format and source/move proofs. Fix newly reached blockers, update QA/lessons/task notes and obtain a scoped review of the repair if needed. Publish the existing PR with an exact observed-head lease, retaining draft/autooff and no merge. ADR required: no new ADR for direct bug fixes and pure existing-boundary moves; existing ADR162/163/150/161/097 and decomposition doctrine apply. Propose any actual contract/owner change before code. No full suite, installs, real-profile/keychain access, external test network or unrelated primary-checkout changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
