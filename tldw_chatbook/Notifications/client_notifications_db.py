@@ -28,7 +28,7 @@ _CATEGORY_NOTIFICATION_SETTINGS = (
 )
 
 
-from tldw_chatbook.Backup_Recovery.participants import (  # noqa: F401 - _get_connection override keeps its gate
+from tldw_chatbook.Backup_Recovery.participants import (
     _core_access,
     _core_getter,
     _register_core_connection,
