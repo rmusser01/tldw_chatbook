@@ -30,6 +30,7 @@ CANVAS_INDEXES = {
     "idx_canvas_revisions_parent",
     "uq_canvas_documents_id_conversation",
     "uq_canvas_revisions_id_canvas",
+    "uq_canvas_revisions_single_root",
 }
 CANVAS_TRIGGERS = {
     "canvas_documents_ownership_immutable",
@@ -75,6 +76,135 @@ def _canvas_schema(connection: sqlite3.Connection) -> dict[tuple[str, str], str]
         "OR name LIKE 'uq_canvas_%' ORDER BY type, name"
     ).fetchall()
     return {(str(row[0]), str(row[1])): str(row[2]) for row in rows}
+
+
+@pytest.mark.parametrize("fail_step", [False, True])
+def test_v81_upgrade_preserves_rows_and_rolls_back_index_rewrite(
+    tmp_path, monkeypatch, fail_step
+):
+    from tldw_chatbook.Canvas.repository import CanvasRepository
+
+    path = tmp_path / "v81.sqlite"
+    with chachanotes_db_at_version(path, 81) as historical:
+        owner, message = _owner(historical)
+        CanvasRepository(historical).create_canvas(
+            owner,
+            title="Exact",
+            source="<p>é\r\n</p>",
+            runtime_profile="canvas-v99",
+            actor_kind="user_import",
+            origin_message_id=message,
+            origin_turn_id="origin",
+        )
+        before_schema = _canvas_schema(historical.get_connection())
+        before_rows = [
+            tuple(row)
+            for row in historical.get_connection().execute(
+                "SELECT * FROM canvas_revisions"
+            )
+        ]
+    if fail_step:
+        original = CharactersRAGDB._execute_migration_statements
+
+        def fail_after_ddl(self, cursor, sql, label):
+            original(self, cursor, sql, label)
+            if label == "V81→V82":
+                raise SchemaError("injected migration failure")
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(
+                CharactersRAGDB, "_execute_migration_statements", fail_after_ddl
+            )
+            with pytest.raises(SchemaError):
+                CharactersRAGDB(path, client_id="rollback")
+        with sqlite3.connect(path) as connection:
+            assert _version(path) == 81
+            assert _canvas_schema(connection) == before_schema
+            assert (
+                connection.execute("SELECT * FROM canvas_revisions").fetchall()
+                == before_rows
+            )
+    upgraded = CharactersRAGDB(path, client_id="upgraded")
+    fresh = CharactersRAGDB(tmp_path / "fresh.sqlite", client_id="fresh")
+    try:
+        assert _version(path) == 82
+        assert _canvas_schema(upgraded.get_connection()) == _canvas_schema(
+            fresh.get_connection()
+        )
+        assert [
+            tuple(row)
+            for row in upgraded.get_connection().execute(
+                "SELECT * FROM canvas_revisions"
+            )
+        ] == before_rows
+        indexes = {
+            row[1]: row[2]
+            for row in upgraded.get_connection().execute(
+                "PRAGMA index_list(canvas_revisions)"
+            )
+        }
+        assert indexes["idx_canvas_revisions_canvas_sequence"] == 0
+        assert indexes["uq_canvas_revisions_single_root"] == 1
+        second_root = (str(uuid4()), *before_rows[0][1:])
+        with (
+            pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"),
+            upgraded.transaction() as cursor,
+        ):
+            cursor.execute(
+                "INSERT INTO canvas_revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                second_root,
+            )
+        from Tests.Canvas.test_repository import _turn_batch
+        from tldw_chatbook.Canvas.repository import CanvasImportBatch
+
+        canvas, root, left, right = (str(uuid4()) for _ in range(4))
+        batches = [
+            _turn_batch(
+                owner,
+                message,
+                canvas_id=canvas,
+                revision_id=identity,
+                source="<p>import after upgrade</p>",
+                sequence=sequence,
+                parent_revision_id=parent,
+            )
+            for identity, sequence, parent in (
+                (root, 1, None),
+                (left, 2, root),
+                (right, 2, root),
+            )
+        ]
+        CanvasRepository(upgraded).import_batch(
+            CanvasImportBatch(
+                owner,
+                batches[0].documents,
+                tuple(batch.revisions[0] for batch in reversed(batches)),
+            )
+        )
+        assert [
+            row.sequence
+            for row in CanvasRepository(upgraded).list_revision_metadata(owner)
+            if row.canvas_id == canvas
+        ] == [1, 2, 2]
+    finally:
+        upgraded.close()
+        fresh.close()
+
+
+def test_v81_upgrade_refuses_incompatible_sequence_index_without_mutation(tmp_path):
+    path = tmp_path / "unshipped.sqlite"
+    with chachanotes_db_at_version(path, 81) as historical:
+        with historical.transaction() as cursor:
+            cursor.execute("DROP INDEX idx_canvas_revisions_canvas_sequence")
+            cursor.execute(
+                "CREATE INDEX idx_canvas_revisions_canvas_sequence ON canvas_revisions(canvas_id, sequence)"
+            )
+        schema = _canvas_schema(historical.get_connection())
+    with pytest.raises(SchemaError):
+        CharactersRAGDB(path, client_id="unshipped")
+    with sqlite3.connect(path) as connection:
+        assert _version(path) == 81
+        assert _canvas_schema(connection) == schema
 
 
 def _create_legacy_canvas_only_database(path: Path, *, version: int) -> str:

@@ -1442,6 +1442,10 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS:
+        return ((82,),)
+    if schema in _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS:
+        return ((81,),)
     if schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS:
         return ((80,),)
     if schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS:
@@ -1593,6 +1597,40 @@ _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS = tuple(
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema) for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
+)
+
+# ADR-239: compose only immutable installed declarations for the shared file.
+# Keep the v81 predecessor as well as v82, with both shipped subscription indexes.
+from .recovery_core_schema import (
+    CHACHANOTES_V81_SCHEMAS,
+    CHACHANOTES_V82_SCHEMAS,
+    _installed_schema_order,
+)
+
+_SUBSCRIPTIONS_CANVAS_V81_SCHEMAS, _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS = (
+    tuple(
+        tuple(
+            sorted(
+                chat_schema
+                + tuple(
+                    sql
+                    for sql in subscriptions_schema
+                    if sql != "CREATE TABLE sqlite_sequence(name,seq)"
+                ),
+                key=_installed_schema_order,
+            )
+        )
+        for chat_schema in chat_schemas
+        for subscriptions_schema in (
+            _SUBSCRIPTIONS_SCHEMA[0][1],
+            tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA),
+        )
+    )
+    for chat_schemas in (CHACHANOTES_V81_SCHEMAS, CHACHANOTES_V82_SCHEMAS)
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema)
+    for schema in _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS + _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS
 )
 
 

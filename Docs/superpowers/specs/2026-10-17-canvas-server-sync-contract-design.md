@@ -240,6 +240,11 @@ archives readable; old applications must reject the new format without partial
 import. Do not reuse format 3.0 for a graph its stated rules cannot represent.
 The final version number and migration number are allocated at implementation
 time against the then-current branch. Do not alter immutable existing rows.
+TASK-35376 allocation (2026-10-17, base `2b37746902a8`): local schema 81→82,
+Canvas-bearing Chatbook 4.0 with Canvas extension 2.0. Valid legacy 3.0/1.0
+archives remain readable under their original unique-sequence invariant;
+non-Canvas exports remain 2.0. This allocation enables local storage/archive
+compatibility only; synchronization and runtime capabilities remain unchanged.
 Affected contracts include `Canvas/repository.py`, `Canvas/service.py`,
 `DB/ChaChaNotes_DB.py` plus its migration/fresh-schema definitions,
 `Chatbooks/chatbook_models.py` and `chatbook_importer.py`, backup schema

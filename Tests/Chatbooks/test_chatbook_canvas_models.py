@@ -62,10 +62,12 @@ def _revision(
 
 
 def _canvas_archive(
-    *, revisions: tuple[CanvasArchiveRevision, ...] | None = None
+    *,
+    revisions: tuple[CanvasArchiveRevision, ...] | None = None,
+    extension_version: str = "1.0",
 ) -> CanvasArchiveManifest:
     return CanvasArchiveManifest(
-        extension_version=CANVAS_ARCHIVE_EXTENSION_VERSION,
+        extension_version=extension_version,
         total_source_bytes=SOURCE_BYTES * len(revisions or (_revision(),)),
         documents=(
             CanvasArchiveDocument(
@@ -82,6 +84,31 @@ def _canvas_archive(
             ),
         ),
     )
+
+
+def test_canvas_v4_tied_graph_round_trips_in_canonical_uuid_order():
+    low = "26695e80-bec2-41fa-b616-d41813c5bb74"
+    siblings = tuple(
+        _revision(revision_id=identity, parent_revision_id=REVISION_ID, sequence=2)
+        for identity in (CHILD_REVISION_ID, low)
+    )
+    manifest = ChatbookManifest(
+        version=ChatbookVersion("4.0"),
+        name="Sibling graph",
+        description="Exact",
+        canvas_archive=_canvas_archive(
+            revisions=(*siblings, _revision()), extension_version="2.0"
+        ),
+    )
+    encoded = manifest.to_dict()
+    assert encoded["version"] == "4.0"
+    assert encoded["canvas"]["extension_version"] == "2.0"
+    assert [
+        row["revision_id"] for row in encoded["canvas"]["documents"][0]["revisions"]
+    ] == [REVISION_ID, low, CHILD_REVISION_ID]
+    assert ChatbookManifest.from_dict(encoded).to_dict() == encoded
+    with pytest.raises(CanvasArchiveValidationError):
+        _canvas_archive(revisions=(*siblings, _revision()), extension_version="1.0")
 
 
 def _document(
@@ -452,7 +479,7 @@ def test_manifest_serialization_is_deterministic() -> None:
 
 def test_archive_version_selection_changes_only_for_canvas_records() -> None:
     assert select_chatbook_version(has_canvas_records=False) is ChatbookVersion.V2
-    assert select_chatbook_version(has_canvas_records=True) is ChatbookVersion.V3
+    assert select_chatbook_version(has_canvas_records=True) is ChatbookVersion.V4
 
 
 def test_v1_and_v2_manifest_serialization_remains_exactly_unchanged() -> None:

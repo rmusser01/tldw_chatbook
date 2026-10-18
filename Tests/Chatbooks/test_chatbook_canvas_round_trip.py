@@ -46,7 +46,12 @@ _PROFILE_ROWS = (
 )
 
 
-def _seed_canvas_graph(path: Path, profiles=_PROFILE_ROWS[0]) -> dict[str, object]:
+pytestmark = pytest.mark.bootstrap_profile
+
+
+def _seed_canvas_graph(
+    path: Path, profiles=_PROFILE_ROWS[0], *, tied=False
+) -> dict[str, object]:
     db = CharactersRAGDB(path, client_id="canvas-archive-source")
     conversation_id = str(uuid4())
     message_ids = [str(uuid4()) for _ in range(4)]
@@ -138,7 +143,7 @@ def _seed_canvas_graph(path: Path, profiles=_PROFILE_ROWS[0]) -> dict[str, objec
                     revision_id=revision_ids[2],
                     canvas_id=canvas_ids[0],
                     parent_revision_id=revision_ids[0],
-                    sequence=3,
+                    sequence=2 if tied else 3,
                     title="Planner alternate",
                     runtime_profile=profiles[2],
                     source=sources[2],
@@ -192,6 +197,189 @@ def _rewrite_archive(
             archive.writestr(name, rewritten)
 
 
+def test_tied_graph_export_import_reexport_and_idempotent_restore(
+    tmp_path, monkeypatch
+):
+    """Ties survive the real ZIP/DB boundary and the exact-identity comparison."""
+    from datetime import UTC, datetime
+
+    import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
+    from tldw_chatbook.Canvas.models import CanvasScope
+    from tldw_chatbook.Canvas.service import CanvasService
+
+    manifest_class = creator_module.ChatbookManifest
+    timestamp = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    monkeypatch.setattr(
+        creator_module,
+        "ChatbookManifest",
+        lambda **kwargs: manifest_class(
+            **kwargs,
+            created_at=timestamp,
+            updated_at=timestamp,
+        ),
+    )
+    source = tmp_path / "tied.sqlite"
+    expected = _seed_canvas_graph(source, tied=True)
+    creator = ChatbookCreator({"ChaChaNotes": str(source)})
+    first = tmp_path / "first.zip"
+    second = tmp_path / "second.zip"
+    selections = {ContentType.CONVERSATION: [expected["conversation_id"]]}
+    for archive_path in (first, second):
+        assert creator.create_chatbook(
+            name="Tied",
+            description="Exact",
+            content_selections=selections,
+            output_path=archive_path,
+        )[0]
+    assert first.read_bytes() == second.read_bytes()
+    with zipfile.ZipFile(first) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        document = next(
+            row
+            for row in manifest["canvas"]["documents"]
+            if row["canvas_id"] == expected["canvas_ids"][0]
+        )
+        assert [
+            (row["sequence"], row["revision_id"]) for row in document["revisions"]
+        ] == [
+            (1, expected["revision_ids"][0]),
+            *((2, identity) for identity in sorted(expected["revision_ids"][1:3])),
+        ]
+    target_path = tmp_path / "target-tied.sqlite"
+    importer = ChatbookImporter({"ChaChaNotes": str(target_path)})
+    success, reason = importer.import_chatbook(first)
+    assert success, reason
+    target = CharactersRAGDB(target_path, client_id="tied-verify")
+    try:
+        owner = target.get_conversation_by_name("Canvas archive graph")[0]["id"]
+        repository = CanvasRepository(target)
+        rows = repository.list_revision_metadata(owner, include_deleted=True)
+        by_title = {row.title: row for row in rows}
+        assert [
+            by_title[title].sequence
+            for title in ("Planner", "Planner renamed", "Planner alternate")
+        ] == [1, 2, 2]
+        for index, title in enumerate(
+            ("Planner", "Planner renamed", "Planner alternate", "Retired future Canvas")
+        ):
+            row = by_title[title]
+            assert (
+                repository.read_revision(
+                    owner, row.revision_id, include_deleted=True
+                ).source
+                == expected["sources"][index]
+            )
+            assert row.runtime_profile == expected["profiles"][index]
+            assert row.origin_turn_id == str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"chatbook:{owner}:turn:{('turn-root', 'turn-left', 'turn-right', 'turn-future')[index]}",
+                )
+            )
+        active = (
+            target.get_connection()
+            .execute(
+                "SELECT id FROM messages WHERE conversation_id=? AND deleted=0 ORDER BY timestamp",
+                (owner,),
+            )
+            .fetchall()
+        )
+        scope = CanvasScope(
+            session_id="tied",
+            conversation_id=owner,
+            active_message_ids=tuple(row[0] for row in active),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="read",
+        )
+        assert (
+            CanvasService(target).list_canvases(scope)[0].revision_id
+            == by_title["Planner alternate"].revision_id
+        )
+        before = (
+            target.get_connection()
+            .execute("SELECT * FROM canvas_revisions ORDER BY id")
+            .fetchall()
+        )
+    finally:
+        target.close()
+    reexport = tmp_path / "reexport.zip"
+    assert ChatbookCreator({"ChaChaNotes": str(target_path)}).create_chatbook(
+        name="Tied",
+        description="Exact",
+        content_selections={ContentType.CONVERSATION: [owner]},
+        output_path=reexport,
+    )[0]
+    status = ImportStatus()
+    success, reason = importer.import_chatbook(reexport, import_status=status)
+    assert success, reason
+    assert status.skipped_items == 1
+    target = CharactersRAGDB(target_path, client_id="tied-after")
+    try:
+        assert (
+            target.get_connection()
+            .execute("SELECT * FROM canvas_revisions ORDER BY id")
+            .fetchall()
+            == before
+        )
+    finally:
+        target.close()
+
+
+@pytest.mark.parametrize(
+    "version,extension,tied,accepted",
+    [
+        ("3.0", "1.0", False, True),
+        ("3.0", "1.0", True, False),
+        ("3.0", "2.0", False, False),
+        ("4.0", "1.0", False, False),
+        ("4.0", "9.0", False, False),
+    ],
+)
+def test_archive_version_pairing_is_checked_before_target_mutation(
+    tmp_path, monkeypatch, version, extension, tied, accepted
+):
+    source = tmp_path / "source-version.sqlite"
+    expected = _seed_canvas_graph(source, tied=tied)
+    original = tmp_path / "original.zip"
+    assert ChatbookCreator({"ChaChaNotes": str(source)}).create_chatbook(
+        name="Version",
+        description="Compatibility",
+        content_selections={ContentType.CONVERSATION: [expected["conversation_id"]]},
+        output_path=original,
+    )[0]
+
+    def change(name, payload):
+        if name == "manifest.json":
+            manifest = json.loads(payload)
+            manifest["version"] = version
+            manifest["canvas"]["extension_version"] = extension
+            payload = json.dumps(manifest).encode()
+        return name, payload
+
+    rewritten = tmp_path / "rewritten.zip"
+    _rewrite_archive(original, rewritten, change)
+    target = tmp_path / "version-target.sqlite"
+    db = CharactersRAGDB(target, client_id="version-target")
+    db.close()
+    before = target.read_bytes()
+    importer = ChatbookImporter({"ChaChaNotes": str(target)})
+    importer.temp_dir = tmp_path / "extraction"
+    importer.temp_dir.mkdir()
+    if not accepted:
+
+        def forbidden_database(*args, **kwargs):
+            raise AssertionError("invalid manifest reached database access")
+
+        monkeypatch.setattr(importer_module, "CharactersRAGDB", forbidden_database)
+    success, reason = importer.import_chatbook(rewritten)
+    assert success is accepted, reason
+    if not accepted:
+        assert "database access" not in reason
+        assert list(importer.temp_dir.iterdir()) == []
+        assert target.read_bytes() == before
+
+
 @pytest.mark.parametrize("profiles", _PROFILE_ROWS)
 def test_canvas_v3_whole_graph_round_trips_atomically_as_new(
     tmp_path: Path, profiles
@@ -222,7 +410,8 @@ def test_canvas_v3_whole_graph_round_trips_atomically_as_new(
             (1980, 1, 1, 0, 0, 0)
         }
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["version"] == "3.0"
+        assert manifest["version"] == "4.0"
+        assert manifest["canvas"]["extension_version"] == "2.0"
         documents = manifest["canvas"]["documents"]
         assert [item["canvas_id"] for item in documents] == sorted(
             expected["canvas_ids"]
@@ -369,7 +558,7 @@ def test_multi_conversation_canvas_archive_preserves_exact_profiles(tmp_path):
     )[0]
     with zipfile.ZipFile(archive_path) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["version"] == "3.0"
+        assert manifest["version"] == "4.0"
         assert len(manifest["canvas"]["documents"]) == 4
         assert not any(
             "runtime-manifest" in name or "mermaid-subset" in name

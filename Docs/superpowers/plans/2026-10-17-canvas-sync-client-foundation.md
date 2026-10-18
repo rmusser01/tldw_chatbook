@@ -37,10 +37,11 @@ This is one review unit: database admission, its archive representation and exac
 - Modify `tldw_chatbook/DB/ChaChaNotes_DB.py`: version 82 and the file-backed, transactional v81→82 step; preserve every shipped predecessor.
 - Modify `tldw_chatbook/Canvas/repository.py`: tied complete-graph imports, stable reads/insertion order and max-sequence authored settlement. Keep import and authored-append semantics distinct.
 - Inspect `tldw_chatbook/Canvas/service.py`, `Canvas/staging.py` and `Chat/console_canvas_controller.py`; modify only a demonstrated count-as-sequence or unstable-order assumption. The existing resolver itself already has the required UUID tie-break.
-- Modify `tldw_chatbook/DB/recovery_core_schema.py`, `DB/recovery_core.py` and `Backup_Recovery/sqlite_validation.py`: immutable v82 catalogs and migration, retain v81 and all older accepted variants, allow the pure Canvas CHECK only for exact installed catalogs.
+- Modify `tldw_chatbook/DB/recovery_core_schema.py`, `DB/recovery_core.py`, `DB/recovery_operations.py` and `Backup_Recovery/sqlite_validation.py`: immutable v82 core/hybrid catalogs and migration, retain v81 and all older accepted variants, allow the pure Canvas CHECK only for exact installed catalogs. The existing hybrid policy stops at80; append exact installed81/82 variants without normalizing old schema bodies.
 - Modify `tldw_chatbook/Canvas/archive.py`, `Chatbooks/chatbook_models.py`, `chatbook_creator.py` and `chatbook_importer.py`: new archive version, strict legacy/version pairing and canonical export/idempotent comparison.
 - Tests: `Tests/ChaChaNotesDB/test_canvas_migration.py`, `Tests/Canvas/test_repository.py`, `test_service.py`, `Tests/Chatbooks/test_chatbook_canvas_models.py`, `test_chatbook_canvas_round_trip.py`, and `Tests/Backup_Recovery/test_canvas_recovery_validation.py`. Add focused fixtures/tests in these files; use a focused new test module only when isolation makes it smaller.
 - Packaging: inspect current wildcard/runtime-derived migration discovery in `pyproject.toml`, `MANIFEST.in`, `Packaging/check_manifest.py` and `Tests/Packaging/test_installed_distribution.py`; change only a registry that actually needs a new entry. Prove the new file is included in real built artifacts.
+- Modify `scripts/index_plan_pin_census.tsv`: explicitly classify the new root UNIQUE constraint under the existing correctness-enforcer exemption, with native second-root refusal evidence and no read-performance claim or guard-code relaxation.
 - Documentation: `Docs/Architecture/canvas.md`, `Docs/Architecture/database-layer.md`, `tldw_chatbook/Chatbooks/CHATBOOKS_GUIDE.md`, the approved sync spec's allocated-version note and a concise tracked qualification report. Root owns task status and final notes.
 
 **Interfaces:**
@@ -79,13 +80,13 @@ For complete-graph import validation, retain per-record validation and quota che
 
 ```python
 distinct_sequences = sorted({revision.sequence for revision in ordered})
-if distinct_sequences != list(range(1, distinct_sequences[-1] + 1)):
+if distinct_sequences != list(range(1, len(distinct_sequences) + 1)):
     raise CanvasValidationError("invalid_revision_sequence")
 if sum(revision.parent_revision_id is None for revision in ordered) != 1:
     raise CanvasValidationError("invalid_root_parent")
 ```
 
-Existing strictly lower same-Canvas parent validation remains. Empty graphs already fail before this block. Retain all per-revision and aggregate quota checks and identity collision refusal.
+Existing strictly lower same-Canvas parent validation remains. Empty graphs already fail before this block. The expected range is bounded by distinct-value count, not an untrusted maximum sequence. Retain all per-revision and aggregate quota checks and identity collision refusal.
 
 In authored batch validation, query actual count and max separately in one query:
 

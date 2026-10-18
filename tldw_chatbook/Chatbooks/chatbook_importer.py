@@ -1164,6 +1164,7 @@ class ChatbookImporter:
                 ChatbookVersion.V1,
                 ChatbookVersion.V2,
                 ChatbookVersion.V3,
+                ChatbookVersion.V4,
             }:
                 status.add_warning(
                     f"Chatbook version {manifest.version.value} may not be fully compatible"
@@ -1463,7 +1464,11 @@ class ChatbookImporter:
                         conv_data = json.load(f)
 
                     graph_messages = None
-                    if manifest.version in {ChatbookVersion.V2, ChatbookVersion.V3}:
+                    if manifest.version in {
+                        ChatbookVersion.V2,
+                        ChatbookVersion.V3,
+                        ChatbookVersion.V4,
+                    }:
                         if (
                             not isinstance(conv_data, dict)
                             or type(conv_id) is not str
@@ -1850,13 +1855,14 @@ class ChatbookImporter:
                         "SELECT id, parent_revision_id, sequence, title, runtime_profile, "
                         "html, content_sha256, html_bytes, actor_kind, origin_message_id, "
                         "origin_turn_id, created_at, deleted_at FROM canvas_revisions "
-                        "WHERE canvas_id = ? ORDER BY sequence",
+                        "WHERE canvas_id = ? ORDER BY sequence, id",
                         (document.canvas_id,),
                     ).fetchall()
                     if len(stored_revisions) != len(document.revisions):
                         raise CanvasArchiveValidationError("same_identity_conflict")
                     expected_revisions = sorted(
-                        document.revisions, key=lambda revision: revision.sequence
+                        document.revisions,
+                        key=lambda revision: (revision.sequence, revision.revision_id),
                     )
                     for stored, revision in zip(
                         stored_revisions, expected_revisions, strict=True

@@ -85,3 +85,67 @@ def test_current_canvas_schema_is_checked_without_imported_authority(
     tmp_path, kind, case
 ):
     _run(tmp_path, kind, case, script=_SCRIPT)
+
+
+_V81_SCRIPT = (
+    _SCRIPT.replace(
+        "db=CharactersRAGDB(path,'canvas-recovery')",
+        "from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version\n"
+        "historical=chachanotes_db_at_version(path,81)\n"
+        "db=historical.__enter__()",
+    )
+    .replace(
+        "db.close()",
+        "historical.__exit__(None,None,None)",
+    )
+    .replace(
+        "case=sys.argv[2]",
+        "assert owner.validate(path)==(),owner.validate(path)\n"
+        "if sys.argv[1]=='core':\n"
+        " assert validate_candidate(owner,path,Event(),migrate=True)==()\n"
+        "else:\n"
+        " migrated=CharactersRAGDB(path,'hybrid-upgrade');migrated.close()\n"
+        "with sqlite3.connect(path) as connection:\n"
+        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(82,)\n"
+        "case=sys.argv[2]",
+    )
+)
+
+
+@pytest.mark.parametrize("kind", ["core", "hybrid"])
+def test_genuine_v81_recovery_preserves_payload_and_restricted_authority(
+    tmp_path, kind
+):
+    _run(tmp_path, kind, "valid", script=_V81_SCRIPT)
+
+
+_LINEAGE_SCRIPT = r"""
+import sqlite3
+from pathlib import Path
+from threading import Event
+from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V81_SCHEMAS
+from tldw_chatbook.DB.recovery_core import core_adapters
+from tldw_chatbook.DB.canvas_payload_validation import install_canvas_revision_payload_validator
+from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+owner=next(a for a in core_adapters() if a.owner_id=='db.chachanotes.primary')
+assert len(CHACHANOTES_V81_SCHEMAS)==4
+for index,schema in enumerate(CHACHANOTES_V81_SCHEMAS):
+ path=Path.home()/f'lineage-{index}.sqlite'
+ with sqlite3.connect(path) as connection:
+  install_canvas_revision_payload_validator(connection)
+  tables=[sql for sql in schema if sql.startswith(('CREATE TABLE','CREATE VIRTUAL TABLE'))]
+  for sql in tables+[sql for sql in schema if sql not in tables]:
+   if connection.execute('SELECT 1 FROM sqlite_schema WHERE sql=?',(sql,)).fetchone() is None:
+    connection.execute(sql)
+  connection.execute("INSERT INTO db_schema_version VALUES ('rag_char_chat_schema',81)")
+ assert owner.validate(path)==(),(index,owner.validate(path))
+ assert validate_candidate(owner,path,Event(),migrate=True)==()
+ with sqlite3.connect(path) as connection:
+  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(82,)
+  assert connection.execute("SELECT [unique] FROM pragma_index_list('canvas_revisions') WHERE name='idx_canvas_revisions_canvas_sequence'").fetchone()==(0,)
+print('retired and reopened')
+"""
+
+
+def test_all_four_frozen_v81_lineages_remain_accepted_and_migrate(tmp_path):
+    _run(tmp_path, "core", "lineages", script=_LINEAGE_SCRIPT)

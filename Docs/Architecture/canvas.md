@@ -43,6 +43,16 @@ Five tools, all reserved-prefixed: `canvas_list`, `canvas_read`, `canvas_create`
 - **DB invariants** (trigger-enforced): revisions are immutable; deletes require an app-registered authorization function; ownership cannot change after creation; parent/sequence guards; payload sha256+bytes re-validated at insert. The migration refuses to run if canvas objects already exist (schema-ownership check).
 - **Source privacy**: durable/display projections strip HTML — only ids, title, hashes, byte counts, sequence, and origin survive; malformed source-bearing payloads collapse to a content-free error code. Errors pass through a whitelist.
 - **Quotas**: enforced in `limits.py` and the repository (`CanvasQuotaError` / `CanvasLimitError`).
+- **Sibling graphs (ADR-239, schema 82)**: complete imports preserve equal-sequence
+  siblings, one root at 1, contiguous distinct positive sequences and strictly
+  lower same-Canvas parents. Reads/exports order by `(sequence, revision_id)`;
+  ordinary and turn-transaction appends allocate `max(sequence)+1`, with count
+  quotas and stale authored claims still enforced. Migration 81→82 replaces the
+  unique sequence index with a covering lookup index and adds a unique root index.
+- **Archives**: Canvas exports use Chatbook 4.0 / extension 2.0; genuine 3.0 / 1.0
+  archives retain their unique-sequence contract. No-Canvas exports remain 2.0.
+  The importer rejects mismatched versions before extraction or DB access.
+  Sync remains excluded; this foundation adds no transport or runtime authority.
 
 ## Config keys
 

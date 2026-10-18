@@ -32,6 +32,16 @@ Core tables: `character_cards`, `conversations` (TEXT UUID PK, `root_id`, `forke
 
 Steps are `.sql` files under `DB/migrations/`, executed **statement-by-statement through a cursor inside the step transaction** (an earlier `executescript` approach auto-committed and was replaced). Idempotent-replay guards handle re-runs: require-entry-version checks, skip-already-applied `ADD COLUMN`, drop-superseded-trigger. The runner is kept aligned with the folder by test.
 
+Schema 82 (ADR-239) permits tied Canvas sibling sequences without rewriting any
+immutable rows. The file-backed 81→82 transaction verifies the exact predecessor
+index, replaces its uniqueness with `(canvas_id, sequence, id)` lookup ordering,
+adds a unique partial root index, and guards the version update. Fresh installs
+replay the same step. Recovery retains every frozen predecessor catalog, all four
+v81 lineages and their exact v82 successors, including installed shared-file
+Subscriptions catalogs; only those exact catalogs can enable the pure Canvas
+payload CHECK during bounded validation. Restricted connections relinquish that
+temporary authority before returning.
+
 ### Patterns (the load-bearing conventions)
 
 - **Transactions**: `with db.transaction(*, immediate=False) as cur:` — thread-local depth counter; the outermost context issues `BEGIN`/`BEGIN IMMEDIATE`. `immediate=True` avoids SQLite's non-retryable deferred-upgrade deadlock for read-then-write flows. Nested contexts defer to the outer; a caller-owned native transaction is borrowed without committing it.
