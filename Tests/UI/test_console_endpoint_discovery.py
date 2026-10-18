@@ -24,10 +24,14 @@ from Tests.UI.test_console_settings_model_change import (
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    build_target_default_console_session_settings,
+    console_send_connection,
 )
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
+    ProviderTestEvidence,
+    provider_connection_evidence,
 )
 from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
@@ -1408,11 +1412,11 @@ async def _list_served_y(pilot, app, modal) -> None:
     await settle(pilot, app)
 
 
-def _served_y_modal(app, settings):
+def _served_y_modal(app, settings, **kwargs):
     async def connection(_identity):
         return ProviderProbeResult("reachable", ("model-a", "served-y"))
 
-    return pick_modal(app, settings, connection_tester=connection)
+    return pick_modal(app, settings, connection_tester=connection, **kwargs)
 
 
 @pytest.mark.bootstrap_profile
@@ -1461,6 +1465,44 @@ async def test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoin
         base_url.value = "http://127.0.0.1:9200"
         await settle(pilot, app)
         assert served in await _pick_mode_pairs(pilot, app, modal)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_listing_is_offered_beside_the_configured_servers_own_listing():
+    """Wave 6 integration review (TASK-33005.12): pick mode reads the
+    configured :9099's readiness, as the Console's does. Once :9099's own
+    listing (model-a) was in the shared evidence, from the switcher's probe
+    or a Test of :9099, llama.cpp's rows were that listing alone, and served-y,
+    which :9200 listed and a pick keeps :9200 for (TASK-33006.19), was gone.
+    It is offered beside that listing; the saved model-b, which no server
+    listed, is not (TASK-33005.12 AC#1)."""
+    app = CoreFirstHarness()
+    owner = provider_connection_evidence(app)
+    configured = console_send_connection(
+        build_target_default_console_session_settings(
+            app.app_config, "llama_cpp", None
+        ),
+        app_config=app.app_config,
+    )
+    owner.publish(ProviderTestEvidence(configured, "reachable", ("model-a",)), order=1)
+    modal = _served_y_modal(
+        app,
+        replace(_settings(), base_url="http://127.0.0.1:9200"),
+        model_picker=pick_mode_opener(app, app.app_config, connection_evidence=owner),
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await _list_served_y(pilot, app, modal)
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        base_url.value = "http://127.0.0.1:9201"
+        await settle(pilot, app)
+        base_url.value = "http://127.0.0.1:9200"
+        await settle(pilot, app)
+        pairs = await _pick_mode_pairs(pilot, app, modal)
+
+    llama = {model for provider, model in pairs if provider == "llama_cpp"}
+    assert llama == {"model-a", "served-y"}
 
 
 @pytest.mark.bootstrap_profile

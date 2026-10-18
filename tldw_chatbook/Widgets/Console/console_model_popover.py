@@ -1127,11 +1127,18 @@ class ConsoleModelPopover(
         return cached
 
     def _models_for(self, key: str) -> tuple[str, ...]:
-        """What the server listed, else the catalog, else the saved models."""
+        """What the server listed, else the catalog, else the saved models.
+
+        A server's listing keeps the models a Chat settings listing found
+        (``served_models``): each is offered only where a pick of it lands on
+        the endpoint that listed it, which may not be this readiness's own
+        (TASK-33006.19), and none is a saved model (TASK-33005.12).
+        """
         catalog, saved = self._catalogs.get(key), self._saved_models(key)
         listed = _server_listing(self._readiness.get(key), catalog or (), saved)
         if listed is not None:
-            return listed
+            served = map(normalize_model_id, self._served.get(key, ()))
+            return tuple(dict.fromkeys((*listed, *filter(None, served))))
         return catalog if catalog is not None else saved
 
     # -- rows -----------------------------------------------------------

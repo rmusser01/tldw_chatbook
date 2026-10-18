@@ -660,3 +660,5 @@ Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keep
 # Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
 # TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
+# TASK-33005.12 (Wave 6 integration review): pick mode offers a Chat settings listing beside the configured server's own listing (3 of 3 serial, ~3 s).
+Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_beside_the_configured_servers_own_listing

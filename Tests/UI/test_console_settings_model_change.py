@@ -60,13 +60,17 @@ def _never(*_args, **_kwargs):
     raise AssertionError("pick mode never rebases, applies or opens Settings")
 
 
-def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
+def pick_mode_opener(
+    app, app_config, providers_models=PROVIDERS_MODELS, connection_evidence=None
+):
     """Return the Change opener the Console passes: the real pick-only switcher.
 
     Args:
         app: The harness app the switcher is pushed on.
         app_config: The configuration its rows and readiness read.
         providers_models: The saved model lists it lists.
+        connection_evidence: The shared evidence owner its readiness reads,
+            as the Console's does; none by default.
 
     Returns:
         A ``model_picker`` for ``ConsoleSettingsModal``.
@@ -83,7 +87,9 @@ def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
                 durability_copy="",
                 draft_rebaser=_never,
                 live_committer=_never,
-                default_readiness_resolver=readiness_resolver(app_config),
+                default_readiness_resolver=readiness_resolver(
+                    app_config, connection_evidence
+                ),
                 pick_only=True,
                 query=query,
                 served_models=served,
@@ -94,11 +100,12 @@ def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
     return open_picker
 
 
-def readiness_resolver(app_config):
-    """Return the configuration-only readiness pick mode reads, as the Console's.
+def readiness_resolver(app_config, connection_evidence=None):
+    """Return the configured connection's readiness pick mode reads, as the Console's.
 
     Args:
         app_config: The configuration the readiness is built from.
+        connection_evidence: The shared evidence owner it reads, if any.
 
     Returns:
         A ``default_readiness_resolver`` for ``ConsoleModelPopover``.
@@ -108,7 +115,9 @@ def readiness_resolver(app_config):
         settings = build_target_default_console_session_settings(
             app_config, provider, model
         )
-        return build_console_settings_readiness(settings, app_config=app_config)
+        return build_console_settings_readiness(
+            settings, app_config=app_config, connection_evidence=connection_evidence
+        )
 
     return readiness
 

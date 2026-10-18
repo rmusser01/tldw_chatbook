@@ -390,8 +390,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # now a private-profile test, 3 of 3 serial: 352.
 # Phase 9 Task 16 appends one node id, 3 of 3 serial: a local server's
 # switcher rows are the models its probe listed (TASK-33005.12): 353, after
-# Task 15's 352, in the Wave 6 integration.
-MINIMUM_FILES = 353
+# Task 15's 352, in the Wave 6 integration. Its integration review round 1
+# appends one node id, 3 of 3 serial: pick mode offers a Chat settings
+# listing beside the configured server's own listing (TASK-33005.12): 354.
+MINIMUM_FILES = 354
 
 
 def read_census(path: Path) -> list[str]:

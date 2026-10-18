@@ -871,8 +871,9 @@ old is reused. The list opens and takes keys at once; the words change as
 the answers come in, and a stopped server's "refused" reaches this chat's
 status at once, under the open list. Once a server's model listing has
 answered (this check, or **Test connection** of the same connection), that
-server's rows are the models it listed, and saved or cached models it did
-not list are no longer offered. A listing is read up to 100 models, and
+server's rows are the models it listed (in Chat settings, with the models a
+listing there found), and saved or cached models it did not list are no
+longer offered. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
 stay after the listed ones; this chat's own model stays listed first.
 Until then (not checked yet, refused or timed out) the rows are the saved
