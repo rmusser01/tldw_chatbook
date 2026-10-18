@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A scroll request can precede the layout it needs (TASK-35585, 2026-10-18)
+
+**Incident.** PR3162's native100x30 recovery capture read composer strips instead of its header: the header was at y26 while the transcript ended at y26, with scroll_y1 and max_scroll_y31. An immediate scroll had used the earlier layout's range. Deferred scrolling alone still failed both compact controls; waiting for layout before requesting that scroll completed the same real click/restore/history journey. A separate imported-results assertion ran after a coalesced Console sync request returnedFalse, before its owning pass published the imported session.
+
+**What to do.** Let layout finish before scrolling, then require the full captured widget inside the transcript viewport and crop there. Keep real hit-tested clicks and content assertions. A coalescible sync call is a request, so wait for its observed view session and completed pass before asserting its publication; do not treat its return as an unconditional completion barrier.
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule

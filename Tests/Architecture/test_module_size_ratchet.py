@@ -232,7 +232,7 @@ _BUDGETS: dict[str, int] = {
     # Rebased onto dev 2026-10-15: dev's UI-perf waves (tasks 34913, 34934,
     # 34935-34937 and their review fixes) added 51 lines; this PR's own net
     # change is unchanged: 35,818.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35818,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35743,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

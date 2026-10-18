@@ -556,3 +556,54 @@ def test_search_retires_only_its_worker_connections(
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(worker).result()
+
+
+@pytest.mark.parametrize("dated", [False, True])
+def test_unknown_archive_pages_use_last_modified_then_identity(stores, dated):
+    from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveSearchRequest
+    from tldw_chatbook.Chat.archive_recovery.search_service import ArchiveSearchService
+
+    db, chat, registry = stores
+    unknown = sorted(add_chat(db) for _ in range(4))
+    modified = [
+        "unavailable",
+        "2026-09-21 12:00:00.000001",
+        "2026-09-21T13:00:00.000001+01:00",
+        "2026-09-21T12:00:00.000002Z",
+    ]
+    known = add_chat(db)
+    with db.transaction() as conn:
+        for cid, value in zip(unknown, modified, strict=True):
+            conn.execute(
+                "UPDATE conversations SET archived_at = NULL, last_modified = ? WHERE id = ?",
+                (value, cid),
+            )
+        conn.execute(
+            "UPDATE conversations SET archived_at = '2026-09-01T00:00:00Z' WHERE id = ?",
+            (known,),
+        )
+    request = ArchiveSearchRequest(
+        limit=2,
+        archived_after="2026-09-01T00:00:00Z" if dated else None,
+        include_unknown_archive_times=dated,
+    )
+    service = ArchiveSearchService(chat, registry)
+    page = service.search(request)
+    items = list(page.items)
+    while page.next_anchor:
+        page = service.search(
+            request,
+            after=page.next_anchor,
+            expected_workspace_digest=page.workspace_digest,
+        )
+        items.extend(page.items)
+    assert [item.target.conversation_id for item in items] == [
+        known,
+        unknown[3],
+        unknown[1],
+        unknown[2],
+        unknown[0],
+    ]
+    assert all(item.conversation_archived_at is None for item in items[1:])
+    assert all(item.chronology_incomplete for item in items[1:])
+    assert all(item.match_basis == () for item in items[1:])

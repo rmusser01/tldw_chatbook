@@ -87,14 +87,24 @@ class ArchiveRecoveryResultsCard(Vertical):
             if request.archived_before
             else "no upper bound"
         )
+        ordering = (
+            "\nUndated results follow dated matches, ordered by last modified, then chat identity."
+            if any(
+                not row["archive_match_basis"]
+                for row in self.record.projection["items"]
+            )
+            else ""
+        )
         yield Static(
-            f"Archived chats · {safe_text(scope)}\nArchive dates: {lower} (inclusive) to {upper} (exclusive)",
+            f"Archived chats · {safe_text(scope)}\nArchive dates: {lower} (inclusive) to {upper} (exclusive){ordering}",
             markup=False,
+            classes="archive-recovery-copy",
         )
         if not self.record.model_visible:
             yield Static(
                 "Manual results · agent selection requires a fresh authorized search",
                 markup=False,
+                classes="archive-recovery-copy",
             )
         for index, row in enumerate(self.record.projection["items"]):
             workspace = row["workspace"]
@@ -127,17 +137,27 @@ class ArchiveRecoveryResultsCard(Vertical):
                 yield Static(
                     f"{index + 1}. {safe_text(row['title'])} · {safe_text(workspace_name)}\n{chat_state} · {workspace_state}\nArchive events: {safe_text(', '.join(dates) or 'unknown time')}\nMatch basis: {safe_text(basis or 'no proven dated match')}\n{safe_text(row['excerpt'])}",
                     markup=False,
+                    classes="archive-recovery-copy",
                 )
                 if row["inactive_branch"]:
-                    yield Static("Match found in inactive branch.", markup=False)
+                    yield Static(
+                        "Match found in inactive branch.",
+                        markup=False,
+                        classes="archive-recovery-copy",
+                    )
                 if row["chronology_incomplete"]:
-                    yield Static("Archive chronology incomplete", markup=False)
+                    yield Static(
+                        "Archive chronology incomplete",
+                        markup=False,
+                        classes="archive-recovery-copy",
+                    )
                     if (
                         request.archived_after or request.archived_before
                     ) and not basis:
                         yield Static(
                             "Archive time unknown; may match this date range.",
                             markup=False,
+                            classes="archive-recovery-copy",
                         )
                 for action, label in [("preview", "Preview"), ("restore", "Restore")]:
                     if action == "restore" and not row["allowed_scopes"]:
@@ -148,7 +168,11 @@ class ArchiveRecoveryResultsCard(Vertical):
                         label, id=widget_id, classes=f"recovery-row-{action}"
                     )
         if not self.record.projection["items"]:
-            yield Static("No archived chats matched this search.", markup=False)
+            yield Static(
+                "No archived chats matched this search.",
+                markup=False,
+                classes="archive-recovery-copy",
+            )
         if self.record.projection.get("cursor"):
             yield RecoveryActionButton("More results", id="recovery-more")
         yield RecoveryActionButton("Refresh", id="recovery-refresh")
@@ -226,8 +250,12 @@ class ArchiveRecoveryConfirmCard(Vertical):
         self.display = confirmation is not None
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="recovery-target", markup=False)
-        yield Static("", id="recovery-effects", markup=False)
+        yield Static(
+            "", id="recovery-target", markup=False, classes="archive-recovery-copy"
+        )
+        yield Static(
+            "", id="recovery-effects", markup=False, classes="archive-recovery-copy"
+        )
         yield Select(
             [(label, scope) for scope, label in SCOPE_LABELS.items()],
             id="recovery-scope",

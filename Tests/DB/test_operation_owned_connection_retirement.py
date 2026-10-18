@@ -178,3 +178,45 @@ def test_cleanup_deadline_tolerates_already_retired_native_handle(tmp_path, body
         assert db.registered_connection_count() == 0
     finally:
         db.close_connection()
+
+
+def test_expiry_after_connection_registration_bounds_internal_checkpoint(
+    tmp_path, monkeypatch
+):
+    """Acquisition's own close must honor the deadline before outer cleanup."""
+    import time
+
+    path = tmp_path / "late-registration.sqlite"
+    db = CharactersRAGDB(path, "late-registration")
+    reader = sqlite3.connect(path)
+    executor = ThreadPoolExecutor(max_workers=1)
+    opened = []
+    original_register = db._connection_quiescence.register
+
+    def register(conn):
+        original_register(conn)
+        opened.append(conn)
+        time.sleep(0.35)  # Cross the acquisition deadline after setup succeeds.
+
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM conversations").fetchone()
+        db.add_conversation({"title": "WAL beyond the reader snapshot"})
+        monkeypatch.setattr(db._connection_quiescence, "register", register)
+
+        def acquire():
+            with pytest.raises(TimeoutError, match="budget exhausted"):
+                db.get_connection(operation_deadline=time.monotonic() + 0.3)
+
+        future = executor.submit(acquire)
+        future.result(timeout=2)
+        assert reader.in_transaction
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            opened[0].execute("SELECT 1")
+        assert db.registered_connection_count() == 1  # Unchanged main borrower.
+    finally:
+        reader.rollback()
+        reader.close()
+        executor.shutdown(wait=True)
+        db.close_connection()

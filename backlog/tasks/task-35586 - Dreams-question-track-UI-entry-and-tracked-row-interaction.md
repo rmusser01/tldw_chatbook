@@ -1,5 +1,5 @@
 ---
-id: TASK-33164
+id: TASK-35586
 title: Dreams question-track UI entry and tracked-row interaction
 status: Done
 assignee:
@@ -42,3 +42,7 @@ Shipped: w/watch question-track entry on the story modal (query verbatim, kind-d
 <!-- SECTION:NOTES:END -->
 
 ADR check: no new ADR required — targeted read + UI wiring inside the Phase 2 Track design (ADR-196 already governs); reviewer concurred in task-33164-report.md.
+
+## Renumbering provenance
+
+Renumbered from TASK-33164 to TASK-35586 during PR3162 qualification on 2026-10-18. The archive follow-up ownership task created at 2026-09-28 05:42 retains TASK-33164; this younger Dreams task was created at 2026-09-28 20:23 and added in commit 0085d96ab2. The completed implementation and original review evidence remain unchanged; the historical task-33164-report.md reference above identifies that original review. The new ID was reserved after scanning all 876 refs and 41 worktrees (maximum TASK-35585).

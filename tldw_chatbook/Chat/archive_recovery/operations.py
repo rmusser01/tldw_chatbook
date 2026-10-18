@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.conversation_archive_actions import (
     local_conversation_service,
     storage_call,
 )
+from tldw_chatbook.DB.conversation_archive_queries import normalized_archive_time
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import (
     WorkspaceArchiveConflict,
@@ -73,7 +74,7 @@ async def read_recovery_target(app: Any, conversation_id: str) -> ArchiveTarget:
             record.workspace_id,
             record.name,
             record.archived,
-            record.archived_at,
+            normalized_archive_time(record.archived_at) if record.archived else None,
             record.archive_revision,
         )
     return ArchiveTarget(

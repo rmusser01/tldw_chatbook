@@ -8359,7 +8359,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     padding: $ds-space-inset;
     margin-bottom: $ds-space-stack;
 }
-#console-archive-recovery-controls .archive-recovery-card Static,
+#console-archive-recovery-controls .archive-recovery-copy,
 #console-archive-recovery-controls .archive-recovery-row {
     height: $ds-height-auto;
     width: $ds-width-fill;
@@ -8367,36 +8367,36 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 #console-archive-recovery-controls .archive-recovery-row {
     margin-bottom: $ds-space-stack;
 }
-#console-archive-recovery-controls Button,
-#console-archive-recovery-controls Select {
+#console-archive-recovery-controls RecoveryActionButton,
+#console-archive-recovery-controls #recovery-scope {
     width: $ds-width-fill;
     height: $ds-control-height;
     margin-top: $ds-space-stack;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
-#console-archive-recovery-controls Button:hover,
-#console-archive-recovery-controls Select:hover {
+#console-archive-recovery-controls RecoveryActionButton:hover,
+#console-archive-recovery-controls #recovery-scope:hover {
     background: $ds-hover-bg;
     color: $ds-hover-fg;
 }
-#console-archive-recovery-controls Button:focus,
-#console-archive-recovery-controls Select:focus {
+#console-archive-recovery-controls RecoveryActionButton:focus,
+#console-archive-recovery-controls #recovery-scope:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }
-#console-archive-recovery-controls Button:disabled,
-#console-archive-recovery-controls Button:disabled:hover {
+#console-archive-recovery-controls RecoveryActionButton:disabled,
+#console-archive-recovery-controls RecoveryActionButton:disabled:hover {
     background: $ds-disabled-bg;
     color: $ds-text-disabled-readable;
     opacity: 100%;
 }
-#console-archive-recovery-controls Select > SelectCurrent {
+#console-archive-recovery-controls #recovery-scope > SelectCurrent {
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
-#console-archive-recovery-controls Select:focus > SelectCurrent {
+#console-archive-recovery-controls #recovery-scope:focus > SelectCurrent {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;

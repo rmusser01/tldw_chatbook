@@ -45,11 +45,13 @@ class ConsoleArchiveRecoverySurface(Vertical):
         await self.view.action(event)
 
     @on(Button.Pressed, "#recovery-manual-library")
-    async def imported_library_search(self, event):
+    def imported_library_search(self, event):
         event.stop()
         source = getattr(event.button, "source_session_id", None)
-        if self.view.is_answerable(source):
-            await self.view.open_library()
+
+        self.app.run_worker(
+            self.view.open_library(session_id=source), group="archive-recovery-library"
+        )
 
     @on(
         Button.Pressed,
@@ -159,6 +161,7 @@ class ConsoleArchiveRecoveryView:
                     Static(
                         "Saved recovery text has no live action provenance. Search again in Library.",
                         markup=False,
+                        classes="archive-recovery-copy",
                     ),
                     library_button,
                     classes="archive-recovery-card",
@@ -202,6 +205,7 @@ class ConsoleArchiveRecoveryView:
         if (
             surface is None
             or record.session_id != self._session_id
+            or not self.is_answerable(record.session_id)
             or set_id in self._rendered_sets
         ):
             return
@@ -213,8 +217,11 @@ class ConsoleArchiveRecoveryView:
             if (
                 generation != self._render_generation
                 or record.session_id != self._session_id
+                or not self.is_answerable(record.session_id)
             ):
                 await card.remove()
+                if generation == self._render_generation:
+                    self._rendered_sets.discard(set_id)
                 return
             surface.display = True
         except Exception:
@@ -274,7 +281,13 @@ class ConsoleArchiveRecoveryView:
         generation = self._render_generation
         self._rendered_receipts.add(receipt.operation_id)
         outcome = receipt.outcome
-        children = [Static(safe_text(outcome.message), markup=False)]
+        children = [
+            Static(
+                safe_text(outcome.message),
+                markup=False,
+                classes="archive-recovery-copy",
+            )
+        ]
         if outcome.chat_available or outcome.next_action == "restore_workspace":
             key = f"recovery-open-{receipt.operation_id}"
             self._receipt_actions[key] = receipt
@@ -334,7 +347,10 @@ class ConsoleArchiveRecoveryView:
         if not self.is_answerable(event.session_id):
             return
         if event.action == "library":
-            await self.open_library()
+            self.screen.app.run_worker(
+                self.open_library(session_id=event.session_id),
+                group="archive-recovery-library",
+            )
             return
         runtime = self.runtime()
         record = next(
@@ -368,12 +384,21 @@ class ConsoleArchiveRecoveryView:
                     )
                     await self.sync()
                 elif event.action == "preview":
-                    await self.open_library(item.target.conversation_id)
+                    self.screen.app.run_worker(
+                        self.open_library(
+                            item.target.conversation_id, session_id=event.session_id
+                        ),
+                        group="archive-recovery-library",
+                    )
         except ArchiveRecoveryError as exc:
             self.screen.notify(str(exc), severity="warning")
 
-    async def open_library(self, conversation_id: str | None = None) -> None:
-        """Use the canonical read-only exact-ID reader, including hidden chats."""
+    async def open_library(
+        self, conversation_id: str | None = None, *, session_id: str
+    ) -> None:
+        """Use the canonical reader only while the requesting source is current."""
+        if not self.is_answerable(session_id):
+            return
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
         from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 

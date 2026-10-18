@@ -181,6 +181,7 @@ class ArchiveRecoveryRuntime:
             self.app.notify(
                 f"{outcome.message} Chat: {'restored' if outcome.chat_changed else 'unchanged'}. "
                 f"Workspace: {'restored' if outcome.workspace_changed else 'unchanged'}.",
+                markup=False,
                 severity="information"
                 if outcome.status in {"restored", "already_available"}
                 else "warning",

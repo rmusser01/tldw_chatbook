@@ -275,23 +275,29 @@ async def mounted_recovery(
 
 async def click(rig, selector):
     widget = rig.console.query_one(selector) if isinstance(selector, str) else selector
-    widget.scroll_visible(animate=False, force=True, immediate=True)
+    await rig.pilot.pause()  # Layout must precede Textual's scroll-range clamp.
+    widget.scroll_visible(animate=False, force=True)
     await rig.pilot.pause()
     assert await rig.pilot.click(widget), (
         widget.region,
-        widget.visible_region,
+        widget.virtual_region,
         rig.console.focused,
     )
 
 
 async def capture(rig, tmp_path, name, widget):
-    widget.scroll_visible(animate=False, top=True, force=True, immediate=True)
+    await rig.pilot.pause()
+    widget.scroll_visible(animate=False, top=True, force=True)
     await rig.pilot.pause()
     strips = rig.console._compositor.render_strips()
     rendered = "\n".join(strip.text for strip in strips)
     (tmp_path / f"{name}.txt").write_text(rendered)
     rig.host.save_screenshot(filename=f"{name}.svg", path=str(tmp_path))
-    region = widget.region.intersection(rig.console.region)
+    viewport = rig.console.query_one(
+        "#console-native-transcript"
+    ).scrollable_content_region
+    assert viewport.contains_region(widget.region), (widget.region, viewport)
+    region = widget.region.intersection(viewport)
     return " ".join(
         strips[y].crop(region.x, region.right).text.strip()
         for y in range(max(0, region.y), min(len(strips), region.bottom))
@@ -477,6 +483,18 @@ async def test_native_result_refresh_remains_manual_and_imported_json_is_inert(
             persist=True,
         )
         await rig.console._sync_native_console_chat_ui()
+        assert rig.store.active_session_id == imported.id, (
+            rig.store.active_session_id,
+            imported.id,
+            rig.console._archive_recovery_view()._session_id,
+        )
+        await wait_until(
+            rig.pilot,
+            lambda: (
+                rig.console._archive_recovery_view()._session_id == imported.id
+                and not rig.console._console_sync_in_progress
+            ),
+        )
         assert not rig.console.query(".archive-recovery-results")
         assert not rig.console.query(".recovery-row-restore")
         assert not rig.console.query_one("#recovery-confirm").parent.display
@@ -894,6 +912,7 @@ async def test_native_date_search_labels_monday_chat_friday_workspace_and_unknow
             for widget in rig.console.query(".archive-recovery-results Static")
         )
         assert "2026-09-21" in text
+        assert ("last modified, then chat identity" in text) == (unknown is True)
         if unknown == "workspace":
             assert "unknown" in text.lower() and "may match" not in text.lower()
         else:
