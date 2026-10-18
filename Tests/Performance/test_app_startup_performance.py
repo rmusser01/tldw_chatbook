@@ -148,6 +148,31 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
     assert payload["loaded"] == []
 
 
+def test_mcp_connection_health_import_keeps_native_cleanup_deferred(
+    tmp_path: Path,
+) -> None:
+    """Ordinary MCP session checks keep native plugin root custody deferred."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import sys
+        from types import SimpleNamespace
+        from Tests import network_guard, real_profile_guard
+
+        network_guard.install()
+        real_profile_guard.install()
+        assert "tldw_chatbook.MCP.connection_ownership" not in sys.modules
+        from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
+
+        assert not ConnectionOwnership._session_unavailable(SimpleNamespace())
+        assert ConnectionOwnership._session_unavailable(SimpleNamespace(_closed=True))
+        assert "tldw_chatbook.Plugins.data_cleanup" not in sys.modules
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_tool_pack_facade_export_is_lazy(tmp_path: Path) -> None:
     """Package symbols must not pull service owners in until first access."""
 
