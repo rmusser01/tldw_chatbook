@@ -300,7 +300,10 @@ def _row_title_cell(
 
 
 def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
-    """Queue-row subtitle: schedule summary + relative next-run (spec S4).
+    """Queue-row subtitle: next run, then schedule summary (spec S4).
+
+    The next run comes first because the auto-width Details column is
+    wider than the queue pane and its right end is cut (TASK-33641.4).
 
     A reminder row reuses `_format_next_run` verbatim (the exact text the
     pre-redesign Next-Run column showed; `compact=True` deliberately
@@ -322,7 +325,7 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
         absolute = row.next_run_at.strftime("%Y-%m-%d %H:%M")
         tz_label = _format_timezone(row.next_run_at)
         next_text = f"{absolute} {tz_label} ({_format_relative(row.next_run_at, now)})"
-    return f"{row.schedule_summary} · {next_text}"
+    return f"{next_text} · {row.schedule_summary}"
 
 
 def _duplicate_definition_payload(definition: dict[str, Any]) -> dict[str, Any]:

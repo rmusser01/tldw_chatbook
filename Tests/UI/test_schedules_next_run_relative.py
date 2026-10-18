@@ -116,16 +116,16 @@ async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
         await pilot.pause()
 
         table = workbench.query_one("#scheduling-task-table", DataTable)
-        # redesign PR-2, Task 2: column 2 is now the subtitle (schedule
-        # summary + relative next-run), replacing the old standalone
-        # Next-Run column at index 3.
+        # redesign PR-2, Task 2: column 2 is now the subtitle (relative
+        # next-run, then schedule summary since TASK-33641.4), replacing
+        # the old standalone Next-Run column at index 3.
         cell = str(table.get_row_at(0)[2])
         detail = str(
             workbench.query_one("#scheduling-task-detail-next-run", Static).render()
         )
         assert "(in 13h)" in cell or "(in 14h)" in cell, cell
         # Same relative rendering in both surfaces.
-        relative = cell[cell.index("(") :]
+        relative = cell[cell.index("(") : cell.index(")") + 1]
         assert relative in detail, (cell, detail)
 
 

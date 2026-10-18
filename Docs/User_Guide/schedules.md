@@ -48,8 +48,10 @@ re-enabling gives it no new run time; edit its schedule to arm it
 again). Each row shows a status
 glyph (`○` recurring, `▶` one-shot, `⏸` paused, `✓` completed), the
 title with the same owner/transfer-badge suffixes described below, and
-a subtitle line (the schedule summary plus a relative next-run time, or
-"— (paused)"/"— (disabled)" when nothing will fire). An automation row
+a subtitle line (the next run with its relative time, or
+"— (paused)"/"— (disabled)" when nothing will fire, then the schedule
+summary; the next run comes first so a narrow queue cuts the summary,
+not the time). An automation row
 with unread results carries a bold unread dot after its title.
 
 Highlighting a row opens its detail pane beside the list — a reminder's

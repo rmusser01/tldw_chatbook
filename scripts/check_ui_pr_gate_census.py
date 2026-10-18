@@ -406,8 +406,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # node id, 3 of 3 serial: Ctrl+N reads the configured endpoint, never
 # probed on a public host (TASK-35190): 362. Its review round 3 appends one
 # node id, 3 of 3 serial: an open's two probers share one in-flight cap
-# (TASK-35190): 363.
-MINIMUM_FILES = 363
+# (TASK-35190): 363. The Phase 9 capture fix wave appends one node id, 3 of
+# 3 serial: a dispatched weekly row paints its relative next run
+# (TASK-33641.4): 364.
+MINIMUM_FILES = 364
 
 
 def read_census(path: Path) -> list[str]:

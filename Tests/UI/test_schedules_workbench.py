@@ -110,7 +110,7 @@ def test_definition_row_subtitle_carries_a_timezone_label() -> None:
     )
     subtitle = _row_subtitle(row, now)
     assert "2026-09-06 09:00 UTC" in subtitle
-    assert subtitle == "Daily at 09:00 UTC · 2026-09-06 09:00 UTC (in 21h)"
+    assert subtitle == "2026-09-06 09:00 UTC (in 21h) · Daily at 09:00 UTC"
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
