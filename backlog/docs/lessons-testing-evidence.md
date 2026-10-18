@@ -140,6 +140,16 @@ against the shards' measured times first: here it matched within 0.1 min median,
 
 **What to do.** A harness borrowing an application must retire that application through its existing ownership APIs before the private-profile fixture resets paths. Check the actual native connections are closed, rather than relying on Textual shutdown, garbage collection or registry bookkeeping. The local `_running` context and its resource regression in `Tests/UI/test_console_tab_switch_binds_composer.py` are the worked example.
 
+**PR #3148, 2026-10-18.** The GGUF setup helper entered `app.run_test()` and
+then failed its initial readiness wait before returning the context. Every
+caller's `finally` started after that return, leaving the app alive during
+executor shutdown and refusing profile retirement. Two real-app regressions
+preserved a setup `RuntimeError` or `CancelledError` but failed because the app
+task was still pending. Closing the entered context on setup failure made both
+pass with the original exception and a completed app task. Own cleanup until
+the context is successfully handed to the caller. The original readiness cause
+remains unknown; an unchanged native Windows retry passed separately.
+
 ## A counter that a reload also bumps calls the same draft new (TASK-33620.15.2, 2026-10-09)
 
 **Incident.** TASK-33620.15 decided whether a held Enter repeated the
