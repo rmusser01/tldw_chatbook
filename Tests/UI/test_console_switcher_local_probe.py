@@ -151,6 +151,7 @@ def build(
     providers_models=PROVIDERS_MODELS,
     prober=True,
     pair=("ollama", "qwen3:4b"),
+    served_models=None,
 ) -> ConsoleModelPopover:
     """The switcher as Alt+M opens it, minus the screen, on an Ollama chat
     (this chat's own row shows CURRENT, not a hint)."""
@@ -174,6 +175,7 @@ def build(
         default_readiness_resolver=readiness,
         setup_opener=lambda provider, model: app.setup.append((provider, model)),
         connection_prober=switcher_connection_prober(app, config) if prober else None,
+        served_models=served_models,
     )
     return switcher
 
@@ -843,9 +845,10 @@ async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, ser
     (ADR-020); with no listing (not probed, or refused) they stay the saved
     ones. A listing at the probe's bound (100 of a server's 150) may stop
     short, so the saved models past it stay offered (round-1 review: the
-    saved m120 dropped out, and Find offered it as a typed id). The rows read
-    the evidence the probe recorded: one request per local server, as
-    before."""
+    saved m120 dropped out, and Find offered it as a typed id), after the
+    models a Chat settings listing found (served-y), as under the bound (Wave 6
+    integration review round 2: served-y came last). The rows read the evidence
+    the probe recorded: one request per local server, as before."""
     servers.up = set() if server == "refused" else {OLLAMA}
     bound = [f"m{index:03d}" for index in range(150)]
     servers.listing = {OLLAMA: bound if "bound" in server else ["qwen2.5:0.5b"]}
@@ -859,6 +862,7 @@ async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, ser
             pair=("ollama", "qwen3:4b")
             if server == "lists-this-chat"
             else ("llama_cpp", "model-a"),
+            served_models={"ollama": ["served-y"]} if "bound" in server else None,
         )
         await app.push_screen(switcher)
         await _settle(app, pilot)
@@ -881,13 +885,13 @@ async def test_a_local_servers_rows_are_the_models_its_probe_listed(servers, ser
         assert popover_module.CURRENT_MARK in line_with(lines, "qwen3:4b")
         assert not any("gemma3:12b" in line for line in lines)
     elif server == "lists-past-the-bound":
-        assert ready == bound[:3]  # the first three, then "… 98 more"
+        assert ready == bound[:3]  # the first three, then "… 99 more"
     elif server == "not-probed":
         assert ready == saved
     else:
         assert ready == []  # refused: not offered as ready at all
     if "bound" in server:
-        assert models == (*bound[:100], "m120")
+        assert models == (*bound[:100], "served-y", "m120")
     else:
         assert models == (("qwen2.5:0.5b",) if "lists" in server else tuple(saved))
     assert sorted(servers.ports) == ([] if server == "not-probed" else [LLAMA, OLLAMA])

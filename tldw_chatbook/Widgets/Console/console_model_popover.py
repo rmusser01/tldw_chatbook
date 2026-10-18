@@ -178,7 +178,8 @@ def _server_listing(
     nothing. Only a server's own listing counts: a URL-based provider or a
     registry entry; a cloud key check's listing is no catalog. A listing at
     the probe's bound may stop short of what the server serves, so the
-    ``known`` models (its catalog, its saved ones) follow it there.
+    ``known`` models (Chat settings' listed ones, its catalog, its saved
+    ones) follow it there.
     """
     from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
 
@@ -1100,9 +1101,7 @@ class ConsoleModelPopover(
         self._sync_find_placeholder()
 
     def _saved_models(self, key: str) -> tuple[str, ...]:
-        """The provider's saved models (a registry entry's own list), then
-        the ones a Chat settings listing found it serving (``served_models``).
-        """
+        """The provider's saved models (a registry entry's own list)."""
         cached = self._saved.get(key)
         if cached is not None:
             return cached
@@ -1119,7 +1118,6 @@ class ConsoleModelPopover(
                 and not isinstance(models, (str, bytes))
                 for model in models
             ]
-        listed += self._served.get(key, ())
         cached = tuple(
             dict.fromkeys(model for model in map(normalize_model_id, listed) if model)
         )
@@ -1127,19 +1125,20 @@ class ConsoleModelPopover(
         return cached
 
     def _models_for(self, key: str) -> tuple[str, ...]:
-        """What the server listed, else the catalog, else the saved models.
+        """What the server listed, else the catalog, else the saved models,
+        then the models a Chat settings listing found (``served_models``).
 
-        A server's listing keeps the models a Chat settings listing found
-        (``served_models``): each is offered only where a pick of it lands on
-        the endpoint that listed it, which may not be this readiness's own
-        (TASK-33006.19), and none is a saved model (TASK-33005.12).
+        Each of those was listed by the endpoint a pick of it lands on, which
+        may not be this readiness's own (TASK-33006.19), so a saved model no
+        server listed is still not offered (TASK-33005.12). At the listing's
+        bound they come before the known models, as they do under it.
         """
         catalog, saved = self._catalogs.get(key), self._saved_models(key)
-        listed = _server_listing(self._readiness.get(key), catalog or (), saved)
-        if listed is not None:
-            served = map(normalize_model_id, self._served.get(key, ()))
-            return tuple(dict.fromkeys((*listed, *filter(None, served))))
-        return catalog if catalog is not None else saved
+        served = tuple(filter(None, map(normalize_model_id, self._served.get(key, ()))))
+        listed = _server_listing(self._readiness.get(key), served, catalog or (), saved)
+        if listed is None:
+            listed = catalog if catalog is not None else saved
+        return tuple(dict.fromkeys((*listed, *served)))
 
     # -- rows -----------------------------------------------------------
 

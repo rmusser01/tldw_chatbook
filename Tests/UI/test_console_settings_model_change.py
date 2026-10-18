@@ -4,8 +4,11 @@ Spec rule 1, pairs only: the MODEL row's Change (or Alt+M) opens the real
 pick-only switcher over the modal, and the picked provider·model pair rebases
 the draft through the controller's rebaser. Nothing is applied until Apply.
 Every test mounts the real modal under the production stylesheets and drives
-it with real keypresses; ``pick_mode_opener`` builds the switcher exactly as
-``model_switcher.open_model_picker`` does, from the harness's configuration.
+it with real keypresses; ``pick_mode_opener`` builds the switcher from the
+harness's configuration with the sources ``model_switcher.open_model_picker``
+lists from: the saved model lists, a catalog loader (the saved lists, as with
+no catalog scope service) and the configured connection's readiness. It runs
+no local probe and reads no RECENT or PREVIOUS.
 """
 
 from __future__ import annotations
@@ -61,7 +64,11 @@ def _never(*_args, **_kwargs):
 
 
 def pick_mode_opener(
-    app, app_config, providers_models=PROVIDERS_MODELS, connection_evidence=None
+    app,
+    app_config,
+    providers_models=PROVIDERS_MODELS,
+    connection_evidence=None,
+    catalog_loader=None,
 ):
     """Return the Change opener the Console passes: the real pick-only switcher.
 
@@ -71,10 +78,15 @@ def pick_mode_opener(
         providers_models: The saved model lists it lists.
         connection_evidence: The shared evidence owner its readiness reads,
             as the Console's does; none by default.
+        catalog_loader: Its ``catalog_loader``; by default the saved list,
+            which ``load_provider_catalog`` returns with no scope service.
 
     Returns:
         A ``model_picker`` for ``ConsoleSettingsModal``.
     """
+
+    async def saved_catalog(provider):
+        return list(providers_models.get(provider, ()))
 
     def open_picker(origin, draft, query, on_pick, served):
         app.push_screen(
@@ -93,6 +105,7 @@ def pick_mode_opener(
                 pick_only=True,
                 query=query,
                 served_models=served,
+                catalog_loader=catalog_loader or saved_catalog,
             ),
             callback=on_pick,
         )

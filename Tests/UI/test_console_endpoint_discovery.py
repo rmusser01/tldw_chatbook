@@ -1486,10 +1486,34 @@ async def test_a_listing_is_offered_beside_the_configured_servers_own_listing():
         app_config=app.app_config,
     )
     owner.publish(ProviderTestEvidence(configured, "reachable", ("model-a",)), order=1)
+    picker = pick_mode_opener(app, app.app_config, connection_evidence=owner)
+    assert await _llama_models_listed_at_9200(app, model_picker=picker) == {
+        "model-a",
+        "served-y",
+    }
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_listing_is_offered_beside_a_loaded_catalog():
+    """Wave 6 integration review round 2 (TASK-33005.12): with no listing of
+    the configured :9099, llama.cpp's rows are its loaded catalog, as Switch
+    model's are once ``catalog_loader`` resolves it. The catalog replaced the
+    saved models, which were where served-y reached pick mode, so the model
+    Test connection had just listed at :9200 was gone. It follows the
+    catalog."""
+    assert await _llama_models_listed_at_9200(CoreFirstHarness()) == {
+        "model-a",
+        "model-b",
+        "served-y",
+    }
+
+
+async def _llama_models_listed_at_9200(app, **kwargs) -> set[str]:
+    """Chat settings on :9200 lists served-y there, retypes :9200 so a pick
+    keeps it (TASK-33006.19), and returns the llama.cpp models Change offers."""
     modal = _served_y_modal(
-        app,
-        replace(_settings(), base_url="http://127.0.0.1:9200"),
-        model_picker=pick_mode_opener(app, app.app_config, connection_evidence=owner),
+        app, replace(_settings(), base_url="http://127.0.0.1:9200"), **kwargs
     )
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
@@ -1500,9 +1524,7 @@ async def test_a_listing_is_offered_beside_the_configured_servers_own_listing():
         base_url.value = "http://127.0.0.1:9200"
         await settle(pilot, app)
         pairs = await _pick_mode_pairs(pilot, app, modal)
-
-    llama = {model for provider, model in pairs if provider == "llama_cpp"}
-    assert llama == {"model-a", "served-y"}
+    return {model for provider, model in pairs if provider == "llama_cpp"}
 
 
 @pytest.mark.bootstrap_profile

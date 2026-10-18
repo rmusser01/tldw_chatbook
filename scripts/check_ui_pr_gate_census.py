@@ -393,7 +393,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Task 15's 352, in the Wave 6 integration. Its integration review round 1
 # appends one node id, 3 of 3 serial: pick mode offers a Chat settings
 # listing beside the configured server's own listing (TASK-33005.12): 354.
-MINIMUM_FILES = 354
+# Round 2 appends one node id, 3 of 3 serial: pick mode offers a Chat
+# settings listing beside a loaded catalog (TASK-33005.12): 355.
+MINIMUM_FILES = 355
 
 
 def read_census(path: Path) -> list[str]:
