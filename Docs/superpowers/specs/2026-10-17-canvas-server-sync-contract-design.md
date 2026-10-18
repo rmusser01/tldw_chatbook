@@ -1,19 +1,18 @@
 # Canvas server synchronization contract design
 
-Date: 2026-10-17. Status: **proposal for review; not approved or implemented**.
+Date: 2026-10-17. Status: **approved Chatbook target contract; implementation and server adoption not complete**.
 Related task: [TASK-31003](../../../backlog/tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md).
-Related decision: [proposed ADR-239](../../../backlog/decisions/239-canvas-sync-replica-and-lifecycle-contract.md).
+Related decision: [accepted ADR-239](../../../backlog/decisions/239-canvas-sync-replica-and-lifecycle-contract.md).
 Inspected Chatbook base:
 `272cad956855feda4d78efb9db9fce7e909d53db`.
 
-This document makes the service/ownership decision reviewable. It does not
-activate synchronization or claim server support. The associated ADR-239
-is proposed and requires review before implementation. The task's current acceptance criteria mix approval of a
-contract with delivery of the entire feature. Contract approval and feature
-activation must remain separate milestones.
+The user approved this contract and splitting client/server implementation into
+follow-up tasks on 2026-10-17. This document does not activate synchronization
+or claim server support. Contract approval and feature activation remain
+separate milestones; TASK-31003 covers the contract, not the complete feature.
 
-ADR required: yes, before implementing the chosen contract.
-ADR path: backlog/decisions/239-canvas-sync-replica-and-lifecycle-contract.md (Proposed).
+ADR required: yes.
+ADR path: backlog/decisions/239-canvas-sync-replica-and-lifecycle-contract.md (Accepted).
 Reason: new cross-runtime service contract, replica ownership, conflict and
 deletion policy, a durable revision-order/schema change, and version negotiation.
 ADR-121, ADR-124, ADR-008 and the Personal Context ADR-102 are applicable prior
@@ -108,10 +107,10 @@ whole conversation/message/Canvas/revision graph. Equal source hashes do not
 collapse different IDs. Reusing an ID with different immutable content,
 ownership, parent, origin, title or profile is an integrity conflict.
 
-## Proposed domains and exact data
+## Contract domains and exact data
 
 All names, the `canvas` capability object and the Canvas-specific semantic rules
-below are **new proposed protocol extensions**, not present server features.
+below are **approved target protocol extensions**, not present server features.
 The enclosing protocol remains `sync-v2-m1`; the Canvas adapter/schema is v1.
 
 | Domain | Object identity / owner | Operations | Payload |
@@ -472,9 +471,10 @@ These are future behavioral tests, not tests of this proposal's wording.
     both persistence backends the server advertises. No server qualification
     claim is established by this design review.
 
-## External dependencies, decisions and scope correction
+## Recorded decisions, external dependencies and delivery split
 
-Before implementation, obtain a recorded decision on:
+The user's 2026-10-17 approval accepts decisions 1–3. Decision 4 remains a
+server follow-up requirement, not a blocker for inert client foundations:
 
 1. **Ownership/protocol:** accept the two new domains, home-server readability,
    conversation-only enrollment and no second CRUD surface.
@@ -496,10 +496,10 @@ conflict error codes, owner-barrier retention policy and server build before a
 client implementation can claim compatibility. The suggested names and
 semantics here are concrete review proposals, not reserved public identifiers.
 
-Suggested TASK-31003 acceptance-scope amendment, for owner/user approval:
+Approved TASK-31003 acceptance-scope amendment:
 
-- Retain AC1 as an explicit **documented and approved** contract; this proposal
-  satisfies only its documented/reviewable portion, not approval.
+- Retain AC1 as an explicit **documented and approved** contract, satisfied by
+  this design, ADR-239 and the user's recorded approval.
 - Reword AC2–7 as requirements the approved contract must specify, with explicit
   examples/conflict outcomes and compatibility/security rules.
 - Reword AC8 as a concrete implementation conformance-test matrix. Do not check
@@ -512,8 +512,25 @@ Suggested TASK-31003 acceptance-scope amendment, for owner/user approval:
   the decision is approved. Do not invent task IDs or mark the present mixed
   implementation criteria Done on the strength of a design document.
 
-Without this scope amendment, TASK-31003 remains incomplete until all current
-implementation ACs actually pass, including server support and automated tests.
-This proposal activates no production sync, migration or server change. Its
-Backlog entry records design progress only. Sync conformance tests have not run;
-the real-server and migration risks remain open pending contract approval.
+The original implementation requirements remain assigned to the following
+atomic tasks; no design checklist is evidence that their feature tests passed.
+
+| Task | Independently reviewable deliverable | Earlier dependencies |
+| --- | --- | --- |
+| TASK-35376 | Client sibling-sequence storage, migration and archive compatibility | TASK-31003 |
+| TASK-35377 | Server inert Canvas domains, immutable persistence and ownership | TASK-31003 |
+| TASK-35378 | Server lifecycle epochs, conflict retention and retired-owner barriers | TASK-35377 |
+| TASK-35379 | Server complete message-tree capability and byte-bounded admission | TASK-35378 |
+| TASK-35380 | Client committed source intents and outbox reconciliation | TASK-35376 |
+| TASK-35381 | Client durable inbox, domain ingress, conflicts and lifecycle apply | TASK-35380 |
+| TASK-35382 | Client negotiated enrollment, consent and byte-bounded exchange | TASK-35379, TASK-35381 |
+| TASK-35383 | Pinned real-server two-replica conformance and release qualification | TASK-35382 |
+
+Original implementation AC2–4 are covered by ownership/replica tasks
+35376/35377/35380/35381; AC5 by 35378/35381; AC6–7 by
+35377/35379/35381/35382; AC8–9 by the per-task tests/docs and final 35383
+qualification. The twelve acceptance cases above remain the release matrix.
+
+No production sync or server change is activated by this approval record. Server
+repository selection, canonical contract adoption, real-server tests and release
+activation remain follow-up gates. Read-only server evidence is not a write grant.

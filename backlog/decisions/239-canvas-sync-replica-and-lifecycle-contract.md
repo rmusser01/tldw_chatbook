@@ -1,7 +1,8 @@
 # ADR-239: Canvas sync replica and lifecycle contract
 
-Status: Proposed — user approval and companion-server agreement required
+Status: Accepted for Chatbook implementation — companion-server adoption and qualification outstanding
 Date: 2026-10-17
+Approval: user approved the contract and client/server follow-up split on 2026-10-17.
 Related task: TASK-31003
 Related decisions: ADR-008, ADR-121, ADR-124
 
@@ -14,7 +15,7 @@ The current unique per-Canvas revision sequence also cannot preserve two
 offline siblings numbered alike, and the server's default 256 KiB envelope
 limit cannot carry every valid 512 KiB Canvas source.
 
-## Proposed decision
+## Decision
 
 Reuse the existing Sync v2 transport with explicit `canvas.document`
 lifecycle and immutable `canvas.revision` domains. Enroll only durable
@@ -41,16 +42,18 @@ collisions. Putting Canvas in message metadata or attachment references loses
 the explicit ownership, lifecycle and compatibility boundary. Retain manual
 archives until coordinated client/server support qualifies.
 
-## Consequences and approval boundary
+## Consequences and delivery boundary
 
-This proposal requires coordinated server adapters and deployment limits,
+This decision requires coordinated server adapters and deployment limits,
 client storage/archive compatibility work, lifecycle/conflict review and real
-replica qualification. It does not approve or implement those changes.
-TASK-31003 retains its current open acceptance criteria; its distinction between
-contract design and full implementation needs an explicit scope decision.
+replica qualification. Approval authorizes the Chatbook implementation, not a
+compatibility claim or a change to another repository. TASK-31003 is scoped to
+the approved contract; atomic client/server implementation and real-server
+qualification are tracked separately in the linked design's delivery map.
 
 The [reviewable contract](../../Docs/superpowers/specs/2026-10-17-canvas-server-sync-contract-design.md)
 contains concrete payloads, conflict outcomes, compatibility rules, limits,
-server evidence and twelve implementation conformance cases. Approval must
-cover source readability, revision-order changes and lifecycle policy before
-implementation planning. Current runtime profiles and sync exclusion remain.
+server evidence and twelve implementation conformance cases. User approval
+covers source readability, revision-order changes and lifecycle policy. No
+server target build is qualified yet. Current runtime profiles and sync
+exclusion remain until the implementation and interoperability gates pass.

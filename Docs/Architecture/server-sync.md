@@ -30,6 +30,17 @@ Config: `[tldw_api] base_url` / `auth_token` in config.toml (shipped localhost p
 
 **The active sync does not read `sync_log`**: Sync v2 producers write envelopes into the outbox at mutation time; the local-first service pushes/pulls envelopes and applies them. v1 send/get-changes remain exposed only as transport wrappers.
 
+### Approved Canvas extension, not yet activated
+
+ADR-239 approves conversation-owned `canvas.document` and immutable
+`canvas.revision` domains under `server_trusted_v1`: the authenticated home
+server can read source. Canvas remains excluded from active exchange until
+client storage/archive, source intents, durable inbox/lifecycle, complete
+capability/byte negotiation and a pinned companion server pass the
+[contract's delivery and conformance gates](../superpowers/specs/2026-10-17-canvas-server-sync-contract-design.md).
+Design approval is not server compatibility. No rendering, browser selection,
+runtime installation or execution capability is part of synchronization.
+
 ## `sync_log` is a ledger, not the outbox
 
 SQL triggers in ChaChaNotes, Prompts, and the Media DB append `(entity, entity_id, operation, timestamp, client_id, version, payload)` rows on create/update/delete/undelete. Frontier-pruning triggers keep only the latest version per entity and purge on hard deletes — that trigger layer is the live retention mechanism. Verified consumers: manual-sync durable dependency ids, organization inventory deletions, targeted note purges, import-executor inserts, and the recovery/backup schema (which recreates the trigger set on restored DBs). There is no `Sync_Client` module anywhere — the name survives only in historical docs. Conflating `sync_log` with the Sync v2 outbox is the most likely documentation error in this area.
