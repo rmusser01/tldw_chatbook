@@ -302,8 +302,8 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column",
     "Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row",
     # Phase 9 capture fix wave, review round 1 (ledger R11): the bootstrap_profile
-    # node ids this phase had put in the UI census run here instead: the Video
-    # Gen editor (TASK-33641.3, 4 cases), the endpoint discovery nodes
+    # node ids this phase had put in the UI census run here instead: the Image
+    # and Video Gen backend editors (TASK-33641.3, 4 cases), the endpoint discovery nodes
     # (TASK-33006.19, TASK-33006.25, TASK-33005.12, TASK-35190; 16 cases) and
     # the weekly queue row (TASK-33641.4, 2 cases). 22 cases, ~80 s serial.
     "Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable",

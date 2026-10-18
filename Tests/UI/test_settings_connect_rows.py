@@ -601,7 +601,8 @@ _NO_FOCUS_GUIDE = {
 }
 
 #: The field Esc releases, where the category guides one whose tooltip the
-#: focus-help line shows (task-2835); no Console Behavior guided field has one.
+#: focus-help line shows (task-2835); no Console Behavior guided text field (the
+#: only kind Esc releases) has one.
 _ESC_FIELDS = {"providers-models": "#settings-session-summary-duration"}
 
 
