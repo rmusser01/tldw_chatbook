@@ -1239,13 +1239,12 @@ class ConsoleModelPopover(
     def _visible_providers(self) -> list[str]:
         """Current provider first, then failed tests, then listing order.
 
-        Legacy aliases never get readiness unless used (``_readiness_targets``),
-        so they drop out below with every other unresolved provider.
+        A legacy alias no chat uses is left out, as from readiness
+        (``_readiness_targets``): Find never takes its id for a name.
         """
         current = provider_key(self._current[0])
         order = [current] if current else []
-        order += [key for key in self._provider_order if key != current]
-        order += sorted(self._used_provider_keys() - set(order))
+        order += [key for key in self._readiness_targets() if key != current]
         blockers = {key: getattr(self._readiness.get(key), "blocker", None) for key in order}
         return sorted(
             (
@@ -1571,7 +1570,7 @@ class ConsoleModelPopover(
         if not tokens:
             return []
         folded = query.casefold()
-        providers = (*self._provider_order, *sorted(self._used_provider_keys()))
+        providers = self._readiness_targets()  # no unused legacy alias
         if any(self._names(folded, key) for key in providers):
             return []  # a provider's name or id is a search, not a model id
         named = [

@@ -1514,6 +1514,58 @@ async def test_find_with_exactly_a_providers_id_lists_its_rows_first() -> None:
     assert row is not None and (row.provider, row.model) == ("llama_cpp", "model-a")
 
 
+@pytest.mark.parametrize(
+    "draft, extra, expected",
+    [
+        (
+            _draft(),
+            {
+                "providers_models": {
+                    "MistralAI": ["mistral-large-latest", "mistral-small-latest"]
+                }
+            },
+            ("mistralai", "mistral-large-latest"),
+        ),
+        (
+            _draft("ollama", "llama3"),
+            {"served_models": {"ollama": ("mistral:7b", "mistral:instruct")}},
+            ("ollama", "mistral:7b"),
+        ),
+    ],
+    ids=["mistral-ai", "ollama-served"],
+)
+async def test_find_with_an_unused_legacy_alias_id_ranks_as_any_text(
+    draft, extra, expected
+) -> None:
+    """TASK-33641.9 AC#2 (round-2 review): the catalog lists legacy aliases
+    that appear only when a chat uses them, yet "mistral" counted as the
+    unused alias Mistral AI (legacy alias)'s id: no row was its, so nothing
+    was highlighted and Enter applied nothing although Mistral AI's (or the
+    Ollama server's) mistral rows were the matches, and the chat's provider
+    was offered no TYPED MODEL ID row. It ranks as any other text."""
+    recorder = Recorder(ready=READY_PROVIDERS | {"mistralai"})
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, build_switcher(recorder, draft=draft, **extra)
+        )
+        await pilot.press(*"mistral")
+        await _settle(app, pilot)
+        row = switcher.highlighted_row()
+        assert row is not None and (row.kind, row.provider, row.model) == (
+            "pair",
+            *expected,
+        )
+        typed = [(r.provider, r.model) for r in switcher._rows if r.kind == "typed"]
+        assert typed == [(draft.settings.provider, "mistral")]
+        await pilot.press("enter")
+        await pilot.pause()
+    assert [
+        (s.draft.settings.provider, s.draft.settings.model)
+        for s in recorder.submissions
+    ] == [expected]
+
+
 async def test_a_list_reopened_with_no_pair_waits_for_readiness_too() -> None:
     """TASK-33008.2: before readiness RECENT can already list the
     aggregator's id, and it is Find's best match there too. A list reopened

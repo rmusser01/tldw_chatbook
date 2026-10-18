@@ -894,7 +894,8 @@ any listed row that holds every word you typed, in its model id or its
 provider's name, is highlighted ahead of it, so **Down** may be needed to
 reach it. A provider whose list is still loading,
 empty or unavailable says so in its own row. Legacy alias providers (such
-as "llama.cpp (legacy alias)") only appear when a chat uses them.
+as "llama.cpp (legacy alias)") only appear when a chat uses them; until
+then typing one's name or id (`mistral`) is an ordinary search.
 
 Up and Down move the highlight while you type, and from the values too.
 Under the list, "Values for <model> · <provider>" names the highlighted pair,
