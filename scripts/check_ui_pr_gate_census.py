@@ -383,10 +383,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (TASK-33002.17), the Lab GGUF one-row node (TASK-33641.2), the Skills
 # built-in rows file whole (TASK-33003.22) and the legacy [API] key save node
 # (TASK-33001.15); it also widens the provider save-scope node to its whole
-# file in place (TASK-33002.17, no count change): 346. Its review round 1
-# appends the Image Gen real-CSS backend-row node (TASK-33641.3), now a
-# private-profile test: 347; 351 with Task 12's four, in the Wave 5
-# integration.
+# file in place (TASK-33002.17, no count change): 350, after Task 12's 346,
+# in the Wave 5 integration. Its review round 1 appends the Image Gen
+# real-CSS backend-row node (TASK-33641.3), now a private-profile test: 351.
 MINIMUM_FILES = 351
 
 
