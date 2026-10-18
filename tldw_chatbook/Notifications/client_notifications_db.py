@@ -5,16 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-import time
-from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
 from ..DB.base_db import BaseDB
 from ..DB.private_sqlite import connect_private_sqlite
-
+from ..DB.store_kernel import SQLiteStoreKernel
 
 DEFAULT_NOTIFICATION_SETTINGS = {
     "enabled": True,
@@ -30,17 +28,14 @@ _CATEGORY_NOTIFICATION_SETTINGS = (
 )
 
 
-from tldw_chatbook.Backup_Recovery.participants import (
+from tldw_chatbook.Backup_Recovery.participants import (  # noqa: F401 - _get_connection override keeps its gate
     _core_access,
-    _core_cached_connection,
-    _core_closing,
     _core_getter,
-    _core_transaction,
     _register_core_connection,
 )
 
 
-class ClientNotificationsDB(BaseDB):
+class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
     """Dedicated local queue/inbox store for client notifications.
 
     task-15466: file-backed connections are held per thread (the
@@ -64,6 +59,14 @@ class ClientNotificationsDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 1
 
+    #: Dual connect owner (ADR-228): the file branch opens through
+    #: BaseDB's db.base seam (this store's _open_connection override),
+    #: while the :memory: branch connects directly under
+    #: notifications.client -- which is also the store's participants
+    #: identity. The kernel's default opener is overridden, so this
+    #: attribute documents the memory-branch owner.
+    _kernel_sqlite_owner = "notifications.client"
+
     #: Liveness-ping gate (mirrors `Workspace_DB`/`ChaChaNotes_DB`,
     #: task-261/3011): a recently-used held connection is known-good
     #: without spending a `SELECT 1` on every call.
@@ -73,7 +76,7 @@ class ClientNotificationsDB(BaseDB):
         # Both must precede super().__init__: _initialize_schema (run
         # eagerly for :memory: below) already needs a connection.
         self._memory_conn: sqlite3.Connection | None = None
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         # TASK-21105: file-backed schema creation is deferred to the first
         # connection (initialize_schema=False below). Construction resolves
         # the path only; no file/WAL sidecars are created until first
@@ -128,7 +131,11 @@ class ClientNotificationsDB(BaseDB):
                 self._memory_conn.isolation_level = None
             return self._memory_conn
         _core_access(self)
-        conn = super()._get_connection()
+        # Explicit BaseDB target: a bare super() now resolves to the kernel
+        # (MRO), whose _get_connection calls _open_connection back -- the
+        # recursion this line caused before the explicit target (ADR-228
+        # provenance pattern).
+        conn = BaseDB._get_connection(self)
         _register_core_connection(self, conn)
         try:
             _core_access(self)
@@ -159,99 +166,20 @@ class ClientNotificationsDB(BaseDB):
             raise
         return conn
 
-    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
-        """Return this thread's held connection, opening or reviving it.
-
-        In-memory stores share the single cached connection instead (see
-        the class docstring). The liveness probe is a plain no-op
-        statement. Only a positively closed native handle is replaced;
-        a failed probe on a live handle preserves it and propagates the error.
+        """Memory stores share the single cached connection (ADR-228 per-store
+        ``:memory:`` policy); file stores take the kernel's held/liveness path.
         """
         if getattr(self, "is_memory_db", False):
             return self._get_connection()
-        _core_access(self)
-        conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    # A failed probe does not retire a live native borrower.
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()  # Positively closed; failure retains cache.
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
-
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield this thread's held connection (no transaction opened).
-
-        In autocommit mode a single statement is its own transaction, so
-        reads and single-statement writes need nothing more than this.
-        """
-        yield self._held_connection()
-
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
-
-        Required for any block whose statements must land (or not land)
-        together: in autocommit mode each bare statement would otherwise
-        commit on its own.
-
-        Nesting: the explicit BEGIN runs on the ONE connection this thread
-        holds (or, for ``:memory:``, the single shared one), so nesting a
-        second ``transaction()`` inside one raises
-        ``sqlite3.OperationalError: cannot start a transaction within a
-        transaction``. Pre-port each block had its own connection and
-        nesting silently "worked"; the outer block still rolls back
-        cleanly, because the failure propagates through its ``except``.
-
-        Raises:
-            Exception: Re-raised after rolling back, on any error inside
-                the ``with`` block. On clean exit the transaction commits.
-        """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        except Exception:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
+        return super()._held_connection()
 
     def close(self) -> None:
-        """Close the memory connection, or this thread's held connection."""
+        """Close the memory connection, then this thread's held connection."""
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 - preserve explicit retirement route
-                    return
-                self._thread_local.conn = None
+        super().close()
 
     def _initialize_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105), so
