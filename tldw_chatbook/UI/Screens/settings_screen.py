@@ -5263,12 +5263,11 @@ class SettingsScreen(BaseAppScreen):
         self._subscription_readiness_observation = observation
         if category is SettingsCategoryId.OVERVIEW:
             presentation = self._settings_overview_presentation()
-            for row in presentation.primary_rows:
-                if row.key == "configuration":
-                    self._set_static_text(
-                        "#settings-overview-configuration",
-                        f"{row.label}: {_fold_long_tokens(row.value)}",
-                    )
+            for row in presentation.primary_rows:  # the test row with the Status
+                self._set_static_text(
+                    f"#settings-overview-{row.key.replace('_', '-')}",
+                    f"{row.label}: {_fold_long_tokens(row.value)}",
+                )
             return
         from ..Settings_Modules.providers_models_card import refresh_key_rows
 

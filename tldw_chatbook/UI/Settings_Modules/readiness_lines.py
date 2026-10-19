@@ -48,14 +48,17 @@ def overview_configuration(screen: SettingsScreen) -> str:
     saved config only: ``chat_defaults.model`` for its own provider, else
     that provider's table model (TASK-33001.8), read against the shared
     connection evidence (AC#1). An unsaved Providers & Models draft is named
-    after them, never shown as the Configuration (AC#4).
+    after them, never shown as the Configuration (AC#4): its pair when that
+    differs, else only that edits are unsaved, so an edit of another field
+    (Temperature) never repeats the saved pair as a draft.
 
     Args:
         screen: The Settings screen.
 
     Returns:
         "<provider> / <model>; Status: <word>", plus "; Unsaved draft: <provider>
-        / <model>" while the draft holds edits.
+        / <model>" while the draft holds another pair, or "; Unsaved Providers
+        & Models edits" while it holds other edits.
     """
     from ...Chat.console_session_settings import (
         blank_console_session_settings,
@@ -71,14 +74,17 @@ def overview_configuration(screen: SettingsScreen) -> str:
         app_config=app_config,
         connection_evidence=shared_connection_evidence(lambda: screen.app),
     )
-    line = (
-        f"{_pair(screen, settings.provider, settings.model)}; "
-        f"Status: {readiness_words(readiness)}"
-    )
+    saved = _pair(screen, settings.provider, settings.model)
+    line = f"{saved}; Status: {readiness_words(readiness)}"
     draft = screen._provider_draft()
     if draft is not None and draft.is_dirty:
         staged = screen._resolve_provider_model_for_settings()
-        line += f"; Unsaved draft: {_pair(screen, staged.provider, staged.model)}"
+        pair = _pair(screen, staged.provider, staged.model)
+        line += (
+            f"; Unsaved draft: {pair}"
+            if pair != saved
+            else "; Unsaved Providers & Models edits"
+        )
     return line
 
 

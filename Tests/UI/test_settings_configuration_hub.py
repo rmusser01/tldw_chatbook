@@ -14353,7 +14353,10 @@ async def test_settings_overview_status_follows_evidence_settled_elsewhere(reque
     on the shared evidence, as a Console probe settles) never reached the
     Overview's Status until the next visit. The existing 0.25 s readiness
     poll now keys on the evidence revision: with that poll stopped nothing
-    repaints the line (no other timer does), and its next tick does."""
+    repaints the line (no other timer does), and its next tick does. Whole-PR
+    review: that tick repainted the Status only, so "refused :9199" sat above
+    "Last connection test: Configuration check has not run." until a revisit;
+    it repaints the test row beside it too."""
     from tldw_chatbook.Chat.console_session_settings import (
         build_target_default_console_session_settings,
         console_send_connection,
@@ -14380,6 +14383,10 @@ async def test_settings_overview_status_follows_evidence_settled_elsewhere(reque
             row = screen.query_one("#settings-overview-configuration", Static)
             return str(row.renderable)
 
+        def last_test() -> str:
+            row = screen.query_one("#settings-overview-last-connection-test", Static)
+            return str(row.renderable)
+
         assert status().endswith("; Status: Ready · not tested"), status()
         screen._subscription_readiness_timer.stop()
         live = screen._provider_readiness_app_config()
@@ -14396,13 +14403,17 @@ async def test_settings_overview_status_follows_evidence_settled_elsewhere(reque
             ProviderProbeResult("unreachable", (), "connection_refused"),
         )
         await pilot.pause(0.6)
-        unpolled = status()
+        unpolled, unpolled_test = status(), last_test()
         screen._poll_subscription_readiness()  # the existing poll's next tick
         await pilot.pause()
-        polled = status()
+        polled, polled_test = status(), last_test()
 
     assert unpolled.endswith("; Status: Ready · not tested"), unpolled
+    assert unpolled_test.endswith(": Configuration check has not run."), unpolled_test
     assert polled.endswith("; Status: Not ready · refused :9199"), polled
+    assert polled_test.startswith(
+        "Last connection test: Readiness: Not ready · refused :9199"
+    ), polled_test
 
 
 @pytest.mark.asyncio
@@ -14494,10 +14505,14 @@ async def test_settings_overview_names_an_unsaved_draft_apart_from_the_saved_pai
             return next(row.value for row in rows if row.key == "configuration")
 
         saved = configuration()
+        screen._stage_provider_value("model_profile_temperature", "0.3")
+        tuned = configuration()
         screen._stage_provider_value("model", "gpt-4.1-mini")
         drafted = configuration()
 
     assert saved == "OpenAI / gpt-4.1; Status: Ready · not tested", saved
+    # Whole-PR review: a Temperature edit repeated the saved pair as the draft.
+    assert tuned == f"{saved}; Unsaved Providers & Models edits", tuned
     assert drafted == f"{saved}; Unsaved draft: OpenAI / gpt-4.1-mini", drafted
 
 

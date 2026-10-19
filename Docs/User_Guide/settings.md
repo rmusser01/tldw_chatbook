@@ -229,7 +229,9 @@ it reads "Not ready · refused :9199", never "Ready". A test run elsewhere
 (the Console, Switch model, Chat settings) updates it while Overview is on
 screen. Unsaved Providers & Models edits never stand in for the saved pair:
 the row names them after it, for example "OpenAI / gpt-4.1; Status: Ready ·
-not tested; Unsaved draft: OpenAI / gpt-4.1-mini". **Open Providers & Models**, **Open Storage**,
+not tested; Unsaved draft: OpenAI / gpt-4.1-mini", or, when the edits leave
+the provider and model as saved (a Temperature change), "…; Unsaved
+Providers & Models edits". **Open Providers & Models**, **Open Storage**,
 and **Open Privacy & Security** take you to the corresponding settings. Use
 **Tab** to reach each action; the detail pane scrolls to the focused control,
 and paired actions stack at compact widths.
