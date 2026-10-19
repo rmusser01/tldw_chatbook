@@ -56,7 +56,7 @@ The list was taken with `Tests/CI/test_console_p0_regression_gate.py`'s `_lanes(
 - `Tests/UI/test_theme_contrast.py::test_user_theme_with_any_kept_variable_form_still_loads` (TASK-33003.16)
 - `Tests/UI/test_theme_contrast.py::test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours` (TASK-33003.16)
 
-Two constraints shape the placement. The admission-sensitive job (`pr-fast-lane-admission`) has little room left: Phase 9's own targets made it about 29 minutes serial locally, estimated at about median 29-31 / max 33-38 CI minutes against its 35-minute cap (TASK-35575). And a test's solo time is not its cost in a step (the lessons entry on it), so each placement is timed in its step's order. Where the bootstrap_profile ones go depends on the rule TASK-35570 decides.
+Two constraints shape the placement. The admission-sensitive job (`pr-fast-lane-admission`) has little room left: Phase 9's own targets made it about 29 minutes serial locally, estimated at about median 29-31 / max 33-38 CI minutes against its 35-minute cap (TASK-35575). Since the owner's decision on TASK-35575 (2026-10-19) Phase 9's 52 run in a second job, `pr-fast-lane-admission-2`: `dev`'s 41 alone took max 20.0 min over 20 PR runs, and the 52 alone 266.9 s serial locally. And a test's solo time is not its cost in a step (the lessons entry on it), so each placement is timed in its step's order. Where the bootstrap_profile ones go depends on the rule TASK-35570 decides.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -273,21 +273,6 @@ DREAMS_ADMISSION_TARGETS = (
 #: ``bootstrap_profile`` suites (TASK-32873); they run in their own job,
 #: ``pr-fast-lane-admission`` (TASK-34916).
 ADMISSION_TARGETS = (
-    # Phase 9's whole-PR review, round 2 (TASK-33641.1, TASK-33003.15): the
-    # step's three many-case pure rule tests lead it, ahead of every mounted
-    # target. Tests/conftest.py collects garbage after every Tests/UI test, and
-    # that pass slows as mounted targets grow the heap: the 623-case chrome rule
-    # test took 710 s of a 956 s run behind them and 74-80 s here (42 s alone;
-    # the step's collection is the rest). Their own pytest step would save
-    # about 45 s, which is not worth a second step in this job.
-    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
-    "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
-    "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
-    # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
-    # setup-blocker reason strings (the capture phase's F2 copy and round 1's
-    # endpoint reason). A pure function test, but its file's module pytestmark
-    # is bootstrap_profile, so it runs here (ledger R11), not in the census.
-    "Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers",
     "Tests/Chat/test_console_run_log_connection_ownership.py",
     "Tests/Chat/test_console_chat_create_connection_ownership.py",
     "Tests/DB/test_chachanotes_connection_quiescence.py",
@@ -339,6 +324,29 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word",
     "Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule",
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",
+)
+
+#: The second admission-sensitive job's invocation, exactly, in order
+#: (TASK-35575, the owner's decision of 2026-10-19): Phase 9's
+#: model-config targets, split out of ``pr-fast-lane-admission`` when the
+#: 93 targets in one job took 29.8 and 27.4 min of its 35-min cap on
+#: PR #3169's two runs. Same order as they had there.
+ADMISSION_2_TARGETS = (
+    # Phase 9's whole-PR review, round 2 (TASK-33641.1, TASK-33003.15): the
+    # step's three many-case pure rule tests lead it, ahead of every mounted
+    # target. Tests/conftest.py collects garbage after every Tests/UI test, and
+    # that pass slows as mounted targets grow the heap: the 623-case chrome rule
+    # test took 710 s of a 956 s run behind them and 74-80 s here (42 s alone;
+    # the step's collection is the rest). Their own pytest step would save
+    # about 45 s, which is not worth a second step in this job.
+    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
+    # setup-blocker reason strings (the capture phase's F2 copy and round 1's
+    # endpoint reason). A pure function test, but its file's module pytestmark
+    # is bootstrap_profile, so it runs here (ledger R11), not in the census.
+    "Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers",
     # Phase 9 Task 14 (ledger R11): TASK-33641.3's backend-row tests are
     # bootstrap_profile, so they run here (12 cases, ~20 s, 3 of 3 serial).
     "Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column",
@@ -490,9 +498,11 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-34916: the PR Fast Lane's admission-sensitive half is its own job.
     # TASK-34929: the Dreams tracking tests are the fifth lane.
     # TASK-34986: PR2921's Dreams/Guardian steps left console-p0-gate.
+    # TASK-35575: the admission-sensitive suites run in two jobs.
     assert required.get("needs") == [
         "pr-fast-lane",
         "pr-fast-lane-admission",
+        "pr-fast-lane-admission-2",
         "ui-fast-lane",
         "console-p0-gate",
         "dreams-boundary",
@@ -509,6 +519,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     for lane, step_name in (
         ("pr-fast-lane", "Require successful PR fast lane"),
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
+        ("pr-fast-lane-admission-2", "Require successful PR fast lane (admission-sensitive 2)"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
     ):
@@ -519,7 +530,12 @@ def _assert_required_aggregation(workflow: dict) -> None:
         )
         assert f"needs.{lane}.result" in verdict["run"]
         assert "exit 1" in verdict["run"]
-    for job_name in ("pr-fast-lane-admission", "dreams-boundary", "dreams-tracking"):
+    for job_name in (
+        "pr-fast-lane-admission",
+        "pr-fast-lane-admission-2",
+        "dreams-boundary",
+        "dreams-tracking",
+    ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
         assert all(not step.get("continue-on-error", False) for step in job["steps"])
@@ -565,6 +581,12 @@ EXACT_STEPS = {
         "pr-fast-lane-admission",
         "Run admission-sensitive suites",
         ADMISSION_TARGETS,
+        300,
+    ),
+    "admission-sensitive 2": (
+        "pr-fast-lane-admission-2",
+        "Run admission-sensitive suites 2",
+        ADMISSION_2_TARGETS,
         300,
     ),
 }
@@ -659,6 +681,12 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
             "PR Fast Lane (admission-sensitive)",
             "Run admission-sensitive suites",
         ),
+        # TASK-35575: the second admission-sensitive job, shaped the same.
+        (
+            "pr-fast-lane-admission-2",
+            "PR Fast Lane (admission-sensitive 2)",
+            "Run admission-sensitive suites 2",
+        ),
     ],
 )
 def test_fast_lane_is_one_serial_minimal_python_312_job(
@@ -681,6 +709,8 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     # the admission-sensitive step (worst case measured 28m20s). TASK-34916
     # split the two pytest invocations into two jobs instead of raising it
     # again: over 90 PR runs the halves replay at max 20.8 and 20.1 min.
+    # TASK-35575 (owner decision, 2026-10-19) split the admission-sensitive
+    # half in two the same way when Phase 9 took it to 29.8 min.
     assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
     # checkout, setup-python, install, one pytest step. TASK-32873 keeps the
@@ -771,14 +801,16 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         assert tokens[-2:] == [timeout, "--tb=short"]
         assert _pytest_targets(step["run"]), step["name"]
     # P0 targets live here, not in pr-fast-lane (whose budget they broke).
-    fast_targets = set(
-        _pytest_targets(
-            _named_step(
-                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane-admission"],
-                "Run admission-sensitive suites",
-            )["run"]
+    fast_targets = {
+        target
+        for job, name, _, _ in (
+            EXACT_STEPS["admission-sensitive"],
+            EXACT_STEPS["admission-sensitive 2"],
         )
-    )
+        for target in _pytest_targets(
+            _named_step(_workflow("derived-artifacts.yml")["jobs"][job], name)["run"]
+        )
+    }
     assert not fast_targets & set(_pytest_targets(admission["run"]))
 
 
@@ -849,15 +881,31 @@ def test_admission_target_set_is_exact() -> None:
     """Review of #3106, W1: the admission-sensitive step is pinned like the
     sandboxed one -- every target, their order, and the 300 s test limit."""
     _assert_admission_invocation(_workflow("derived-artifacts.yml"))
+    assert len(set(ADMISSION_TARGETS)) == len(ADMISSION_TARGETS)
+    assert set(NOTES_SYNC_REAL_STACK_TARGETS) <= set(ADMISSION_TARGETS)
+
+
+def test_second_admission_target_set_is_exact() -> None:
+    """TASK-35575: the second admission-sensitive job is pinned the same way,
+    and the two jobs share no target (each would otherwise run twice)."""
+    _assert_exact_step(_workflow("derived-artifacts.yml"), "admission-sensitive 2")
     # Phase 9's whole-PR review, round 2: the many-case pure rule tests lead
-    # the step, ahead of every mounted target (see ADMISSION_TARGETS' note).
-    assert ADMISSION_TARGETS[:3] == (
+    # the step, ahead of every mounted target (see ADMISSION_2_TARGETS' note).
+    assert ADMISSION_2_TARGETS[:3] == (
         "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
         "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
         "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
     )
-    assert len(set(ADMISSION_TARGETS)) == len(ADMISSION_TARGETS)
-    assert set(NOTES_SYNC_REAL_STACK_TARGETS) <= set(ADMISSION_TARGETS)
+    assert len(set(ADMISSION_2_TARGETS)) == len(ADMISSION_2_TARGETS)
+    shared = [
+        (first, second)
+        for first in ADMISSION_TARGETS
+        for second in ADMISSION_2_TARGETS
+        if first == second
+        or first.startswith(second + "::")
+        or second.startswith(first + "::")
+    ]
+    assert shared == []
 
 
 def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
@@ -927,6 +975,21 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         _assert_required_aggregation(mutated)
 
 
+@pytest.mark.parametrize("lane", ["pr-fast-lane-admission", "pr-fast-lane-admission-2"])
+def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: str) -> None:
+    """TASK-35575: the required check waits on each admission-sensitive job;
+    dropping one from its ``needs`` fails the contract.
+
+    Args:
+        lane: The admission-sensitive job dropped from the aggregate's needs.
+    """
+    mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    mutated["jobs"]["derived-artifacts"]["needs"].remove(lane)
+
+    with pytest.raises(AssertionError):
+        _assert_required_aggregation(mutated)
+
+
 @pytest.mark.parametrize(
     ("job_name", "step_name"),
     [
@@ -934,6 +997,9 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         ("pr-fast-lane-admission", None),
         ("pr-fast-lane-admission", "Run admission-sensitive suites"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive)"),
+        ("pr-fast-lane-admission-2", None),
+        ("pr-fast-lane-admission-2", "Run admission-sensitive suites 2"),
+        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 2)"),
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests"),
         ("derived-artifacts", "Require successful Dreams tracking tests"),
