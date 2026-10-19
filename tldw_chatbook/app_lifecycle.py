@@ -1728,18 +1728,25 @@ class LifecycleMixin:
                 return  # Documented off-switch (ADR-229).
             from datetime import timedelta
 
+            from .DB.base_db import operation_owned_connection
             from .Utils.timestamps import to_utc_iso, utc_now
 
             # Shared UTC helper (ADR-173 ratchet): same canonical
             # millisecond-Z shape the hand-rolled strftime produced.
             cutoff = to_utc_iso(utc_now() - timedelta(days=retention_days))
+
+            def prune(db):
+                # TASK-34100.16.1: retire the handle this pool thread opened. A
+                # cached one keeps a storage lease that a backup's pause cannot
+                # drain, so Create backup ended in admission_timeout.
+                with operation_owned_connection(db):
+                    return db.delete_sync_log_entries_older_than(cutoff)
+
             for attr in ("chachanotes_db", "media_db"):
                 db = getattr(self, attr, None)
                 if db is None:
                     continue
-                pruned = await asyncio.to_thread(
-                    db.delete_sync_log_entries_older_than, cutoff
-                )
+                pruned = await asyncio.to_thread(prune, db)
                 if pruned:
                     self.loguru_logger.info(
                         f"Sync-log retention pruned {pruned} rows older than "

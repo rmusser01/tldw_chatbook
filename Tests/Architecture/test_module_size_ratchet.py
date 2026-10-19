@@ -92,7 +92,10 @@ _BUDGETS: dict[str, int] = {
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
-    "tldw_chatbook/app_lifecycle.py": 2134,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.16.1 +7 (the
+    # sync-log retention pass retires its worker connection). The row was
+    # already 209 over on dev 4de437a5c5; that overage is not this task's.
+    "tldw_chatbook/app_lifecycle.py": 2141,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     "tldw_chatbook/app_navigation.py": 1110,
