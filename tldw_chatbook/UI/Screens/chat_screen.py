@@ -17717,6 +17717,23 @@ class ChatScreen(BaseAppScreen):
             # and the later reads rebuild, while a settled tick pays for one
             # build. Task-scoped: only THIS coroutine's task reads the cache —
             # workers and handlers interleaving during the awaits build live.
+            if poll_record is None:
+                from ..Console_Modules.config_sync import prepare_console_presentation_sync
+
+                prepared = await prepare_console_presentation_sync(self)
+                if _console_screen_is_torn_down(self):
+                    return False
+                current_visit = self._current_console_attach_visit()
+                if (
+                    not visit.same_visit(current_visit)
+                    or visit.active != current_visit.active
+                ):
+                    self._console_sync_requested = True
+                    return False
+                if not prepared or getattr(self, "_console_sync_maintenance_paused", False):
+                    self._console_control_bar_replay_whole_sync = True
+                    self._request_console_control_bar_sync(delayed=True)
+                    return False
             with self._workspace.tick_workspace_build_scope():
                 if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True

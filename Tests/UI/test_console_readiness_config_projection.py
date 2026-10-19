@@ -301,6 +301,8 @@ async def test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation(
     screen._console_mode_summary = lambda state: str(state["current"])
     screen._native_run_status_copy = lambda: "Streaming"
     screen._console_active_run_copy = lambda: "Streaming"
+    screen._console_rate_reading = None
+    screen._console_chat_controller = None
     # The same real body without its projection is the positive UI-IO control.
     module.ChatScreen._sync_console_mode_bar.__wrapped__(screen)
     assert reads == [threading.get_ident()] and updates == ["True | Run: Streaming"]

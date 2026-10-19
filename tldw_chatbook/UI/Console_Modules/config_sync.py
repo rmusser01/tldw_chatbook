@@ -1,7 +1,8 @@
-"""The Console's synchronous checked configuration refresh lifetime."""
+"""Checked Console config preparation and synchronous presentation lifetime."""
 
 from collections.abc import Callable
 from contextlib import ExitStack
+from typing import Any
 
 
 def run_console_config_sync(
@@ -76,6 +77,40 @@ def run_console_config_sync(
     return True
 
 
+async def prepare_console_presentation_sync(screen: Any) -> bool:
+    """Await the existing stock display owner before FULL's synchronous render.
+
+    No native operation spans this await. Direct/custom presentation keeps its
+    existing route; the caller owns whole-FULL replay when preparation refuses.
+
+    Args:
+        screen: Current Console view with its existing display projection.
+
+    Returns:
+        Whether FULL may attempt its original synchronous presentation.
+    """
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _screen_readiness_config,
+        _standard_readiness_projections,
+    )
+
+    if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
+        screen, "_closing", False
+    ):
+        return False
+    value = _screen_readiness_config(screen)
+    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+        return True
+    projection = ConsoleReadinessConfigProjection.for_screen(screen)
+    if (
+        type(projection) is not ConsoleReadinessConfigProjection
+        or projection not in _standard_readiness_projections
+    ):
+        return True
+    return await projection.warm()
+
+
 def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
     """Select the existing screen's checked display, retaining live fallback."""
     from .console_spend_projection import (
@@ -86,7 +121,9 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
     def render(projection=None):
         return run_console_config_sync(
             sync,
-            maintenance_paused=getattr(screen, "_console_sync_maintenance_paused", False),
+            maintenance_paused=getattr(
+                screen, "_console_sync_maintenance_paused", False
+            ),
             defer=lambda: screen._request_console_control_bar_sync(delayed=True),
             checked_projection=projection,
         )

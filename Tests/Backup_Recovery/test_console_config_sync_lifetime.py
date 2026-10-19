@@ -432,8 +432,14 @@ _WORKER_RETRY = (
     + r"""
 import asyncio
 from contextlib import nullcontext
+from tldw_chatbook.UI.Console_Modules.attach_visit import ConsoleAttachVisit
 async def no_async():pass
 def no_sync(*args,**kwargs):pass
+# This fixture drives an already-attached FULL refresh, without booting services.
+visit_runtime=SimpleNamespace(view=screen,_attached_generation=1)
+screen._current_console_attach_visit=lambda:ConsoleAttachVisit(visit_runtime,screen,1,1,True)
+screen._console_attach_sync_complete=True
+screen._console_attach_reconciled=True
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)

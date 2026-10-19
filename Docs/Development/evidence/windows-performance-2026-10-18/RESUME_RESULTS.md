@@ -134,3 +134,6 @@ Authoritative FULL synchronization and checked config presentation are now the
 dominant resume stalls. The screen-message-pump boundary described above and
 large histories need separate profiling before further scheduling/cache changes.
 This change does not claim that Console resume is fast overall.
+
+The subsequent FULL/config preparation change and its native controls are
+documented in [FULL_RESULTS.md](FULL_RESULTS.md).

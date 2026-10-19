@@ -4,6 +4,8 @@ Run from repository root with .venv/Scripts/python.exe <this file> --ready.
 Add --settings-ab for an alternating, diagnostic-only prepared-summary test.
 Add --resume-only for six Home/Console returns; --resume-baseline restores the
 pre-attention/workspace modules in memory for a paired original-code control.
+Add --full-baseline for the pre-FULL-config-preparation modules, or
+--config-observe for diagnostic return-site observations (not timing evidence).
 Add --profile for cProfile discovery (this Python 3.12 build captures workers
 too; its cumulative timings/callers are not trustworthy main-thread evidence).
 The separate sampler explicitly selects the main thread. Fresh temporary app
@@ -128,6 +130,10 @@ async def main():
         import attention_baseline_tests
 
         report["baseline_revision"] = attention_baseline_tests.BASE_REVISION
+    if "--full-baseline" in sys.argv:
+        import full_baseline
+
+        report["baseline_revision"] = full_baseline.BASE_REVISION
     profiler = cProfile.Profile()
     if PROFILE:
         profiler.enable()
@@ -135,6 +141,12 @@ async def main():
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from textual import events
+
+    finish_config_observation = None
+    if "--config-observe" in sys.argv:
+        from config_observer import install
+
+        finish_config_observation = install(report, lambda: stage)
 
     if "--settings-source" in sys.argv:
         import importlib.util
@@ -174,26 +186,72 @@ async def main():
                     stage = f"console-resume-{iteration}"
                     running = True
                     lags = []
+                    attach_ms = None
+                    resume_screen = None
 
                     async def heartbeat():
+                        nonlocal attach_ms
                         while running:
                             tick = time.perf_counter()
                             await asyncio.sleep(0.01)
                             lags.append(
                                 max(0, time.perf_counter() - tick - 0.01) * 1000
                             )
+                            if (
+                                attach_ms is None
+                                and resume_screen is not None
+                                and resume_screen._console_attach_reconciled
+                            ):
+                                attach_ms = (time.perf_counter() - started) * 1000
 
                     beat = asyncio.create_task(heartbeat())
                     await asyncio.sleep(0)
                     started = time.perf_counter()
                     app.post_message(NavigateToScreen("chat"))
                     await until(lambda: type(app.screen).__name__ == "ChatScreen")
+                    resume_screen = app.screen
                     composer = app.screen.query_one("#console-native-composer")
                     composer.focus_draft_from(None)
                     before = composer.draft_text()
+
                     input_started = time.perf_counter()
                     app._driver.send_message(events.Key("z", "z"))
-                    await until(lambda: composer.draft_text() != before, 10)
+                    try:
+                        await until(lambda: composer.draft_text() != before, 10)
+                    except TimeoutError:
+                        faulthandler.dump_traceback(file=stack_log)
+                        projection = getattr(app.screen, "_console_readiness_config_projection", None)
+                        chains = []
+                        for task in asyncio.all_tasks():
+                            chain = []
+                            coro = task.get_coro()
+                            while coro is not None:
+                                frame = getattr(coro, "cr_frame", None)
+                                if frame is not None:
+                                    chain.append([Path(frame.f_code.co_filename).name, frame.f_code.co_name, frame.f_lineno])
+                                coro = getattr(coro, "cr_await", None)
+                            if any(
+                                "console" in frame[0] or frame[0] == "chat_screen.py"
+                                for frame in chain
+                            ):
+                                chains.append(chain)
+                        report["input_timeout"] = {
+                            "iteration": iteration,
+                            "screen": type(app.screen).__name__,
+                            "focused": repr(app.screen.focused),
+                            "composer_can_focus": composer.can_focus,
+                            "composer_disabled": composer.disabled,
+                            "draft_before": before,
+                            "draft_after": composer.draft_text(),
+                            "attach_reconciled": getattr(app.screen, "_console_attach_reconciled", None),
+                            "sync_in_progress": getattr(app.screen, "_console_sync_in_progress", None),
+                            "workers": [repr(w) for w in app.workers],
+                            "projection_pending": getattr(projection, "pending", None),
+                            "projection_reads": repr(getattr(projection, "_reads", None)),
+                            "projection_settled": projection._settled.is_set() if projection else None,
+                            "tasks": chains,
+                        }
+                        raise
                     input_ms = (time.perf_counter() - input_started) * 1000
                     arrival_input_ms = (time.perf_counter() - started) * 1000
                     await pilot.pause(0.5)
@@ -204,6 +262,7 @@ async def main():
                         {
                             "iteration": iteration,
                             "resume_to_input_ms": arrival_input_ms,
+                            "resume_to_attach_ms": attach_ms,
                             "input_ms": input_ms,
                             "max_loop_overshoot_ms": max(lags, default=0),
                             "draft_retained": composer.draft_text() == before + "z",
@@ -349,6 +408,11 @@ async def main():
             }
             stage = "shutdown"
     finally:
+        if finish_config_observation is not None:
+            try:
+                finish_config_observation()
+            except Exception as error:
+                report["config_observer_error"] = repr(error)
         stop_sampling.set()
         sampler.join(1)
         (OUT / f"{TAG}-samples.json").write_text(
