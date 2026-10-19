@@ -364,6 +364,7 @@ from ...Chat.console_display_state import (
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
     console_prompted_source_count,
+    console_setup_blocked_reason,
     console_staged_source_count,
 )
 from ...Chat.console_onboarding_state import (
@@ -13883,30 +13884,7 @@ class ChatScreen(BaseAppScreen):
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
         _settings, readiness = self._active_console_settings_readiness()
-        if readiness.operability == "ready_to_send":
-            return ""
-        if readiness.recovery_action == "wait_for_active_run":
-            # The prompt-queue presentation owns active-run admission: it
-            # blocks while a turn is preparing, then enables Queue once the
-            # provider has accepted it. Settings readiness still blocks
-            # mutations during the run, but must not override that composer
-            # lifecycle with a second, permanently-blocked gate.
-            return ""
-        if readiness.recovery_action == "select_model":
-            return "Choose a model in Chat settings before sending."
-        if readiness.recovery_action == "configure_credential":
-            if readiness.subscription_status == "pending":
-                return "Checking Claude subscription credential."
-            if readiness.subscription_status in {"missing", "expired"}:
-                return "Log in with Claude Code to refresh the subscription credential."
-            if readiness.blocker == "credential_rejected":  # TASK-33005.7
-                return "API key rejected. Update it in Settings > Providers & Models."
-            return "Add API key in Settings > Providers & Models before sending."
-        if readiness.recovery_action == "save_endpoint":
-            return "Save provider endpoint in Chat settings before sending."
-        if readiness.recovery_action == "retry_connection":
-            return "Provider unreachable. Retry connection before sending."
-        return "Finish provider setup before sending."
+        return console_setup_blocked_reason(readiness)
 
     def _console_provider_recovery_field(self) -> str:
         """Return the Settings Providers & Models field targeted by recovery."""
