@@ -5,9 +5,11 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from html import escape as html_escape
 from pathlib import PurePath
+from typing import TYPE_CHECKING
 from typing import Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
@@ -32,6 +34,11 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
 )
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+    from tldw_chatbook.Chat.console_context_compaction import EffectiveMemoryResult
+
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -66,6 +73,202 @@ _SOURCE_STATUS_CLASS_MAP = {
     "running": {"retrieving", "running", "searching", "stale"},
     "blocked": {"blocked", "missing", "unavailable"},
 }
+
+
+#: SP2 /rewind: render-derived (never a tree node) one-line banner shown above
+#: the boundary message when "summarize up to here" is in effect.
+CONSOLE_SUMMARY_BANNER_COPY = (
+    "⤵ Earlier turns summarized for context — full history above"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMemoryBannerPresentation:
+    """One content-free banner derived from validated effective memory."""
+
+    kind: Literal["prefix", "range"]
+    render_anchor_message_id: str
+    start_message_id: str | None
+    end_message_id: str
+    copy: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"prefix", "range"}:
+            raise ValueError("memory banner kind must be prefix or range")
+        for name in ("render_anchor_message_id", "end_message_id", "copy"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                raise ValueError(f"memory banner {name} must be non-empty text")
+        if self.kind == "range":
+            if not isinstance(self.start_message_id, str) or not self.start_message_id:
+                raise ValueError("range memory banner requires a start identity")
+        elif self.start_message_id is not None:
+            raise ValueError("prefix memory banner cannot carry a start identity")
+
+
+def derive_console_memory_banner_presentation(
+    effective: EffectiveMemoryResult,
+    active_messages: Iterable[ConsoleChatMessage],
+) -> ConsoleMemoryBannerPresentation | None:
+    """Derive one banner from the same typed memory result used by dispatch.
+
+    Every persisted identity lookup is exact. Missing or duplicate anchors,
+    malformed effective state, and prefix memories without a real placement
+    row return ``None`` rather than guessing from content or proximity.
+
+    Args:
+        effective: Validated effective-memory result used by provider dispatch.
+        active_messages: Ordered native messages on the visible active branch.
+
+    Returns:
+        A content-free banner presentation, or ``None`` when exact placement
+        cannot be proven.
+
+    Raises:
+        TypeError: If ``effective`` is not an ``EffectiveMemoryResult``.
+    """
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_context_compaction import (
+        EffectiveMemoryKind,
+        EffectiveMemoryResult,
+    )
+    from tldw_chatbook.Chat.console_context_repository import (
+        MemoryCoverageKind,
+        MemoryOriginKind,
+    )
+
+    if not isinstance(effective, EffectiveMemoryResult):
+        raise TypeError("effective must be an EffectiveMemoryResult")
+    rows = tuple(active_messages)
+    positions_by_persisted_id: dict[str, list[int]] = {}
+    for index, message in enumerate(rows):
+        persisted_id = message.persisted_message_id
+        if isinstance(persisted_id, str) and persisted_id:
+            positions_by_persisted_id.setdefault(persisted_id, []).append(index)
+
+    def exact_index(persisted_id: str | None) -> int | None:
+        if not isinstance(persisted_id, str) or not persisted_id:
+            return None
+        matches = positions_by_persisted_id.get(persisted_id, ())
+        return matches[0] if len(matches) == 1 else None
+
+    def prefix_presentation(
+        *, render_index: int, end_message_id: str
+    ) -> ConsoleMemoryBannerPresentation:
+        return ConsoleMemoryBannerPresentation(
+            kind="prefix",
+            render_anchor_message_id=rows[render_index].id,
+            start_message_id=None,
+            end_message_id=end_message_id,
+            copy=CONSOLE_SUMMARY_BANNER_COPY,
+        )
+
+    if effective.kind is EffectiveMemoryKind.RAW:
+        return None
+    if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX:
+        legacy = effective.legacy
+        if legacy is None:
+            return None
+        boundary_index = exact_index(legacy.boundary_message_id)
+        if boundary_index is None:
+            return None
+        return prefix_presentation(
+            render_index=boundary_index,
+            end_message_id=legacy.boundary_message_id,
+        )
+
+    memory = effective.memory
+    scope = effective.scope
+    if (
+        memory is None
+        or scope is None
+        or not memory.active
+        or memory.source_kind != "generated"
+        or memory.memory_id != scope.memory_id
+        or memory.conversation_id != scope.conversation_id
+    ):
+        return None
+    boundary_index = exact_index(memory.boundary_message_id)
+    if boundary_index is None:
+        return None
+
+    if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
+        if (
+            scope.coverage_kind is not MemoryCoverageKind.RANGE
+            or scope.origin_kind is not MemoryOriginKind.MANUAL_REWIND
+        ):
+            return None
+        start_index = exact_index(scope.selection_anchor_message_id)
+        if (
+            start_index is None
+            or start_index >= boundary_index
+            or rows[start_index].role is not ConsoleMessageRole.USER
+        ):
+            return None
+        user_ordinals: dict[int, int] = {}
+        ordinal = 0
+        for index, message in enumerate(rows):
+            if message.role is ConsoleMessageRole.USER:
+                ordinal += 1
+                user_ordinals[index] = ordinal
+        start_ordinal = user_ordinals.get(start_index)
+        end_ordinal = next(
+            (
+                user_ordinals[index]
+                for index in range(boundary_index, start_index - 1, -1)
+                if index in user_ordinals
+            ),
+            None,
+        )
+        if start_ordinal is None or end_ordinal is None:
+            return None
+        return ConsoleMemoryBannerPresentation(
+            kind="range",
+            render_anchor_message_id=rows[start_index].id,
+            start_message_id=scope.selection_anchor_message_id,
+            end_message_id=memory.boundary_message_id,
+            copy=(
+                "Context uses a summary of turns "
+                f"#{start_ordinal}-#{end_ordinal} - full transcript remains visible."
+            ),
+        )
+
+    if (
+        effective.kind is not EffectiveMemoryKind.GENERATED_PREFIX
+        or scope.coverage_kind is not MemoryCoverageKind.PREFIX
+    ):
+        return None
+    if scope.origin_kind is MemoryOriginKind.MANUAL_REWIND:
+        anchor_index = exact_index(scope.selection_anchor_message_id)
+        if (
+            anchor_index is None
+            or boundary_index >= anchor_index
+            or rows[anchor_index].role is not ConsoleMessageRole.USER
+        ):
+            return None
+        return prefix_presentation(
+            render_index=anchor_index,
+            end_message_id=memory.boundary_message_id,
+        )
+    if (
+        scope.origin_kind is not MemoryOriginKind.AUTOMATIC
+        or scope.selection_anchor_message_id is not None
+    ):
+        return None
+    next_user_index = next(
+        (
+            index
+            for index in range(boundary_index + 1, len(rows))
+            if rows[index].role is ConsoleMessageRole.USER
+        ),
+        None,
+    )
+    if next_user_index is None:
+        return None
+    return prefix_presentation(
+        render_index=next_user_index,
+        end_message_id=memory.boundary_message_id,
+    )
 
 
 def normalize_console_source_status(status: Any) -> str:
@@ -2215,6 +2418,55 @@ def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
         break
 
     return "\n".join(kept) + tail_line
+
+
+def _hunk_containing_line(
+    hunks: "list[DiffHunk]", line_index: int
+) -> "tuple[int, DiffHunk | None]":
+    """Find the hunk covering ``line_index`` over the file's FULL diff text.
+
+    TASK-18060 Task 7 (review-rail spec §3/§4): a ``diff_line`` note's
+    hunk fields are ALSO populated with the hunk the cursor's line falls
+    in — ``split_unified_diff`` segments a diff into ``DiffHunk``s but
+    does not carry each hunk's absolute line offset, so this reconstructs
+    it by walking the hunks in order: hunk *k* occupies its header line
+    (one line) plus its body lines, contiguously, right after the shared
+    file prelude — ``split_unified_diff``'s own segmentation guarantees no
+    gaps between one hunk's last body line and the next hunk's header.
+
+    Args:
+        hunks: ``split_unified_diff``'s output for the file's full diff.
+        line_index: 0-based index over the SAME full diff text (the
+            screen's own ``_cursor_line``, which under the display cap
+            equals the full-diff line index — the cap truncates only the
+            tail).
+
+    Returns:
+        ``(hunk_index, hunk)`` for the hunk covering ``line_index``. A
+        line in the shared prelude (before any hunk header) degrades to
+        the first hunk rather than reporting "no hunk" — a line comment
+        always has SOME hunk context when the diff has hunks at all. A
+        line past every hunk's tracked span (should not happen for a real
+        cursor line) degrades to the last hunk. ``(-1, None)`` only when
+        ``hunks`` itself is empty.
+    """
+    if not hunks:
+        return -1, None
+    if len(hunks) == 1 and not hunks[0].header:
+        # The fallback shape (binary/rename-no-change, split_unified_
+        # diff's own docstring): no real hunk headers at all — every line
+        # belongs to the one synthetic hunk.
+        return 0, hunks[0]
+    prelude = hunks[0].file_prelude
+    offset = len(prelude.splitlines()) if prelude else 0
+    if line_index < offset:
+        return 0, hunks[0]
+    for index, hunk in enumerate(hunks):
+        span = 1 + len(hunk.body_lines)  # the header line + its body
+        if offset <= line_index < offset + span:
+            return index, hunk
+        offset += span
+    return len(hunks) - 1, hunks[-1]
 
 
 def hunk_excerpt(

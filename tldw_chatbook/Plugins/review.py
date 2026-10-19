@@ -32,6 +32,7 @@ class PluginReview:
         "update",
         "retain",
         "configure",
+        "select",
     ] = "install"
     intent: Literal["inherit", "enabled", "disabled"] | None = None
     previous_revision: str | None = None
@@ -58,6 +59,19 @@ class OperationReceipt:
     request_id: str | None = None
 
 
+@dataclass(frozen=True)
+class AuthorityResetReview:
+    """Explicit plugin-only reset, retaining the original namespace and roots."""
+
+    token: str
+    operation_id: str
+    namespace_id: str
+    posture: str
+    marker: object
+    roots_json: str
+    expires_at: float
+
+
 def inspection_identity(inspection: PackageInspection) -> str:
     """Bind deterministic inspection inputs, excluding observational timestamps."""
     value = inspection.model_dump(mode="json")
@@ -69,17 +83,7 @@ def inspection_identity(inspection: PackageInspection) -> str:
 
 def reinspect(inspection: PackageInspection, root: Path) -> PackageInspection:
     """Verify materialized bytes while preserving authenticated source provenance."""
-    from .inspection import inspect_package
+    from .package_files import capture_package
+    from .retained_inspection import _reinspect_expected
 
-    observed = inspect_package(root, dialect=inspection.dialect)
-    observed = observed.model_copy(
-        update={
-            "source_identity": inspection.source_identity,
-            "source_digest": inspection.source_digest,
-            "materialized_identity": inspection.materialized_identity,
-            "link_targets": dict(inspection.link_targets),
-        }
-    )
-    if inspection_identity(observed) != inspection_identity(inspection):
-        raise ValueError("stale review or changed retained package")
-    return observed
+    return _reinspect_expected(capture_package(root), inspection)

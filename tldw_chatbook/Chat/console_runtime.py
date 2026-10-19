@@ -3521,6 +3521,30 @@ class ConsoleRuntime:
 
         return hooks_v2_context_key(self, session_id)
 
+    def _plugin_test_owner(self):
+        from .console_plugin_tests import ConsolePluginTests
+
+        owner = getattr(self, "_plugin_tests", None)
+        if owner is None:
+            owner = self._plugin_tests = ConsolePluginTests(self)
+        return owner
+
+    async def prepare_plugin_test(
+        self, session_id, installation_id, component_id, **options
+    ):
+        """Review an explicit test against an existing Console session, without execution."""
+        return await self._plugin_test_owner().prepare(
+            session_id, installation_id, component_id, **options
+        )
+
+    async def execute_plugin_test(self, review):
+        """Keep test custody in Console when a presentation waiter leaves."""
+        return await self._plugin_test_owner().execute(review)
+
+    def discard_plugin_test(self, review):
+        """Discard only an unexecuted review; running work retains its runtime owner."""
+        return self._plugin_test_owner().discard(review)
+
     async def prepare_hooks_v2(
         self,
         session_id: str,
@@ -3528,6 +3552,7 @@ class ConsoleRuntime:
         reason="startup",
         initiator="manual",
         configuration=None,
+        test_only=False,
     ):
         """Initialize only at validated execution admission, never at view access."""
         from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
@@ -3549,7 +3574,7 @@ class ConsoleRuntime:
         )
         if configuration is not None:
             maximum = configuration.skill_context_maximum
-            if any(
+            if maximum.get("_plugin_requirement_ceiling") or any(
                 row.get("plugin_owned") for row in maximum.get("available_skills", ())
             ):
                 local = getattr(
@@ -3558,7 +3583,11 @@ class ConsoleRuntime:
                 service = getattr(local, "plugin_service", None)
                 if service is None:
                     raise PermissionError("plugin_hook_authority_unavailable")
-                native = await service.hook_configuration(maximum)
+                native = await service.hook_configuration(
+                    maximum,
+                    scratch_manager=self._scratch_spaces,
+                    scratch_snapshot=self._scratch_spaces.snapshot(session_id),
+                )
                 self._require_hook_preparation_source(source)
         signature = (
             configured,
@@ -3588,6 +3617,18 @@ class ConsoleRuntime:
         context_changed = owner is not None and owner.context_key != context_key
         if context_changed and native is not None and configuration is None:
             raise PermissionError("plugin_hook_workspace_admission_required")
+        if (
+            test_only
+            and engine is not None
+            and (
+                previous != signature
+                or context_changed
+                or owner is None
+                or not owner.live
+                or owner.turn_scope is not None
+            )
+        ):
+            raise PermissionError("plugin_test_requires_compatible_idle_hook_session")
         if (previous is not None and previous != signature) or context_changed:
             # The controller owns a reversible validation slot at this point.
             owner = self._hooks_v2_lifecycles.get(session_id)
@@ -3605,6 +3646,15 @@ class ConsoleRuntime:
                     engine.authority_check,
                     enabled=engine.enabled,
                     invalid_admissions=engine.invalid_admissions,
+                    process_owner=engine.processes.owner,
+                    process_owner_for=engine._process_owner_for,
+                    environment=engine._environment,
+                    host_environment=engine._host_environment,
+                    command_launch=engine._command_launch,
+                    dependency_required=engine._dependency_required,
+                    event_projector=engine._event_projector,
+                    launch_guard=engine.processes._launch_guard,
+                    effect_authority_check=engine._effect_authority_check,
                 )
             else:
                 engine = None
@@ -3694,22 +3744,31 @@ class ConsoleRuntime:
 
             engine = self.ensure_hooks_v2(
                 session_id,
-                configured.v2_handlers
+                (configured.v2_handlers if configured.enabled else ())
                 + (native.definitions if native is not None else ()),
                 authority,
                 process_owner=native,
+                process_owner_for=native.process_owner if native is not None else None,
                 host_environment=native.host_environment
                 if native is not None
                 else None,
                 event_projector=native.project_event if native is not None else None,
+                command_launch=native.command_launch if native is not None else None,
                 dependency_required=native.dependency_required
                 if native is not None
                 else None,
                 launch_guard=launch_guard,
                 effect_authority_check=effects_current,
-                enabled=configured.enabled,
-                invalid_admissions=configured.v2_invalid_admissions,
+                enabled=configured.enabled or bool(native and native.definitions),
+                invalid_admissions=(
+                    configured.v2_invalid_admissions if configured.enabled else ()
+                ),
             )
+            if test_only:
+                created = getattr(self, "_plugin_test_created_engines", None)
+                if created is None:
+                    created = self._plugin_test_created_engines = {}
+                created[asyncio.current_task()] = engine
             if native is not None:
                 native.engine = engine
                 engine.native_plugins = native
@@ -3735,7 +3794,12 @@ class ConsoleRuntime:
                 except Exception:  # noqa: BLE001 -- hook boundary
                     return False
 
-            lifecycle = HookSessionLifecycle(engine, session_id, current=current)
+            lifecycle = HookSessionLifecycle(
+                engine,
+                session_id,
+                current=current,
+                render_context=native.render_context if native is not None else None,
+            )
             lifecycle.context_key = context_key
             self._hooks_v2_lifecycles[session_id] = lifecycle
             engine.lifecycle_owner = lifecycle
@@ -3762,13 +3826,14 @@ class ConsoleRuntime:
                 lifecycle.turn_scope = None
                 raise
         if not lifecycle.live:
-            token = lifecycle.reserve(
-                lifecycle.event(
-                    "SessionStart",
-                    data={"reason": reason},
-                    initiator=initiator,
-                )
+            start_event = lifecycle.event(
+                "SessionStart", data={"reason": reason}, initiator=initiator
             )
+            if test_only:
+                start_event = start_event.model_copy(
+                    update={"origin": "host_plugin_test"}
+                )
+            token = lifecycle.reserve(start_event)
             try:
                 await lifecycle.initialize(token)
                 self._require_hook_preparation_source(source)

@@ -46,7 +46,8 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 from tldw_chatbook.Chat.console_display_state import (
-    DiffHunk,
+    _hunk_containing_line,
+    DiffHunk as DiffHunk,  # noqa: PLC0414 -- retain the original module export.
     hunk_excerpt,
     split_unified_diff,
 )
@@ -1212,55 +1213,6 @@ def _root_summary_line(info: "GitWorkspaceInfo", *, name_root: bool) -> str:
     if name_root:
         return f"{info.root.name}: {summary}"
     return summary
-
-
-def _hunk_containing_line(
-    hunks: "list[DiffHunk]", line_index: int
-) -> "tuple[int, DiffHunk | None]":
-    """Find the hunk covering ``line_index`` over the file's FULL diff text.
-
-    TASK-18060 Task 7 (review-rail spec §3/§4): a ``diff_line`` note's
-    hunk fields are ALSO populated with the hunk the cursor's line falls
-    in — ``split_unified_diff`` segments a diff into ``DiffHunk``s but
-    does not carry each hunk's absolute line offset, so this reconstructs
-    it by walking the hunks in order: hunk *k* occupies its header line
-    (one line) plus its body lines, contiguously, right after the shared
-    file prelude — ``split_unified_diff``'s own segmentation guarantees no
-    gaps between one hunk's last body line and the next hunk's header.
-
-    Args:
-        hunks: ``split_unified_diff``'s output for the file's full diff.
-        line_index: 0-based index over the SAME full diff text (the
-            screen's own ``_cursor_line``, which under the display cap
-            equals the full-diff line index — the cap truncates only the
-            tail).
-
-    Returns:
-        ``(hunk_index, hunk)`` for the hunk covering ``line_index``. A
-        line in the shared prelude (before any hunk header) degrades to
-        the first hunk rather than reporting "no hunk" — a line comment
-        always has SOME hunk context when the diff has hunks at all. A
-        line past every hunk's tracked span (should not happen for a real
-        cursor line) degrades to the last hunk. ``(-1, None)`` only when
-        ``hunks`` itself is empty.
-    """
-    if not hunks:
-        return -1, None
-    if len(hunks) == 1 and not hunks[0].header:
-        # The fallback shape (binary/rename-no-change, split_unified_
-        # diff's own docstring): no real hunk headers at all — every line
-        # belongs to the one synthetic hunk.
-        return 0, hunks[0]
-    prelude = hunks[0].file_prelude
-    offset = len(prelude.splitlines()) if prelude else 0
-    if line_index < offset:
-        return 0, hunks[0]
-    for index, hunk in enumerate(hunks):
-        span = 1 + len(hunk.body_lines)  # the header line + its body
-        if offset <= line_index < offset + span:
-            return index, hunk
-        offset += span
-    return len(hunks) - 1, hunks[-1]
 
 
 class ChangeReviewDiffPane(VerticalScroll):

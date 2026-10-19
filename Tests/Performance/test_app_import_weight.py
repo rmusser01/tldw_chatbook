@@ -54,6 +54,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins.platform_support import managed_runtime
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The full heavy-dependency guard set from the task 163 plan. NONE of these
@@ -316,7 +318,7 @@ finally:
     }
 
 
-@pytest.mark.parametrize("module", ["coordinator", "inspection", "schemas"])
+@pytest.mark.parametrize("module", ["coordinator"])
 def test_deferred_plugin_import_failure_settles_readiness(tmp_path, module):
     """First-use import failure reaches every waiter and leaves no live worker."""
     code = """
@@ -361,6 +363,126 @@ print(json.dumps({"failure_published": True, "worker_stopped": True}))
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {
         "failure_published": True,
+        "worker_stopped": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        pytest.param("inspection", marks=managed_runtime),
+        pytest.param("schemas", marks=managed_runtime),
+    ],
+)
+def test_deferred_plugin_operation_import_failure_preserves_readiness(tmp_path, module):
+    """Lazy package imports fail operations while the ready worker stays healthy."""
+    code = """
+import asyncio
+import importlib.abc
+import json
+import shutil
+import sys
+from pathlib import Path
+
+from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+from tldw_chatbook.Plugins.service import PluginService
+
+blocked = BLOCKED_MODULE
+assert blocked not in sys.modules
+class RefuseImport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            raise ImportError("deliberate deferred import failure")
+
+sys.meta_path.insert(0, RefuseImport())
+root = (Path.home() / "plugin-profile").resolve()
+marker_root = Path.home() / "fixture-marker"
+package = Path.home() / "source-package"
+shutil.copytree(Path(NATIVE_FIXTURE), package)
+assert (package / "plugin.json").is_file()
+service = PluginService(
+    root,
+    workspace_lookup=lambda _: None,
+    marker_store_factory=lambda _: FilePluginMarkerStore(marker_root),
+    accept_reduced_protection=True,
+)
+
+def storage_effects():
+    coordinator = service._coordinator
+    registry = coordinator.registry
+    sqlite_files = {
+        registry.path,
+        registry.path.with_name(registry.path.name + "-wal"),
+        registry.path.with_name(registry.path.name + "-shm"),
+    }
+    return {
+        "registry": tuple(registry._connection.iterdump()),
+        "counts": tuple(registry._connection.execute(
+            "SELECT (SELECT count(*) FROM installations), "
+            "(SELECT count(*) FROM revisions), (SELECT count(*) FROM operations)"
+        ).fetchone()),
+        "files": tuple(
+            (str(path.relative_to(root)), path.read_bytes() if path.is_file() else None)
+            for path in sorted(root.rglob("*")) if path not in sqlite_files
+        ),
+        "authority_created": coordinator.authority.store_dir.exists(),
+        "marker_created": marker_root.exists(),
+        "reviews": tuple(coordinator._reviews),
+    }
+
+ready = service._start()
+try:
+    worker_loop = ready.result(timeout=5)
+    assert service._start() is ready
+    assert ready.result(timeout=5) is worker_loop
+    assert blocked not in sys.modules
+    assert service._thread.is_alive()
+    retained = (root / "plugins", root / "plugins/runtime.lock",
+                root / "plugins/registry.sqlite3")
+    identities = tuple((path.stat().st_dev, path.stat().st_ino) for path in retained)
+
+    async def exercise():
+        baseline = await service._call(storage_effects)
+        assert baseline["counts"] == (0, 0, 0)
+        assert baseline["authority_created"] is False
+        assert baseline["marker_created"] is False
+        assert baseline["reviews"] == ()
+        assert not (root / "plugins/packages").exists()
+        assert not (root / "plugins/packages-revisions").exists()
+        for _ in range(2):
+            try:
+                await service.review_install(
+                    package, selection=("skill:review",), workspace_id=None
+                )
+            except ImportError as error:
+                assert str(error) == "deliberate deferred import failure"
+            else:
+                raise AssertionError("package operation must fail")
+            assert service._start() is ready
+            assert ready.result(timeout=5) is worker_loop
+            assert service._thread.is_alive()
+            assert blocked not in sys.modules
+            assert await service._call(storage_effects) == baseline
+
+    asyncio.run(exercise())
+finally:
+    asyncio.run(service.aclose())
+    service._thread.join(timeout=5)
+    assert not service._thread.is_alive()
+assert service._closed
+assert worker_loop.is_closed()
+assert tuple((path.stat().st_dev, path.stat().st_ino) for path in retained) == identities
+print(json.dumps({"operation_failures": 2, "ready_preserved": True,
+                  "storage_unchanged": True, "worker_stopped": True}))
+""".replace("BLOCKED_MODULE", repr("tldw_chatbook.Plugins." + module)).replace(
+        "NATIVE_FIXTURE", repr(str(REPO_ROOT / "Tests/Plugins/fixtures/native"))
+    )
+    result = _run_isolated_python(tmp_path, code)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "operation_failures": 2,
+        "ready_preserved": True,
+        "storage_unchanged": True,
         "worker_stopped": True,
     }
 

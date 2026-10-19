@@ -7,6 +7,7 @@ import pytest
 from Tests.Agents.test_hook_permissions import _approve, _edit
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.Agents.test_hooks_v2_execution import command
+from Tests.Chat.hooks_v2_owned_rig import disposed_hook_rig
 from Tests.Chat.test_console_fleet_wake import _controller_rig
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
@@ -62,11 +63,11 @@ async def session_case(tmp_path):
         admitted_turn_count=lambda: len(accepted),
         root_stop_count=lambda: sum(event == "Stop" for event, _ in notifications),
     )
-    yield case
-    await runtime.close_hooks_v2()
-    await runtime.dispose()
-    _runs.close()
-    chacha.close()
+    try:
+        yield case
+    finally:
+        async with disposed_hook_rig(runtime, controller, _runs, chacha):
+            pass
 
 
 @pytest.mark.asyncio
@@ -907,8 +908,8 @@ async def test_actual_console_admission_runs_connected_mcp_initializer(
                 assert "Console MCP runtime instructions" in str(gateway.payloads)
                 assert len(service.execution_log.read_recent()) == 2
         finally:
-            await runtime.close_hooks_v2()
-            chacha.close()
+            async with disposed_hook_rig(runtime, controller, _runs, chacha):
+                pass
 
 
 @pytest.mark.asyncio
@@ -1114,8 +1115,8 @@ async def test_failed_console_initialization_discards_nested_turn_context(
             if not pending.done():
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
-            await runtime.close_hooks_v2()
-            chacha.close()
+            async with disposed_hook_rig(runtime, controller, _runs, chacha):
+                pass
 
 
 @pytest.mark.asyncio
@@ -1284,8 +1285,8 @@ async def test_actual_console_teardown_mcp_uses_captured_runtime_and_normal_guar
             )
             assert again.content[0]["text"] == ("3" if mode == "success" else "2")
         finally:
-            await runtime.close_hooks_v2()
-            chacha.close()
+            async with disposed_hook_rig(runtime, controller, _runs, chacha):
+                pass
 
 
 @pytest.mark.asyncio
@@ -1390,6 +1391,7 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
                     break
                 await asyncio.sleep(0.01)
             assert time.monotonic() - stamp < (2.5 if mode == "slow_guard" else 2)
+            assert not engine.cleanup_pending
             assert engine.budget_owner.snapshot()["tickets"] == 0
             counter = await client.call_tool_result(
                 "fixture", "fixture", {"counter": True}
@@ -1404,8 +1406,8 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
             if not pending.done():
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
-            await runtime.close_hooks_v2()
-            chacha.close()
+            async with disposed_hook_rig(runtime, controller, _runs, chacha):
+                pass
 
 
 @pytest.mark.asyncio

@@ -1187,7 +1187,7 @@ Stop event, chain start/count and inherited configuration. Only successful
 accepted root settlement can issue it; retired operation/run scopes are never
 rebound. Required post gates settle before transfer to the live session owner.
 
-ChaChaNotes schema 74 adds `console_hook_continuation_receipts`, keyed uniquely
+ChaChaNotes schema 75 adds `console_hook_continuation_receipts`, keyed uniquely
 by `(parent_turn_id, stop_event_id)`. The existing acceptance transaction inserts
 the receipt, user-role attributed untrusted input, assistant owner and active
 dispatch checkpoint together. A duplicate rolls the competing acceptance back.
@@ -1408,3 +1408,124 @@ known optional observers remain visible but unavailable. Ordinary user messages
 remain possible without expanding blocked package material. No foreign allow result
 can reach or bypass the native permission store. This documents the deliberately
 unsupported runtime subset of TASK-32687, not original-host qualification.
+
+
+### Native component ownership and canonical restrictions (R74–R75)
+
+Ruling: R74 — native command hooks select their exact existing process-owner adapter from the qualified handler at dispatch and retain that adapter on the original CommandJob through reserve, publish and terminal settlement; the shared HookEvent stays unchanged — concurrent handlers can belong to different installations, so one event-wide owner cannot identify their root/revision custody — cost if wrong: revise the narrow per-job selection seam; owner lookup failure must refuse before launch, and cancellation, late cleanup or replacement must never settle another handler’s custody.
+
+Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations are immutable narrowing constraints resolved against the actual eligible parent registry at use, while noncanonical tokens require reviewed exact owner mappings — a declaration can restrict existing rights without creating a durable generic tool grant or another permission owner — cost if wrong: narrow supported declarations or revise the resolver; missing or changed identities refuse, explicit empty stays empty, recovery creates no grants, and display-name fallback never authorizes a tool.
+
+### I1 owned hook composition
+
+`register_hook_definitions(snapshot)` validates original local hook declarations, then qualifies IDs with installation identity and expands host variables once. `NativeHooks` supplies the existing `HookEngine` with exact graph requirements, currentness, per-job process owners and the existing ledger renderer. Unknown dependencies refuse the dependent component; unrelated components remain usable. Hook and plugin origins remain distinct while sharing the final provider-input budget; oversized required contributions refuse whole.
+
+`_NativeHookProcessOwner` binds the exact original `CommandJob` cancellation callback before launch. F8 reserves dirty/root/revision custody before process access, publishes actual process provenance before stdin, and settles only on positive terminal proof. A failed registration settles its unlaunched reservation. Workspace revocation cancels only matching job ownership; independent scopes retain their work. The original adapter remains attached for late cleanup.
+
+Worker admission/launch/result checks perform full owning-service recapture. Main-loop synchronous effect-currentness uses only the live fence and cannot replace those reads. Final provider dispatch waits for full recapture and checks the live fence again after worker completion; changed or unavailable authority refuses delivery. No synchronous main-loop wait on the plugin worker is introduced.
+
+### I2 command protocol adaptation (2026-10-15; TASK-32687)
+
+The closed `vendor_protocol` marker selects pure input/output codecs on the same
+HookHandler and CommandJob. `codex/1` supports UserPromptSubmit, PreToolUse and
+PostToolUse; `cursor/1` supports beforeSubmitPrompt, preToolUse,
+beforeMCPExecution, postToolUse and postToolUseFailure. Source hook files retain
+Cursor's numeric version 1. Command parsing is qualified on Darwin only, for
+simple POSIX argv with no shell operators, interpolation, globbing, substitutions
+or comments; only explicit host/declaration placeholders survive for one native
+expansion. Windows/Linux argv conversion is unqualified and refuses.
+
+Matcher support is absent/empty or universal `.*` only. Aliases, regex filters,
+command-text matchers and unlisted events refuse. The Cursor MCP-specific event
+filters the actual MCP provider and serializes tool_input as JSON text; generic
+pre-events carry a JSON object. Cursor postToolUse runs only on actual successful,
+non-error outcomes. Codex post completion and Cursor failure events retain their
+separate producer outcomes. Unsupported output fields, `ask`, invalid JSON and
+undeclared effects refuse. `allow` means pass to normal Chatbook permission review,
+never permission bypass. Source exit 2 can deny only after the unchanged authority,
+output-bound, deadline and cancellation checks.
+
+Retained package cwd and Chatbook's fail-closed guard failure policy are explicit
+adaptations from vendor session cwd/fail-open defaults. The existing owner supplies
+PLUGIN_ROOT/PLUGIN_DATA and expands declared variables; activation grants no folder
+binding. Every source pre-guard becomes a dependency of all effective non-hook
+components, including native-extension siblings. Unknown guard scope blocks that
+installation's capabilities. Mixed deny/input-transform mappings execute once in
+the transformer phase and cannot satisfy a required final guard: dependent
+components carry `dependency_guard_unqualified:<hook-id>`. Pure-deny MCP/prompt
+mappings can satisfy their qualified event requirements. Distinct native final
+validators still see final arguments; no vendor command is invoked twice to claim
+a guard guarantee. No approval-bypass, Stop continuation, editor/Tab event, generic
+regex or original-host runtime equivalence is claimed.
+
+
+## PR3148 current-owner hook reconciliation (2026-10-17, TASK32695)
+
+Keep current dev's single `NativeHooks` facade and hook engine. Its existing
+consent `launch_guard`, `effect_authority_check`, `event_projector`, authenticated
+current-delivery and exactly-once SessionEnd/teardown paths remain authoritative.
+Thread the actual optional keyword-only `scratch_manager`/`scratch_snapshot` pair
+through `PluginService.hook_configuration` into that facade. Add the already
+approved `process_owner_for` and `command_launch` engine callbacks alongside,
+not instead of, those current gates. Engine copies/child/compaction replacements
+carry both sets. The job captures one private adapter to the existing process/root
+owner; native and fallback paths cannot both reserve the same job, and unavailable
+native requirements cannot escape through fallback.
+
+`CommandLaunchValues` remains frozen and repr-free; resolved protected values
+stay launch locals. Bare host selection is absolute before child cwd/environment
+overlays; explicit contained package executables remain separate. Preserve strict
+standalone cwd validation, original matcher/event scope for unavailable required
+constraints, current counters/deadlines, scratch incarnation and positive terminal
+proof before resource release. Signature metadata contains no resolved secrets.
+
+Current received-intent/configuration/native commit, saved consent, response-rule
+settlement and machine-followup admission remain in their current owners under
+ADR197/230/232. Do not restore removed facades, move work back to views, introduce
+new schedulers or treat history as renewed authority. This is direct integration
+of the accepted hook/ownership contracts; behavioral and native lifetime checks
+must run on the rebased source before qualification.
+
+## Final integration operation and private launch interfaces (R163 / CLI44, 2026-10-17)
+
+[ADR-163's final integration amendment](../../../backlog/decisions/163-expanded-console-hook-runtime.md)
+concretizes canonical provider operations, exact env references and launch-only
+values; [ADR-162](../../../backlog/decisions/162-managed-agent-plugins.md) owns
+reviewed typed references and actual scratch/root lifetime. Optional provider
+hook_operation classification is captured in exact definition snapshots and all
+three tool events; Cursor MCP guards use qualified mcp.call. Genuinely unavailable
+classification still refuses operation-dependent guards.
+
+Native reference objects retain the exact runtime grammar. The third host-reserved
+name CHATBOOK_WORKSPACE_DATA is distinct from shared PLUGIN_DATA. The existing
+engine/executor accepts optional command_launch returning ephemeral repr-private
+CommandLaunchValues; actual values resolve once on existing workers after
+reservation and before currentness/launch checks, never into reviewed handlers.
+Explicit secret argv has ordinary privileged process visibility. Native cwd
+containment, unowned/user/legacy defaults, all native-handler copy/child owners,
+required constraints and final acceptance authority remain enforced. Qualification
+uses narrow actual-capability gates and genuine refusal controls; a marker audit
+is not native Windows/Linux success or broader production platform support.
+
+R166/CLI47 retains selected valid unavailable controlling/explicit-required hooks
+as host-only `unavailable_hooks` requirement metadata, separate from executable
+selection. Internal exact `check_requirement` projection preserves original
+matchers and inherited ceilings; normal execution validation still refuses.
+Matching required/control occurrences fail before owner reservation, nonmatches
+remain nonfailures, and dependency-only siblings stay independent. See the R166
+amendments in ADR-162/163; no new runtime, persisted schema or owner is added.
+
+R168/CLI49 completes actor/resume requirement custody within service.py. A private
+projection gate preserves execution-only validation, while a service-private
+wrapper retains only requirement metadata proven by the original signed
+installation/scope/revision/generation/mapping/root pin and host snapshot. Unknown
+custody refuses; no ready capability, unrelated installation, pin/schema/public
+interface or runtime owner is added. See the R168 amendments in ADR-162/163.
+
+### Current dev integration: required occurrences and capture failures (R18)
+
+Native hook requirement parsing uses authenticated in-memory declarations and the unchanged public parser. Its private non-executable occurrence projection withholds package-relative cwd solely to preserve the declared event, matcher and effects when execution is unavailable. The complete original declaration, including cwd, remains bound to the revision. Execution rejoins and validates the contained existing absolute package cwd, current bytes, mappings and authority before launch. Unavailable occurrence metadata cannot supply a callable snapshot or fallback process owner.
+
+The existing plugin service publishes constraint-verification failures atomically with its catalog. Exact affected installation/workspace scopes refuse; an attempted refresh that cannot authenticate the constraint set refuses as unknown. Verified inactive, unselected, untrusted or revoked scopes retain ordinary empty eligibility, including explicit workspace disable over global inheritance. Successful authoritative refresh clears the failure; failed reads never revive old executable snapshots or imply removal of a requirement. The private failure member stores only scope keys, with no new registry, body, secret or grant.
+
+At the actual Console configuration capture boundary, only `PluginUnavailable("plugin_constraint_verification_failed")` becomes the existing `RecoveryRequired` with that fixed code. The synchronous optional-catalog wrapper propagates this recovery failure; the two existing preparation wrappers already do so. Ordinary optional failures keep their current behavior. Existing admission and final publication recheck the captured installation/workspace so a previously captured requirement cannot survive loss of its proof as an executable grant. Existing ADR162/163 govern this integration; no new storage or permission authority is introduced.

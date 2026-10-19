@@ -139,14 +139,9 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     TAB_CHAT,
-    TAB_EVALS,
     TAB_HOME,
     TAB_LIBRARY,
-    TAB_PERSONAS,
-    TAB_SCHEDULES,
     TAB_SETTINGS,
-    TAB_WATCHLISTS_COLLECTIONS,
-    TAB_WORKFLOWS,
     WIDE_VIEWPORT_COLUMNS,
 )
 from tldw_chatbook.css import build_css
@@ -319,6 +314,7 @@ from .UI.Navigation.screen_state_store import (
     ScreenStateStore,
 )
 from .UI.Navigation.screen_registry import (
+    _SCREEN_OWNED_ROUTE_CSS,
     ScreenRoute,
     registered_screen_aliases,
     registered_screen_routes,
@@ -2517,13 +2513,9 @@ class TldwCli(
     #: tests (2026-09-04, paired arms). The agentic split sheets predate
     #: this seam and keep their TASK-25812 wiring (console on the boot
     #: path; library/settings via their screens' ``CSS_PATH``).
-    _SCREEN_OWNED_ROUTE_CSS: ClassVar[dict[str, tuple[str, ...]]] = {
-        TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
-        TAB_EVALS: ("screen_feature_evals.tcss",),
-        TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
-        TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
-        TAB_PERSONAS: ("screen_feature_roleplay.tcss",),
-    }
+    _SCREEN_OWNED_ROUTE_CSS: ClassVar[dict[str, tuple[str, ...]]] = (
+        _SCREEN_OWNED_ROUTE_CSS
+    )
 
     # Cluster K2 (TASK-33011): Roleplay-to-Console character-conversation
     # activation, delegated to ``app_destinations``.

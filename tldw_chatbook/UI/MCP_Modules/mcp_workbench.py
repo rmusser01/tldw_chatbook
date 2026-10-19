@@ -108,6 +108,8 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
     _safe_tool_test_text,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    _tool_has_arg_rules,
+    _build_permission_preview,
     _PROFILE_HINT_TEXT,
     MCPPermissionsMode,
     PermissionProfileContext,
@@ -3035,59 +3037,8 @@ class MCPWorkbench(Container):
         *,
         ancestor_servers: Sequence[Mapping[str, Any]] = (),
     ) -> bool:
-        """Whether the STORE payload carries any EXACT-INPUT allow rule for
-        one tool (task-32281) -- same raw-payload read shape as
-        `_raw_tool_state()` immediately above, checked alongside it so the
-        matrix's ``≡`` marker never needs its own store round-trip
-        (`servers_payload` is the caller's already-loaded profile slice).
-
-        Review round 1 (Minor 1): counts only ``args_json``-shaped rules --
-        the same filter `MCPPermissionStore.list_tool_arg_rules()` applies
-        (a hand-written ``{"field": ..., "pattern": ...}`` glob rule is
-        never returned there either). Picked over the alternative (listing
-        glob rules read-only in the inspector too) as the cheaper fix: it
-        keeps the marker and the list it's advertising in agreement without
-        adding a second rendering path for a rule shape this UI has never
-        offered a way to CREATE (only `add_tool_arg_rule()`'s exact-input
-        writer feeds this surface; glob rules are hand-edited-file-only).
-
-        Qodo #2597 #1: `ancestor_servers` carries the rest of the selected
-        profile's inheritance chain (the `default` profile's own `servers`
-        slice, when a named profile is selected), because an INHERITED rule
-        is just as live as a locally stored one -- `arg_rule_allows()`
-        honors it and `list_tool_arg_rules()` now lists it, so the matrix
-        must mark it too. Answering "does ANY chain profile carry a rule"
-        needs no shadowing logic: the resolver stops at the first profile
-        carrying rules, which is a profile carrying rules either way.
-        """
-
-        def _entry_has_rules(servers: Mapping[str, Any]) -> bool:
-            server_entry = servers.get(server_key)
-            if not isinstance(server_entry, Mapping):
-                return False
-            tools_entry = server_entry.get("tools")
-            if not isinstance(tools_entry, Mapping):
-                return False
-            tool_entry = tools_entry.get(tool_name)
-            if not isinstance(tool_entry, Mapping):
-                return False
-            rules = tool_entry.get("arg_rules")
-            # `servers_payload` here may be a FROZEN snapshot (`_tool_policy_
-            # inventory()`'s `read_profile_inventory_snapshot()`/`read_
-            # snapshot_strict()` path, via `permission_store._freeze_
-            # snapshot()`, which turns every list into a tuple) -- accept both.
-            if not isinstance(rules, (list, tuple)):
-                return False
-            return any(
-                isinstance(rule, Mapping)
-                and isinstance(rule.get("args_json"), str)
-                and rule.get("args_json")
-                for rule in rules
-            )
-
-        return any(
-            _entry_has_rules(servers)
-            for servers in (servers_payload, *ancestor_servers)
+        return _tool_has_arg_rules(
+            servers_payload, server_key, tool_name, ancestor_servers=ancestor_servers
         )
 
     def _build_permission_rows(
@@ -3257,63 +3208,14 @@ class MCPWorkbench(Container):
         *,
         extra_override_rows: Sequence[PermRow] = (),
     ) -> str:
-        """One plain-language sentence -- UX batch item 9: Library counts-
-        line vocabulary (lowercase state words, no noun, " · " separators,
-        no trailing period -- `library_ingest_state._queue_counts_line()`'s
-        own precedent), scoped to the rail's currently selected server when
-        that server has any discovered tools:
-        `"<label>: N allow · M ask · K off — global default: <word>"`.
-
-        With no selection (or the selected server has no discovered
-        tools): `"global default: <word>"`, plus a
-        `" · N overrides across M servers"` suffix when at least one
-        explicit server- or tool-level override exists anywhere in `rows`
-        OR `extra_override_rows` (omitted entirely when there are none,
-        rather than a "0 overrides" segment nobody needs).
-
-        Fix 2 (PR #906 review): `extra_override_rows` -- the built-in
-        section's own `PermRow`s, when the caller has them
-        (`_build_permission_rows()`'s own `extra_override_rows`) -- is
-        counted into this suffix alongside `rows` so a persistent built-in
-        override is reflected here too, matching `update_matrix()`'s own
-        documented contract that this sentence "ALWAYS summarizes the
-        full, UNFILTERED matrix". It plays no part in the rail-scoped
-        branch immediately below: that branch only ever triggers for a
-        SELECTED MCP server (`self._selected_server_key`), which the
-        built-in section's pseudo server key can never be (the rail never
-        lists it -- see `_builtin_permission_matrix_rows()`'s docstring).
-        """
-        global_word = global_label.lower()
-        server_key = self._selected_server_key
-        tools = tools_by_server.get(server_key) if server_key else None
-        if tools:
-            counts = {"allow": 0, "ask": 0, "deny": 0}
-            for tool in tools:
-                tool_effective = effective.get((tool.server_key, tool.name))
-                state = tool_effective.state if tool_effective is not None else "ask"
-                counts[state] = counts.get(state, 0) + 1
-            label = labels_by_key.get(server_key, server_key)
-            return (
-                f"{label}: {counts['allow']} allow · {counts['ask']} ask · "
-                f"{counts['deny']} off — global default: {global_word}"
-            )
-        override_rows = [
-            row
-            for row in rows
-            if row.kind in ("server", "tool") and row.cycle_current is not None
-        ] + [
-            row
-            for row in extra_override_rows
-            if row.kind in ("server", "tool") and row.cycle_current is not None
-        ]
-        if not override_rows:
-            return f"global default: {global_word}"
-        override_servers = {row.server_key for row in override_rows}
-        override_word = "override" if len(override_rows) == 1 else "overrides"
-        server_word = "server" if len(override_servers) == 1 else "servers"
-        return (
-            f"global default: {global_word} · {len(override_rows)} {override_word} "
-            f"across {len(override_servers)} {server_word}"
+        return _build_permission_preview(
+            self._selected_server_key,
+            rows,
+            tools_by_server,
+            labels_by_key,
+            effective,
+            global_label,
+            extra_override_rows=extra_override_rows,
         )
 
     def _mcp_recovery_view(self):
@@ -3818,6 +3720,15 @@ class MCPWorkbench(Container):
             slots = await self._fetch_credential_slots(record.get("server_id"))
             await canvas.show_server_mutations(record, slots)
             return
+        if selected is not None and selected.source == "local":
+            record = (
+                self._catalog_records.get(selected.server_key.split(":", 1)[1]) or {}
+            )
+            owner = record.get("plugin_owner")
+            if isinstance(owner, dict):
+                selected = replace(
+                    selected, detail={**selected.detail, "plugin_owner": dict(owner)}
+                )
         await canvas.show_detail(
             selected, mutations_available=self._server_mutations_available
         )
@@ -6394,25 +6305,26 @@ class MCPWorkbench(Container):
         )
 
     async def _delete_local_profile(self, server_key: str, profile_id: str) -> None:
-        try:
-            service = self._service()
-            if service is None:
-                return
-            try:
-                await service.delete_local_profile(profile_id)
-            except Exception as exc:
-                logger.warning(
-                    "{}", _safe_diagnostic_message("MCP profile delete failed", exc)
-                )
-                self.app.notify(_toast(f"Delete failed: {exc}"), severity="error")
-                return
-            self.app.notify(_toast(f"Deleted {profile_id}."))
-            if self._selected_server_key == server_key:
-                self._selected_server_key = None
-            self._snapshots = await self._collect_snapshots()
-            await self._sync_children()
-        finally:
-            self._profile_delete_in_flight = False
+        from .mcp_profile_actions import _delete_local_profile
+
+        await _delete_local_profile(self, server_key, profile_id)
+
+    async def on_mcp_profile_form_manage_plugin_requested(
+        self, event: MCPProfileForm.ManagePluginRequested
+    ) -> None:
+        event.stop()
+        owner = event.owner
+        if not isinstance(owner.get("installation_id"), str):
+            self.app.notify(
+                "Plugin ownership is unavailable; refresh the profile.",
+                severity="warning",
+            )
+            return
+        from tldw_chatbook.UI.Plugins_Modules.review import open_owned_plugin
+
+        await open_owned_plugin(
+            self.app, owner["installation_id"], owner.get("component_id")
+        )
 
     def on_mcp_profile_form_submit_requested(
         self, event: MCPProfileForm.SubmitRequested
@@ -6456,61 +6368,9 @@ class MCPWorkbench(Container):
         *,
         connect_after: bool = False,
     ) -> None:
-        """Run one profile save; on success, also re-surface the form's args
-        secret-lint `warning` as a toast (I4 follow-up). The in-form
-        `#mcp-form-args-warning` Static only survives FAILED saves -- the
-        success path's `hide_form()` below unmounts the whole form
-        sub-second after the warning rendered, so without this toast the
-        user would never see it on exactly the path where the secret
-        actually got persisted into a profile's args.
+        from .mcp_profile_actions import _save_local_profile
 
-        Wave C (F7a): `connect_after=True` (the form's "Save and connect")
-        dispatches the connect lifecycle for the just-saved profile once
-        the save and resync land -- the saved->connected journey used to
-        require finding the new row and its inspector Connect action.
-        A connect failure surfaces through the lifecycle's own
-        notification/readiness path (e.g. a missing env placeholder).
-        """
-        try:
-            service = self._service()
-            if service is None:
-                return
-            try:
-                await service.save_local_profile(payload)
-            except ValueError as exc:
-                # Store-validation copy is user-ready. If the form is gone
-                # (e.g. cancelled while the save was in flight), the failure
-                # must still surface -- never vanish silently.
-                form = self._form_or_none()
-                if form is not None:
-                    form.show_error(str(exc))
-                else:
-                    self.app.notify(_toast(str(exc)), severity="error")
-                return
-            except Exception as exc:
-                logger.warning(
-                    "{}", _safe_diagnostic_message("MCP profile save failed", exc)
-                )
-                # Route through show_error when possible: it also re-enables
-                # the form's Save button (disabled at submit) for a retry.
-                form = self._form_or_none()
-                if form is not None:
-                    form.show_error(f"Save failed: {exc}")
-                else:
-                    self.app.notify(_toast(f"Save failed: {exc}"), severity="error")
-                return
-            canvas = self.query_one(MCPServersMode)
-            await canvas.hide_form()
-            self.app.notify(_toast(f"Saved {payload.get('profile_id')}."))
-            if warning:
-                self.app.notify(warning, severity="warning")
-            self._snapshots = await self._collect_snapshots()
-            await self._sync_children()
-            if connect_after and payload.get("profile_id"):
-                profile_id = str(payload["profile_id"])
-                self._start_lifecycle(f"local:{profile_id}", profile_id, "connect")
-        finally:
-            self._profile_save_in_flight = False
+        await _save_local_profile(self, payload, warning, connect_after=connect_after)
 
     async def on_mcp_profile_form_cancelled(
         self, event: MCPProfileForm.Cancelled
@@ -6789,6 +6649,13 @@ class MCPWorkbench(Container):
         wouldn't run until the event loop actually scheduled this coroutine,
         leaving a window where the guard/cancel logic would see stale state.
         """
+        if (self._catalog_records.get(profile_id) or {}).get(
+            "plugin_owner"
+        ) is not None:
+            self.app.notify(
+                "Manage this plugin to review connection tests in its Console scope."
+            )
+            return
         if server_key in self._in_flight:
             self.app.notify(
                 _toast(f"{profile_id}: {action} already running."), severity="warning"

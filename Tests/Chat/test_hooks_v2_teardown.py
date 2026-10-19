@@ -9,9 +9,9 @@ import pytest
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 from Tests.Agents.test_hooks_v2_execution import command
+from Tests.Chat.hooks_v2_owned_rig import disposed_hook_rig, disposed_mounted_hook_rig
 from Tests.Chat.test_console_fleet_wake import _controller_rig
 from Tests.Chat.test_console_runtime_lifetime import _View
-from Tests.conftest import _close_database_instance
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
@@ -161,10 +161,8 @@ async def test_interrupt_once_after_seal_and_revocation(
             assert not engine.processes.records
     finally:
         release.set()
-        await runtime.close_hooks_v2()
-        await runtime.dispose()
-        runs_db.close()
-        _close_database_instance(db)
+        async with disposed_hook_rig(runtime, controller, runs_db, db):
+            pass
 
 
 @pytest.mark.asyncio
@@ -201,11 +199,13 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         ),
         lambda *_: True,
     )
-    entered, release = asyncio.Event(), asyncio.Event()
+    from concurrent.futures import Future
+
+    entered, release = Future(), Future()
 
     async def stream(*args, **kwargs):
-        entered.set()
-        await release.wait()
+        entered.set_result(None)
+        await asyncio.wrap_future(release)
         yield "done"
 
     gateway.stream_chat = stream
@@ -225,7 +225,7 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
             )
             turn = runtime.accept_turn(request)
             pending = asyncio.create_task(runtime.wait_for_turn(turn))
-            await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(asyncio.wrap_future(entered), 10)
             await screen._stop_console_generation_from_visible_action()
             await pending
             for _ in range(200):
@@ -239,11 +239,10 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
         await runtime.close_hooks_v2()
         assert not engine.cleanup_pending
     finally:
-        release.set()
-        await runtime.close_hooks_v2()
-        await runtime.dispose()
-        runs_db.close()
-        _close_database_instance(db)
+        if not release.done():
+            release.set_result(None)
+        async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
+            pass
 
 
 @pytest.mark.asyncio
@@ -448,8 +447,5 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
                 assert len(notifications.read_text().splitlines()) == 1
     finally:
         release.touch()
-        await runtime.close_hooks_v2()
-        assert not engine.processes.records
-        await runtime.dispose()
-        _close_database_instance(db)
-        runs_db.close()
+        async with disposed_mounted_hook_rig(app, runtime, controller, runs_db, db):
+            assert not engine.processes.records

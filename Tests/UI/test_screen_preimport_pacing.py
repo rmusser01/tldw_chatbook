@@ -20,12 +20,14 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook import app as app_module
 from tldw_chatbook.UI.Navigation import screen_registry
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 
 # Real app construction reads the collection-bound private config source.
@@ -48,8 +50,19 @@ def sleep_spy(monkeypatch):
     def fake_sleep(seconds: float) -> None:
         recorded.append(seconds)
 
-    monkeypatch.setattr(app_module.time, "sleep", fake_sleep)
+    clock = SimpleNamespace(**vars(time))
+    clock.sleep = fake_sleep
+    set_app_global(monkeypatch, "time", clock)
     return recorded
+
+
+def test_isolated_sleep_spy_observes_actual_preimport_pause(sleep_spy):
+    app = _build_test_app()
+    gap = app_module.SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS
+
+    app._pause_between_preimports(gap)
+
+    assert sleep_spy == [gap]
 
 
 # --- AC #1: yield between routes, proportional to the cost just paid --------

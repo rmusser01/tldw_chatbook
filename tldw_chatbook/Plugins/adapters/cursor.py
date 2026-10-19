@@ -12,3 +12,6 @@ def inspect_cursor(
     from ..inspection import inspect_package
 
     return inspect_package(root, dialect="cursor", catalog_overlay=catalog_overlay)
+
+
+ADAPTER_VERSION = "chatbook-cursor/2"

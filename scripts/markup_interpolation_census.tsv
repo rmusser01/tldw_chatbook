@@ -91,7 +91,7 @@ tldw_chatbook/UI/MCP_Modules/mcp_profile_form	MCPImportPanel._preview	button_lab
 tldw_chatbook/UI/MCP_Modules/mcp_rail	MCPRail.compose	button_label_interp	1
 tldw_chatbook/UI/MCP_Modules/mcp_server_mutations	MCPServerMutationsPanel._compose_credentials	tooltip_interp	3
 tldw_chatbook/UI/MCP_Modules/mcp_tools_mode	MCPToolsMode._update_empty_state	tooltip_interp	1
-tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._delete_local_profile	notify_interp	2
+tldw_chatbook/UI/MCP_Modules/mcp_profile_actions	_delete_local_profile	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._goto_permission_row	notify_interp	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._lifecycle_wrapper	notify_interp	3
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._load_import_file	notify_interp	3
@@ -99,7 +99,7 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._open_audit_permission	n
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._open_audit_tool	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._run_server_mutation	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._save_builtin_flag	notify_interp	2
-tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._save_local_profile	notify_interp	2
+tldw_chatbook/UI/MCP_Modules/mcp_profile_actions	_save_local_profile	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._save_tool_gate	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._show_tool_test_result	notify_interp	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._start_lifecycle	notify_interp	1

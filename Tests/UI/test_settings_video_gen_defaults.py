@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.UI.Screens import settings_video_gen_defaults as d
 
 
@@ -153,7 +154,8 @@ def test_validate_disabled_backends_warns_not_blocks():
 
 
 @pytest.mark.asyncio
-async def test_panel_compose_covers_all_sections():
+@private_profile_test
+async def test_panel_compose_covers_all_sections(request):
     from textual.screen import Screen
     from textual.widgets import Checkbox, Collapsible, Select, Static
 
@@ -186,8 +188,9 @@ async def test_panel_compose_covers_all_sections():
 # -- fresh-profile dirty state (TASK-23191) ----------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
+async def test_video_gen_opens_clean_on_a_fresh_profile(request, monkeypatch):
     """Opening Video Gen with no persisted ``[video_generation]`` is not dirty.
 
     Regression pin for TASK-23191. Both of the panel's ``Select``s re-post
@@ -205,15 +208,14 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
     """
     from textual.widgets import Select, Static
 
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
         _build_test_app,
         _wait_for_selector,
     )
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 
     real_load = SettingsConfigAdapter.load
 

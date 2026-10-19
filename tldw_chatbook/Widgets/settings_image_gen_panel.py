@@ -61,6 +61,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_LABELS,
     FIELD_SCHEMA,
     ImageGenBackendRow,
+    ImageGenDraftValues,
     build_backend_rows,
     effective_placeholder,
     load_user_image_generation_table,
@@ -387,3 +388,53 @@ class ImageGenSettingsPanel(Vertical):
             id="settings-imagegen-save-result",
             classes="settings-imagegen-hint",
         )
+
+
+def _draft_values_for_save(panel, values) -> ImageGenDraftValues:
+    from tldw_chatbook.UI.Screens import settings_screen as _owner
+
+    backend_fields: dict[str, dict[str, str]] = {}
+    cleared_fields: dict[str, list[str]] = {}
+    for key, value in values.items():
+        if key.startswith("field::"):
+            _prefix, backend_id, toml_key = key.split("::", 2)
+            backend_fields.setdefault(backend_id, {})[toml_key] = value
+        elif key.startswith("cleared::"):
+            _prefix, backend_id, toml_key = key.split("::", 2)
+            cleared_fields.setdefault(backend_id, []).append(toml_key)
+
+    # enabled_backends/default_backend/context_llm_enabled are ALWAYS
+    # read live off the mounted widgets (never from `values`) -- see
+    # the class-comment above for why this is safe and required (an
+    # untouched checkbox/select must still be reflected, since it's
+    # never staged unless the user actually toggles it).
+    enabled_backends = [
+        backend_id
+        for backend_id in _owner.IMAGE_GEN_BACKEND_IDS
+        if panel.query_one(
+            f"#settings-imagegen-enabled-{backend_id}", _owner.Checkbox
+        ).value
+    ]
+    default_backend_widget_value = panel.query_one(
+        "#settings-imagegen-default_backend", _owner.Select
+    ).value
+    default_backend = (
+        default_backend_widget_value
+        if isinstance(default_backend_widget_value, str)
+        else None
+    )
+    context_llm_enabled = bool(
+        panel.query_one("#settings-imagegen-context_llm_enabled", _owner.Checkbox).value
+    )
+
+    return _owner.ImageGenDraftValues(
+        default_backend=default_backend,
+        enabled_backends=enabled_backends,
+        default_batch=values.get("default_batch"),
+        max_variants_per_message=values.get("max_variants_per_message"),
+        context_llm_enabled=context_llm_enabled,
+        context_llm_turns=values.get("context_llm_turns"),
+        context_llm_timeout_seconds=values.get("context_llm_timeout_seconds"),
+        backend_fields=backend_fields,
+        cleared_fields=cleared_fields,
+    )
