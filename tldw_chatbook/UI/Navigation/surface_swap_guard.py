@@ -137,12 +137,16 @@ async def finish_removal(removal: Awaitable[object]) -> None:
 
     A caller that is itself one of the removed widgets' pumps awaits the
     removal directly: ``AwaitRemove`` leaves the current task out of what it
-    waits on, and the shield's new task would not be left out.
+    waits on, and the shield's new task would not be left out. That await is
+    unshielded, so cancelling that pump still cuts its own removal short, as it
+    did before.
 
     Args:
         removal: The ``AwaitRemove`` (or other awaitable) a removal returned.
     """
-    # ``_tasks`` is AwaitRemove's list of the removed pumps (Textual 8.2.8).
+    # ``_tasks`` is AwaitRemove's list of the removed pumps (Textual 8.2.8; a
+    # rename would send self-removals through the shield, which the self-pump
+    # test in test_console_transcript_poll_stop_removal.py catches).
     if asyncio.current_task() in getattr(removal, "_tasks", ()):
         await removal
         return
@@ -156,6 +160,7 @@ async def finish_removal(removal: Awaitable[object]) -> None:
 
 
 def _log_orphaned_removal_failure(task: asyncio.Future) -> None:
+    """Log a shielded removal's failure once no caller is left to see it."""
     if not task.cancelled() and task.exception() is not None:
         logger.warning(
             "A DOM removal failed after its awaiter was cancelled (exception_type={})",

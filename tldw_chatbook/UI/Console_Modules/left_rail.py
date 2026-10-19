@@ -70,8 +70,8 @@ from ...Chat.console_settings_defaults import (
     parse_console_endpoint_preview,
 )
 from ...Widgets.glyph_fallback import resolve_glyph
-from ..Navigation.surface_swap_guard import finish_removal
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
+from ...UI.Navigation.surface_swap_guard import finish_removal
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
