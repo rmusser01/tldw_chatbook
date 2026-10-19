@@ -187,18 +187,22 @@ def _cadence(screen: Any) -> _Cadence:
     return cadence
 
 
-async def run_periodic_console_sync(sync: Callable[[], Awaitable[Any]]) -> Any:
+async def run_periodic_console_sync(
+    sync: Callable[..., Awaitable[Any]], *args: Any
+) -> Any:
     """Run the 0.2 s poll's sync, whose projections may skip their operation.
 
     Args:
-        sync: Starts the poll's sync (``sync_poll_display_ui`` on the screen).
+        sync: Starts the poll's sync (the screen's ``sync_poll_display_ui``).
+        *args: Passed to ``sync``.
 
     Returns:
-        Whatever the sync returned.
+        Whatever the sync returned (False: a deferred display, which the
+        poll leaves to its replay).
     """
     token = _POLL_TICK.set(True)
     try:
-        return await sync()
+        return await sync(*args)
     finally:
         _POLL_TICK.reset(token)
 
@@ -365,8 +369,8 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         force: Run the projections even when nothing moved.
 
     Returns:
-        False when the projection was deferred (the caller's existing replay
-        owns it); True when it rendered or was not needed.
+        False when the projection was deferred (handed to the delayed
+        whole-sync replay here); True when it rendered or was not needed.
     """
     cadence = _cadence(screen)
     objects, values = _projection_inputs(screen)
@@ -381,7 +385,9 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         cadence.owed = True
         return True
     if screen._sync_console_rail_and_controls() is False:
-        return False
+        # The tick's deferral: the coalesced whole-sync replay owns the
+        # render. A cold checked display defers without asking for one.
+        return replay_whole_console_sync(screen)
     cadence.served = requested
     cadence.objects, cadence.values, cadence.at = objects, values, _clock()
     cadence.owed = False
@@ -415,6 +421,4 @@ def settle_stopped_poll(screen: Any, torn_down: Callable[[Any], bool]) -> None:
     workspace = getattr(screen, "_workspace", None)
     scope = getattr(workspace, "tick_workspace_build_scope", nullcontext)
     with scope():  # One workspace-context build, as on a tick.
-        projected = project_console_tick(screen, force=True)
-    if projected is False:
-        screen._console_control_bar_replay_whole_sync = True
+        project_console_tick(screen, force=True)  # Defers as a tick does.

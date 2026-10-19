@@ -17658,8 +17658,8 @@ class ChatScreen(BaseAppScreen):
             # build. Task-scoped: only THIS coroutine's task reads the cache —
             # workers and handlers interleaving during the awaits build live.
             with self._workspace.tick_workspace_build_scope():
-                if config_sync.project_console_tick(self) is False:
-                    return config_sync.replay_whole_console_sync(self)
+                if config_sync.project_console_tick(self) is False:  # Replay owns it.
+                    return False
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.
@@ -17889,7 +17889,7 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
-            from ..Console_Modules import config_sync
+            from ..Console_Modules import config_sync  # The cadence's poll mark.
 
             # TASK-34789: work ending mid-paint wrote rows this paint missed,
             # and nothing else repaints a finished turn (starters only ask for
@@ -17897,12 +17897,8 @@ class ChatScreen(BaseAppScreen):
             # work, and asked for by nothing while it ran, may be the last.
             self._console_transcript_poll_asked = False
             live_before_paint = self._console_transcript_poll_needed()
-            if (
-                await config_sync.run_periodic_console_sync(
-                    lambda: run_controls.sync_poll_display_ui(self)
-                )
-                is False
-            ):
+            display = run_controls.sync_poll_display_ui
+            if await config_sync.run_periodic_console_sync(display, self) is False:
                 # Deferred reconciliation still owes a complete final refresh.
                 return
             controller = self._console_chat_controller

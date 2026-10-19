@@ -122,6 +122,11 @@ class _Screen:
         self._console_sync_maintenance_paused = False
         self._console_control_bar_replay_whole_sync = False
         self._console_sync_requested = False
+        self.replays_requested = 0
+
+    def _request_console_control_bar_sync(self, *, delayed: bool = False) -> None:
+        assert delayed, "a deferred projection's replay is the delayed one"
+        self.replays_requested += 1
 
     def _console_run_active(self) -> bool:
         return self.active
@@ -165,7 +170,9 @@ def clock(monkeypatch) -> _Clock:
 def _tick(screen: _Screen) -> int:
     """One poll tick; returns how many projections it ran."""
     before = screen.projections
-    asyncio.run(config_sync.run_periodic_console_sync(screen._sync_native_console_chat_ui))
+    asyncio.run(
+        config_sync.run_periodic_console_sync(screen._sync_native_console_chat_ui)
+    )
     return screen.projections - before
 
 
@@ -474,10 +481,24 @@ def test_a_deferred_or_failed_stop_render_stays_owed(clock, outcome):
     else:
         assert _stop(screen) == 1
         assert screen._console_control_bar_replay_whole_sync
+        # Rebased onto dev (PR #3023): a cold checked display defers without
+        # asking for a replay itself, so the tick asks for the delayed one;
+        # the stop render must too, or nothing runs the replay it owns.
+        assert screen.replays_requested == 1, "no delayed replay was requested"
         screen._console_control_bar_replay_whole_sync = False
     screen.result = True
     assert _stop(screen) == 1
     assert _stop(screen) == 0
+
+
+def test_a_deferred_tick_hands_its_projection_to_the_delayed_whole_sync_replay(clock):
+    """The tick's own deferral handling: the replay flag and one delayed request."""
+    screen = _settled(clock)
+    screen.result = False
+    screen._console_chat_store.active_session_id = "s2"
+    assert _tick(screen) == 1
+    assert screen._console_control_bar_replay_whole_sync
+    assert screen.replays_requested == 1
 
 
 @pytest.mark.parametrize("outcome", [False, RuntimeError("render failed")])
