@@ -934,6 +934,8 @@ class ConsoleWorkspaceController:
         self._console_appearance_map_cached_at: float = 0.0
         #: TASK-33620.15.4: (map, ids an off-loop re-read of it found absent).
         self._console_appearance_map_absent: tuple[dict, frozenset[str]] | None = None
+        self._console_appearance_map_service: Any = None
+        self._console_appearance_map_queried_ids: set[str] = set()
         self._character_conversation_activation_coordinator = None
 
     @property
@@ -3191,11 +3193,14 @@ class ConsoleWorkspaceController:
         cache_at = getattr(self, "_console_appearance_map_cached_at", 0.0)
         cached_map = getattr(self, "_console_appearance_map_cache", None)
         now = time.monotonic()
-        if (
-            cached_map is not None
+        same_service = getattr(self, "_console_appearance_map_service", None) is service
+        current = (
+            same_service
+            and cached_map is not None
             and now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
-            and wanted <= set(cached_map)
-        ):
+        )
+        queried_ids = getattr(self, "_console_appearance_map_queried_ids", set())
+        if current and wanted <= queried_ids:
             return cached_map
         if cached_map is not None and self._stale_display_reads_on:
             # An id the last re-read found absent (unknown or soft-deleted)
@@ -3217,8 +3222,10 @@ class ConsoleWorkspaceController:
             logger.opt(exception=True).debug(
                 "Unable to read Console conversation appearances"
             )
-            return cached_map if cached_map is not None else {}
-        merged_map = dict(cached_map or {})
+            return cached_map if same_service and cached_map is not None else {}
+        merged_map = dict(cached_map or {}) if same_service else {}
+        for conversation_id in wanted:
+            merged_map.pop(conversation_id, None)
         merged_map.update(
             {
                 str(conversation_id): (
@@ -3230,6 +3237,10 @@ class ConsoleWorkspaceController:
         )
         self._console_appearance_map_cache = merged_map
         self._console_appearance_map_cached_at = now
+        self._console_appearance_map_service = service
+        # Unknown/deleted conversations are omitted by the service. Remember
+        # their display read too, without inventing an appearance for the row.
+        self._console_appearance_map_queried_ids = wanted
         return merged_map
 
     @staticmethod
@@ -8256,6 +8267,8 @@ class ConsoleWorkspaceController:
         # appearance for up to the TTL window.
         self._console_appearance_map_cache = None
         self._console_appearance_map_cached_at = 0.0
+        self._console_appearance_map_queried_ids = set()
+        self._console_appearance_map_service = None
         self._sync_console_workspace_context()
 
     def _toggle_console_conversation_star(

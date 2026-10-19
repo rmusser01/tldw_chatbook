@@ -964,6 +964,22 @@ The 57 tests from the first round passed throughout. No test interrupted a chang
 **What to do.** Before investigating a CI flake, read the log to the first exception rather than the summary line, then check whether dev has changed that code since, with `git merge-base --is-ancestor <fix> <failing head>` for each failing run. If the heads predate the fix, the work left is counting the runs since it.
 
 **Seen again (TASK-33620.15.23, 2026-10-27): a commit date is not a merge date.** The task was filed on 2026-10-24 from the two nothing-focused composer tests failing "in most runs" on dev 5b5920b8e2. The wait that fixed them (a19334f0e6) is dated 2026-10-20, four days earlier, so it read as already on dev. It reached dev only on 2026-10-26, with the merge of PR #3211 (c398d3a4d0), and 5b5920b8e2 does not contain it. On dev a2b7104d1e the two tests passed 8 of 8 serial runs before any change. Run the ancestry check against the failing head, never compare dates.
+## Separate worker SQL from UI-thread SQL in performance counters (TASK-35610, 2026-10-19)
+
+The Windows CSS/presentation follow-up's settled-tick test counted two registry
+reads on the updated code and zero on an original-code control. Repeating the
+updated test reproduced the assertion. Thread/stack observation located both
+reads in the existing finite workspace-availability worker, outside the UI loop.
+The class-level counter's method wrappers also selected the conservative custom
+reader route, which legitimately calls both folder and runtime-binding readers.
+The counter had been interpreting all-thread traffic as UI blocking work.
+
+Keep UI and background read/connection/SQL counts separately, retain the actual
+native calls, and prove both counters with positive controls. Do not silence a
+worker, freeze its TTL, or weaken admission to make a timing window green. Also
+avoid unconditional `asyncio.current_task()` in a thread observer: the first
+diagnostic raised without an event loop and was discarded; the corrected observer
+preserved the original call and supplied the usable evidence.
 
 ## A render-entry wait must also observe its producer's failure (TASK-35592, 2026-10-19)
 

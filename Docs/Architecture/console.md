@@ -52,6 +52,20 @@ FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
 
+Console presentation avoids an unused leading inspector/rail build before the
+control pass (TASK-35610). Controls supply their freshly built inspector to the
+existing rail projection; hidden inspector updates and the fresh post-await FULL
+projection remain. Conversation appearance display caching records the last
+successfully queried IDs, including absent rows, under its existing short TTL
+and service identity. New IDs, expiry and writes require another original read;
+failed reads do not renew the cache. Deleted appearances are removed on successful
+refresh. These are disposable icon/color values, never storage or action authority.
+
+CSS application retains upstream Textual style resolution. A bounded 1024-entry
+candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
+it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
+theme changes and virtual component styles still pass through upstream matching.
+
 ## Screen layout
 
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.

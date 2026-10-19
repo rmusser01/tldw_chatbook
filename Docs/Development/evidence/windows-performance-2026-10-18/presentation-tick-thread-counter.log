@@ -1,0 +1,138 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+
+[t22201] 5 settled ticks: 621.2 ms wall, reads={'ensure_default_workspace': 0, 'get_active_workspace': 0, 'list_workspaces': 0, 'list_runtime_bindings': 0, 'list_workspace_memberships': 0}, round_trips=0, statements=0, background_reads={'ensure_default_workspace': 0, 'get_active_workspace': 0, 'list_workspaces': 0, 'list_runtime_bindings': 2, 'list_workspace_memberships': 0}, background_statements=2
+.F.                                                                      [100%]
+================================== FAILURES ===================================
+______________ test_the_counter_still_sees_real_registry_traffic ______________
+
+    @pytest.mark.asyncio
+    async def test_the_counter_still_sees_real_registry_traffic():
+        """Control: "zero" above must not be satisfiable by an unwired counter."""
+        app, host = _ready_host()
+        async with host.run_test(size=APP_SIZE) as pilot:
+            await _settled_console(host, pilot)
+            registry = app.workspace_registry_service
+            assert registry is not None
+
+            with _WorkspaceReadCounter() as counter:
+                active = registry.get_active_workspace()
+                listed = registry.list_workspaces()
+                registry.ensure_default_workspace()
+
+            assert active is not None
+            assert listed
+            assert counter.read_calls["get_active_workspace"] >= 1
+            assert counter.read_calls["list_workspaces"] >= 1
+            assert counter.read_calls["ensure_default_workspace"] == 1
+            assert counter.db_round_trips >= 3
+            assert any("workspace_records" in s for s in counter.statements)
+
+            # Real preparation work may overlap a UI tick. It must remain visible
+            # in the background counters without being attributed to the UI thread.
+            with _WorkspaceReadCounter() as background:
+                assert await asyncio.to_thread(registry.list_workspaces)
+                await asyncio.to_thread(registry.ensure_default_workspace)
+
+            assert background.registry_reads == 0
+            assert background.db_round_trips == 0
+            assert background.statements == []
+            assert background.background_read_calls["list_workspaces"] >= 1
+            assert background.background_read_calls["ensure_default_workspace"] == 1
+            assert background.background_db_connections >= 1
+>           assert background.background_db_transactions >= 1
+E           assert 0 >= 1
+E            +  where 0 = <Tests.UI.test_console_run_tick_workspace_reads._WorkspaceReadCounter object at 0x000001BE81D249E0>.background_db_transactions
+
+Tests\UI\test_console_run_tick_workspace_reads.py:255: AssertionError
+---------------------------- Captured stderr call -----------------------------
+2026-10-19 10:57:35.709 | INFO     | tldw_chatbook.app:__init__:1281 - Loaded app_config - strip_thinking_tags: True
+2026-10-19 10:57:35.968 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'prompts_service' completed in 0.000s
+2026-10-19 10:57:35.968 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'providers_models' completed in 0.000s
+2026-10-19 10:57:35.968 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'notes_service' completed in 0.000s
+2026-10-19 10:57:35.968 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'media_db' completed in 0.000s
+2026-10-19 10:57:36.063 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-uzajybof\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-19 10:57:36.428 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-uzajybof\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-19 10:57:37.142 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-uzajybof\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-19 10:57:37.299 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-19 10:57:37.301 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-uzajybof\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-19 10:57:37.301 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-uzajybof\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-19 10:57:37.500 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-19 10:57:37.555 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-19 10:57:37.616 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-19 10:57:37.677 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-19 10:57:37.735 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-19 10:57:37.790 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-19 10:57:37.790 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-uzajybof\scheduled_tasks.sqlite [Client: default]
+2026-10-19 10:57:38.289 | DEBUG    | tldw_chatbook.app:__init__:1460 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-19 10:57:38.289 | DEBUG    | tldw_chatbook.app:__init__:1463 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-19 10:57:38.499 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw_test_config_c2n104mv\home\.local\share\tldw_cli\default_user\evals.db
+2026-10-19 10:57:38.500 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-19 10:57:38.934 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:_init_worker_handlers:2211 - Worker handler registry initialized with all handlers
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1653 - === STARTUP TIMING SUMMARY ===
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1654 - Total initialization time: 3.337 seconds
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1660 -   basic_init: 0.368s (11.0%)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1660 -   attribute_init: 0.000s (0.0%)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.001s (0.0%)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.000s (0.3% of parallel_init)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.000s (0.2% of parallel_init)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.000s (0.2% of parallel_init)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.000s (0.1% of parallel_init)
+2026-10-19 10:57:38.935 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+2026-10-19 10:57:39.107 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8936 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('splash_screen',)": ['enabled'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+2026-10-19 10:57:39.183 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8991 - Successfully replaced settings file at C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw_test_config_c2n104mv\config\config.toml
+2026-10-19 10:57:39.195 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+2026-10-19 10:57:39.195 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+2026-10-19 10:57:39.199 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-19 10:57:39.477 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw_test_config_c2n104mv\home\.local\share\tldw_cli\default_user\chat_dicts
+2026-10-19 10:57:39.477 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-10-19 10:57:39.480 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9021 - Global configuration caches invalidated and reloaded.
+2026-10-19 10:57:39.596 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+2026-10-19 10:57:39.596 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+2026-10-19 10:57:39.605 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7062 - Attempting to load CLI config from: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw_test_config_c2n104mv\config\config.toml
+2026-10-19 10:57:39.633 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7083 - Successfully loaded and merged CLI config from C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw_test_config_c2n104mv\config\config.toml
+2026-10-19 10:57:39.633 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7167 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-10-19 10:57:39.633 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7171 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-19 10:57:39.634 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-19 10:57:39.878 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw_test_config_c2n104mv\home\.local\share\tldw_cli\default_user\chat_dicts
+2026-10-19 10:57:39.879 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-10-19 10:57:39.892 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+2026-10-19 10:57:40.245 | DEBUG    | tldw_chatbook.Chat.console_runtime:ensure_chat_controller:4849 - ensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: ['default_session_settings', 'global_user_display_name', 'library_provider_factory', 'provider_config', 'rag_capture_provider', 'turn_context_provider']
+2026-10-19 10:57:40.355 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3942 - Local persisted conversation service is unavailable
+2026-10-19 10:57:40.356 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12915 - No Console workspace context tray available for sync
+2026-10-19 10:57:40.356 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12915 - No Console workspace context tray available for sync
+2026-10-19 10:57:40.356 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1322 - wake recovery failed (exception_type=AttributeError)
+2026-10-19 10:57:41.731 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:910 - Sidebar temperature input not found for sync
+2026-10-19 10:57:42.130 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:682 - Screen chat mounted
+2026-10-19 10:57:42.152 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22820 - Chat screen resuming
+2026-10-19 10:57:43.084 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22820 - Chat screen resuming
+2026-10-19 10:57:44.135 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:24273 - No collapsible states to restore
+2026-10-19 10:57:45.542 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:713 - Screen chat unmounted
+------------------------------ Captured log call ------------------------------
+INFO     root:app.py:1415 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1522 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1543 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+-------------------------- Captured stderr teardown ---------------------------
+2026-10-19 10:57:45.962 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6428 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+============================== warnings summary ===============================
+.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+16.36s call     Tests/UI/test_console_run_tick_workspace_reads.py::test_settled_run_ticks_do_zero_workspace_registry_sql
+10.57s call     Tests/UI/test_console_run_tick_workspace_reads.py::test_registry_mutation_reflects_in_the_next_tick
+9.95s call     Tests/UI/test_console_run_tick_workspace_reads.py::test_the_counter_still_sees_real_registry_traffic
+
+(6 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_the_counter_still_sees_real_registry_traffic
+1 failed, 2 passed, 2 warnings in 44.11s

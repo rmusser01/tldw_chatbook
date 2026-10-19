@@ -10,6 +10,7 @@ Add --storage-baseline for the pre-initialization-wait storage module.
 Add --attach-poll to replay the extra observer used in the earlier stalled runs.
 Add --storage-observe for initialization durations and worker stack sampling.
 Add --clock-safe to keep probe polling above the Windows loop clock resolution.
+Add --presentation-baseline for the pre-CSS/inspector/appearance modules.
 Add --profile for cProfile discovery (this Python 3.12 build captures workers
 too; its cumulative timings/callers are not trustworthy main-thread evidence).
 The separate sampler explicitly selects the main thread. Fresh temporary app
@@ -159,6 +160,10 @@ async def main():
         probe_poll_seconds=poll_seconds,
         probe_heartbeat_seconds=heartbeat_seconds,
     )
+    if "--presentation-baseline" in sys.argv:
+        import presentation_baseline
+
+        report["baseline_revision"] = presentation_baseline.BASE_REVISION
     if "--storage-baseline" in sys.argv:
         assert "tldw_chatbook.Backup_Recovery.storage_admission" not in sys.modules
         import storage_baseline
@@ -222,6 +227,11 @@ async def main():
                 app.post_message(NavigateToScreen("chat"))
                 await until(lambda: type(app.screen).__name__ == "ChatScreen")
                 await pilot.pause(3)
+                if "--css-observe" in sys.argv:
+                    from css_observer import measure
+
+                    report["css_diagnostic"] = measure(app)
+                    save()
                 report["console_resume"] = []
                 for iteration in range(6):
                     stage = "leave-console"
