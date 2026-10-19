@@ -98,6 +98,7 @@ def card_action_finished(
     *,
     accepted: bool,
     return_to_composer: bool,
+    interrupted: bool = False,
 ) -> Any:
     """Settle the shelf after a card action on a paused send.
 
@@ -108,6 +109,9 @@ def card_action_finished(
         accepted: The action sent the turn.
         return_to_composer: The action was a Cancel that took effect and the
             composer is empty, so the turn goes back there.
+        interrupted: The action raised or was cancelled -- opening the
+            Console terminal removes the card mid-action -- so no card is
+            known to cover a re-pause and the shelf offers the turn again.
 
     Returns:
         The unsent turn put back as the draft (its ``draft`` is the text to
@@ -119,7 +123,9 @@ def card_action_finished(
         runtime.forget_turn_recoveries_for_preparation(preparation_id)
         return None
     store = controller.store
-    if shelf_releasable(store.preparation_by_id(preparation_id), preparation_id):
+    if not interrupted and shelf_releasable(
+        store.preparation_by_id(preparation_id), preparation_id
+    ):
         return None  # paused again: the card covers it, the shelf stays clear
     if return_to_composer:
         return runtime.return_turn_recovery_to_draft(preparation_id)

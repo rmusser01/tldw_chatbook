@@ -158,3 +158,53 @@ async def automatic_search_outcome(
         # settled run state, and a first send resumes "Validating provider.".
         if controller.run_state_for(session_id) == searching:
             controller._set_run_state(previous, session_id=session_id)
+
+
+def pause_interrupted_retry(controller: Any, preparation: Any) -> None:
+    """Return a send whose Retry search was cancelled to a Library pause.
+
+    TASK-33621.20 re-review: a card's Retry runs as a worker on the card, and
+    swapping the transcript region out (opening the Console terminal) cancels
+    it. Mid-search, that left the send PREPARING with no owner: no card, a
+    shelf Discard that released nothing, and every later send refused
+    ("Another send is still preparing…"). The send pauses as a stopped Library
+    search instead, exactly as a Stop would leave it.
+
+    Args:
+        controller: The Console chat controller.
+        preparation: The preparation the cancelled Retry had moved to
+            PREPARING.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsolePreparationOutcome
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunState
+    from tldw_chatbook.Chat.console_turn_preparation import (
+        ConsolePreparationPauseKind,
+        ConsolePreparationTransition,
+        ConsoleTurnPreparationState,
+        library_pause_copy,
+    )
+
+    paused = controller.store.compare_and_set_preparation(
+        preparation.session_id,
+        ConsolePreparationTransition(
+            preparation_id=preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.PREPARING,
+            new_state=ConsoleTurnPreparationState.PAUSED,
+            pause_kind=ConsolePreparationPauseKind.RETRIEVAL,
+            new_attempt_id=None,
+        ),
+    )
+    if paused is None:
+        return
+    controller._preparation_outcomes[paused.preparation_id] = ConsolePreparationOutcome(
+        preparation_id=paused.preparation_id,
+        attempt_id=paused.attempt_id,
+        state=paused.state,
+        evidence_bundle=None,
+        contribution=None,
+        error_code="library_retrieval_stopped",
+    )
+    controller._set_run_state(
+        ConsoleRunState.blocked(library_pause_copy("library_retrieval_stopped")),
+        session_id=paused.session_id,
+    )

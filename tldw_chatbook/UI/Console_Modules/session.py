@@ -6877,13 +6877,18 @@ class ConsoleSessionController:
             )
         except BaseException:
             if releasable:
+                # TASK-33621.20: the card may be gone (a center swap cancels its
+                # worker), so the shelf offers the turn again, repainted from
+                # the screen rather than from this ending task.
                 card_action_finished(
                     runtime,
                     controller,
                     preparation_id,
                     accepted=False,
                     return_to_composer=False,
+                    interrupted=True,
                 )
+                self.run_worker(sync_ui(), exclusive=False, group="console-sync")
             raise
         composer = self._console_composer_or_none()
         now_held = controller.trace_call_recovery_preparation()

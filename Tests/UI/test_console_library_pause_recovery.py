@@ -240,3 +240,49 @@ async def test_card_cancel_returns_the_message_with_its_staged_attachment(
             assert not _shelf_offers_unsent_turn(console)
             assert console._console_runtime().recoveries_for_session(session_id) == ()
             assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_card_retry_cancelled_by_a_center_swap_leaves_a_recoverable_pause():
+    """Re-review IMPORTANT 1: a cancelled card Retry must not recreate the jam.
+
+    The card's actions run as a worker on the card. Opening the Console
+    terminal swaps the transcript region out, which cancels that worker; mid
+    search, the send was left PREPARING with no owner: no card, a shelf
+    Discard that released nothing, and every later send refused.
+    """
+    gateway = _Gateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            controller._library_preparation_timeout = 60.0
+            console.query_one(_CARD_ACTIONS["Retry Library search"], Button).press()
+            await until(lambda: library.calls == 2)
+
+            await console._swap_console_center()  # what opening the terminal does
+
+            await until(lambda: _paused_retrieval(controller))
+            await until(lambda: _shelf_offers_unsent_turn(console))
+            # The fresh card shows the paused send again, with its reason.
+            await until(
+                lambda: console.query_one(_CARD_ACTIONS["Cancel send"], Button).display
+            )
+            await until(lambda: "Library search stopped" in _screen_text(host))
+            console.query_one("#console-prompt-queue-pause", Button).press()
+            await until(lambda: not _shelf_offers_unsent_turn(console))
+
+            assert not _paused_retrieval(controller)
+
+            library.release.set()
+            composer.load_draft(SECOND)
+            composer.focus()  # the swap moved focus to the transcript
+            await pilot.pause()
+            press(host, "enter", "\r")
+            await until(lambda: gateway.stream_calls == 1)
+            await until(lambda: REPLY in _screen_text(host))
+            screen = _screen_text(host)
+            assert "Another send is still preparing" not in screen
+            assert "Last send is blocked" not in screen

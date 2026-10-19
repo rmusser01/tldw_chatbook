@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -470,14 +472,18 @@ class TraceCallRecoveryCallout(Vertical):
                 result = await result
         except asyncio.CancelledError:
             self._busy = False
-            self.sync_recovery(self.recovery_state)
+            # A center swap removed the card mid-action: its buttons may
+            # already be gone, and a NoMatches here would fail the worker.
+            with contextlib.suppress(NoMatches):
+                self.sync_recovery(self.recovery_state)
             raise
         except Exception:
             self._busy = False
             self._status_copy = (
                 "Recovery did not complete. Try again or cancel the send."
             )
-            self.sync_recovery(self.recovery_state)
+            with contextlib.suppress(NoMatches):  # removed mid-action, as above
+                self.sync_recovery(self.recovery_state)
             return
         self._busy = False
         completed = (
@@ -855,12 +861,16 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         """Synchronize the always-mounted recovery placeholder in place."""
         if not self.is_mounted:
             return
-        self.query_one(TraceCallRecoveryCallout).sync_recovery(
-            self._trace_recovery_state_builder()
-        )
-        self.query_one(ProviderContinuationRecoveryCallout).sync_recovery(
-            self._recovery_state()
-        )
+        try:
+            trace = self.query_one(TraceCallRecoveryCallout)
+            continuation = self.query_one(ProviderContinuationRecoveryCallout)
+        except NoMatches:
+            # TASK-33621.20: a center swap removing this region prunes its
+            # children first; a sync then (a cancelled card action's own)
+            # must not fail the worker. The replacement composes fresh.
+            return
+        trace.sync_recovery(self._trace_recovery_state_builder())
+        continuation.sync_recovery(self._recovery_state())
 
     async def _recover_trace_call(
         self, action: str, preparation_id: str

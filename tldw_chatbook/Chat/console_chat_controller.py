@@ -7425,7 +7425,13 @@ class ConsoleChatController:
                 self._preparation_by_id(preparation_id)
             )
         self._preparation_outcomes.pop(preparation_id, None)
-        outcome = await self.prepare_library_for_turn(preparation_id)
+        try:
+            outcome = await self.prepare_library_for_turn(preparation_id)
+        except asyncio.CancelledError:  # TASK-33621.20: never leave it PREPARING
+            from tldw_chatbook.Chat import console_library_search
+
+            console_library_search.pause_interrupted_retry(self, retried)
+            raise
         if outcome.state is not ConsoleTurnPreparationState.READY:
             # TASK-33621.20: say why the retry paused again, not why it first did.
             paused_copy = library_pause_copy(outcome.error_code)
