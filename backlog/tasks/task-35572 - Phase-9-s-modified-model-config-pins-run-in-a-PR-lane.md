@@ -22,8 +22,9 @@ references:
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Found in Phase 9's fix-round review (2026-10-19). Phase 9 placed every NEW model-config evidence test in a PR lane, but 32 test functions it MODIFIED still run in no PR lane: the census, the PR Fast Lane's steps and the P0 gate leave them to nightly-deep and the main-push Core Tests. Some are pins the plan says were rewritten on purpose (for example `test_console_settings_modal_enumerated_inputs_list_accepted_values` and `test_mounted_no_resume_keeps_blocking_modal_focus_transfer`), so a later PR can undo what they pin and still merge green.
 
-The list was taken with `Tests/CI/test_console_p0_regression_gate.py`'s `_lanes()` / `_selected_by`, over the test functions present at both ends of Phase 9's range whose source differs, and marked with Tests/CI's `_uses_bootstrap_profile`. 7 are bootstrap_profile and 25 are not:
+The list was taken with `Tests/CI/test_console_p0_regression_gate.py`'s `_lanes()` / `_selected_by`, over the test functions present at both ends of Phase 9's range whose source differs, and marked with Tests/CI's `_uses_bootstrap_profile`. 8 are bootstrap_profile and 24 are not:
 
+- `Tests/Chat/test_kimi_zai_native_tools.py::test_hosted_partial_call_cancellation_never_executes` (TASK-33666, bootstrap_profile; the Stop-claim fix removed an assertion that only passed by reading a flag inside the server's 2 s window)
 - `Tests/LLM_Calls/test_kobold_tabby_config.py::test_configuration_reaches_the_public_analyze_boundary` (TASK-33001.14, bootstrap_profile)
 - `Tests/LLM_Calls/test_llama_summarizer_config.py::test_budget_and_diagnostic_reach_the_public_analyze_boundary` (TASK-33001.14, bootstrap_profile)
 - `Tests/UI/test_console_cost_chip_screen.py::test_idle_draft_edit_burst_coalesces_one_cost_refresh` (TASK-33006.20, bootstrap_profile)
@@ -33,7 +34,6 @@ The list was taken with `Tests/CI/test_console_p0_regression_gate.py`'s `_lanes(
 - `Tests/UI/test_console_workbench_contract.py::test_console_ready_empty_transcript_omits_setup_action_row` (TASK-33005.7, bootstrap_profile)
 - `Tests/Chat/test_console_onboarding_state.py::test_setup_complete_collapses_to_ready_line` (TASK-33005.7)
 - `Tests/Chat/test_encrypted_api_key_never_sent.py::test_summarizers_never_send_ciphertext` (TASK-33001.14)
-- `Tests/Chat/test_kimi_zai_native_tools.py::test_hosted_partial_call_cancellation_never_executes` (TASK-33666; the Stop-claim fix removed an assertion that only passed by reading a flag inside the server's 2 s window)
 - `Tests/Internal_Prompts/test_summarization_migration.py::test_local_template_fallback_reaches_the_core_user_content` (TASK-33001.14)
 - `Tests/UI/test_console_internals_decomposition.py::test_console_empty_ready_transcript_shows_first_run_guidance` (TASK-33005.7)
 - `Tests/UI/test_console_internals_decomposition.py::test_console_empty_transcript_uses_compact_ready_state` (TASK-33005.7)
@@ -57,7 +57,7 @@ The list was taken with `Tests/CI/test_console_p0_regression_gate.py`'s `_lanes(
 - `Tests/UI/test_theme_contrast.py::test_user_theme_with_any_kept_variable_form_still_loads` (TASK-33003.16)
 - `Tests/UI/test_theme_contrast.py::test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours` (TASK-33003.16)
 
-Two constraints shape the placement. The admission-sensitive job (`pr-fast-lane-admission`) has little room left: Phase 9's own targets made it about 29 minutes serial locally, estimated at about median 29-31 / max 33-38 CI minutes against its 35-minute cap (TASK-35575). Since the owner's decision on TASK-35575 (2026-10-19) Phase 9's 52 run in a second job, `pr-fast-lane-admission-2`: `dev`'s 41 alone took max 20.0 min over 20 PR runs, and the 52 alone 266.9 s serial locally. And a test's solo time is not its cost in a step (the lessons entry on it), so each placement is timed in its step's order. Where the bootstrap_profile ones go depends on the rule TASK-35570 decides.
+Two constraints shape the placement. The admission-sensitive job (`pr-fast-lane-admission`) has little room left: Phase 9's own targets made it about 29 minutes serial locally, estimated at about median 29-31 / max 33-38 CI minutes against its 35-minute cap (TASK-35575). Since the owner's decision on TASK-35575 (2026-10-19) Phase 9's 54 run in a second job, `pr-fast-lane-admission-2`: `dev`'s 41 alone took max 20.0 min over 20 PR runs, and the 52 alone 266.9 s serial locally. And a test's solo time is not its cost in a step (the lessons entry on it), so each placement is timed in its step's order. Where the bootstrap_profile ones go depends on the rule TASK-35570 decides.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
