@@ -341,7 +341,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # rebuild pin, appended last (one mounted Console, about 3 s).
 # TASK-34406.28 raised it by two, to 326: ten browser Quit cases and the
 # flat-search native-drain regression, appended without moving earlier entries.
-MINIMUM_FILES = 326
+# TASK-34982 raised it by 1, to 327: the poll-timer-stop row-removal pins,
+# appended last (a bare transcript host; well under 1 s).
+MINIMUM_FILES = 327
 
 
 def read_census(path: Path) -> list[str]:

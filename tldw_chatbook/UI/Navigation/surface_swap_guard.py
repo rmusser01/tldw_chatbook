@@ -36,7 +36,7 @@ needs the surface swapped hands the swap to the screen -- ``screen.call_next``
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Awaitable, Iterable
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -122,3 +122,23 @@ def log_refused_surface_swap(
         fallback=fallback,
         error=error,
     )
+
+
+async def finish_removal(removal: Awaitable[object]) -> None:
+    """Await a DOM removal that the caller's cancellation cannot cut short.
+
+    TASK-34982. ``AwaitRemove`` gathers the removed widgets' own message-pump
+    tasks, so cancelling the task that awaits it cancels those pumps mid-exit:
+    the widgets stay in the DOM with dead tasks, and their parent's next prune
+    (app shutdown included) raises a bare ``CancelledError``. The Console
+    transcript poll paints inside its timer's task, and Textual cancels that
+    task whenever the timer stops. Shielded, the removal finishes on its own and
+    the caller still sees its cancellation.
+
+    Not for a removal of the calling widget itself: the shield awaits from a
+    new task, which ``AwaitRemove`` no longer leaves out of what it waits on.
+
+    Args:
+        removal: The ``AwaitRemove`` (or other awaitable) a removal returned.
+    """
+    await asyncio.shield(asyncio.ensure_future(removal))

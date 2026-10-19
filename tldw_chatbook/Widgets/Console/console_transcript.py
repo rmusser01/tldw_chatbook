@@ -93,6 +93,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
 )
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
@@ -7276,7 +7277,9 @@ class ConsoleTranscript(VerticalScroll):
         if removals:
             for widget in removals:
                 self._cancel_selection_if_row_removed(widget)
-            await self.remove_children(removals)
+            # TASK-34982: the poll paints in its timer's task; a stopped timer
+            # must not cancel the removed rows' own pumps mid-exit.
+            await finish_removal(self.remove_children(removals))
             if not self._can_mutate_widget(self):
                 return
 
@@ -7406,7 +7409,7 @@ class ConsoleTranscript(VerticalScroll):
             )
             if widget.adjunct_stack.children:
                 self._cancel_selection_if_row_removed(widget.adjunct_stack)
-                await widget.adjunct_stack.remove_children()
+                await finish_removal(widget.adjunct_stack.remove_children())
                 if not self._can_sync_assistant_turn(widget):
                     return False
             if adjuncts:
@@ -7762,7 +7765,7 @@ class ConsoleTranscript(VerticalScroll):
             if stale:
                 for disclosure in stale:
                     self._cancel_selection_if_row_removed(disclosure)
-                await widget.activity_stack.remove_children(stale)
+                await finish_removal(widget.activity_stack.remove_children(stale))
                 if not self._can_sync_assistant_turn(widget):
                     return False
             disclosures = []
@@ -7810,7 +7813,7 @@ class ConsoleTranscript(VerticalScroll):
                 != components.action_signature
             ):
                 if disclosure.action_stack.children:
-                    await disclosure.action_stack.remove_children()
+                    await finish_removal(disclosure.action_stack.remove_children())
                     if not disclosure_is_live(disclosure):
                         return False
                 if components.action_widgets:
@@ -7841,8 +7844,8 @@ class ConsoleTranscript(VerticalScroll):
                     if previous_signature[1:] != components.detail_signature[1:]:
                         for child in current_detail[1:]:
                             self._cancel_selection_if_row_removed(child)
-                        await disclosure.detail_stack.remove_children(
-                            current_detail[1:]
+                        await finish_removal(
+                            disclosure.detail_stack.remove_children(current_detail[1:])
                         )
                         if not disclosure_is_live(disclosure):
                             return False

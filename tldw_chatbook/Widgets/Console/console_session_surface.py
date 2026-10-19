@@ -43,6 +43,7 @@ from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
@@ -881,7 +882,7 @@ class ConsoleSessionSurface(Vertical):
             mounted_count = (len(sessions) * 2) + 2
             # Each removal or mount can yield to navigation or app shutdown.
             for child in list(tab_strip.children):
-                await child.remove()
+                await finish_removal(child.remove())
                 if not self._session_strip_is_attached(tab_strip):
                     return
             for session in sessions:

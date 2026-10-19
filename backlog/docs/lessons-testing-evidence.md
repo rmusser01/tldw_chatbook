@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
+
+**Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. The first version drove the paint with `app.set_timer(...)`. In Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.
+
+**What to do.** When a test stands in for a production timer, use the same Textual call, and print `asyncio.current_task().get_name()` inside the callback once to confirm which task the work runs in. While a widget's pump is deliberately held, poll with `asyncio.sleep`, not `pilot.pause()`.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
