@@ -277,6 +277,10 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 # check_ui_pr_gate_census.py).
 # Each keeps the comment that names what it pins, which the replay's --write
 # moves with it; the blank line below ends this header, so it stays here.
+# Four of their slots hold Phase 9 entries since Phase 9's whole-PR review,
+# round 1: the Chat settings geometry nodes there turned bootstrap_profile
+# (TASK-33006.24's module mark) and run in the admission-sensitive step, and
+# a swap in place keeps every other entry on its shard.
 # Append new entries after them; one added above them moves every one of them
 # to another shard. Entries that --write will re-order with this block (its
 # --tail counts them too) must not be blank-separated from it or from each other.
@@ -383,8 +387,8 @@ Tests/UI/test_settings_number_spelling.py
 # TASK-33007.3: the Default model picker -- one row, ids grouped by where they
 # came from, Custom ID and its rollback, a wide id read from its head.
 Tests/UI/test_settings_default_model_picker.py
-# Capture round 2, finding 21: the Context view leaves the nav bar visible.
-Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible
+# Whole-PR review of Phase 9, round 1 (in a bootstrap_profile geometry node's slot): TASK-33003.22 AC#2, the Python style ratchet holds at zero (~45 s under load, private profile).
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
 # Capture round 2, finding 1: the Inspector starts at a heading, says more above.
 Tests/UI/test_settings_field_guide_in_view.py::test_the_inspector_starts_at_a_heading_and_says_when_more_is_above
 # TASK-33007.5: Model defaults' one-row field-truth rows, the one-row Select
@@ -406,8 +410,8 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snaps
 # TASK-33007.3 AC#9: Save selected fills an empty default model with the first
 # saved id (17-27 s).
 Tests/UI/test_settings_provider_test_draft.py::test_model_to_activate_after_save_prefers_first_saved_when_field_empty
-# Capture finding 15: every Chat settings help line is whole at full screen.
-Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen
+# Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33641.4, a definition row's subtitle leads with its next run and carries a timezone label (pure, under a second).
+Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label
 # A custom endpoint as the default: Settings opens on a dangling registry
 # default honestly, the row that was red in no lane (11-19 s; the file is 3.4 min).
 Tests/UI/test_settings_custom_endpoint_default.py::test_settings_opens_on_a_dangling_registry_default_honestly
@@ -434,8 +438,8 @@ Tests/UI/test_settings_save_selected_not_cancelled.py
 # Finding 12b: Chat settings' field widths, re-keyed to the control types after
 # the last capture (three cases, 13-20 s each).
 Tests/UI/test_console_session_settings.py::test_console_settings_fields_are_sized_by_value_type
-# Capture finding 16: Chat settings' footer sets its hint and buttons apart.
-Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart
+# Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33003.22 AC#1, the dimension-literal ratchet holds at zero (~4 s, private profile).
+Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
 # Post-rebase round 1, finding 1: leaving Settings waits for a snapshot Save still writing (15 s).
 Tests/UI/test_app_quit_under_modal.py::test_leaving_settings_waits_for_a_snapshot_save_in_flight
 # Parent AC#1: no listed provider's closed card needs scrolling at 211x44 (26-44 s).
@@ -458,8 +462,8 @@ Tests/UI/test_settings_custom_id_fast_typing.py
 Tests/UI/test_settings_revert_model_defaults_rows.py
 # R1 #23: a Model defaults field the provider does not accept is composed blank.
 Tests/UI/test_settings_model_defaults_hidden_field_blank.py
-# Capture finding 15 (B #15): Chat settings is its width token (176) by 22.
-Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport
+# Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33003.16 AC#3, a Settings theme import drops 'auto NN%' on a background variable and applies (~5 s, private profile).
+Tests/UI/test_settings_theme_import.py::test_import_drops_auto_on_a_background_variable
 # Capture round 2, finding 14: replay override controls sit beside a named model.
 Tests/UI/test_settings_console_reasoning_history.py::test_override_controls_show_only_beside_the_model_they_remember
 # R1 #2: an emptied Default model is not rebuilt as the text None.

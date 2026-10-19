@@ -105,6 +105,9 @@ class _App(ConsolidatedCSSApp):
         self.scheduling_service = _Service()
 
 
+# ``bootstrap_profile``: see the same note in test_schedules_disabled_state.py
+# (whole-PR review of Phase 9, round 1).
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
     app = _App()

@@ -207,6 +207,29 @@ FAST_LANE_TARGETS = (
     "Tests/LLM_Calls/test_summarization_credential_source.py",
     "Tests/Chat/test_legacy_api_key_credential_source.py",
     "Tests/LLM_Calls/test_dispatch_local_argument_routing.py",
+    # Phase 9's whole-PR review, round 1 (2026-10-18): sandboxed model-config
+    # tests that are the only evidence for ticked criteria and ran in no PR
+    # lane, each 3 of 3 serial in this job's install set (about 50 s together).
+    # TASK-33666: Stop ends a silent stream through the stall watchdog's stop
+    # poll (node ids: the file's older test_non_finite_config_falls_back_to_default
+    # reads guarded config and refuses with RecoveryRequired in this step).
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_silent_stream_without_reporting_a_stall",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_predicate_never_drops_or_reorders_items",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stall_still_trips_between_stop_polls",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_cancel_with_a_stop_predicate_still_propagates_and_closes",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_landing_as_the_window_expires_is_a_stop_and_raises_nothing_in_the_loop",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_stream_that_went_silent_after_content",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_the_stop_poll_leaves_nothing_for_the_cyclic_collector",
+    # TASK-33641.6: a guarded config read on the UI loop sees only its own
+    # task's raw scope (whole file, pure asyncio).
+    "Tests/Backup_Recovery/test_raw_operation_task_discovery.py",
+    # TASK-33003.16: the theme loader drops 'auto NN%' on a background name and
+    # a value of the wrong kind, and the loaded theme applies (whole file).
+    "Tests/Utils/test_user_theme_loader.py",
+    # TASK-33641.1 AC#3: the boot CSS byte budget
+    # and the ancestor-scoped bare-type rule ratchet (private profile each).
+    "Tests/Performance/test_boot_css_byte_budget.py",
+    "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -317,6 +340,64 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry",
     "Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last",
     "Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run",
+    # Phase 9's whole-PR review, round 1 (2026-10-18): the model-config tests
+    # that are the only evidence for ticked criteria and ran in no PR lane.
+    # Each is bootstrap_profile (its own mark, its module's, or Tests/conftest.py's
+    # file list), each 3 of 3 serial in this job's install set. TASK-33003.11 and
+    # TASK-33006.23: the view tabs paint whole labels and their '●' mark.
+    "Tests/UI/test_console_settings_geometry.py::test_view_tabs_paint_their_whole_labels_after_each_view_switch",
+    "Tests/UI/test_console_settings_geometry.py::test_a_selected_view_tab_paints_its_mark_while_it_holds_focus",
+    # The file's four UI census nodes, which TASK-33006.24's module mark made
+    # bootstrap_profile (ledger R11 puts them here, not in the census).
+    "Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible",
+    "Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen",
+    "Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart",
+    "Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport",
+    # TASK-33006.21: on_mount and a subscription change each build default
+    # readiness once; TASK-33006.22: the Context view names the unsaved endpoint.
+    "Tests/UI/test_console_session_settings.py::test_console_settings_mount_builds_default_readiness_once",
+    "Tests/UI/test_console_session_settings.py::test_console_settings_subscription_change_builds_default_readiness_once",
+    "Tests/UI/test_console_session_settings.py::test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint",
+    "Tests/UI/test_console_session_settings.py::test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason",
+    # TASK-33666: Stop on a silent provider releases the run thread (whole file).
+    "Tests/Chat/test_console_stop_silent_provider.py",
+    # TASK-33667: a second open of an open chat reuses its session, from the
+    # sidebar and while the launch wake loads its tree.
+    "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles",
+    "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_two_overlapping_opens_of_a_chat_make_one_session",
+    "Tests/Chat/test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice",
+    # TASK-33641.4: an enabled recurring reminder shows its next run, and the
+    # two queue pins the row-order fix rewrote (now marked, as the new nodes).
+    "Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status",
+    "Tests/UI/test_schedules_disabled_state.py::test_rearmed_one_time_reminder_shows_its_new_run",
+    "Tests/UI/test_schedules_disabled_state.py::test_reminder_that_will_not_run_keeps_its_dash_form",
+    "Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_with_no_next_run_reads_the_plain_dash",
+    "Tests/UI/test_schedules_disabled_state.py::test_real_recurring_dispatch_keeps_the_next_run_visible",
+    "Tests/UI/test_schedules_disabled_state.py::test_disabled_row_and_badge_read_disabled_and_survive_refresh",
+    "Tests/UI/test_schedules_next_run_relative.py::test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail",
+    "Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form",
+    # TASK-33003.15: Library and Workflows pane frames at 3:1; TASK-33003.16: a
+    # surface set to auto stays measurable; TASK-33641.1: the app chrome lines
+    # paint at 3:1. The chrome lines' rule test (623 cases, ~13 min serial) would
+    # take this job past its cap, so it runs in no PR lane (TASK-33641.1's notes).
+    "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text",
+    "Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable",
+    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast",
+    # TASK-33003.19 and TASK-33006.17: the Console modal inventory, launch
+    # declarations and contract tables (they drift with every new Console modal
+    # on dev), the redirected click, and the mounted rows those riders changed.
+    # Node ids, about 70 s serial: the whole file is 120 cases and ~2.7 min.
+    "Tests/UI/test_console_modal_dismissal.py::test_console_modal_launch_declarations_match_runtime_construction",
+    "Tests/UI/test_console_modal_dismissal.py::test_console_modal_inventory_matches_runtime_ast_and_transitive_launches",
+    "Tests/UI/test_console_modal_dismissal.py::test_task2_modal_contract_table_is_complete_and_adopted",
+    "Tests/UI/test_console_modal_dismissal.py::test_task3_modal_contract_table_is_complete_and_adopted",
+    "Tests/UI/test_console_modal_dismissal.py::test_task4_transitive_modal_contract_table_is_complete_and_adopted",
+    "Tests/UI/test_console_modal_dismissal.py::test_settings_redirected_select_click_uses_real_mro_dispatch",
+    "Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result",
+    "Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result",
+    "Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

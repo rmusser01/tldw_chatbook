@@ -417,6 +417,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # and TASK-33641.3's) to the PR Fast Lane's admission-sensitive step, ledger
 # R11's rule (TASK-32873: their keep_bootstrap_profile enrollment can poison
 # sandboxed suites sharing a process). Each still runs in one PR lane: 355.
+# Phase 9's whole-PR review, round 1 moves the four Chat settings geometry
+# node ids out the same way (TASK-33006.24's module pytestmark made them
+# bootstrap_profile), and four of the phase's private-profile and pure
+# Tests/UI evidence nodes take their slots in place (TASK-33003.22's two
+# governance ratchets, TASK-33641.4's definition row, TASK-33003.16's theme
+# import), so no other entry changes shard. Each still runs in one PR lane: 355.
 MINIMUM_FILES = 355
 
 

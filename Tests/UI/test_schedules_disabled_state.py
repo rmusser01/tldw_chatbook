@@ -479,6 +479,11 @@ class _WorkbenchApp(ConsolidatedCSSApp):
         self.scheduling_service = _DisabledTaskService()
 
 
+# ``bootstrap_profile`` (whole-PR review of Phase 9, round 1): the mounted
+# workbench's footer reads guarded config while it composes, so without it
+# this node never reaches an assertion and could run in no PR lane. It writes
+# no config.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
     app = _WorkbenchApp()
