@@ -339,7 +339,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # sync-before-compose pin, appended last (no app; well under 1 s).
 # TASK-35444 raised it by 1, to 324: the recovery sync's no-wait-on-config-
 # rebuild pin, appended last (one mounted Console, about 3 s).
-MINIMUM_FILES = 324
+# TASK-34406.28 raised it by two, to 326: ten browser Quit cases and the
+# flat-search native-drain regression, appended without moving earlier entries.
+MINIMUM_FILES = 326
 
 
 def read_census(path: Path) -> list[str]:

@@ -570,3 +570,9 @@ Tests/UI/test_console_session_settings.py::test_a_keyless_403_to_test_connection
 Tests/UI/test_console_project_instruction_choose_folder.py::test_status_row_synced_before_its_compose_runs_paints_that_state
 # TASK-35444: the transcript's recovery sync never waits for a config rebuild (about 3 s).
 Tests/UI/test_console_response_rules.py::test_recovery_sync_never_waits_for_a_config_rebuild
+
+# TASK-34406.28: both browser routes reject queued/late/detached reads at
+# approved Quit, retain real native retirement, and preserve Stay (ten cases).
+Tests/UI/test_console_browser_quit_fence.py
+# The flat browser group must retain its issued native callback through drain.
+Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_presentation_worker[console-flat-conversation-search]

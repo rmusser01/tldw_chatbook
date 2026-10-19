@@ -1,6 +1,6 @@
 # Console browser correctness at approved Quit
 
-Status: implemented and verified locally; unmerged. TASK-34406.28 remains In Progress pending integration policy/CI. No new latency cohort or speed gain is claimed.
+Status: implemented and verified locally; standalone correctness PR and merge after CI authorized by the user on 2026-10-18. TASK-34406.28 remains In Progress pending integration. No new latency cohort or speed gain is claimed.
 
 ## Problem and repair
 
@@ -38,7 +38,7 @@ Some earlier changes remove real work even without a consistent Send win:
 
 The old1064-call figure is metadata work (stat/lstat/statvfs), not1064 opens. Open attempts are not unique files, successful opens, bytes or a complete kernel/SQLite/child-process census. The benchmark's whole-source census also reads thousands of Python files before the App starts and after Quit; those source checks are outside the measured Send window. The evidence does not justify claiming thousands of redundant Send opens have been removed. Optional unpublished evidence and duplicate pure work within one finite checked operation remain better targets than a new global freshness cache.
 
-This Quit repair prevents invalid late reads irrespective of Send timing. It does not establish a first-send speed gain. The user's existing rule requires consistent actual Enter-to-HTTP improvement before merge; no correctness-only exception has yet been granted. No PR/publication/CI/merge or new actual8 cohort has been started.
+This Quit repair prevents invalid late reads irrespective of Send timing. It does not establish a first-send speed gain. On 2026-10-18 the user authorized a separate correctness PR and merge after review and required CI. That exception applies only to this Quit repair; earlier latency candidates remain unmerged under the original consistency gate. No speed gain is claimed.
 
 ## Evidence and remaining work
 
@@ -49,6 +49,6 @@ External evidence in `pr-review-wave2`:
 - `quit-correctness-current28-live-frozen-chain-r2.json`, protocol/review/seal, `quit-correctness-current28-live-qualified-r2.json`.
 - `postsave-current27-prior-efficiency-review-r1.md` and both current27 rejected receipts.
 
-Next: obtain a decision on integrating this standalone correctness repair under the existing latency-only merge rule, then required current-base/head CI/review/threads before any merge. Current-dev latency profiling remains open. No full suite, Windows/native Terminal, populationp95, OS-cold-cache, provider breadth, separate real-home census or universal native-worker-retirement claim.
+Integration: rebased cleanly onto dev `768d58b7564bb2ea6e55a7e0e1f40dbc4016d8fa` (an unrelated notifications migration); all three repaired product files and the unchanged native source-guard module remain byte-identical to the live-verified product head above. The ten-case Quit module and exact flat native-drain case join the required UI gate, with two census entries appended and its floor raised to326. Current-head targeted checks, independent review and required CI/threads remain prerequisites to merge. Current-dev latency profiling remains open. No full suite, Windows/native Terminal, populationp95, OS-cold-cache, provider breadth, separate real-home census or universal native-worker-retirement claim.
 
 ADR required:no new; existing ADR126/230 ownership and retirement. General ADR231 polling remains Proposed.
