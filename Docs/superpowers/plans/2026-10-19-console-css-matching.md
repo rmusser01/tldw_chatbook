@@ -37,7 +37,7 @@ optimization, retaining ADR-126/231 storage and runtime boundaries.
   real Console/Library/Settings style fidelity. Record baseline-only failures.
 - [x] Measure four interleaved same-screen CSS pairs with style comparisons, then
   separate original/current six-return Windows profiles without concurrent tests.
-- [ ] Obtain independent review, record timings and limitations, update PR3166.
+- [x] Obtain independent review, record timings and limitations, update PR3166.
 
 ## Investigation notes
 
