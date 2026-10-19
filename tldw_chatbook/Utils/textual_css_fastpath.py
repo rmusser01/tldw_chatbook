@@ -88,7 +88,7 @@ from typing import Any
 
 from textual.css import stylesheet
 from textual.css.match import _check_selectors as _upstream_check_selectors
-from textual.css.model import Selector
+from textual.css.model import CombinatorType, Selector
 from textual.css.stylesheet import Stylesheet
 
 __all__ = ["install_stylesheet_fastpath", "is_installed"]
@@ -236,14 +236,28 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
 def _check_subject_pseudo_classes(
     selectors: list[Selector], css_path_nodes: list
 ) -> bool:
-    """Reject a false live subject state before upstream scans its ancestors.
+    """Match subject-only rules directly; reject impossible final pseudo-state.
 
     Every successful upstream match ends on the final selector and subject.
     Check that necessary condition first only for dynamic selectors, where
     unsuccessful ancestor scans dominate. Keep rules in the candidate list:
     upstream still needs their pseudo classes to set refresh/invalidation flags.
-    No state or matching result is cached; positive cases delegate in full.
+    A single selector or SAME/zero-advance compound can only succeed on the
+    subject, so evaluate its original checks there once. Ancestry-dependent
+    positive cases still delegate in full. No state or match result is cached.
     """
+    if len(selectors) == 1 and selectors[0].combinator == CombinatorType.DESCENDENT:
+        return selectors[0].check(css_path_nodes[-1])
+    if (
+        selectors
+        and selectors[0].combinator == CombinatorType.DESCENDENT
+        and selectors[0].advance == 0
+        and all(
+            selector.combinator == CombinatorType.SAME and previous.advance == 0
+            for previous, selector in zip(selectors, selectors[1:])
+        )
+    ):
+        return all(selector.check(css_path_nodes[-1]) for selector in selectors)
     if (
         selectors
         and selectors[-1].pseudo_classes

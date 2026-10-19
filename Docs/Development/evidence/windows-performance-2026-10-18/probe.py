@@ -210,6 +210,10 @@ async def main():
         import return_baseline
 
         report["baseline_revision"] = return_baseline.BASE_REVISION
+    if "--return-matcher-baseline" in sys.argv:
+        import return_matcher_baseline
+
+        report["baseline_revision"] = return_matcher_baseline.BASE_REVISION
     if "--subject-baseline" in sys.argv:
         import subject_baseline
 
@@ -266,6 +270,11 @@ async def main():
 
     finish_config_observation = None
     finish_storage_observation = None
+    finish_return_observation = None
+    if "--return-observe" in sys.argv:
+        from return_observer import install
+
+        finish_return_observation = install(report, lambda: stage)
     if "--storage-observe" in sys.argv:
         from storage_observer import install
 
@@ -306,6 +315,15 @@ async def main():
                 app.post_message(NavigateToScreen("chat"))
                 await until(lambda: type(app.screen).__name__ == "ChatScreen")
                 await pilot.pause(3)
+                if "--return-matcher-benchmark" in sys.argv:
+                    from subject_benchmark import measure
+
+                    report["subject_benchmark"] = measure(
+                        app, "48339e4d6d2fa82b561e6fa1651f8e82928177b2"
+                    )
+                    save()
+                    stage = "shutdown"
+                    return
                 if "--subject-benchmark" in sys.argv:
                     from subject_benchmark import measure
 
@@ -619,6 +637,8 @@ async def main():
         faulthandler.dump_traceback(file=stack_log)
         raise
     finally:
+        if finish_return_observation is not None:
+            finish_return_observation()
         if finish_storage_observation is not None:
             finish_storage_observation()
         if finish_config_observation is not None:

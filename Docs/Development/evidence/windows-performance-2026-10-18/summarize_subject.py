@@ -9,17 +9,23 @@ import sys
 OUT = Path(__file__).parent
 result = {}
 confirm = "--confirm" in sys.argv
+matcher = "--return-matcher" in sys.argv
+if matcher and confirm:
+    raise ValueError("Select one comparison")
+prefix = "return-matcher" if matcher else "subject"
 tags = ("control1", "after1", "after2", "control2", "final", "final-control")
+if matcher:
+    tags = tags[:4]
 if confirm:
     tags = tuple("verify-" + tag for tag in tags[:4])
 for tag in tags:
-    data = json.loads((OUT / f"plain-ready-subject-{tag}.json").read_text())
-    receipt = json.loads((OUT / f"subject-{tag}-exit.json").read_text())
+    data = json.loads((OUT / f"plain-ready-{prefix}-{tag}.json").read_text())
+    receipt = json.loads((OUT / f"{prefix}-{tag}-exit.json").read_text())
     returns = data.get("console_resume", [])
     if len(returns) != 6 or "final_screen" not in data or receipt.get("exit_code") != 0:
         result[tag] = {"incomplete": True, "receipt": receipt}
         continue
-    samples = json.loads((OUT / f"plain-ready-subject-{tag}-samples.json").read_text())
+    samples = json.loads((OUT / f"plain-ready-{prefix}-{tag}-samples.json").read_text())
     counts = Counter()
     for row in samples:
         if row["stage"].startswith("console-resume-"):
@@ -51,12 +57,13 @@ for tag in tags:
             )
         },
     }
-if confirm:
-    receipt = json.loads((OUT / "subject-verify-benchmark-exit.json").read_text())
+if confirm or matcher:
+    benchmark_tag = "verify-benchmark" if confirm else "benchmark"
+    receipt = json.loads((OUT / f"{prefix}-{benchmark_tag}-exit.json").read_text())
     if receipt.get("exit_code") != 0:
         raise ValueError("Cannot summarize an incomplete or failed CSS benchmark")
     benchmark = json.loads(
-        (OUT / "plain-ready-subject-verify-benchmark.json").read_text()
+        (OUT / f"plain-ready-{prefix}-{benchmark_tag}.json").read_text()
     )
     if "final_screen" not in benchmark:
         raise ValueError("CSS benchmark report was not finalized")
@@ -76,6 +83,6 @@ if confirm:
     result["benchmark"]["profile_refusals"] = benchmark["real_profile_refusals"]
     result["benchmark"]["exit_code"] = receipt["exit_code"]
 (
-    OUT / ("subject-confirmation.json" if confirm else "subject-comparison.json")
+    OUT / ("subject-confirmation.json" if confirm else f"{prefix}-comparison.json")
 ).write_text(json.dumps(result, indent=2), encoding="utf-8")
 print(json.dumps(result, indent=2))
