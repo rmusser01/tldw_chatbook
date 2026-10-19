@@ -230,6 +230,10 @@ FAST_LANE_TARGETS = (
     # and the ancestor-scoped bare-type rule ratchet (private profile each).
     "Tests/Performance/test_boot_css_byte_budget.py",
     "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    # TASK-33001.15: the loader names the tables it filled from legacy [API],
+    # and a kept stored key is written only into such a table.
+    "Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section",
+    "Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -378,12 +382,12 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form",
     # TASK-33003.15: Library and Workflows pane frames at 3:1; TASK-33003.16: a
     # surface set to auto stays measurable; TASK-33641.1: the app chrome lines
-    # paint at 3:1. The chrome lines' rule test (623 cases, ~13 min serial) would
-    # take this job past its cap, so it runs in no PR lane (TASK-33641.1's notes).
+    # paint at 3:1, by rule (623 cases, about 40 s serial) and as painted.
     "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
     "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
     "Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text",
     "Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable",
+    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
     "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast",
     # TASK-33003.19 and TASK-33006.17: the Console modal inventory, launch
     # declarations and contract tables (they drift with every new Console modal
