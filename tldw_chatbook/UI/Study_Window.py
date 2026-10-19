@@ -737,8 +737,12 @@ class StudyWindow(Container):
                 yield Static(
                     "Workspace Study", id="study-scope-title", classes="section-title"
                 )
+                # Literal: a workspace name is typed by the user.
                 yield Static(
-                    "", id="study-scope-workspace-name", classes="study-scope-row"
+                    "",
+                    id="study-scope-workspace-name",
+                    classes="study-scope-row",
+                    markup=False,
                 )
                 yield Static(
                     "", id="study-scope-backend-status", classes="study-scope-row"
