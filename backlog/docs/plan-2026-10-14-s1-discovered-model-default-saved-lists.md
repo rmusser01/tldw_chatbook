@@ -7,6 +7,7 @@
 >
 > **Owner rulings, 2026-10-19** (asked directly, after the plan was re-validated against Phase 9's head e8f475a219):
 > - NO-1: **(a)**. In TASK-35010, Switch model also probes URL-based providers that are `model_missing` and still at the shipped default, and lists a refused probe under NOT RUNNING (`console_model_popover.py`, which joins T1's files). AC#9 gets a test case: vLLM with an empty list, one refused server and one running server. If (a) turns out larger than a predicate change plus one branch, the implementer stops and brings option (c) (accept vLLM under NEEDS SETUP and amend AC#9) back to the owner.
+> - NO-1 scope (ruled later on 2026-10-19, after the re-review): the probe rule covers **all five** URL-based providers that are `model_missing` at the shipped default on a fresh profile: vllm, llama_cpp, koboldcpp, oobabooga and local_llamafile. On the template config, `resolve_effective_chat_configuration` returns model=None and `provider_left_at_shipped_default` returns True for each of them. Today the four that are not vLLM show under NEEDS SETUP and are never probed. AC#9 is extended to name all five, and its test cases add an untouched llama.cpp and an untouched koboldcpp.
 > - NO-2: **(a)**, if at T2's branch point no open or armed PR touches `.github/workflows/derived-artifacts.yml`: a `saved_model_list.py` birth size row plus a PR Fast Lane node (`derived-artifacts.yml` and `FAST_LANE_TARGETS`), as ruling C11 did. Otherwise **(b)**: the row with no PR lane, said in the PR.
 > - NO-3: **no gate.** Switch model and Chat settings' pick-mode model picker both get T3's reorder. TASK-35012 AC#1, AC#5 and console.md name both surfaces, and one pick-mode test node pins it.
 > - NO-4: C6 stays out of S1. Its copy follow-up is filed as TASK-35578.
@@ -122,7 +123,7 @@ After S1, saved model lists can be trusted:
   - Save selected and the startup refresh write to the list as the file holds it, read under the config write lock (C3).
   - `app.providers_models` follows the file after every Settings list write, Advanced Config save and Config reload (C3, corrected cause).
   - The shipped sample ids leave the template. Existing files are cleaned in two ways: their sample ids are ignored when read, and dropped on the next Settings write (M2).
-  - The Switch model probe keeps an untouched vLLM under NOT RUNNING (NO-1 (a)).
+  - The Switch model probe checks every untouched local server with no model (vLLM, llama.cpp, koboldcpp, Oobabooga, llamafile). One that is running is listed; one that refuses is under NOT RUNNING (NO-1 (a), its scope widened on 2026-10-19).
 - **TASK-35011** (the owner decision, plus its controls):
   - A pick joins the list on `s`, and it survives leaving Settings.
   - **Add to model list**: label, instant-apply hint and receipts (A2, C4 residual).
@@ -242,19 +243,28 @@ Closes: C3 (with its corrected reach: deletions are resurrected, and Console and
    - A Save selected that adds nothing still writes the cleaned list when the locked list holds sample ids (D-a).
    - The startup refresh also uses this function. Its provider set (`AUTO_REFRESH_PROVIDER_LIST_KEYS`) is cloud-only, and those lists never hold these ids, so ADR-020's append-only write-through is unaffected in practice.
 7. **Deliberately untouched:** the template's `[api_settings.*].model` values (`aphrodite-engine`, `tabby-model`, `custom-model-alpha`, `custom-model-gamma`). `provider_left_at_shipped_default` compares each provider table with the template. Changing the template would make every existing untouched table look user-configured and move refusing local defaults from NOT RUNNING to NEEDS SETUP (TASK-33005.6 AC#3).
-8. **vLLM stays under NOT RUNNING (NO-1, ruled (a)).**
+8. **Untouched local servers with no model are probed (NO-1, ruled (a); scope widened 2026-10-19).**
    - **The problem.**
      - vLLM's template table has `model = ""` (config.py:5295). With `vLLM = []`, `_representative_model` returns None (console_model_popover.py:971-975), and readiness returns `model_missing`.
      - That check runs before the endpoint check (console_session_settings.py:2039, :2072).
      - `_offer_probes` (:1025-1040) probes only the blockers in `_PROBED_BLOCKERS` (:215-217).
      - `_not_running` (:1514-1537) needs `_retries_in_place` (:161-173), and a `model_missing` readiness never has `recovery_action == "retry_connection"`.
      - The result: an untouched vLLM would move from NOT RUNNING to NEEDS SETUP, and a running one would never be found (TASK-33005.6 AC#3).
+     - The same gate already holds back four more servers on a fresh profile: llama_cpp (config.py:5235), oobabooga (:5250), koboldcpp (:5266) and local_llamafile (:5383). Each has `model = ""` in its template table and no saved model (its list is `["None"]`). T1's emptied vLLM list makes vLLM the fifth.
    - **The fix,** in `console_model_popover.py`:
      - also probe providers that are `model_missing`, URL-based (`URL_BASED_PROVIDER_KEYS`, Chat/provider_endpoint_contract.py:27-44) and still at the shipped default;
      - list a refused probe under NOT RUNNING. Because the resolver puts `model_missing` before the endpoint result, `_not_running` reads the refusal from the probe outcome, not from `_retries_in_place`.
-   - **No other provider needs it.** TabbyAPI, Aphrodite, Custom and Custom 2 carry a model in their template tables (config.py:5310, :5325, :5340, :5355).
+   - **The five providers.** The rule covers vllm, llama_cpp, koboldcpp, oobabooga and local_llamafile, all in `URL_BASED_PROVIDER_KEYS`.
+     - **The four that are not vLLM change behaviour.** Today they show under NEEDS SETUP and are never probed. After T1:
+       - a refused one is under NOT RUNNING;
+       - a running one is probed and listed.
+     - **Each Alt+M on a fresh profile probes four more endpoints:** llama.cpp's root :8080, Oobabooga's :5000, koboldcpp's :5001 and llamafile's :8001.
+     - **The probes share the per-open cap.** At most `SWITCHER_PROBES_IN_FLIGHT = 3` run at once (UI/Console_Modules/connection_probe.py:58), so a fresh profile's open takes longer to settle.
+     - **The other template servers need nothing.** TabbyAPI, Aphrodite, Custom and Custom 2 carry a model in their template tables (config.py:5310, :5325, :5340, :5355), so they are probed already.
    - **The gating is not a P9 change.** It dates from fa6ab8527f (TASK-33005.5), an ancestor of the plan base. The existing pins cannot catch it, because they seed `vllm=['vendor/model:b']` (Tests/UI/test_console_switcher_local_probe.py:68).
-   - **The stop rule.** If this turns out larger than a predicate change plus one branch, stop and bring option (c) back to the owner.
+   - **The stop rule,** re-checked against the wider scope.
+     - It still holds: the five share one predicate (URL-based, `model_missing`, at the shipped default), so the change stays a predicate plus one branch.
+     - If it turns out larger, stop and bring option (c) back to the owner. Under the wider scope, (c) means accepting these servers under NEEDS SETUP and amending AC#9.
 
 Files:
 - `tldw_chatbook/LLM_Provider_Catalog/model_discovery_persistence.py`
@@ -265,6 +275,7 @@ Files:
 - `Tests/Architecture/test_module_size_ratchet.py` (lower the `settings_screen.py` row to its measured size)
 - `scripts/ui_pr_gate_census.txt` and `scripts/check_ui_pr_gate_census.py`. `MINIMUM_FILES` becomes the branch-point value + 1 (it is 360 at P9, check_ui_pr_gate_census.py:427).
 - `Docs/User_Guide/settings.md`
+- `Docs/User_Guide/console.md` (NO-1's line; see Docs)
 
 New tests stay `@private_profile_test` and are never `bootstrap_profile` (ledger R11, 40c63e17b7).
 
@@ -363,7 +374,7 @@ Closes A2 (the owner decision replaces its by-design verdict), B6, B19 (minus Te
    - `settings_screen.py` has 0 headroom and the card has +3. Re-measure after T1 lands.
    - Lower both rows in the same commit. A row more than 50 lines above its file fails `test_budget_is_not_left_slack`, which runs in no PR lane for these files.
    - Birth row (NO-2, ruled): add a row for `saved_model_list.py`, following the TASK-33007.8 precedent.
-     - If no open or armed PR touches `.github/workflows/derived-artifacts.yml` at T2's branch point, also add its `does_not_grow` node to the PR Fast Lane. That means both `derived-artifacts.yml` and `FAST_LANE_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py`, as ruling C11 did for the three Settings modules (:130-132, mirrored at derived-artifacts.yml:189-191). Check changed paths, not titles: `gh pr list --state open --limit 200 --json number,files --jq '.[] | select(any(.files[]; .path==".github/workflows/derived-artifacts.yml")) | .number'` must print nothing (on 2026-10-19 it printed 3169 and 3036). An armed PR is an open PR, so this covers both.
+     - If no open or armed PR touches `.github/workflows/derived-artifacts.yml` at T2's branch point, also add its `does_not_grow` node to the PR Fast Lane. That means both `derived-artifacts.yml` and `FAST_LANE_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py`, as ruling C11 did for the three Settings modules (:130-132, mirrored at derived-artifacts.yml:189-191). Check changed paths, not titles: `gh pr list --state open --limit 200 --json number,files --jq '.[] | select(any(.files[]; .path==".github/workflows/derived-artifacts.yml")) | .number'` must print nothing (on 2026-10-19 it printed 3169 and 3036). An armed PR is an open PR, so this covers both. `--json files` lists at most 100 files per PR (#3169 shows 100 of 545). For any PR whose `changedFiles` is above 100, list its files with `gh api --paginate repos/rmusser01/tldw_chatbook/pulls/<n>/files --jq '.[].filename'`.
      - Otherwise add the row with no PR lane, run `Tests/Architecture` serially, and say so in the PR.
      - An `evict-workflow-file` eviction is recoverable with one manual rebase.
 9. **ADR-002 amendment** (`backlog/decisions/002-openai-compatible-model-discovery.md`, "Amendment 2026-10-14, owner decision"; TASK-35011 AC#14):
@@ -453,6 +464,15 @@ Run these, and edit only if red:
 - `Tests/Chat/test_provider_setup_persistence.py` (the default path of `resolve_remembered_provider_model` is unchanged);
 - `Tests/Architecture/test_module_size_ratchet.py`. Seven rows are base reds: app_lifecycle, personas_screen, console_transcript, mcp_workbench, tldw_api/client, llm_screen and change_review_screen.
 
+NO-1's wider probe rule. A search of `Tests/UI/test_console_model_switcher.py` and `Tests/UI/test_console_switcher_local_probe.py` at e8f475a219 looked for NEEDS SETUP expectations on vllm, llama_cpp, koboldcpp, oobabooga and local_llamafile.
+- **No pin found.** No pin expects one of them untouched and model-less under NEEDS SETUP. Each place the five appear carries a saved or table model, or an endpoint that is not the template's (test_console_switcher_local_probe.py:57, :61, :66, :68, :69). `_with_shipped` copies only tabbyapi, aphrodite, local_mlx_lm and `_UNTOUCHED`, whose vllm keeps `vendor/model:b`.
+- **No rewritten pin is planned.** If the implementer finds one red because of the wider rule, it is **rewritten on purpose** and named in the PR.
+- **Run these too.** The full-app tests that open Switch model on the shipped profile:
+  - the Tests/ProductionApp palette;
+  - Alt+M in Tests/UI.
+
+  They run with the autouse no-op prober (Tests/conftest.py:942-946), whose probes never settle. A newly offered probe can change how their rows read while pending.
+
 **TASK-35011:**
 - `Tests/UI/test_settings_default_model_picker.py::test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with_s` (:229; asserts :257, :269-270). It asserts that no `providers` section is in the mutation and that `app.providers_models` is unchanged. Under the ruling, the mutation carries the pick appended to the file's list.
 - `Tests/UI/test_settings_default_model_picker.py::test_a_discovered_model_becomes_the_saved_default_without_joining_the_list` (:517; asserts :561-562; TASK-33007.3 AC#10, the real-service test). Rename it `…_and_joins_the_list`. The file's `[providers].OpenAI` must equal the list before plus the served id, and `app.providers_models` must equal the file.
@@ -520,7 +540,10 @@ No workflow file is edited, unless NO-2 (a) applies (see T2 mechanism 8). `deriv
    - an untouched template `api_settings` stays under NOT RUNNING;
    - `resolve_remembered_provider_model(..)` without the keyword still returns `aphrodite-engine` (the send path is unchanged).
 6. `CONFIG_TOML_CONTENT`'s five lists parse as empty.
-7. NO-1: vLLM with an empty list. A refused server stays under NOT RUNNING, and a running server is probed and listed.
+7. NO-1, with the five probed:
+   - vLLM with an empty list: a refused server stays under NOT RUNNING, and a running server is probed and listed.
+   - An untouched llama.cpp and an untouched koboldcpp, one refused and the other running: the refused one is under NOT RUNNING, and the running one is probed and listed. Neither shows under NEEDS SETUP.
+   - The autouse guard in Tests/conftest.py (:942-946) replaces the probe seam with a no-op. These cases inject the real prober by name, as Tests/UI/test_console_switcher_local_probe.py does.
 8. A `RecoveryRequired` raised inside the builder maps to `status="error"`.
 
 **TASK-35011: `Tests/UI/test_settings_pick_joins_saved_list.py`.** Same harness rules. Cases:
@@ -574,6 +597,8 @@ Each task's User Guide edit below is one of its ACs (TASK-35010 AC#11, TASK-3501
   - the new receipts;
   - the empty-default fill.
 
+`Docs/User_Guide/console.md` (T1, NO-1): beside :851-856, which already says shipped-default servers "are checked like any other local server", add one line. An untouched local server with no model chosen (vLLM, llama.cpp, koboldcpp, Oobabooga, llamafile) is checked too: it lists its models when it is running, and reads under NOT RUNNING when it refuses.
+
 `Docs/User_Guide/console.md` (T3): READY PROVIDERS lists each provider's saved default first, after the open chat's current model, when it is one of that provider's rows (for an answered local server, when the server listed it). The same order holds in Chat settings' model picker (NO-3). Place it next to console.md:878-891, so the two passages agree. Switch model lives in Console, so this is the matching guide page.
 
 ADR-002 amendment (T2, TASK-35011 AC#14): records the "Pick = use as default" ruling and that it supersedes TASK-33007.3 AC#4 and the "[providers] list did not change" clause of TASK-33007.3 AC#10.
@@ -596,9 +621,33 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
 - **Stub A**, on 127.0.0.1:0: answers GET `/v1/models` only, listing `fake-alpha`, `fake-beta` and `fake-gamma` (step 6 lists more).
 - **Stub B** (step 2): the same program on 127.0.0.1:8000, vLLM's template port, listing `fake-alpha` and `fake-beta`. Also bind ::1:8000 if `localhost` resolves to it first.
 - **Stub C** (step 6): the same program with chat on, listing `stub-chat`. It also answers POST `/v1/chat/completions` with a fixed reply, both streaming (SSE) and non-streaming.
-- **`--hold N`:** any stub delays each `/v1/models` answer by N seconds (e.g. 20), so a frame "before the probe settles" can be captured. A loopback stub answers, and a closed port refuses, within milliseconds, so without a hold there is no such frame. `_UNPROBED_SERVERS` holds only MLX-LM and local-llm, so the template servers are all probed.
-- **Stall listener:** for a template port nothing listens on, a temporary TCP listener that accepts and never answers, so the probe stays pending. Close it, then reopen Alt+M, to get the refused frame.
-- **The template ports** are 8000 (vLLM), 8080 (llama.cpp and TabbyAPI), 2242 (Aphrodite), 1234 (Custom) and 5678 (Custom 2).
+- **The probe's timing,** which every frame below has to fit:
+  - Each probe request times out after 2.5 s (`DISCOVERY_PROBE_TIMEOUT_SECONDS`, Chat/local_server_discovery.py:39), and a probe makes at most two requests (UI/Console_Modules/connection_probe.py:52-55).
+  - A probe result younger than 10 s is reused (`SWITCHER_PROBE_CACHE_SECONDS`, connection_probe.py:56).
+  - At most 3 probes run at once (`SWITCHER_PROBES_IN_FLIGHT`, :58).
+  - `_not_running` needs `connection_refused`. A server that accepts and never answers reads as timed out after about 5 s, not as refused.
+- **`--hold N`:** any stub delays each `/v1/models` answer by N seconds, so a frame "before the probe settles" can be captured. A loopback stub answers, and a closed port refuses, within milliseconds, so without a hold there is no such frame.
+  - Keep N under 2.5 s (e.g. 2), or the hold reads as a timeout.
+  - If 2 s is too short to capture, hold longer for the before frame only. Then restart the stub without the hold for the after frame. `_UNPROBED_SERVERS` (console_model_popover.py:220) contains none of the five servers that hold sample ids, nor any of NO-1's five, so all of them are probed.
+- **Stall listener:** for a template port nothing listens on, a temporary TCP listener that accepts and never answers, so the probe stays pending.
+  - Capture a stall frame within about 5 s of the open; after that the probe reads it as timed out.
+  - Close the listener, then reopen Alt+M, to get the refused frame.
+- **Wait 10 s before a reopen that must see a new server state:** after closing a stall listener, after starting stub B, and after removing a hold. Otherwise the open reuses the cached result.
+- **The template ports.** These are every loopback `api_url` in the template whose provider is in `URL_BASED_PROVIDER_KEYS` (config.py:5234-5427):
+
+  | Port | Providers |
+  |---|---|
+  | 8080 | llama.cpp, TabbyAPI |
+  | 5000 | Oobabooga |
+  | 5001 | koboldcpp |
+  | 11434 | Ollama |
+  | 8000 | vLLM |
+  | 2242 | Aphrodite |
+  | 1234 | Custom |
+  | 5678 | Custom 2, local_ollama |
+  | 8001 | local_llamafile, local_llamacpp |
+  | 8008 | local_vllm |
+
   - Before the first boot, `lsof -nP -iTCP:<port> -sTCP:LISTEN` prints nothing for each of them.
   - If one prints a listener, stop: a real local server would answer the probes.
 - **Record the mechanism.** Every "before the probe settles" frame records what produced it: a held stub, or a stall listener on which port. A frame with neither is not evidence.
@@ -613,7 +662,7 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
 - At each step, take `capture-pane -p` and `-e` captures and a semantic TOML diff of the config.
 
 0. **Baseline, dev after #3169** (the run the critic found missing). Seed the shipped samples and `Llama_cpp = ["None","m-one","m-two","m-three"]`.
-   - Capture Alt+M before the probe settles, with stall listeners on the five template ports (see Stubs and listeners).
+   - Capture Alt+M before the probe settles, with stall listeners on the template ports (see Stubs and listeners), within about 5 s of the open.
    - Re-derive the expected strings, because the readiness copy changed in TASK-33005.7.
    - Capture:
      - Settings ▸ provider vLLM: Model shows `vllm-model-z`;
@@ -626,13 +675,15 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
      - Save selected `fake-alpha`: `m-two` does not come back in the file.
 2. **T1 / M2, on the old-sample profile.** Nothing below edits vLLM's table: it stays at the shipped default throughout this step.
    - Provider vLLM: Model reads "not set".
-   - Alt+M, before the probe settles (stall listeners on the five template ports), shows no `vllm-model-*`, `tabby-model*` or `aphrodite-engine*`.
+   - Alt+M, before the probe settles (stall listeners on the template ports; captured within about 5 s), shows no `vllm-model-*`, `tabby-model*` or `aphrodite-engine*`.
      - On base the same frame shows the samples.
      - Once the probes refuse, base hides them too (NOT RUNNING), so only the pre-settle frames compare.
    - **NO-1, refused half.** Before any vLLM edit:
      - `lsof -nP -iTCP:8000 -sTCP:LISTEN` prints nothing, with the stall listeners closed.
-     - Reopen Alt+M. vLLM (an empty list after the filter, table untouched), TabbyAPI and Aphrodite are quietly under NOT RUNNING.
-   - **NO-1, running half.** Start stub B on 127.0.0.1:8000. Reopen Alt+M: stub B logs a GET `/v1/models`, and vLLM is probed and listed with `fake-alpha` and `fake-beta`.
+     - Wait 10 s, then reopen Alt+M. vLLM (an empty list after the filter, table untouched), TabbyAPI and Aphrodite are quietly under NOT RUNNING.
+     - Oobabooga, koboldcpp and llamafile, untouched, are under NOT RUNNING too. On base they are under NEEDS SETUP, unprobed.
+     - llama.cpp is not in this check, since step 1 repointed it.
+   - **NO-1, running half.** Start stub B on 127.0.0.1:8000. Wait 10 s, then reopen Alt+M: stub B logs a GET `/v1/models`, and vLLM is probed and listed with `fake-alpha` and `fake-beta`.
    - **Save selected, against stub B.**
      - vLLM's endpoint is still the template's localhost:8000, so Discover reaches stub B. No repointing is needed.
      - Tick `fake-alpha`, Save selected. The file's `vLLM` becomes `["fake-alpha"]`, and Model is filled as a draft.
@@ -658,11 +709,11 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
      - Boot, open a new chat, pick Custom ▸ `stub-chat` in Alt+M, and send one message. Stub C answers it, and its log shows the POST.
      - The chat now holds a message on Custom, so it keeps that pair. Its current model is not on llama.cpp.
    - Open Alt+M from that chat. The llama.cpp group leads with `fake-beta`. Capture it twice:
-     - before the probe answers (stub A on `--hold`; saved and cached rows);
-     - after it answers (listing rows).
+     - before the probe answers (stub A on `--hold 2`, or a longer hold for this frame only; saved and cached rows);
+     - after it answers (listing rows). If the before frame used a longer hold, restart stub A without it and wait 10 s before the reopen.
 
 **Cleanup and checks.**
-- Kill every stub and stall listener by its pid, check that `lsof -nP -iTCP:<port> -sTCP:LISTEN` is empty again for the five template ports, and run `tmux -L s1live kill-server`. Remove only `$V`.
+- Kill every stub and stall listener by its pid, check that `lsof -nP -iTCP:<port> -sTCP:LISTEN` is empty again for every template port in the table, and run `tmux -L s1live kill-server`. Remove only `$V`.
 - Every request in the stubs' logs came from the app. No send reached anything but stub C.
 - During the run, `lsof -p <app pid>` shows no handle under the real profile. Afterwards, `find ~/.config/tldw_cli ~/.local/share/tldw_cli ~/.config/tldw-live -newer $V/baseline` prints nothing.
 - Keep the captures in the session scratchpad and describe the procedure in the PR. Commit no probe scripts.
