@@ -15,51 +15,23 @@ picker test types into the real dropdowns to pin that.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 from textual.widgets import Input, ListView, Select, Static
 
 from Tests.UI.test_study_flashcards_real_service_contract import (  # noqa: F401
-    _WAIT_SECONDS,
     _build_real_study_app,
     _card_list_labels,
     _disable_full_app_splash,
     _flashcards_view_up,
     _study_screen_up,
     _text,
+    _wait_for_study_workers,
     _wait_until,
 )
 from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeType
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 pytestmark = pytest.mark.bootstrap_profile
-
-
-def _study_workers_pending(app) -> bool:
-    return any(
-        str(worker.group).startswith("study-") and not worker.is_finished
-        for worker in app.workers
-    )
-
-
-async def _settle_study_workers(pilot, app, *, what: str) -> None:
-    """Wait until no Study worker is pending, across two pauses.
-
-    The deck switch's rebuild worker may not exist yet when this starts: its
-    ``Select.Changed`` is still queued. So "idle" counts only after a pause,
-    and must still hold after a second one.
-    """
-    deadline = time.monotonic() + _WAIT_SECONDS
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if not _study_workers_pending(app):
-            await pilot.pause()
-            if not _study_workers_pending(app):
-                return
-        else:
-            await pilot.pause(0.02)
-    raise AssertionError(f"timed out after {_WAIT_SECONDS:.0f}s waiting for {what}")
 
 
 async def _open_flashcards(app, pilot):
@@ -74,7 +46,7 @@ async def _open_flashcards(app, pilot):
 async def _create_deck(app, pilot, controller, name: str) -> str:
     app.screen.query_one("#new-deck-name-input", Input).value = name
     await controller.create_deck()
-    await _settle_study_workers(pilot, app, what="the deck switch")
+    await _wait_for_study_workers(pilot, app, what="the deck switch")
     deck_id = controller._selected_deck_id()
     assert deck_id is not None, "the created deck was not selected"
     return deck_id
@@ -144,7 +116,7 @@ async def test_deck_and_quiz_pickers_find_a_markup_named_entry_by_typing():
             lambda: str(deck_select.value) == zebra_id,
             what="typing 'z' to pick the Zebra deck",
         )
-        await _settle_study_workers(pilot, app, what="the deck switch")
+        await _wait_for_study_workers(pilot, app, what="the deck switch")
         assert _text(deck_select.query_one("#label", Static)) == zebra
         assert _card_list_labels(app.screen.query_one("#card-list", ListView)) == [
             "No cards in this deck."
