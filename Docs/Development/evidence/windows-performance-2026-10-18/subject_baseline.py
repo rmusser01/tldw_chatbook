@@ -2,7 +2,7 @@
 
 import presentation_baseline
 
-BASE_REVISION = "aeaac674e3b19e2af5989be2a145a0316856248a"
+BASE_REVISION = "f152dfc4a6c4fbf2fcd277543757a46a0d2874e2"
 presentation_baseline.BASE_REVISION = BASE_REVISION
 presentation_baseline.MODULES = {
     "tldw_chatbook.UI.Screens.chat_screen",

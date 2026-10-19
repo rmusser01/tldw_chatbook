@@ -38,6 +38,7 @@ for tag in ("control1", "after1", "after2", "control2"):
             name: counts[name]
             for name in (
                 "_check_selectors",
+                "_check_subject_pseudo_classes",
                 "_config_file_posture",
                 "_build_console_inspector_state",
                 "_unread_notification_count",
