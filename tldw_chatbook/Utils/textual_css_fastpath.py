@@ -68,12 +68,11 @@ Metric                       no filter  filter      delta
 
 Ranges did not overlap (103.5-108.3 vs 64.8-66.8).
 
-The filter is conservative by construction: a rule survives unless **every**
-one of its selector sets states a requirement that is unmet, and any shape
-that cannot be decided cheaply reports "no requirement" (a leading ``TYPE``
-selector needs MRO matching, which is the cost this avoids). Both the
-per-node fidelity tour and a unit test over the parser shapes pin it, and
-both were mutation-tested: deleting the one-compound guard fails them.
+The original filter used only the leading ancestor ID/class. TASK-35611 extends
+that necessary-condition check to all static ancestor and subject names, including
+Textual's CSS inheritance types. Every comma alternative must be impossible before
+a rule is rejected; universal and unknown selectors impose no cheap requirement.
+Upstream still checks compound co-location, ancestry order and all dynamic state.
 
 Candidate reuse (TASK-35610): a 1024-entry LRU per parsed stylesheet reuses
 ordered candidates for identical live subject/ancestor names. It retains no
@@ -108,55 +107,36 @@ _CACHE_ATTR = "_tldw_rule_position_index"
 _MAX_CANDIDATE_KEYS = 1024
 
 
-def _ancestor_requirements(rule: Any) -> tuple:
-    """Names an ANCESTOR must carry for each of a rule's selector sets.
+def _static_requirements(rule: Any) -> tuple:
+    """Return necessary ancestor/subject names for each selector alternative.
 
-    Textual indexes a rule under its rightmost selector only, so
-    ``#prompt-variables-actions Button`` is a candidate for every ``Button``
-    in the app even though it can only match one panel's buttons. This
-    recovers the leading requirement so those can be rejected before upstream
-    runs full selector matching on them.
-
-    Returns:
-        One entry per selector set: ``"#id"`` / ``".class"`` when that set
-        requires an ancestor carrying it, or ``None`` when no requirement can
-        be established cheaply. A rule matches if ANY of its sets match, so it
-        is only rejectable when EVERY entry is a requirement that is unmet.
-
-        ``None`` is returned for a leading TYPE selector on purpose: matching
-        a type against an ancestor means walking its MRO, which is what this
-        filter exists to avoid, and a wrong answer here is a styling bug.
+    Names before the final child/descendant hop belong to ancestors; the final
+    compound belongs to the subject. Presence is only necessary, not sufficient:
+    upstream still checks which ancestor, ordering, pseudo-state and specificity.
+    Universal and unknown selectors impose no cheap requirement.
     """
     from textual.css.model import CombinatorType, SelectorType
 
+    prefixes = {SelectorType.ID: "#", SelectorType.CLASS: ".", SelectorType.TYPE: ""}
     requirements = []
     for selector_set in rule.selector_set:
         selectors = selector_set.selectors
-        if len(selectors) < 2:
-            # Subject only -- says nothing about ancestors.
-            requirements.append(None)
-            continue
-        if not any(
-            selector.combinator in (CombinatorType.DESCENDENT, CombinatorType.CHILD)
-            for selector in selectors[1:]
-        ):
-            # One compound (e.g. `Button.foo#bar`): the id/class is on the
-            # SUBJECT, not an ancestor. Requiring an ancestor would wrongly
-            # reject the node that actually matches.
-            requirements.append(None)
-            continue
-        first = selectors[0]
-        if first.type == SelectorType.ID:
-            requirements.append(f"#{first.name}")
-        elif first.type == SelectorType.CLASS:
-            requirements.append(f".{first.name}")
-        else:
-            requirements.append(None)
+        subject_start = 0
+        for index, selector in enumerate(selectors[1:], 1):
+            if selector.combinator in (CombinatorType.DESCENDENT, CombinatorType.CHILD):
+                subject_start = index
+        ancestors, subject = set(), set()
+        for index, selector in enumerate(selectors):
+            prefix = prefixes.get(selector.type)
+            if prefix is not None:
+                target = ancestors if index < subject_start else subject
+                target.add(f"{prefix}{selector.name}")
+        requirements.append((frozenset(ancestors), frozenset(subject)))
     return tuple(requirements)
 
 
 def _ancestor_names(node: Any) -> set:
-    """Every ``#id`` and ``.class`` carried by this node's ancestors.
+    """Every type, ``#id`` and ``.class`` carried by this node's ancestors.
 
     Recomputed per apply rather than cached: an ancestor's classes change at
     runtime (``-active``, ``hidden``, ...), and a stale set here would reject
@@ -164,6 +144,8 @@ def _ancestor_names(node: Any) -> set:
     """
     names = set()
     for ancestor in node.ancestors:
+        # Use the matcher's CSS inheritance names, not Python's full MRO.
+        names.update(getattr(ancestor, "_css_type_names", ()))
         ancestor_id = getattr(ancestor, "id", None)
         if ancestor_id:
             names.add(f"#{ancestor_id}")
@@ -218,23 +200,15 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
         rule for name in rules_map.keys() & selector_names for rule in rules_map[name]
     }
 
-    # Reject candidates whose leading compound names an ancestor this node
-    # does not have. `rules_map` keys on the RIGHTMOST selector only, so a
-    # rule scoped to one panel is a candidate for every widget of that type
-    # in the app -- measured at 47% of all candidates on a 502-node Console,
-    # and 50% of a Button's. Rejecting here skips upstream's full selector
-    # evaluation for them.
-    #
-    # Conservative by construction: a rule survives unless EVERY one of its
-    # selector sets states a requirement that is unmet, and any set we cannot
-    # decide cheaply reports `None` (= keep). Correctness is pinned by
-    # `test_fastpath_computes_identical_styles_for_every_node`.
+    # Each comma alternative must be statically impossible before dropping the
+    # rule. An unrelated bare subject in one alternative must not keep a scoped
+    # rule alive for every node of another alternative's type.
     surviving = []
     for rule in candidates:
         rule_id = id(rule)
         rule_requirements = requirements.get(rule_id)
         if rule_requirements is None:
-            rule_requirements = _ancestor_requirements(rule)
+            rule_requirements = _static_requirements(rule)
             requirements[rule_id] = rule_requirements
         if not rule_requirements:
             # No selector sets at all: nothing is known, so keep it. Without
@@ -243,8 +217,8 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
             # something that fell through.
             surviving.append(rule)
             continue
-        for requirement in rule_requirements:
-            if requirement is None or requirement in ancestor_names:
+        for ancestors, subject in rule_requirements:
+            if ancestors <= ancestor_names and subject <= selector_names:
                 surviving.append(rule)
                 break
     # Ascending source order. Upstream reverses it again inside ``apply``,

@@ -164,12 +164,11 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
 
     `rules_map` keys a rule under its RIGHTMOST selector, so `#panel Button`
     is a candidate for every Button in the app. The fast path rejects such a
-    rule when the node has no ancestor carrying the leading name -- which is
-    only sound if "no requirement" is reported for every shape the parser can
-    produce that does NOT imply an ancestor.
+    rule when the node has no ancestor carrying a required name -- which is
+    only sound if subject compounds never become ancestor requirements.
 
     Each case below is a shape that previously either cost performance (a
-    real requirement reported as None) or would corrupt styling (a
+    real requirement omitted) or would corrupt styling (a
     non-requirement reported as a requirement). The second kind is the
     dangerous one: `Button.foo` is ONE compound, so demanding an ancestor
     `.foo` would reject the very node that matches.
@@ -177,53 +176,46 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
     from textual.css.model import RuleSet
     from textual.css.parse import parse_selectors
 
-    from tldw_chatbook.Utils.textual_css_fastpath import _ancestor_requirements
+    from tldw_chatbook.Utils.textual_css_fastpath import _static_requirements
 
     def requirements_for(css_selector: str):
         rule = RuleSet(list(parse_selectors(css_selector)))
         rule._post_parse()
-        return _ancestor_requirements(rule)
+        return tuple(ancestors for ancestors, subject in _static_requirements(rule))
 
     # An ancestor IS implied -- these are the ones worth rejecting.
-    assert requirements_for("#panel Button") == ("#panel",)
-    assert requirements_for(".message-actions Button") == (".message-actions",)
-    assert requirements_for("#panel > Button") == ("#panel",)
-    assert requirements_for("#panel Button:disabled") == ("#panel",)
+    assert requirements_for("#panel Button") == ({"#panel"},)
+    assert requirements_for(".message-actions Button") == ({".message-actions"},)
+    assert requirements_for("#panel > Button") == ({"#panel"},)
+    assert requirements_for("#panel Button:disabled") == ({"#panel"},)
 
-    # No ancestor implied -- must be None, or styling breaks.
-    assert requirements_for("Button") == (None,)
-    assert requirements_for("#panel") == (None,)
-    assert requirements_for("Button.foo") == (None,), (
-        "one compound: the class is on the SUBJECT, not an ancestor"
-    )
-    assert requirements_for("Button#thing.foo") == (None,)
-    # These two are the shapes that actually exercise the one-compound
-    # guard: a single compound LED by an id/class. `Button.foo` above does
-    # not -- its first selector is a TYPE, so it reports None either way,
-    # and it passed even with the guard deleted.
-    assert requirements_for("#thing.foo") == (None,), (
+    # No ancestor implied -- must be empty, or styling breaks.
+    assert requirements_for("Button") == (set(),)
+    assert requirements_for("#panel") == (set(),)
+    assert requirements_for("Button.foo") == (
+        set(),
+    ), "one compound: the class is on the SUBJECT, not an ancestor"
+    assert requirements_for("Button#thing.foo") == (set(),)
+    # Single compounds led by an ID/class must also stay on the subject.
+    assert requirements_for("#thing.foo") == (set(),), (
         "single compound led by an id: the id is on the SUBJECT; demanding "
         "it of an ancestor rejects the very node that matches"
     )
-    assert requirements_for(".foo.bar") == (None,)
-    assert requirements_for("Widget Button") == (None,), (
-        "a leading TYPE needs MRO matching, which this filter does not do"
-    )
+    assert requirements_for(".foo.bar") == (set(),)
+    assert requirements_for("Widget Button") == ({"Widget"},)
 
     # A rule matches if ANY selector set matches, so a comma-separated rule is
     # only rejectable when EVERY set states an unmet requirement.
-    assert requirements_for("#panel Button, Button") == ("#panel", None)
-    assert requirements_for("#a Button, #b Button") == ("#a", "#b")
+    assert requirements_for("#panel Button, Button") == ({"#panel"}, set())
+    assert requirements_for("#a Button, #b Button") == ({"#a"}, {"#b"})
 
     # A rule with no selector sets states nothing, so it must be KEPT. The
     # rejection loop iterates the requirements and appends on the first
     # keepable one -- with an empty tuple it never appends, which would drop
     # the rule silently. Rejection has to be a decision, not a fall-through.
-    from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
-
     empty = RuleSet([])
     empty._post_parse()
-    assert _ancestor_requirements(empty) == ()
+    assert _static_requirements(empty) == ()
 
 
 @pytest.mark.ui
@@ -268,8 +260,7 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
             (
                 node
                 for node in nodes
-                if node.parent is not None
-                and getattr(node, "_selector_names", None)
+                if node.parent is not None and getattr(node, "_selector_names", None)
             ),
             None,
         )
@@ -401,18 +392,14 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
             for rule in rules_map.get(key, ()):
                 if id(rule) in counted:
                     continue  # a rule can index under several names
-                if any(
-                    len(sset.selectors) > 1 for sset in rule.selector_set
-                ):
+                if any(len(sset.selectors) > 1 for sset in rule.selector_set):
                     counted.add(id(rule))
                     per_key[key] += 1
                     if len(offenders) < 400:
                         offenders.append(f"[{key}] {rule.selectors}")
 
         total = sum(per_key.values())
-        breakdown = ", ".join(
-            f"{key}={count}" for key, count in per_key.most_common()
-        )
+        breakdown = ", ".join(f"{key}={count}" for key, count in per_key.most_common())
 
         print(f"\n[census] total={total} ({breakdown})")
         assert total >= MIN_ANCESTOR_SCOPED_BARE_TYPE_RULES, (
@@ -436,6 +423,5 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
             "Newest offenders are easiest to find with: git diff on "
             "tldw_chatbook/css/ for selectors ending in a bare "
             f"{'/'.join(_GUARDED_TYPE_KEYS[:3])}... type.\n"
-            "Sample of current offenders:\n  "
-            + "\n  ".join(offenders[:15])
+            "Sample of current offenders:\n  " + "\n  ".join(offenders[:15])
         )
