@@ -1243,6 +1243,27 @@ setup. Their failure said nothing about slowness.
 - To pin the fix, stall the gap deterministically (here, hold `submit_draft`
   across several poll ticks). Do not rely on the slow runner.
 
+## A wait that ran out once may be a dropped press: time every run before raising it (TASK-33641.7, 2026-10-19)
+
+**PR #3169, CI run 2.** `test_skills_recovery_controls.py[empty]` failed "Skills
+UI checkpoint did not settle" after its 20 s wait for the review modal, and the
+review asked for 40 s. The file's other 12 cases took about 3.2 s each on that
+runner, so it was not a slow runner. A scratch probe ran the case 240 and 400
+times under xdist at load 18-25 with each wait timed. Every run that settled
+showed the modal within 0.35 s, and 4 runs never did (30-110 s). In those runs
+the pressed Button was detached, with a new one under the same id: a second
+posture load had recomposed the header after the script found the Button.
+`Button.press()` posts its message to the Button, so the message was lost with
+it. The lesson above, about a reference taken before a recompose, covers a
+Button found too early. This one was found after the first recompose and
+lost to the next.
+
+**What to do:** before raising a wait, run the case a few hundred times and
+print each wait's time. Many fast runs plus a few that never finish means a
+lost event, not slowness, and a longer wait only makes it fail later. Print
+`is_attached` on what you pressed, and wait for the workers that recompose to
+finish (`not app.workers`, then `pilot.pause()`) before you query and press.
+
 ## A baseline tree at a generic scratchpad path is someone else's baseline too
 
 **TASK-33006.2, 2026-10-02.** The session scratchpad is shared by every agent the

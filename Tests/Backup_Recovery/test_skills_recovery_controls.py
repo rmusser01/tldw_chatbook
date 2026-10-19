@@ -77,11 +77,18 @@ async def wait_for(predicate):
  while not predicate():
   assert clock()<deadline,'Skills UI checkpoint did not settle'
   await asyncio.sleep(.02)
+# Each posture load (on mount, then after the source snapshot) recomposes the
+# header, and a press on a Button a later load replaced is dropped with it: in
+# 3 of 400 [empty] runs the review never opened (PR #3169's CI run 2). So wait
+# for no worker left and let the last recompose land before pressing.
+async def settled_action(pilot,host):
+ await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')) and not host.workers)
+ await pilot.pause()
+ return host.subject.query_one('#library-skills-trust-action',Button)
 async def run():
  host=Host()
  async with host.run_test(size=(110,44)) as pilot:
-  await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')))
-  subject=host.subject;button=subject.query_one('#library-skills-trust-action',Button)
+  button=await settled_action(pilot,host);subject=host.subject
   assert str(button.label)=='Review restored skills',str(button.label)
   button.press()
   await wait_for(lambda:bool(host.screen.query('#skills-recovery-files')))
@@ -196,10 +203,9 @@ history={p.relative_to(old).as_posix():p.read_bytes() for p in old.rglob('*') if
         + r"""
 async def run():
  host=Host()
- async with host.run_test(size=(110,44)):
+ async with host.run_test(size=(110,44)) as pilot:
   assert context.get('available_skills') or context.get('blocked_skills'),context
-  await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')))
-  button=host.subject.query_one('#library-skills-trust-action',Button)
+  button=await settled_action(pilot,host)
   assert str(button.label)=='Unlock',str(button.label)
   button.press()
   # As above: Submit mounts one container level after the input.
