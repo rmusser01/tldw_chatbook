@@ -1,5 +1,11 @@
 # Lessons: verifying against the real thing
 
+## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
+
+**Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.
+
+**What to do.** Test the owner-removal transition as well as disposal. Keep terminal admission closed with an existing longer-lived fence, while preserving ordinary missing-owner dispatch before shutdown and the issued callback's original source/refusal/physical-retirement checks. Do not silence refusal logs to qualify the packet.
+
 ## `tmux send-keys M-1` types a character into the composer (TASK-33620.15.2, 2026-10-09)
 
 **Incident.** To switch Console tabs live (Alt+1, Alt+2), `tmux -L <name>

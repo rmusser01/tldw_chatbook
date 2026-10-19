@@ -7,6 +7,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from textual.worker_manager import WorkerManager
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_chat_models import (
@@ -82,6 +83,7 @@ class _ConfirmationHarness:
     _confirm_workflow_session_quit = TldwCli._confirm_workflow_session_quit
 
     def __init__(self, screen: _ConfirmationScreen) -> None:
+        self._workers = WorkerManager(self)
         self.screen = screen
         self._quit_in_progress = True
         self._shutting_down = False
@@ -207,6 +209,7 @@ class _ApprovedQuitHarness:
     _run_approved_quit_cleanup = TldwCli._run_approved_quit_cleanup
 
     def __init__(self) -> None:
+        self._workers = WorkerManager(self)
         self.events: list[tuple[str, int]] = []
         self.loop_thread = threading.get_ident()
         self._quit_in_progress = True
@@ -383,6 +386,7 @@ class _AppLevelQuitHarness:
         *,
         fail_fence: bool = False,
     ) -> None:
+        self._workers = WorkerManager(self)
         self.screen = screen
         self._quit_in_progress = True
         self._shutting_down = False

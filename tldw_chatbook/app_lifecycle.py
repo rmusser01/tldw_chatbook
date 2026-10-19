@@ -2126,9 +2126,17 @@ class LifecycleMixin:
                         pass
                     return
             self._shutting_down = True
-            # TASK-22215: the user has approved the quit -- nothing further from
-            # the staggered boot fleet may start (idempotent with the same call in
-            # `on_shutdown_request`, which the quit path reaches later).
+            from .UI.Console_Modules import view_workers
+
+            # Cancel before cleanup yields; the original manager retains Tasks
+            # through native retirement for the later runtime shutdown drain.
+            view_workers.cancel_console_view_workers(
+                view_workers.capture_console_view_workers(
+                    self, groups=view_workers.CONSOLE_BROWSER_WORKER_GROUPS
+                )
+            )
+            # Approved Quit also closes staggered boot admission before cleanup
+            # (idempotent with the later on_shutdown_request).
             self._close_boot_worker_gate("quit")
             await self._run_approved_quit_cleanup()
         finally:

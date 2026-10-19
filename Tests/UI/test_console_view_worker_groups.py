@@ -20,6 +20,7 @@ pytestmark = pytest.mark.bootstrap_profile
     "group",
     [
         "console-readiness-config",
+        "console-flat-conversation-search",
         "console-agent-history",
         "console-subagent-counts",
         "console-subagent-count-publication",
