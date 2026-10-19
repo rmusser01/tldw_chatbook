@@ -237,3 +237,62 @@ def test_budget_change_requires_preview_before_control_creation(tmp_path, monkey
             cancel=Event(),
         )
     assert not root.exists()
+
+
+def test_unenrolled_default_profile_backs_up_through_the_known_profiles_selection(
+    tmp_path, monkeypatch
+):
+    """Pin for TASK-34100.16.1: a fresh profile's own config stays in capture scope.
+
+    Backup & Restore asks for "all known local profiles" plus the running
+    config. Builds from 2026-10-05 refused that capture on a fresh, unenrolled
+    profile with ``capture_source_outside_scope``: the selected config path was
+    outside the maintenance session's roots. On 4de437a5c5 it no longer
+    reproduces live. This keeps the UI's selection shape, the default config
+    location under a scratch HOME and real stores, through a verified archive.
+    """
+    import json
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Backup_Recovery.archive_reader import acquire
+    from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    # The running profile is the default one: both locators name this file.
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    _populate_required_dependencies(preview)
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    destination = tmp_path / "fresh.tldw-backup.zip"
+
+    result = capture(
+        (source,),
+        preview.scope_digest,
+        destination,
+        options=options,
+        cancel=Event(),
+        include_known_profiles=True,
+    )
+
+    assert bootstrap._records(root) == ([], []), "capture must not enroll the profile"
+    manifest = json.loads(result.manifest_bytes)
+    owners = {file["owner_id"] for file in manifest["files"]}
+    assert {"config", "db.chachanotes.primary"} <= owners
+    sealed = write_archive(result, destination, password=None, cancel=Event())
+    verified = acquire(
+        sealed.path, tmp_path / "inspect", ArchiveLimits(), None, Event()
+    )
+    assert verified.digest == sealed.digest
