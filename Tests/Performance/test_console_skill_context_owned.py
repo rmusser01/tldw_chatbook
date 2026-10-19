@@ -117,7 +117,7 @@ async def exercise():
         try:
             assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is None
             assert (await controller._fetch_console_skill_context()).get('available_skills')
-            assert calls and set(calls) == {main}
+            assert calls and set(calls) == {main}, (main, calls)
         finally:
             facade.policy_enforcer = local.policy_enforcer = original_policy
             app._local_skills_stack_inputs = original_inputs

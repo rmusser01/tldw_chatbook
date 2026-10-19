@@ -45,6 +45,7 @@ from ...Chat.console_session_settings import (
 )
 from ...Chat.console_trace_projection import ProjectedTraceCall
 from ...Chat.provider_readiness import provider_config_key
+from ...Chat.provider_usage import ProviderUsage
 from ...Widgets.Console import ConsoleSettingsSummary
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
@@ -782,8 +783,9 @@ class ConsoleContextSpendController:
         """Derive one synchronous display using the already selected owner pair."""
         session_id = session.id
         provider, model, _settings = self._active_console_provider_model_display()
-        if not spend.console_tokenizer_display_ready(self._screen, model, provider):
-            return None
+        tokenizer_ready = spend.console_tokenizer_display_ready(
+            self._screen, model, provider
+        )
         controller = self._ensure_console_chat_controller()
         history_key, messages, history = self._console_display_history(
             store, session_id, controller
@@ -797,6 +799,7 @@ class ConsoleContextSpendController:
             store.session_settings_revision(session_id),
             catalog,
             helper_usage,
+            tokenizer_ready,
         )
         # PR2b Task 5 (cost rollup): the active conversation's LIVE
         # sub-agent fleet spend, folded into the snapshot's token total
@@ -854,6 +857,12 @@ class ConsoleContextSpendController:
             snapshot_messages = spend.build_console_current_cost_messages(
                 messages, history.current_ids
             )
+            if not tokenizer_ready and any(
+                not isinstance(message.usage, ProviderUsage)
+                and str(message.content or "").strip()
+                for message in snapshot_messages
+            ):
+                return None  # A partial measured total must not stand in for Current.
             settled_snapshot = self._build_cost_snapshot(
                 snapshot_messages,
                 provider=provider,
@@ -863,7 +872,7 @@ class ConsoleContextSpendController:
                 auxiliary_usage=tuple(record.usage for record in helper_usage),
                 **spend.pricing_snapshot_options(catalog),
             )
-            historical_media = any(
+            historical_media = tokenizer_ready and any(
                 message.role is ConsoleMessageRole.USER
                 and message.attachments
                 and message.id in history.request_ids
@@ -912,7 +921,11 @@ class ConsoleContextSpendController:
         # changed since the last check (revision `!=`, not `>`: a
         # restore can reset the store's counter back down).
         break_reason = self._console_cost_break_reasons.get(session_id)
-        if controller is not None and run_status not in CONSOLE_ACTIVE_RUN_STATUSES:
+        if (
+            tokenizer_ready
+            and controller is not None
+            and run_status not in CONSOLE_ACTIVE_RUN_STATUSES
+        ):
             current_revision = store.payload_revision(session_id)
             if current_revision != self._console_cost_fp_revisions.get(session_id):
                 baseline = controller.payload_fingerprint_baseline(session_id)
@@ -943,7 +956,8 @@ class ConsoleContextSpendController:
         if pricing is not None:
             pricing_as_of = pricing.as_of
             if (
-                cache_state == ConsoleCacheState.WARM
+                tokenizer_ready
+                and cache_state == ConsoleCacheState.WARM
                 and break_reason
                 and pricing.cache_write_per_mtok is not None
                 and pricing.cache_read_per_mtok is not None
@@ -1018,8 +1032,10 @@ class ConsoleContextSpendController:
                 projected_delta_usd = round(estimated_tokens * rate_delta, 6)
 
         composer = self._console_composer_or_none()
-        context_state = self._last_console_context_control_state
-        if context_state is None:
+        context_state = (
+            self._last_console_context_control_state if tokenizer_ready else None
+        )
+        if context_state is None and tokenizer_ready:
             try:
                 context_state = self._active_console_context_control_state()
             except (KeyError, ValueError):
