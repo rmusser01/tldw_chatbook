@@ -22,8 +22,8 @@ import inspect
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
@@ -5832,6 +5832,123 @@ class ConsoleWorkspaceController:
         # previous session was temporary.
         self._sync_console_temporary_chip()
 
+    @asynccontextmanager
+    async def prepare_console_workspace_reconciliation(self) -> AsyncIterator[None]:
+        """Prepare one original registry read for the immediately resumed stack.
+
+        This is neither display evidence nor a reusable workspace cache. The
+        original reader retains live storage admission and its finite native
+        scope; reconciliation and all subsequent resume effects stay on-loop.
+        Custom and in-memory readers retain their original synchronous route.
+        """
+        from ...Backup_Recovery.participants import _core_operation
+        from ...Chat.console_preparation_reads import run_preparation_read
+
+        app = self.app_instance
+        registry = getattr(app, "workspace_registry_service", None)
+        database = getattr(registry, "db", None)
+        if not (
+            type(registry) is LocalWorkspaceRegistryService
+            and type(database) is WorkspaceDB
+            and not database.is_memory_db
+            and _availability_methods_current(self, _WORKSPACE_RECONCILIATION_METHODS)
+            and _availability_methods_current(
+                registry, _WORKSPACE_RECONCILIATION_REGISTRY_METHODS
+            )
+            and _availability_methods_current(
+                database, _WORKSPACE_RECONCILIATION_DATABASE_METHODS
+            )
+        ):
+            yield
+            return
+
+        reader = registry.get_active_workspace
+        database_path = database.db_path
+        generation = registry.mutation_generation
+        runtime = self._workspace_availability_runtime()
+        lifecycle = self._screen_lifecycle_token()
+        store = self._console_chat_store
+        session_id = None if store is None else store.active_session_id
+        session = None
+        if session_id is not None:
+            try:
+                session = store.ensure_session()
+            except KeyError:
+                pass  # The original reconciler repairs stale active identities.
+        workspace_id = None if session is None else session.workspace_id
+
+        def source_current():
+            # Worker checks inspect captured sources only, never UI callbacks.
+            if (
+                registry.db is not database
+                or database.db_path != database_path
+                or registry.mutation_generation != generation
+                or not _availability_methods_current(
+                    registry, _WORKSPACE_RECONCILIATION_REGISTRY_METHODS
+                )
+                or not _availability_methods_current(
+                    database, _WORKSPACE_RECONCILIATION_DATABASE_METHODS
+                )
+                or (runtime is not None and runtime._disposed)
+            ):
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_reconciliation_source_changed"
+                )
+
+        def view_current():
+            source_current()
+            if (
+                self.app_instance is not app
+                or getattr(app, "workspace_registry_service", None) is not registry
+                or self._workspace_availability_runtime() is not runtime
+                or self._screen_lifecycle_token() != lifecycle
+                or not self._screen_running_accessor()
+                or self._console_chat_store is not store
+                or (store is not None and store.active_session_id != session_id)
+                or (
+                    session is not None
+                    and (
+                        store.ensure_session() is not session
+                        or session.workspace_id != workspace_id
+                    )
+                )
+                or not _availability_methods_current(
+                    self, _WORKSPACE_RECONCILIATION_METHODS
+                )
+            ):
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_reconciliation_view_changed"
+                )
+
+        def read():
+            with operation_owned_connection(database), _core_operation(database):
+                source_current()
+                return reader()
+
+        view_current()
+        try:
+            active = await run_preparation_read(
+                read,
+                creator=self,
+                session_id=session_id,
+                reads=self._preparation_reads,
+                observers=() if runtime is None else (runtime._preparation_reads,),
+                require_current=source_current,
+            )
+        except _WorkspaceAvailabilityObsolete:
+            raise  # Existing attach reconciliation owns the bounded retry.
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to read active workspace during Console resume reconcile"
+            )
+            active = None  # Preserve the original optional-read failure policy.
+        view_current()
+        self._prepared_workspace_reconciliation = (view_current, active)
+        try:
+            yield
+        finally:
+            self.__dict__.pop("_prepared_workspace_reconciliation", None)
+
     def _reconcile_console_session_with_registry(self) -> None:
         """Align the Console session with the registry's active workspace.
 
@@ -5888,8 +6005,15 @@ class ConsoleWorkspaceController:
         )
         if registry_service is None:
             return
+        prepared = self.__dict__.pop("_prepared_workspace_reconciliation", None)
         try:
-            active = registry_service.get_active_workspace()
+            if prepared is None:
+                active = registry_service.get_active_workspace()
+            else:
+                current, active = prepared
+                current()
+        except _WorkspaceAvailabilityObsolete:
+            raise
         except Exception:
             logger.opt(exception=True).debug(
                 "Unable to read active workspace during Console resume reconcile"
@@ -8700,6 +8824,30 @@ class ConsoleWorkspaceController:
                     "Unable to resolve Console workspace name for approval toast"
                 )
         return str(workspace_id)
+
+
+_WORKSPACE_RECONCILIATION_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in ("_reconcile_console_session_with_registry",)
+    for function in (getattr(ConsoleWorkspaceController, name),)
+)
+_WORKSPACE_RECONCILIATION_REGISTRY_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in ("get_active_workspace",)
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)
+_WORKSPACE_RECONCILIATION_DATABASE_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in (
+        "connection",
+        "_get_connection",
+        "_held_connection",
+        "_open_connection",
+        "_configure_connection",
+        "close",
+    )
+    for function in (getattr(WorkspaceDB, name),)
+)
 
 
 _WORKSPACE_AVAILABILITY_METHODS = tuple(

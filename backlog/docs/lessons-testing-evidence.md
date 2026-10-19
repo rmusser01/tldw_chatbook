@@ -965,6 +965,18 @@ The 57 tests from the first round passed throughout. No test interrupted a chang
 
 **Seen again (TASK-33620.15.23, 2026-10-27): a commit date is not a merge date.** The task was filed on 2026-10-24 from the two nothing-focused composer tests failing "in most runs" on dev 5b5920b8e2. The wait that fixed them (a19334f0e6) is dated 2026-10-20, four days earlier, so it read as already on dev. It reached dev only on 2026-10-26, with the merge of PR #3211 (c398d3a4d0), and 5b5920b8e2 does not contain it. On dev a2b7104d1e the two tests passed 8 of 8 serial runs before any change. Run the ancestry check against the failing head, never compare dates.
 
+## A render-entry wait must also observe its producer's failure (TASK-35592, 2026-10-19)
+
+The Windows attention regression run reached two stale transcript fixtures,
+then timed out after 180 seconds in a third test. Its refresh task had already
+raised because the harness lacked `_console_chat_store`, but the test waited
+only for an event the failed task would never set. Both assertion failures
+reproduced on pre-change `efb71994`. Supplying the existing store/rate-chip seams
+and racing the entry event against producer completion made all three tests
+pass. Observe early producer errors, bound the entry wait, and retire both tasks
+in `finally`; an event-only wait hides the useful failure until Windows kills
+the entire pytest process.
+
 ## A held-lock test's blocked stack names the product read to fix (TASK-35444, 2026-10-18)
 
 **Incident.** The response-rules phase test holds config's rebuild lock and fails

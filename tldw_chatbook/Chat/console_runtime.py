@@ -150,6 +150,8 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.base_db import run_owned_db_call
 
+from . import console_attention_preparation as _attention_preparation
+
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
     from tldw_chatbook.Chat.console_voice_promotion import (
@@ -1243,6 +1245,9 @@ class ConsoleRuntime:
         self._attention_lock = threading.RLock()
         self._attention_operation_lock = threading.RLock()
         self._attention_revision = 0
+        self._attention_refresh_task: asyncio.Task[None] | None = None
+        self._attention_refresh_request: tuple | None = None
+        self._attention_refresh_force = False
         self._console_needs_attention: bool | None = None
         self._last_known_terminal_marks: tuple[tuple[str, str], ...] | None = None
         self._notified_terminal_receipts: set[str] = set()
@@ -1656,6 +1661,106 @@ class ConsoleRuntime:
                     recorded = True
         return recorded
 
+    def request_console_attention_refresh(
+        self, *, force_projection: bool = False
+    ) -> bool:
+        """Coalesce stock loop refreshes; keep direct/custom recomputes synchronous.
+
+        The return value is the last published projection. The finite read owns
+        only its connection; acknowledgement never waits on its operation lock.
+        """
+        if self._disposed:
+            return self.console_needs_attention
+        if (
+            type(self) is not ConsoleRuntime
+            or "recompute_console_attention" in vars(self)
+            or ConsoleRuntime.recompute_console_attention is not _ATTENTION_RECOMPUTE
+            or _ATTENTION_RECOMPUTE.__code__ is not _ATTENTION_RECOMPUTE_CODE
+        ):
+            return self.recompute_console_attention(force_projection=force_projection)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self.recompute_console_attention(force_projection=force_projection)
+        read = _attention_preparation.capture_attention_marks_read(
+            self._console_local_marks_service()
+        )
+        if read is None:
+            return self.recompute_console_attention(force_projection=force_projection)
+        revision = self._reserve_attention_revision()
+        self._attention_refresh_force |= force_projection
+        self._attention_refresh_request = (
+            revision,
+            read,
+            self._app,
+            self._chat_store,
+            self.authority_token,
+        )
+        task = self._attention_refresh_task
+        if task is not None and not task.done():
+            return self.console_needs_attention
+
+        async def refresh() -> None:
+            from .console_preparation_reads import run_preparation_read
+
+            try:
+                while (
+                    self._attention_refresh_request is not None and not self._disposed
+                ):
+                    revision, read, app, store, token = self._attention_refresh_request
+                    self._attention_refresh_request = None
+                    known = False
+                    try:
+                        marks = await run_preparation_read(
+                            read,
+                            creator=self,
+                            session_id=None,
+                            reads=self._preparation_reads,
+                            require_current=lambda: None,
+                        )
+                        known = True
+                    except Exception as exc:  # preserve the last known projection
+                        logger.debug(
+                            "Console terminal-attention query failed (exception_type={})",
+                            type(exc).__name__,
+                        )
+                        with self._attention_lock:
+                            marks = self._last_known_terminal_marks or ()
+                    if (
+                        self._disposed
+                        or self._app is not app
+                        or self._chat_store is not store
+                        or self.authority_token != token
+                        or not self._attention_revision_is_current(revision)
+                        or self._console_local_marks_service() is not read.service
+                        or not read.current()
+                    ):
+                        continue
+                    force = self._attention_refresh_force
+                    self._attention_refresh_force = False
+                    self._project_console_attention_marks(
+                        revision,
+                        marks,
+                        known,
+                        force_projection=force,
+                    )
+            finally:
+                self._attention_refresh_request = None
+                self._attention_refresh_force = False
+
+        coroutine = refresh()
+        try:
+            self._attention_refresh_task = loop.create_task(
+                coroutine, name="console-attention-refresh"
+            )
+            self._attention_refresh_task.add_done_callback(self._consume_task_outcome)
+        except BaseException:
+            coroutine.close()
+            self._attention_refresh_request = None
+            self._attention_refresh_force = False
+            raise
+        return self.console_needs_attention
+
     def recompute_console_attention(self, *, force_projection: bool = False) -> bool:
         """Re-derive and publish the one boolean Console attention state.
 
@@ -1690,6 +1795,20 @@ class ConsoleRuntime:
                     with self._attention_lock:
                         marks = self._last_known_terminal_marks or ()
 
+            return self._project_console_attention_marks(
+                revision, marks, marks_known, force_projection=force_projection
+            )
+
+    def _project_console_attention_marks(
+        self,
+        revision: int,
+        marks: tuple[tuple[str, str], ...],
+        marks_known: bool,
+        *,
+        force_projection: bool = False,
+    ) -> bool:
+        """Apply a current read on its caller, preserving notification affinity."""
+        with self._attention_operation_lock:
             if not self._attention_revision_is_current(revision):
                 return self.console_needs_attention
             if marks_known:
@@ -1848,7 +1967,7 @@ class ConsoleRuntime:
                             for pair in self._last_known_terminal_marks
                             if pair not in removed_pairs
                         )
-                self.recompute_console_attention()
+                self.request_console_attention_refresh()
             return tuple(acknowledged)
 
     # -- handle writes (the screen's properties, and 59 test sites) --------
@@ -1994,7 +2113,7 @@ class ConsoleRuntime:
                 self._project_to_attached_view, "set_pending_skill_script"
             )
             value.set_pending_decision = self._project_pending_decision_to_attached_view
-            value.on_console_attention_changed = self.recompute_console_attention
+            value.on_console_attention_changed = self.request_console_attention_refresh
         coordinator = getattr(value, "prompt_queue_coordinator", None)
         bind_submitter = getattr(coordinator, "bind_runtime_submitter", None)
         if callable(bind_submitter):
@@ -3427,7 +3546,7 @@ class ConsoleRuntime:
             # Terminal rows and their exact unseen marks are committed by the
             # store before the controller returns. Recompute once per turn,
             # never from streaming/token callbacks.
-            self.recompute_console_attention()
+            self.request_console_attention_refresh()
 
     def _ensure_canvas_profile_snapshot(self) -> Any:
         """Share one lazy process owner with an early served-child handshake."""
@@ -5551,7 +5670,7 @@ class ConsoleRuntime:
 
             hook_mounted = project_runtime_hook_review(self, projection)
             if hook_mounted is not None:
-                self.recompute_console_attention()
+                self.request_console_attention_refresh()
                 return hook_mounted
         view = self.view if self.has_answerable_view() else None
         provider = getattr(view, "console_view_hooks", None)
@@ -5586,7 +5705,7 @@ class ConsoleRuntime:
                         session_id or "",
                         getattr(projection, "decision_id", ""),
                     )
-            self.recompute_console_attention()
+            self.request_console_attention_refresh()
             return mounted
         mounted = False
         for decision_type, hook_name in hook_by_type.items():
@@ -5615,7 +5734,7 @@ class ConsoleRuntime:
                     session_id or "",
                     getattr(projection, "decision_id", ""),
                 )
-        self.recompute_console_attention()
+        self.request_console_attention_refresh()
         return mounted
 
     def _hook_target(self, kind: str) -> Any | None:
@@ -5925,7 +6044,7 @@ class ConsoleRuntime:
             self.view = None
             self._attached_generation = None
             self._reconciled_view = None
-            self.recompute_console_attention()
+            self.request_console_attention_refresh()
             return True
 
     # -- teardown ----------------------------------------------------------
@@ -6941,3 +7060,8 @@ _CONSOLE_PENDING_RUNTIME_PROPERTIES = (
         for descriptor in (inspect.getattr_static(ConsoleRuntime, name),)
     ),
 )
+
+
+# Direct callers and injected recompute callbacks retain their synchronous API.
+_ATTENTION_RECOMPUTE = ConsoleRuntime.recompute_console_attention
+_ATTENTION_RECOMPUTE_CODE = _ATTENTION_RECOMPUTE.__code__

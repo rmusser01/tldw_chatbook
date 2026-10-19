@@ -2140,8 +2140,10 @@ class ServiceWiringMixin(
         )
         runtime = getattr(self, "console_runtime", None)
         recompute_attention = getattr(
-            runtime, "recompute_console_attention", None
+            runtime, "request_console_attention_refresh", None
         )
+        if not callable(recompute_attention):
+            recompute_attention = getattr(runtime, "recompute_console_attention", None)
         if callable(recompute_attention):
             recompute_attention(force_projection=True)
         self.server_chat_conversation_service = (
