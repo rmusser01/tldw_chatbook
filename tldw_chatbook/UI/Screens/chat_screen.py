@@ -138,6 +138,7 @@ from ..Console_Modules.left_rail import (
     CONSOLE_RETRY_DEFAULT_SAVE_ID,
     CONSOLE_RETRY_GENERATION_SETTINGS_ID,
     ConsoleLeftRail,
+    rail_focus_shortcuts,
 )
 from ..Console_Modules.workspace import (
     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
@@ -5035,19 +5036,8 @@ class ChatScreen(BaseAppScreen):
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
-        # TASK-32322: with focus inside a rail, Tab is region-locked -- the
-        # exits are F6 and Esc, taught first (degradation drops from the END).
-        # That names F6 and Esc, so their own hints go (a collapsed composer's
-        # Esc too), and Ctrl+K/T trail the rail's Alt+I/A/C: a 211-column
-        # footer keeps all three (TASK-33006.20).
-        if self._console_rail_focus_active():
-            later = (("Ctrl+K", "switch session"), ("Ctrl+T", "new tab"))
-            gone = (("F6", "next pane"), ("Esc", "show composer"), *later)
-            rest = [p for p in shortcuts if p not in gone]
-            keys = ("Alt+I", "Alt+A", "Alt+C")
-            at = max([i + 1 for i, p in enumerate(rest) if p[0] in keys] or [len(rest)])
-            rest[at:at] = [p for p in shortcuts if p in later]
-            shortcuts = (("Esc", "composer · F6 panes"), *rest)
+        if self._console_rail_focus_active():  # TASK-32322: the rail's exits
+            shortcuts = rail_focus_shortcuts(shortcuts)
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
