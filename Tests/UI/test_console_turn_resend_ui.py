@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
+import time
 
 import pytest
 from textual.app import ComposeResult
@@ -30,6 +32,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -259,6 +262,21 @@ def _session_rows(console) -> list[ConsoleChatMessage]:
     return store.messages_for_session(store.active_session_id)
 
 
+def _unstarted_send_stage(console) -> str:
+    """Name how far a pressed Send got without reaching ``submit_draft``."""
+    store = console._ensure_console_chat_store()
+    acknowledgement = getattr(console, "_console_send_ack", None)
+    send = console.query_one("#console-send-message", Button)
+    return (
+        "the Send never reached the stalled submit_draft: "
+        f"in runtime custody={console._console_runtime().has_custodied_turns()}, "
+        "acknowledged="
+        f"{acknowledgement is not None and acknowledgement.active_for(store.active_session_id)}, "
+        f"Send={str(send.label)!r} disabled={send.disabled} tooltip={send.tooltip!r}, "
+        f"notices={[notice.message for notice in console.app._notifications]!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_console_resend_click_re_runs_a_failed_turn_in_place():
     host = _console_app(FailThenRecoverGateway())
@@ -293,6 +311,78 @@ async def test_console_resend_click_re_runs_a_failed_turn_in_place():
     assert [row.id for row in rows] == [user.id, failed.id]
 
 
+#: How long the holder thread keeps the config locks. The helper's sync runs
+#: at once, so this only has to outlast the gap between the two.
+_CONFIG_LOCK_HOLD_S = 1.0
+
+
+def _hold_config_locks() -> tuple[threading.Thread, threading.Event, threading.Event]:
+    """Hold both config locks on another thread for ``_CONFIG_LOCK_HOLD_S``.
+
+    Returns:
+        The holder thread, an event set once its hold has ended, and an event
+        that ends the hold early.
+    """
+    held, ended, release = (threading.Event() for _ in range(3))
+
+    def hold() -> None:
+        # Same locks, same order as run_console_config_sync takes them.
+        with (
+            config_module._settings_rebuild_lock(),
+            config_module._config_file_lock(),
+        ):
+            held.set()
+            release.wait(_CONFIG_LOCK_HOLD_S)
+            ended.set()
+
+    holder = threading.Thread(target=hold, name="config-lock-holder", daemon=True)
+    holder.start()
+    assert held.wait(10), "the holder never took the config locks"
+    return holder, ended, release
+
+
+@pytest.mark.asyncio
+async def test_select_llamacpp_console_enables_send_while_another_thread_holds_the_config_locks():
+    """Callers of ``_select_llamacpp_console`` load a draft and press Send at
+    once, so the helper must render the selection before it returns, even
+    while another thread holds the config locks.
+
+    In the CI failures TASK-34789 lists (TASK-35660), a control-bar sync that
+    could not take the locks deferred to a 0.2 s retry. Send kept its
+    mount-time block, and ``Button.press()`` on a disabled button posts
+    nothing, so the test timed out waiting for a send that was never made.
+    Locally the Console's post-mount hook-permission read holds the locks on a
+    worker thread; which holder overlapped on the runner is not known.
+
+    This pins the outcome callers rely on, not how the helper reaches it. The
+    helper's readiness warm-up currently waits for the hold to end (about 1 s
+    here) before its sync, so removing only its lock wrap would still pass;
+    the helper as it was before TASK-34789 fails.
+    """
+    host = _console_app(FailThenRecoverGateway())
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        send = console.query_one("#console-send-message", Button)
+        assert send.disabled, "no mount-time block for the helper to lift"
+        for _ in range(3):
+            holder, hold_ended, release = _hold_config_locks()
+            if not hold_ended.is_set():
+                break
+            holder.join(10)  # A stalled loop outlived the hold: take it again.
+        else:
+            raise AssertionError("the config-lock hold kept lapsing before the helper")
+        try:
+            await _select_llamacpp_console(console)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            composer.load_draft("hello")
+            assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
+        finally:
+            release.set()
+            holder.join(10)
+
+
 @pytest.mark.asyncio
 async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
     monkeypatch,
@@ -309,6 +399,15 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
     fixed 0.6 s pause after the press asserted before the poll had even been
     started (UI Fast Lane, TASK-33628.5.1; red on dev too under
     ``taskpolicy -b``).
+
+    A press made while the provider switch's deferred control-bar sync still
+    held Send disabled was dropped, and the wait for the stalled start timed
+    out with no send begun (UI Fast Lane, TASK-35660). The shared helper now
+    renders before it returns (TASK-34789), and the press asserts Send is
+    enabled so a dropped press fails here, naming Send's blocked reason.
+    Under ``taskpolicy -b`` the send reached the stalled start in about 4 s,
+    so that wait's bound is generous and its failure names the stage the send
+    reached.
     """
     host = _console_app(FailThenRecoverGateway())
 
@@ -341,16 +440,22 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
-        console.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(entered.wait(), 10)
+        send = console.query_one("#console-send-message", Button)
+        # press() on a disabled Send posts nothing (TASK-35660).
+        assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
+        send.press()
+        try:
+            await asyncio.wait_for(entered.wait(), 30)
+        except TimeoutError:
+            raise AssertionError(_unstarted_send_stage(console)) from None
         assert console._console_runtime().has_custodied_turns()
         held = len(decisions)
-        for _ in range(100):  # three poll decisions while the start is held
-            if (
-                len(decisions) >= held + 3
-                or console._console_transcript_sync_timer is None
-            ):
-                break
+        deadline = time.monotonic() + 20  # three poll decisions while it is held
+        while (
+            len(decisions) < held + 3
+            and console._console_transcript_sync_timer is not None
+            and time.monotonic() < deadline
+        ):
             await pilot.pause(0.05)
         assert decisions[held:][:3] == [True, True, True]
         assert console._console_transcript_sync_timer is not None
