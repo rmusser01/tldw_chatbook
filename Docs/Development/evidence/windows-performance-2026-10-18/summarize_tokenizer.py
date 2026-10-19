@@ -27,14 +27,19 @@ for variant in ("before", "after", "post-pr"):
         "idle_cpu_seconds": report["idle"]["cpu_seconds"],
         "idle_elapsed_seconds": report["idle"]["elapsed_seconds"],
         "main_thread_tokenizer_loading_samples_all_stages": sum(
-            row["count"] for row in samples
+            row["count"]
+            for row in samples
             if any(
-                Path(filename).name == "custom_tokenizers.py" and name in {"get_tokenizer_manager", "__init__", "load_tokenizer"}
-                or Path(filename).name == "token_counter.py" and name == "get_tiktoken_encoding"
+                Path(filename).name == "custom_tokenizers.py"
+                and name in {"get_tokenizer_manager", "__init__", "load_tokenizer"}
+                or Path(filename).name == "token_counter.py"
+                and name == "get_tiktoken_encoding"
                 for filename, name, _line in row["stack"]
             )
         ),
-        "top_overlapping_console_functions": [[*key, count] for key, count in counts.most_common(25)],
+        "top_overlapping_console_functions": [
+            [*key, count] for key, count in counts.most_common(25)
+        ],
         "blocked_network_attempts": report["blocked_network_attempts"],
         "real_profile_refusals": report["real_profile_refusals"],
         "tokenizer_display": report.get("tokenizer_display"),

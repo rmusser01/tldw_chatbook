@@ -72,3 +72,41 @@ ADR required: no. This is a scheduling fix applying existing finite ownership
 and authority separation (ADR-126/230/231), with no new storage/service contract.
 Independent review found the cold heuristic fallback issue; it is fixed and
 covered by an original-constructor regression test.
+
+## Continued profiling after PR #3166
+
+A second fresh-profile tour on commit `4c9755fe51` again recorded **zero**
+main-thread tokenizer-loading samples. Worst idle overshoot was **19.55 ms**,
+median typing **3.83 ms**, worst typing **33.50 ms**, and idle process CPU
+**0.219 s**. The final actual display was prepared and reported **11 tokens**,
+so the improvement did not come from permanently withholding the estimate.
+No network attempts or real-profile refusals occurred. See
+`plain-ready-tokenizer-post-pr.json` and the updated comparison.
+
+`warm_token_math.py` then isolated original counting with a prepared backend
+using generated ASCII code-like text (seven repetitions per size):
+
+| Characters | Uncached median, backend warm | Memo-hit median |
+| --- | ---: | ---: |
+| 1,000 | 0.12 ms | 0.003 ms |
+| 10,000 | 1.02 ms | 0.004 ms |
+| 100,000 | 5.30 ms | 0.006 ms |
+| 1,000,000 | 64.94 ms | 0.018 ms |
+
+The 1 MB maximum was 90.53 ms; readiness source checking averaged 0.032 ms.
+This is a single synthetic workload and excludes TUI rendering, provider work
+and non-ASCII/custom encoders. Existing memoization is already effective for
+unchanged text; these measurements do not justify another token cache. Large
+changing drafts remain a CPU-counting candidate, distinct from backend loading.
+
+The repeated tour still samples synchronous
+`ConsoleRuntime.recompute_console_attention` → `list_console_unseen_marks`
+on resume (18 overlapping samples) and `get_active_workspace` (19). Inspection
+confirms attention recomputation also publishes notifications, handles exact
+receipt visibility, and serializes acknowledgements under its operation lock.
+The next bounded investigation should measure original attention reads and
+coalesce their *read-only input preparation* without moving the entire callback
+or weakening acknowledgement/authority boundaries. Workspace reconciliation is
+also authoritative; a display memo cannot replace its live checks. Separately,
+the marks query fetches every matching row before applying its valid-receipt
+limit in Python; large-history profiling is needed before changing that path.
