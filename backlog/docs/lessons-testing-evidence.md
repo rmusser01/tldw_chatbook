@@ -20399,3 +20399,22 @@ failed drafts were valid or that any product input behavior was fixed.
 ## Worker failure injection must leave unrelated work running
 
 **PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.
+
+
+## Sub-resolution async polling can manufacture Windows stalls (TASK-35595, 2026-10-19)
+
+**Incident.** The Console profiling probe added a second 5 ms observer alongside
+a 5 ms input poll and 10 ms heartbeat. Python 3.12 Windows used GetTickCount64
+with 15.625 ms event-loop clock resolution. A standalone reproduction, importing
+no application code, made 261,448 loop iterations in two seconds, every selector
+call with zero timeout, consuming nearly one CPU core and starving ctypes work.
+Stacks looked like native-storage initialization stalls while the main loop was
+inside its I/O poll. Both original and updated app code timed out; both completed
+all six returns when diagnostic polling was raised above the clock resolution.
+
+**What to do.** Measure the event loop's clock resolution, not only the stopwatch
+resolution. Keep diagnostic polling above it, or observe existing events. Record
+poll/heartbeat intervals with results and rerun both versions after correcting
+the probe. Do not credit removal of an observer-induced timeout as a product fix.
+Evidence: `Docs/Development/evidence/windows-performance-2026-10-18/STORAGE_RESULTS.md`
+and `asyncio_polling_probe.py` in the same directory.

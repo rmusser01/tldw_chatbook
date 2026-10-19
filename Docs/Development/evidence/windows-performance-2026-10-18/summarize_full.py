@@ -4,11 +4,13 @@ from collections import Counter
 import json
 from pathlib import Path
 from statistics import median
+import sys
 
 root = Path(__file__).parent
+workload = sys.argv[1] if len(sys.argv) > 1 else "full"
 summary = {}
-for variant in ("before", "after", "control", "control2", "verified"):
-    prefix = f"plain-ready-full-{variant}"
+for variant in ("before", "after", "control", "control2", "verified", "final"):
+    prefix = f"plain-ready-{workload}-{variant}"
     path = root / f"{prefix}.json"
     if not path.exists():
         continue
@@ -68,5 +70,5 @@ for variant in ("before", "after", "control", "control2", "verified"):
         "real_profile_refusals": report["real_profile_refusals"],
     }
 text = json.dumps(summary, indent=2)
-(root / "full-comparison.json").write_text(text, encoding="utf-8")
+(root / f"{workload}-comparison.json").write_text(text, encoding="utf-8")
 print(text)

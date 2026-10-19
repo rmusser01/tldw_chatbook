@@ -172,12 +172,23 @@ if mode in ('foreign','alias','pending','cancel','uncertain'):
   else:raise AssertionError('foreign companion was admitted')
   assert backup.read_bytes()==preserved and selected.read_bytes()==initial
  elif mode=='pending':
-  from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+  from tldw_chatbook.Backup_Recovery.admission import AdmissionCancelled
   replacement=home/'new-config';replacement.write_bytes(initial);replacement.chmod(0o600)
-  with storage.acquire_storage(selected):
-   try:authority.remap('profile',(replacement,data),0.01)
-   except AdmissionTimeout:pass
-   else:raise AssertionError('remap unexpectedly crossed native owner')
+  published=threading.Event();write=Admission._write
+  def observed_write(self,parent_fd,registry,**kwargs):
+   write(self,parent_fd,registry,**kwargs)
+   if self is authority and registry.entries['profile'].pending:published.set()
+  Admission._write=observed_write
+  try:
+   with storage.acquire_storage(selected):
+    try:authority.remap('profile',(replacement,data),5,cancel=published)
+    except AdmissionCancelled:pass
+    else:raise AssertionError('remap unexpectedly crossed native owner')
+  finally:Admission._write=write
+  assert published.is_set()
+  with authority._directory() as parent_fd:
+   with authority._lock(parent_fd,'registry.lock',fcntl.LOCK_SH):
+    assert authority._read(parent_fd).entries['profile'].pending
   try:config.read_cli_config_serialized()
   except (bootstrap.RecoveryRequired,OSError,ValueError):pass
   else:raise AssertionError('pending authority was admitted')

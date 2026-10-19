@@ -127,3 +127,11 @@ inspector-state construction (12), and provider/config presentation posture read
 (11). These overlap; they are candidates for separate profiling rather than
 proof that any safety check should be cached or removed. Large histories and
 actual paint/Send/Stop latency are outside this empty-profile workload.
+
+Follow-up: [STORAGE_RESULTS.md](STORAGE_RESULTS.md) removes redundant native
+initializer polling and repeated ancestry walks while retaining storage checks.
+It also identifies the extra sub-resolution polling as a measurement problem on
+Python 3.12 Windows: the pinned original code completes all six returns when the
+probe polls above the event-loop clock resolution. The failed instrumented runs
+above therefore do not establish an unresolved product deadlock. Their original
+observations remain here; the follow-up contains the corrected paired profile.

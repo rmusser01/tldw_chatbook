@@ -6,6 +6,10 @@ Add --resume-only for six Home/Console returns; --resume-baseline restores the
 pre-attention/workspace modules in memory for a paired original-code control.
 Add --full-baseline for the pre-FULL-config-preparation modules, or
 --config-observe for diagnostic return-site observations (not timing evidence).
+Add --storage-baseline for the pre-initialization-wait storage module.
+Add --attach-poll to replay the extra observer used in the earlier stalled runs.
+Add --storage-observe for initialization durations and worker stack sampling.
+Add --clock-safe to keep probe polling above the Windows loop clock resolution.
 Add --profile for cProfile discovery (this Python 3.12 build captures workers
 too; its cumulative timings/callers are not trustworthy main-thread evidence).
 The separate sampler explicitly selects the main thread. Fresh temporary app
@@ -88,10 +92,14 @@ report = {
     "viewport": [170, 48],
     "routes": [],
     "typing": [],
+    "attach_poll": "--attach-poll" in sys.argv,
     "temporary_profile": str(scratch),
 }
 stage = "startup"
+poll_seconds = 0.005
+heartbeat_seconds = 0.01
 samples = Counter()
+worker_samples = Counter()
 stop_sampling = threading.Event()
 main_id = threading.get_ident()
 
@@ -106,6 +114,21 @@ def sample_main():
             )
             frame = frame.f_back
         samples[(stage, tuple(stack))] += 1
+        if "--storage-observe" in sys.argv:
+            for ident, worker_frame in sys._current_frames().items():
+                if ident in (main_id, threading.get_ident()):
+                    continue
+                worker_stack = []
+                while worker_frame is not None:
+                    worker_stack.append(
+                        (
+                            worker_frame.f_code.co_filename,
+                            worker_frame.f_code.co_name,
+                            worker_frame.f_lineno,
+                        )
+                    )
+                    worker_frame = worker_frame.f_back
+                worker_samples[(stage, tuple(worker_stack))] += 1
 
 
 sampler = threading.Thread(target=sample_main, daemon=True)
@@ -120,12 +143,27 @@ async def until(predicate, seconds=60):
     deadline = time.perf_counter() + seconds
     while not predicate():
         if time.perf_counter() > deadline:
+            faulthandler.dump_traceback(file=stack_log)
             raise TimeoutError("diagnostic condition did not arrive")
-        await asyncio.sleep(0.005)
+        await asyncio.sleep(poll_seconds)
 
 
 async def main():
-    global stage
+    global stage, poll_seconds, heartbeat_seconds
+    resolution = asyncio.get_running_loop()._clock_resolution
+    if "--clock-safe" in sys.argv:
+        poll_seconds = max(poll_seconds, 2 * resolution)
+        heartbeat_seconds = max(heartbeat_seconds, 2 * resolution)
+    report.update(
+        loop_clock_resolution_seconds=resolution,
+        probe_poll_seconds=poll_seconds,
+        probe_heartbeat_seconds=heartbeat_seconds,
+    )
+    if "--storage-baseline" in sys.argv:
+        assert "tldw_chatbook.Backup_Recovery.storage_admission" not in sys.modules
+        import storage_baseline
+
+        report["baseline_revision"] = storage_baseline.BASE_REVISION
     if "--resume-baseline" in sys.argv:
         import attention_baseline_tests
 
@@ -143,6 +181,13 @@ async def main():
     from textual import events
 
     finish_config_observation = None
+    finish_storage_observation = None
+    if "--storage-observe" in sys.argv:
+        from storage_observer import install
+
+        finish_storage_observation = install(
+            OUT / f"{TAG}-initialization.json", lambda: stage
+        )
     if "--config-observe" in sys.argv:
         from config_observer import install
 
@@ -182,7 +227,7 @@ async def main():
                     stage = "leave-console"
                     app.post_message(NavigateToScreen("home"))
                     await until(lambda: type(app.screen).__name__ == "HomeScreen")
-                    await pilot.pause(.5)
+                    await pilot.pause(0.5)
                     stage = f"console-resume-{iteration}"
                     running = True
                     lags = []
@@ -193,9 +238,10 @@ async def main():
                         nonlocal attach_ms
                         while running:
                             tick = time.perf_counter()
-                            await asyncio.sleep(0.01)
+                            await asyncio.sleep(heartbeat_seconds)
                             lags.append(
-                                max(0, time.perf_counter() - tick - 0.01) * 1000
+                                max(0, time.perf_counter() - tick - heartbeat_seconds)
+                                * 1000
                             )
                             if (
                                 attach_ms is None
@@ -214,13 +260,32 @@ async def main():
                     composer.focus_draft_from(None)
                     before = composer.draft_text()
 
+                    async def attachment_completed():
+                        await until(
+                            lambda: resume_screen._console_attach_reconciled, 10
+                        )
+                        return (time.perf_counter() - started) * 1000
+
+                    attach_observer = (
+                        asyncio.create_task(attachment_completed())
+                        if "--attach-poll" in sys.argv
+                        else None
+                    )
+
                     input_started = time.perf_counter()
                     app._driver.send_message(events.Key("z", "z"))
                     try:
                         await until(lambda: composer.draft_text() != before, 10)
                     except TimeoutError:
+                        if attach_observer is not None:
+                            attach_observer.cancel()
+                            await asyncio.gather(
+                                attach_observer, return_exceptions=True
+                            )
                         faulthandler.dump_traceback(file=stack_log)
-                        projection = getattr(app.screen, "_console_readiness_config_projection", None)
+                        projection = getattr(
+                            app.screen, "_console_readiness_config_projection", None
+                        )
                         chains = []
                         for task in asyncio.all_tasks():
                             chain = []
@@ -228,7 +293,13 @@ async def main():
                             while coro is not None:
                                 frame = getattr(coro, "cr_frame", None)
                                 if frame is not None:
-                                    chain.append([Path(frame.f_code.co_filename).name, frame.f_code.co_name, frame.f_lineno])
+                                    chain.append(
+                                        [
+                                            Path(frame.f_code.co_filename).name,
+                                            frame.f_code.co_name,
+                                            frame.f_lineno,
+                                        ]
+                                    )
                                 coro = getattr(coro, "cr_await", None)
                             if any(
                                 "console" in frame[0] or frame[0] == "chat_screen.py"
@@ -243,19 +314,34 @@ async def main():
                             "composer_disabled": composer.disabled,
                             "draft_before": before,
                             "draft_after": composer.draft_text(),
-                            "attach_reconciled": getattr(app.screen, "_console_attach_reconciled", None),
-                            "sync_in_progress": getattr(app.screen, "_console_sync_in_progress", None),
+                            "attach_reconciled": getattr(
+                                app.screen, "_console_attach_reconciled", None
+                            ),
+                            "sync_in_progress": getattr(
+                                app.screen, "_console_sync_in_progress", None
+                            ),
                             "workers": [repr(w) for w in app.workers],
                             "projection_pending": getattr(projection, "pending", None),
-                            "projection_reads": repr(getattr(projection, "_reads", None)),
-                            "projection_settled": projection._settled.is_set() if projection else None,
+                            "projection_reads": repr(
+                                getattr(projection, "_reads", None)
+                            ),
+                            "projection_settled": projection._settled.is_set()
+                            if projection
+                            else None,
                             "tasks": chains,
                         }
                         raise
                     input_ms = (time.perf_counter() - input_started) * 1000
                     arrival_input_ms = (time.perf_counter() - started) * 1000
+                    report["pending_resume"] = {
+                        "iteration": iteration,
+                        "resume_to_input_ms": arrival_input_ms,
+                    }
+                    save()
                     await pilot.pause(0.5)
                     await until(lambda: app.screen._console_attach_reconciled, 10)
+                    if attach_observer is not None:
+                        attach_ms = await attach_observer
                     running = False
                     await beat
                     report["console_resume"].append(
@@ -270,6 +356,7 @@ async def main():
                             "elapsed_ms": (time.perf_counter() - started) * 1000,
                         }
                     )
+                    report.pop("pending_resume", None)
                 stage = "shutdown"
                 return
             if "--skills-only" in sys.argv:
@@ -303,13 +390,16 @@ async def main():
                     input_ms = (time.perf_counter() - start) * 1000
                     running = False
                     await heart
-                    report["skill_context"].append({
-                        "iteration": iteration, "elapsed_ms": elapsed,
-                        "input_observed_after_fetch_ms": input_ms,
-                        "max_loop_overshoot_ms": max(lags, default=0),
-                        "available": len(context.get("available_skills", [])),
-                        "blocked": len(context.get("blocked_skills", [])),
-                    })
+                    report["skill_context"].append(
+                        {
+                            "iteration": iteration,
+                            "elapsed_ms": elapsed,
+                            "input_observed_after_fetch_ms": input_ms,
+                            "max_loop_overshoot_ms": max(lags, default=0),
+                            "available": len(context.get("available_skills", [])),
+                            "blocked": len(context.get("blocked_skills", [])),
+                        }
+                    )
                     save()
                     await pilot.pause(0.1)
                 stage = "shutdown"
@@ -399,15 +489,30 @@ async def main():
                 "loop_overshoot_ms": lags,
             }
             stage = "display-verification"
-            projection = getattr(app.screen, "_console_readiness_config_projection", None)
-            estimate = app.screen._context_spend._active_console_settings_context_estimate()
+            projection = getattr(
+                app.screen, "_console_readiness_config_projection", None
+            )
+            estimate = (
+                app.screen._context_spend._active_console_settings_context_estimate()
+            )
             report["tokenizer_display"] = {
-                "prepared": getattr(projection, "_tokenizer_prepared", None) is not None,
+                "prepared": getattr(projection, "_tokenizer_prepared", None)
+                is not None,
                 "used_tokens": estimate.used_tokens,
                 "label": estimate.label,
             }
             stage = "shutdown"
+    except BaseException as error:
+        report["failure"] = {
+            "stage": stage,
+            "type": type(error).__name__,
+            "message": str(error),
+        }
+        faulthandler.dump_traceback(file=stack_log)
+        raise
     finally:
+        if finish_storage_observation is not None:
+            finish_storage_observation()
         if finish_config_observation is not None:
             try:
                 finish_config_observation()
@@ -415,6 +520,16 @@ async def main():
                 report["config_observer_error"] = repr(error)
         stop_sampling.set()
         sampler.join(1)
+        if "--storage-observe" in sys.argv:
+            (OUT / f"{TAG}-worker-samples.json").write_text(
+                json.dumps(
+                    [
+                        {"stage": name, "stack": stack, "count": count}
+                        for (name, stack), count in worker_samples.most_common()
+                    ]
+                ),
+                encoding="utf-8",
+            )
         (OUT / f"{TAG}-samples.json").write_text(
             json.dumps(
                 [

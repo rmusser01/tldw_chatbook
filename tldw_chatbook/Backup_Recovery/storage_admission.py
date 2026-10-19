@@ -244,7 +244,10 @@ class _Acquisition:
                     raise bootstrap.RecoveryRequired(
                         "recursive_authority_initialization"
                     )
-                _changed.wait(0.01)
+                # Leader retirement and local-pause cancellation both notify.
+                # Timed wakeups repeat native path checks under this shared lock
+                # and can starve the initializer that the followers need to finish.
+                _changed.wait()
         try:
             yield
         finally:
