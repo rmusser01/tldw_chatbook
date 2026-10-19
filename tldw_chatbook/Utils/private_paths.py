@@ -9,10 +9,8 @@ from __future__ import annotations
 import contextlib
 import errno
 import functools
-import secrets
 import stat
 import sys
-import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -1307,6 +1305,9 @@ def atomic_private_write_bytes(
     target_precondition: PrivateFileWritePrecondition | None = None,
 ) -> PrivatePathResult:
     """Atomically replace a private file without following its target."""
+
+    import secrets
+    import tempfile
 
     selected = lexical_path(path)
     operation = _runtime_operation(selected)
