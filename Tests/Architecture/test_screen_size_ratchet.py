@@ -98,6 +98,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: helpers. Lowered to the exact measurement: 24985/754.
     #: PR3023 current-dev integration measured 24369/740 after rebase;
     #: lower both ceilings to retain the decomposition gain.
+    #: Model-config Phase 9 adds no line here: TASK-35190's own-pair memory
+    #: went to Chat/console_settings_apply.py::remember_session_pair (with the
+    #: draft builder, now ::initial_settings_draft), TASK-33006.20's rail-focus
+    #: footer to Console_Modules/left_rail.py::rail_focus_shortcuts and
+    #: TASK-33005.7's composer setup copy to Chat/console_display_state.py::
+    #: console_setup_blocked_reason. Dev 69771c1811 measured 24378/737 (over
+    #: this row); with Phase 9, 24332/736. The row is left as it was.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24369, 740),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
