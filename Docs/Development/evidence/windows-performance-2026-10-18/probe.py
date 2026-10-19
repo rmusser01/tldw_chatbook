@@ -189,6 +189,10 @@ async def main():
         probe_poll_seconds=poll_seconds,
         probe_heartbeat_seconds=heartbeat_seconds,
     )
+    if "--return-baseline" in sys.argv:
+        import return_baseline
+
+        report["baseline_revision"] = return_baseline.BASE_REVISION
     if "--subject-baseline" in sys.argv:
         import subject_baseline
 

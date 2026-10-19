@@ -1,5 +1,21 @@
 # Lessons: what counts as evidence a change works
 
+## An idle event loop can still have blocked keyboard dispatch (TASK-35614, 2026-10-19)
+
+**Incident.** A Windows Console return took 2.29 seconds while 152 of 178
+main-thread samples were in the event-loop poll. Textual 8.2 awaited the async
+attach callback in `Screen._invoke_and_clear_callbacks`, so the screen message
+pump could not process a typed key during the native-read await. A mounted test
+holding reconciliation reproduced the missing key despite continuing loop
+progress; dispatching through a retained finite view worker let the key through
+without acknowledging runtime attachment early.
+
+**What to do.** Measure a real posted key separately from loop heartbeat and
+attachment completion. Inspect the callback's awaiting message pump when CPU
+samples are mostly idle. Moving work off the UI thread alone does not establish
+input responsiveness; retain native retirement and visit fences when changing
+the async caller.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.

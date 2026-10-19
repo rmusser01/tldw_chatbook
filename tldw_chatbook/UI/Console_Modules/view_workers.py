@@ -13,6 +13,7 @@ CONSOLE_BROWSER_WORKER_GROUPS = frozenset(
 _GROUPS = frozenset(
     {
         "console-sync",
+        "console-attach-reconciliation",
         "console-context-presentation",
         "console-readiness-config",
         "console-readiness-publication",

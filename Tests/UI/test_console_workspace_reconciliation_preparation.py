@@ -352,6 +352,9 @@ async def test_new_attach_visit_defers_resume_while_original_read_is_held(
     screen._reconcile_console_after_attach = (
         lambda: ChatScreen._reconcile_console_after_attach(screen)
     )
+    # This domain test awaits reconciliation directly; mounted tests cover
+    # the managed launcher and keyboard dispatch during its native await.
+    screen._start_console_attach_reconciliation = screen._reconcile_console_after_attach
 
     def resumed_body():
         controller._reconcile_console_session_with_registry()

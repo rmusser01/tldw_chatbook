@@ -2504,12 +2504,16 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = self.SEND_READY_TOOLTIP
         else:
             send_button.tooltip = "Type a message to send."
-        send_button.set_class(send_ready, "console-action-primary")
-        send_button.set_class(not send_ready, "console-action-subdued")
-        send_button.set_class(not send_ready, "console-action-disabled")
-        send_button.set_class(send_ready, "console-send-ready")
-        send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(effective_send_blocked, "console-send-blocked")
+        send_button.update_classes(
+            {
+                "console-action-primary": send_ready,
+                "console-action-subdued": not send_ready,
+                "console-action-disabled": not send_ready,
+                "console-send-ready": send_ready,
+                "console-send-inactive": not has_draft,
+                "console-send-blocked": effective_send_blocked,
+            }
+        )
         # TASK-33625.1: a queue state arrives as `queue_blocked_reason`, never
         # as setup copy, so it cannot become a link into the setup wizard.
         self.set_class(
@@ -2550,9 +2554,13 @@ class ConsoleComposerBar(Horizontal):
         # control that is never actionable while shown, so the dead copy
         # goes instead of the budget.
         stop_button.tooltip = "Stop this tab's run." if self._stop_available else None
-        stop_button.set_class(self._stop_available, "console-stop-active")
-        stop_button.set_class(not self._stop_available, "console-stop-idle")
-        stop_button.set_class(not self._stop_available, "console-action-disabled")
+        stop_button.update_classes(
+            {
+                "console-stop-active": self._stop_available,
+                "console-stop-idle": not self._stop_available,
+                "console-action-disabled": not self._stop_available,
+            }
+        )
         stop_button.styles.display = "block" if self._stop_available else "none"
         # Redirect requires active generation; a pending hook exposes only Stop.
         # TASK-28227: Redirect appears only while this tab's run is active.

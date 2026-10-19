@@ -74,7 +74,7 @@ def _full_screen(screen, monkeypatch):
         "_sync_console_workspace_context",
         "_sync_console_rail_visibility_if_changed",
         "_dispatch_console_rail_preference_prune",
-        "_reconcile_console_after_attach",
+        "_start_console_attach_reconciliation",
     ):
         setattr(screen, name, no_op)
     screen._sync_console_native_session_tabs = async_no_op

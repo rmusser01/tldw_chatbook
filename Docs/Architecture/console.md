@@ -57,6 +57,22 @@ scope (TASK-35613). Each loads current config once, reuses an enclosing scope wh
 present, and drops the memo on return or failure. The next independent call reads
 again; config path posture checks and native action admission remain unchanged.
 
+Attach/resume reconciliation launches from a synchronous after-refresh callback
+into the finite `console-attach-reconciliation` view worker (TASK-35614).
+Textual awaits async after-refresh callbacks inside the screen message pump;
+holding that pump through native preparation prevented even draft typing.
+The launcher deduplicates without cancelling an older visit's physical read.
+Existing visit fences, bounded retries, runtime answerability and original
+native-read retirement remain in the reconciler. The group participates in the
+same exact-worker capture and view/App shutdown drain as other finite workers.
+Typing remains session-owned while the reconciliation awaits; Send retains its
+existing Preparing, fresh configuration and admission checks.
+The resume-triggered hook indicator refresh is scheduled after reconciliation,
+avoiding a duplicate read/repaint during the FULL await. Session-change and Send
+refreshes remain independent. A failed attach can retain the previous indicator
+count until reconciliation or explicit Hooks/Send refresh; permission checks still
+read fresh state on the action path.
+
 CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
@@ -71,6 +87,9 @@ Textual's live `Selector.check(subject)` before its ancestor scan (TASK-35613).
 Candidates remain present for refresh-flag computation; successful prechecks still
 delegate the full match. No pseudo-state result is cached, and DOM query matching
 is unchanged. Upstream-comparison tests restore both application and matcher seams.
+Composer Send/Stop class changes use Textual's native `update_classes` batch,
+avoiding intermediate style refreshes while preserving unrelated classes and the
+final disabled, tooltip, queue and setup states (TASK-35614).
 
 ## Screen layout
 

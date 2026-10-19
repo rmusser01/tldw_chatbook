@@ -261,7 +261,9 @@ async def test_idle_stop_button_has_no_unreachable_tooltip(request):
             can_save_chatbook=False,
             send_blocked=True,
         )
-        await pilot.pause(0.1)
+
+        # This synchronous widget projection does not start a runtime run.
+        # A later app refresh correctly restores the real idle state.
 
         assert stop_button.styles.display == "block"
         assert stop_button.tooltip == "Stop this tab's run."
