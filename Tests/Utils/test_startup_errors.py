@@ -80,7 +80,9 @@ def test_shared_writable_guidance_names_chmod_command():
     assert "shared_writable_parent" in text
 
 
-def test_sticky_home_guidance_recommends_real_home_not_chmod():
+def test_sticky_home_guidance_recommends_real_home_not_chmod(monkeypatch):
+    # TASK-35312: guidance branches per platform; this pins the POSIX copy.
+    monkeypatch.setattr(startup_errors, "_is_windows", lambda: False)
     text = startup_errors.format_private_path_error(
         _refusal(
             "missing_component_in_shared_sticky_parent",
@@ -216,9 +218,11 @@ def test_config_import_prints_diagnostic_before_raising(tmp_path: Path) -> None:
 # --- Qodo remediation: safe copy-paste commands and honest alternatives -------
 
 
-def test_repair_commands_shell_quote_hostile_paths():
+def test_repair_commands_shell_quote_hostile_paths(monkeypatch):
     """Paths with spaces/metacharacters must survive copy-paste as one operand."""
 
+    # TASK-35312: shlex quoting is the POSIX repair path; pin it there.
+    monkeypatch.setattr(startup_errors, "_is_windows", lambda: False)
     hostile = Path("/home/u/my configs/x;touch pwned")
     text = startup_errors.format_private_path_error(
         _refusal("shared_writable_parent", offender_path=hostile)
@@ -269,3 +273,88 @@ def test_default_alternative_mentions_data_dir_escape_hatch():
         _refusal("shared_writable_parent")
     )
     assert "data_dir" in text
+
+
+# --- TASK-35312: Windows-appropriate guidance --------------------------------
+#
+# Console UAT 2026-10-17 finding 3: on Windows the guard reads real NTFS
+# ACLs (windows_files._acl_mode), and a machine whose %TEMP% genuinely
+# grants other principals write is refused CORRECTLY -- but the repair
+# guidance suggested `chmod`/`sudo chown` and `$VAR=...` shell syntax a
+# Windows user cannot use. The refusal semantics stay fail-closed
+# (ADR-029/ADR-126); only the guidance branches per platform.
+
+
+def _windows(monkeypatch):
+    monkeypatch.setattr(startup_errors, "_is_windows", lambda: True)
+
+
+def test_windows_shared_writable_guidance_uses_icacls_not_chmod(monkeypatch):
+    _windows(monkeypatch)
+    text = startup_errors.format_private_path_error(
+        _refusal(
+            "shared_writable_parent",
+            offender_path=Path(r"C:\Users\ubuntu\.config"),
+        )
+    )
+
+    # chmod cannot change Windows ACLs; the Windows branch must not offer it.
+    assert "chmod" not in text
+    # The ACL inspection command names the blocked directory.
+    assert 'icacls "C:\\Users\\ubuntu\\.config"' in text
+    # The cause is explained in Windows terms.
+    assert "write access" in text
+    # The escape hatch uses PowerShell env syntax, not POSIX assignment.
+    assert "$env:TLDW_CONFIG_PATH" in text
+    assert 'TLDW_CONFIG_PATH="$HOME' not in text
+
+
+def test_windows_temp_offender_explains_shared_temp(monkeypatch):
+    _windows(monkeypatch)
+    monkeypatch.setattr(
+        startup_errors, "_windows_temp_dir", lambda: r"C:\Users\ubuntu\AppData\Local\Temp"
+    )
+    text = startup_errors.format_private_path_error(
+        _refusal(
+            "shared_writable_parent",
+            offender_path=Path(r"C:\Users\ubuntu\AppData\Local\Temp"),
+        )
+    )
+
+    assert "TEMP" in text
+    assert "shared with other users" in text
+
+
+def test_windows_repair_hint_has_no_mechanical_one_liner(monkeypatch):
+    _windows(monkeypatch)
+    # There is no safe single command that repairs an unknown ACL grant;
+    # the guidance block carries the icacls detail instead of a fake fix.
+    assert startup_errors.private_path_repair_hint(
+        _refusal("shared_writable_parent", offender_path=Path(r"C:\Temp"))
+    ) is None
+    assert startup_errors.private_path_repair_hint(
+        _refusal("untrusted_directory_owner", offender_path=Path(r"C:\Temp"))
+    ) is None
+
+
+def test_windows_ownership_guidance_mentions_security_settings(monkeypatch):
+    _windows(monkeypatch)
+    text = startup_errors.format_private_path_error(
+        _refusal("untrusted_directory_owner", offender_path=Path(r"C:\Users\other"))
+    )
+
+    assert "sudo" not in text
+    assert "Properties" in text or "Security" in text
+
+
+def test_posix_branch_stays_byte_identical(monkeypatch):
+    monkeypatch.setattr(startup_errors, "_is_windows", lambda: False)
+    text = startup_errors.format_private_path_error(_refusal("shared_writable_parent"))
+
+    # Expected strings derive from the same Path the refusal carries, so
+    # the assertion holds on POSIX CI and on a Windows dev box alike.
+    posix_offender = shlex.quote(str(Path("/home/ubuntu/.config")))
+    assert f"chmod g-w,o-w -- {posix_offender}" in text
+    assert "TLDW_CONFIG_PATH=" in text and "tldw-cli" in text
+    assert "$env:TLDW_CONFIG_PATH" not in text
+    assert "icacls" not in text
