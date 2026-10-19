@@ -171,7 +171,6 @@ from ..Console_Modules.wiring import (
 )
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
-from ..Console_Modules import config_sync
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -17527,6 +17526,8 @@ class ChatScreen(BaseAppScreen):
         ``NoMatches``, and killed the app -- after which every later
         ``post_message`` was silently dropped and navigation was dead.
         """
+        from ..Console_Modules import config_sync  # Off the UI-ready path.
+
         config_sync.begin_console_sync(self)  # TASK-33620.15.1 cadence.
         if _console_screen_is_torn_down(self):
             # The re-arm below is skipped for the same reason; clearing the
@@ -17888,6 +17889,8 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
+            from ..Console_Modules import config_sync
+
             # TASK-34789: work ending mid-paint wrote rows this paint missed,
             # and nothing else repaints a finished turn (starters only ask for
             # this poll, a no-op while it runs). Only a paint begun with no live
