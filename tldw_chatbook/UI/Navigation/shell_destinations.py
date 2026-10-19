@@ -175,6 +175,15 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         palette_aliases=("meeting", "record", "transcribe"),
         navigation_priority=75,
     ),
+    ShellDestination(
+        "kanban",
+        "Kanban",
+        "kanban",
+        "A keyboard-first kanban board of columns and cards over the local Kanban store.",
+        "Open the kanban board.",
+        palette_aliases=("board", "kanban board"),
+        navigation_priority=80,
+    ),
 )
 
 _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
@@ -210,6 +219,7 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "settings": "f4",
         "research": "f5",
         "meetings": "f7",
+        "kanban": "f8",
     }
 )
 

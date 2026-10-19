@@ -12,6 +12,7 @@ from tldw_chatbook.Constants import (
     TAB_LLM,
     TAB_MCP,
     TAB_MEETINGS,
+    TAB_KANBAN,
     TAB_RESEARCH_WORKSPACE,
 )
 from .shell_destinations import resolve_shell_route
@@ -150,6 +151,12 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         TAB_MEETINGS,
         "tldw_chatbook.UI.Screens.meetings_screen",
         "MeetingsScreen",
+    ),
+    TAB_KANBAN: ScreenRoute(
+        "kanban",
+        TAB_KANBAN,
+        "tldw_chatbook.UI.Kanban.kanban_board_screen",
+        "KanbanBoardScreen",
     ),
     "mcp": ScreenRoute(
         "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"

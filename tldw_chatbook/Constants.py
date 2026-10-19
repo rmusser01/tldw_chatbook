@@ -42,6 +42,7 @@ TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
 TAB_MEETINGS = "meetings"
+TAB_KANBAN = "kanban"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
@@ -136,6 +137,7 @@ TAB_DISPLAY_LABELS = {
     TAB_SKILLS: "Skills",
     TAB_SETTINGS: "Settings",
     TAB_MEETINGS: "Meetings",
+    TAB_KANBAN: "Kanban",
 }
 
 
