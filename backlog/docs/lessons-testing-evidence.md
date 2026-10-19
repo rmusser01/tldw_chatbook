@@ -36,6 +36,28 @@ builders made the same call, and fixing only the first would have moved the wait
 
 **Follow-up (2026-10-19).** That fix was not enough: after it merged the test failed 7 times in 31 runs, every time at a read on the same full UI sync that the first stacks never reached. A pin that runs the whole sync with the rebuild starting at its transcript step then found two more, and fixing those exposed another. Pin the whole path the stack ran on, from the await where the hold can begin, not only the read the stack named; and before making a live read defer, check how often ordinary work holds its lock (here: constantly, so the sync deferred on every pass and another test broke 5 of 5).
 
+## A loop's close does not wait for its executor; a neighbour test passed on that (TASK-33666, 2026-10-19)
+
+**Incident.** TASK-33666's stop poll ended a silent provider's read. On the
+threaded transport that cancels only the `asyncio.to_thread` wrapper, and the
+thread stays in `chat_api_call`. The model lifeline finished its ADR-134
+operation when its loop closed. `loop.close()` shuts the default executor down
+with `wait=False`, so the capacity registry showed the slot free, and the chat
+start released its automatic claim, while the provider call still ran. The
+base-vs-head comparison of PR #3169 caught it: a claim test was 3 of 3 red at
+the head and green at the base. The fix awaits `loop.shutdown_default_executor()`
+in cleanup. That turned `test_hosted_partial_call_cancellation_never_executes`
+red. Its `assert not server.stall_timed_out` had passed at the base only
+because it read the flag 0.5 s into the server's 2 s window. Timed at the base,
+the response close landed at stall start + 2.005 s, after the server had
+already given up.
+
+**What to do.** Release accounting for physical work when the work ends, not
+when its loop closes: await `shutdown_default_executor()` before `close()`
+whenever a loop's lifetime gates a slot. When a fix turns a "closed promptly"
+test red, print the monotonic times of the close and of the window at the base
+before you restore the old timing.
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule
