@@ -157,6 +157,10 @@ async def test_app_retention_retires_its_constructed_database(tmp_path, local_ro
         return report
 
     monkeypatch.setattr(change_retention, "prune_change_history", prune)
+    # The pass prunes an existing runs DB only (TASK-34100.16.1).
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    AgentRunsDB(tmp_path / "agent_runs.db").close()
     result = await asyncio.to_thread(
         change_retention.run_retention_for_app,
         tmp_path / "chachanotes.db",
@@ -169,6 +173,69 @@ async def test_app_retention_retires_its_constructed_database(tmp_path, local_ro
         assert observed[0].get_run(run_ids[0])["conversation_id"] == "kept"
     finally:
         observed[0].close()
+
+
+def test_app_retention_never_creates_an_absent_runs_db(tmp_path, local_root):
+    """No runs DB means nothing to prune; the pass must not create one.
+
+    TASK-34100.16.1: the startup pass ran 65 s after launch and created
+    ``agent_runs.db`` on a profile that had none. Backup Review lists that
+    store as unused, so a Review taken in the first minute was voided at
+    Create with ``scope_changed``.
+    """
+    runs = tmp_path / "agent_runs.db"
+
+    result = change_retention.run_retention_for_app(
+        tmp_path / "chachanotes.db", service=SimpleNamespace(available=True)
+    )
+
+    assert result is None
+    assert not runs.exists(), "the retention pass created the runs store"
+    assert not list(tmp_path.glob("agent_runs.db*"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_sync_log_retention_retires_its_worker_connections(
+    tmp_path, local_root, monkeypatch, fail
+):
+    """The startup sync-log pass leaves no pool-thread handle holding storage.
+
+    TASK-34100.16.1: each store's cached connection on an executor thread kept
+    a storage lease that a backup's local pause can never drain, so every
+    Create backup after the 65 s pass ended in ``admission_timeout``.
+    """
+    from loguru import logger
+
+    from tldw_chatbook import app_lifecycle
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    chat = CharactersRAGDB(tmp_path / "chat.db", "test")
+    media = MediaDatabase(tmp_path / "media.db", client_id="test")
+    ran = []
+    for db in (chat, media):
+        original = db.delete_sync_log_entries_older_than
+
+        def prune(cutoff, original=original, db=db):
+            ran.append((db, threading.current_thread()))
+            deleted = original(cutoff)
+            if fail:
+                raise ValueError("prune failed after its delete")
+            return deleted
+
+        monkeypatch.setattr(db, "delete_sync_log_entries_older_than", prune)
+    monkeypatch.setattr(app_lifecycle, "get_cli_setting", lambda *args, **kwargs: 90)
+    host = SimpleNamespace(chachanotes_db=chat, media_db=media, loguru_logger=logger)
+    try:
+        await app_lifecycle.LifecycleMixin._perform_sync_log_retention(host)
+
+        assert [db for db, _ in ran] == ([chat] if fail else [chat, media])
+        assert all(thread is not threading.current_thread() for _, thread in ran)
+        assert not worker_leases(chat), "ChaChaNotes worker kept its connection"
+        assert not worker_leases(media), "Media worker kept its connection"
+    finally:
+        chat.close_connection()
+        media.close_connection()
 
 
 @pytest.mark.asyncio
