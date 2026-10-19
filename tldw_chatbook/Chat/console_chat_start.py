@@ -696,6 +696,9 @@ class ConsoleChatStartCoordinator:
                             if self._active.get(request.session_id) is item:
                                 self._active.pop(request.session_id, None)
                         finally:
+                            await item.capacity_owner.drain_automatic_primary(
+                                request.conversation_id
+                            )
                             item.capacity_owner.release_automatic_primary(
                                 request.session_id, item.token
                             )

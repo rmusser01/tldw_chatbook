@@ -2494,8 +2494,14 @@ class _ModelCallLifeline:
                     await asyncio.gather(*pending, return_exceptions=True)
                 await self.loop.shutdown_asyncgens()
             finally:
-                if self._close_current_loop is not None:
-                    await self._close_current_loop()
+                try:
+                    if self._close_current_loop is not None:
+                        await self._close_current_loop()
+                finally:
+                    # A cancelled to_thread leaves its worker running (the
+                    # generic transport's chat_api_call): the model operation
+                    # stays owned until it returns, as ADR-134 requires.
+                    await self.loop.shutdown_default_executor()
         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
             logger.warning("model-call loop cleanup failed")
         finally:

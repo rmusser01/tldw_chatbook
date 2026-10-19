@@ -337,6 +337,35 @@ class ConsoleFleetWakeCoordinator:
         del self._automatic_primary_claims[session_id]
         return True
 
+    async def drain_automatic_primary(
+        self, conversation_id: str, *, children: bool = False
+    ) -> None:
+        """Wait, before a release, until the conversation's executions settle.
+
+        ADR-134: a Stop settles a run while its provider worker may still run.
+        Children have their own capacity, so only a holder that owns them (a
+        goal iteration) waits for them. A cancelled awaiter keeps waiting; a
+        disposed runtime admits nothing, so its wait ends.
+        """
+
+        def busy() -> bool:
+            try:
+                capacity = self._controller._agent_bridge.runtime_capacity
+                executions = capacity.snapshot().executions
+            except (AttributeError, RuntimeError):
+                return False
+            return any(
+                entry.conversation_id == conversation_id
+                and (children or not entry.child)
+                for entry in executions
+            )
+
+        while not self._disposed and busy():
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                continue
+
     def wire(
         self,
         *,
@@ -1119,6 +1148,7 @@ class ConsoleFleetWakeCoordinator:
                 if authorization is not None:
                     await self._finish_attempt(authorization, returned)
             finally:
+                await self.drain_automatic_primary(conversation_id)
                 delivery = self._active.get(conversation_id)
                 if delivery is not None and (
                     slot_token is None or delivery.slot_token is slot_token
