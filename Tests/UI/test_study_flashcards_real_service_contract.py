@@ -240,6 +240,32 @@ async def _wait_for_study_workers(pilot, app, *, what: str) -> None:
     raise AssertionError(f"timed out after {_WAIT_SECONDS:.0f}s waiting for {what}")
 
 
+async def _open_flashcards(app, pilot):
+    """Open Study ▸ Flashcards; return its controller once its first load is done.
+
+    Not as soon as the view shows: its ``initialize_view`` worker is still
+    loading decks then, and a deck created alongside it set the picker's
+    value before the picker had composed (``NoMatches: '#label'``).
+    """
+    await _wait_until(pilot, lambda: _study_screen_up(app), what="the Study screen")
+    await pilot.click("#view-flashcards-btn")
+    await _wait_until(
+        pilot, lambda: _flashcards_view_up(app), what="the Flashcards view"
+    )
+    await _wait_for_study_workers(pilot, app, what="the Flashcards view's first load")
+    return app.screen.query_one(StudyWindow).flashcards_controller
+
+
+async def _create_deck(app, pilot, controller, name: str) -> str:
+    """Create a deck through the controller; return its id once it is selected."""
+    app.screen.query_one("#new-deck-name-input", Input).value = name
+    await controller.create_deck()
+    await _wait_for_study_workers(pilot, app, what="the deck switch")
+    deck_id = controller._selected_deck_id()
+    assert deck_id is not None, "the created deck was not selected"
+    return deck_id
+
+
 def _card_list_labels(list_view: ListView) -> list[str]:
     labels: list[str] = []
     for item in list_view.children:

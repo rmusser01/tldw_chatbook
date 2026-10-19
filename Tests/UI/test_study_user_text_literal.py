@@ -16,40 +16,23 @@ picker test types into the real dropdowns to pin that.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Input, ListView, Select, Static
+from textual.widgets import ListView, Select, Static
 
 from Tests.UI.test_study_flashcards_real_service_contract import (  # noqa: F401
     _build_real_study_app,
     _card_list_labels,
+    _create_deck,
     _disable_full_app_splash,
     _flashcards_view_up,
+    _open_flashcards,
     _study_screen_up,
     _text,
     _wait_for_study_workers,
     _wait_until,
 )
 from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeType
-from tldw_chatbook.UI.Study_Window import StudyWindow
 
 pytestmark = pytest.mark.bootstrap_profile
-
-
-async def _open_flashcards(app, pilot):
-    await _wait_until(pilot, lambda: _study_screen_up(app), what="the Study screen")
-    await pilot.click("#view-flashcards-btn")
-    await _wait_until(
-        pilot, lambda: _flashcards_view_up(app), what="the Flashcards view"
-    )
-    return app.screen.query_one(StudyWindow).flashcards_controller
-
-
-async def _create_deck(app, pilot, controller, name: str) -> str:
-    app.screen.query_one("#new-deck-name-input", Input).value = name
-    await controller.create_deck()
-    await _wait_for_study_workers(pilot, app, what="the deck switch")
-    deck_id = controller._selected_deck_id()
-    assert deck_id is not None, "the created deck was not selected"
-    return deck_id
 
 
 async def _type_into_open_picker(pilot, select: Select, keys: str) -> None:
@@ -91,6 +74,8 @@ async def test_workspace_name_with_markup_brackets_paints_literally_in_the_scope
         banner_name = app.screen.query_one("#study-scope-workspace-name", Static)
         assert banner_name.visible
         assert _text(banner_name) == f"Workspace: {name}"
+        # Let the scope change's reloads finish before the app is torn down.
+        await _wait_for_study_workers(pilot, app, what="the workspace scope's reloads")
 
 
 @pytest.mark.asyncio
