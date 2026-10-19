@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-19 19:37'
-updated_date: '2026-10-19 20:04'
+updated_date: '2026-10-19 21:14'
 labels: []
 dependencies: []
 ---
@@ -33,6 +33,8 @@ ADR required: no. ADR path: N/A. Reason: routine optimization of existing synchr
 2. Add failing regressions, scope independent derivations using the existing synchronous memo, and reject impossible final pseudo states at the matcher seam.
 3. Verify dynamic style fidelity and fresh config behavior; run serial native Windows benchmark and ABBA return profiles against aeaac674e3b19e2af5989be2a145a0316856248a.
 4. Review, document honest results, update PR, and clean only owned diagnostic fixtures.
+
+Verification follow-up after syncing the completed remote work: rerun config/CSS/return compatibility, then repeat a same-screen CSS benchmark and serial ABBA returns on current head. Restore only the two original derivation method bodies and original CSS helper in the diagnostic control, preserving later Console return and measured-spend fixes in both arms. Record all results and update PR3166. No new ADR: diagnostic-only control; product/security contracts unchanged.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -44,4 +46,11 @@ Warm full-screen CSS improved 165.34 to 129.41 ms (21.7%), 526 widgets and zero 
 A concurrent shared-checkout rebase required an isolated managed worktree. Controls pin f152dfc4; final compatibility/profile evidence includes 1bebf20b. See Docs/Development/evidence/windows-performance-2026-10-18/SUBJECT_RESULTS.md and updated Console architecture/verification lessons. PR update pending.
 
 Published fixes and evidence to PR #3166, updated its description with mixed end-to-end results and retained outliers, and removed all 12 exact owned private fixture directories. Auto-merge remains disabled for the new head pending fresh review. Final combined-code profile/control both completed all six returns with no guard violations.
+
+Current-code confirmation on 3742efae: 19 targeted native config/CSS/return/spend checks passed. Four alternating same-screen CSS rounds improve warm application from 144.37 to 117.70 ms (18.5%), with zero style differences across 526 widgets. The scoped control restores only the two original derivation methods and CSS helper, preserving later return/spend fixes; all other ChatScreen AST is checked identical.
+
+Serial ABBA input medians were 165.69 / 168.12 / 233.70 / 195.87 ms: no overall latency improvement is verified, and updated tails worsen. All 24 drafts were retained, all attaches completed, all five exits were zero, and network/profile guard counts were zero. Seven safety modules remain identical to pre-optimization sources.
+
+Independent review found no product blocker; its minor benchmark-receipt validation finding was fixed and negative-tested. Helper/test lint and formatting pass; legacy debt is unchanged. See SUBJECT_CONFIRMATION.md, subject-confirmation.json and exact exit receipts. No new ADR or product/security change in this confirmation. Six exact completed fixture directories were cleaned.
+
 <!-- SECTION:NOTES:END -->

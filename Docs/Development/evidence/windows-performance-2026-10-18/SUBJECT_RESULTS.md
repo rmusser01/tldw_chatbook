@@ -1,5 +1,10 @@
 # Config derivation and CSS subject matching — TASK-35613
 
+Current-code repeat: [SUBJECT_CONFIRMATION.md](SUBJECT_CONFIRMATION.md) preserves
+the later Console return fix in both comparison arms. It confirms 18.5% faster
+warm CSS application and 19 passing targeted checks, while recording flat/slower
+overall input results rather than claiming a general latency gain.
+
 Baseline: `f152dfc4a6c4fbf2fcd277543757a46a0d2874e2`, the rebased PR head.
 Python 3.12.10, Textual 8.2.8, native Windows, 170×48 headless viewport.
 

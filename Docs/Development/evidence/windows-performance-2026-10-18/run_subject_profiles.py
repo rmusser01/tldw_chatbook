@@ -24,7 +24,10 @@ if "--final" in sys.argv:
     runs = (("final", False),)
 if "--final-control" in sys.argv:
     runs = (("final-control", True),)
+confirm = "--confirm" in sys.argv
 for tag, original in runs:
+    if confirm:
+        tag = "verify-" + tag
     command = [
         sys.executable,
         str(OUT / "probe.py"),
@@ -35,10 +38,10 @@ for tag, original in runs:
         "--tag",
         f"subject-{tag}",
     ]
-    if tag == "benchmark":
+    if tag in ("benchmark", "verify-benchmark"):
         command.append("--subject-benchmark")
     if original:
-        command.append("--subject-baseline")
+        command.append("--subject-scoped-baseline" if confirm else "--subject-baseline")
     receipt = {
         "tag": tag,
         "original": original,
