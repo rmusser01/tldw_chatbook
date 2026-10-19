@@ -45,7 +45,7 @@ TASK-34982 describes such a path: the transcript poll paints inside its timer's 
 
 Locally on dev 69771c1811 the test passed 5 of 5 sequential runs (75-107 s each).
 
-2026-10-19 UTC, cause (AC #1, in the product): the TASK-34982 path, whose notes have the detail. At app shutdown the Console screen's teardown stops the transcript poll's set_interval timer before the screen's children are gathered; a paint removing rows at that moment has its cancel reach the rows' own pump tasks, they stay attached with cancelled tasks, and ConsoleTranscript's gather raises a bare CancelledError. That a paint was removing rows in 39151121023 is inferred from the matching mechanism and signature; its log names no timer.
+2026-10-19 UTC, cause (AC #1, in the product): the TASK-34982 path, whose notes have the detail. At app shutdown the Console screen's teardown stops the transcript poll's set_interval timer before the screen's children are gathered; a paint removing rows at that moment has its cancel reach the rows' own pump tasks, they stay attached with cancelled tasks, and ConsoleTranscript's gather raises a frameless CancelledError (an earlier gather had consumed each row's saved error). That a paint was removing rows in 39151121023 is inferred from the matching mechanism and signature; its log names no timer.
 
 Fix and pin (AC #3): PR #3167 (TASK-34982). Its test_stopping_the_paint_timer_mid_removal_still_removes_the_row fails on dev with this task's CancelledError at run_test shutdown.
 
