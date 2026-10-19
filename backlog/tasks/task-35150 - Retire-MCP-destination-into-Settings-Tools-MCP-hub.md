@@ -51,7 +51,10 @@ old meaning in every other category; per-mode footer hints ride the category
 footer-shortcuts path. Spec:
 `Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md`; ADR:
 `backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md`
-(renumbered from 233 — numbers 233-236 are claimed on sibling branches).
+(renumbered twice: drafted as 233, moved 233 → 237 on 2026-10-16 because
+233-236 are claimed on sibling branches; 237 was then contested by open
+PR #3157 and dev merged 238-239 as canvas ADRs, so the final number is
+240 — see the ADR's own renumber note).
 
 **Key decisions.**
 - Footer registration uses a last-writer-wins tail-call: the pane re-asserts
@@ -85,14 +88,22 @@ references); ~18 test files ported (destination shells, navigation aliases,
 footer hints, permissions handoff, retired-destination root state, recovery
 review, visual parity, smoke/perf guards).
 
-**Ratchet measurement (spec A2).** `settings_screen.py` grew +211 lines on
-this branch (36,444 → 36,655; 36,641 before the final-review view-state
-fix) and is exempt from the module-size ratchet by
-design (no row yet — the #3057 pin never landed first). The 12 red ratchet
-modules were already red at the pristine merge base — line-count-proven on
-untouched files (app_lifecycle 2337 > 2134, app.py 5824 > 5712,
-mcp_workbench 6878 > 6760) — so no offset extraction was warranted; the
-`mcp-defaults` deletion offset stands on its own.
+**Ratchet measurement (spec A2) — corrected to the final state.** An
+earlier draft of this note wrongly recorded `settings_screen.py` as exempt
+(no ratchet row). In fact BOTH rows pre-existed this branch (added
+2026-10-05, TASK-33007.8: `app.py` 5,710, `settings_screen.py` 35,818), so
+the branch had to fit under them: two extraction commits moved the
+Tools-hub glue and tools-domain helpers into `settings_tools_hub.py` and
+`LEGACY_ROUTE_NAV_CONTEXTS` into `shell_destinations.py`. Final counts:
+`settings_screen.py` 35,792/35,818 and `app.py` 5,707/5,710, both rows
+green (the pre-merge review's verb-branch fix then lands
+`settings_screen.py` exactly at 35,818/35,818 — still at, not over, the
+row). The 12 red ratchet modules were already red at the pristine merge
+base — line-count-proven on untouched files (app_lifecycle 2337 > 2134,
+app.py 5824 > 5712, mcp_workbench 6878 > 6760) — which is why the reds
+alone demanded no extraction; the two above were forced by the
+pre-existing rows, and the `mcp-defaults` deletion offset stands on its
+own.
 
 **Category-count note (spec A1).** Category-count neutral — `MCP_DEFAULTS`
 out, `TOOLS` in, enum stays 33 — so TASK-35020's rail-size guard can be pinned

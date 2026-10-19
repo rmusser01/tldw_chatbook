@@ -34107,6 +34107,15 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # The pane-held `r` binding wins while focus is inside the pane;
+            # this branch keeps the advertised key working when focus is
+            # outside it (e.g. on the category rail) -- force-reload the
+            # workbench (ADR-240), not the draft revert path.
+            pane = self._tools_hub_pane()
+            if pane:
+                pane.refresh_now()
+            return
         category = self._active_category_id()
         if category is SettingsCategoryId.PRIVACY_SECURITY and getattr(
             self, "_raw_cli_save_pending", False
@@ -34364,6 +34373,14 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # The pane-held `t` binding wins while focus is inside the pane;
+            # this branch keeps the advertised key working outside it (e.g.
+            # the rail), not the stub toast (ADR-240, test_settings_tools_hub).
+            pane = self._tools_hub_pane()
+            if pane:
+                pane.test_selected_tool()
+            return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
             detail, summary, passed = self._provider_readiness_test_report()
@@ -34521,6 +34538,15 @@ class SettingsScreen(BaseAppScreen):
                 never arrives with a text entry focused).
         """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # The pane-held `a` binding wins while focus is inside the pane;
+            # this branch keeps the advertised key working when focus is
+            # outside it (e.g. on the category rail) -- open the hub's
+            # Add-server form (ADR-240), not the RAG set-active flow.
+            pane = self._tools_hub_pane()
+            if pane:
+                pane.add_server()
             return
         if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
             self._dispatch_personal_context_action("add_record")

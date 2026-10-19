@@ -274,14 +274,18 @@ least that many lines; if it does not, extract the remainder into
 `settings_tools_hub.py` before merge. Record the before/after measurement in
 the task's Implementation Notes.
 
-> Resolved 2026-10-16 (closeout): `settings_screen.py` is exempt from the
-> ratchet by design (it has no ratchet row — the #3057 pin never landed
-> before this branch); the measured branch delta is +190 lines
-> (36,444 → 36,634). The 12 red ratchet modules were already red at the
-> pristine merge base — line-count-proven on untouched files (app_lifecycle
-> 2337 > 2134, app.py 5824 > 5712, mcp_workbench 6878 > 6760) — so no
-> offset extraction was warranted; the `mcp-defaults` deletion stands on
-> its own.
+> Resolved 2026-10-16 (closeout; corrected 2026-10-18 to the final state —
+> an earlier draft of this note wrongly claimed an exemption): both ratchet
+> rows pre-existed the branch (added 2026-10-05, TASK-33007.8: `app.py`
+> 5,710, `settings_screen.py` 35,818), so the branch fit under them via two
+> extraction commits (Tools-hub glue + tools-domain helpers →
+> `settings_tools_hub.py`; `LEGACY_ROUTE_NAV_CONTEXTS` →
+> `shell_destinations.py`), landing at final counts `settings_screen.py`
+> 35,792/35,818 and `app.py` 5,707/5,710. The 12 red ratchet modules were
+> already red at the pristine merge base — line-count-proven on untouched
+> files (app_lifecycle 2337 > 2134, app.py 5824 > 5712, mcp_workbench
+> 6878 > 6760) — and the `mcp-defaults` deletion stands on its own; the
+> task file's Implementation Notes record the same correction.
 
 ### A3. No-draft honesty for the Tools & MCP category
 

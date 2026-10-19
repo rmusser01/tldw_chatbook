@@ -123,14 +123,59 @@ async def test_mode_keys_and_verb_keys_dispatch_only_in_tools_category():
         called: list[str] = []
         pane.activate_mode = lambda mode: called.append(mode)  # type: ignore[assignment]
         pane.test_selected_tool = lambda: called.append("test")  # type: ignore[assignment]
-        # The 1-4/a/r/t keys are pane-held BINDINGS (ADR-240 ratchet offset:
-        # strictly better scoping than the category guard -- they fire when
-        # focus is inside the pane, and keep their pre-branch Settings
-        # meanings outside it).
+        # The 1-4 keys are pane-held BINDINGS only (ADR-240 ratchet offset;
+        # rail-focus digits stay the sanctioned edge). a/r/t are pane-held
+        # first, with screen-level TOOLS branches behind them so the
+        # advertised keys also work with focus OUTSIDE the pane (pinned in
+        # the verb-dispatch proof test below).
         pane.action_tools_mode("audit")
         assert called == ["audit"]
         pane.action_tools_test_tool()
         assert called == ["audit", "test"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_screen_verb_actions_reach_pane_with_focus_outside(request, tmp_path):
+    """PR #3140 pre-merge review, finding 1: with the TOOLS category active
+    but focus OUTSIDE the pane (e.g. on the category rail), the screen-level
+    s/r/t actions must still reach the hub pane -- `t` must never fall
+    through to the "No test action is available" stub toast. This is the
+    proof the footer-hints drift guard
+    (test_settings_footer_hints.py::test_advertised_capabilities_match_real_
+    action_branches) asserts for TOOLS; that file is locally env-blocked
+    (RecoveryRequired), so the proof is pinned here on the private-profile
+    runner instead."""
+    app = _build_test_app()
+    # A real (fake-seam) hub service: the workbench's initial load worker
+    # reads app_instance.unified_mcp_service, and the real service raises
+    # RecoveryRequired in this sandbox (pre-existing env block, see
+    # baseline-failures.txt) -- the handoff test stubs the same seam.
+    app.unified_mcp_service = PermissionsHubService(
+        tmp_path / "mcp_permissions.json"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        settings = _active_destination_screen(host)
+        settings._select_category(SettingsCategoryId.TOOLS.value)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = settings.query_one("#settings-tools-hub", ToolsHubPanel)
+        toasts: list[str] = []
+        host.notify = lambda message, **kwargs: toasts.append(message)  # type: ignore[assignment]
+        called: list[str] = []
+        pane.test_selected_tool = lambda: called.append("test")  # type: ignore[assignment]
+        pane.refresh_now = lambda: called.append("refresh")  # type: ignore[assignment]
+        pane.add_server = lambda: called.append("add")  # type: ignore[assignment]
+        # Direct (stub-free) calls stand in for keypresses arriving while
+        # focus sits outside the pane -- the pane-held bindings do not fire
+        # from there, so the screen-level TOOLS branches must.
+        settings.action_settings_test_category()
+        settings.action_settings_revert_category()
+        settings.action_settings_rag_set_active()
+        assert called == ["test", "refresh", "add"], called
+        assert not any("No test action is available" in t for t in toasts), toasts
 
 
 @pytest.mark.asyncio
