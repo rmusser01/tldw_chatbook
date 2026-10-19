@@ -67,14 +67,14 @@ class ConsoleLibraryPolicyController:
     def open_access(self) -> None:
         """Open the policy-only modal for the currently active session.
 
-        Only from an uncovered Console (TASK-34720). Every Enter or Space on
-        the focused Library chip posts its own request, and typed text queues
-        them all before the first dialog is on screen -- closing the dialog
-        hands focus back to the chip, so a user typing a message lands there.
-        Each request used to push another dialog: a typed sentence stacked
-        about twenty, and Textual's nested render of translucent modals
-        exceeded the recursion limit and exited the app. The first request's
-        dialog now covers the Console, so the queued rest are refused here.
+        Only from an uncovered Console (TASK-34720). Each request used to
+        push another dialog. On the old Library chip every Enter or Space
+        posted one, and closing the dialog handed focus back to the chip, so
+        a typed sentence stacked about twenty and Textual's nested render of
+        translucent modals exceeded the recursion limit and exited the app.
+        The entry is now the composer menu's "Library access..." (TASK-35160);
+        the rule stays here, so any request that arrives while the first
+        request's dialog covers the Console is refused.
         """
         if not self._console_owns_screen_stack():
             return

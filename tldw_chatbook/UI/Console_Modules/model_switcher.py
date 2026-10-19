@@ -713,7 +713,7 @@ def _open_switcher(
     if not screen._owns_console_screen_stack():
         # A second press of a card action before the first one's Switch model
         # had the screen: a second dialog would sit over it on stale state.
-        # Likewise a burst of Provider/Model chip keys (TASK-34720).
+        # Likewise a burst of Provider/Model segment keys (TASK-34720).
         return
     store = screen._ensure_console_chat_store()
     session_id = store.active_session_id

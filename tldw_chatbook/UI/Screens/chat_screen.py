@@ -3459,9 +3459,10 @@ class ChatScreen(BaseAppScreen):
         """Return whether this exact Console instance owns the active stack top.
 
         TASK-34720: also the one rule every Console dialog opener checks just
-        before it pushes. A typed burst on a focused chip queues one request
-        per Enter/Space; the first dialog covers the Console, so the rest are
-        refused instead of stacking (~20 stacked dialogs crashed the app).
+        before it pushes. A typed burst on the focused status line queues one
+        request per Enter/Space; the first dialog covers the Console, so the
+        rest are refused instead of stacking (~20 stacked dialogs crashed the
+        app).
         """
         try:
             stack = self.app.screen_stack

@@ -499,6 +499,13 @@ fails without playing a truncated file.
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
 
+An entry that opens a dialog (Provider, Model, System prompt, Assistant,
+Scope, the cost figure, and the composer menu's **Library access…**) opens
+one dialog however fast it is pressed. Closing a dialog returns focus to the
+row, so if you go on typing there, each Space or Enter presses the entry
+again: presses that arrive while its dialog is opening or open are ignored,
+and once the dialog closes the next press opens it again.
+
 ### Long conversations
 
 Opening or switching to a long conversation shows the most recent stretch of it
