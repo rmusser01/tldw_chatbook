@@ -102,9 +102,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
-    "tldw_chatbook/Chat/console_chat_controller.py": 29184,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29181,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6449,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to

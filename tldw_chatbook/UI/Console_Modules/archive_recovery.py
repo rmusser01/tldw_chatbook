@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from textual import on
@@ -66,6 +67,7 @@ class ConsoleArchiveRecoveryView:
 
     def __init__(self, screen: Any) -> None:
         self.screen = screen
+        self._sync_lock = asyncio.Lock()
         self._session_id = None
         self._render_generation = 0
         self._rendered_sets: set[str] = set()
@@ -95,14 +97,17 @@ class ConsoleArchiveRecoveryView:
         return bool(
             self.screen._console_runtime().view is self.screen
             and self.screen.is_mounted
+            and self.screen.is_attached
             and self.screen.is_current
             and store
             and store.active_session_id == session_id
             and card
             and card.is_mounted
+            and card.is_attached
             and all(
                 bool(card.query(f"#{identity}"))
                 and card.query(f"#{identity}").first().is_mounted
+                and card.query(f"#{identity}").first().is_attached
                 for identity in (
                     "recovery-confirm",
                     "recovery-cancel",
@@ -113,81 +118,90 @@ class ConsoleArchiveRecoveryView:
 
     async def sync(self) -> None:
         """Remount only runtime custody, never persisted transcript dictionaries."""
-        if not hasattr(self.screen, "_nodes"):
-            return
-        roots = self.screen.query("#console-archive-recovery")
-        if not roots:
-            return
-        root = roots.first()
-        surface = self._surface()
-        if surface is None:
-            surface = ConsoleArchiveRecoverySurface(self)
-            await root.mount(surface)
-        root.display = True
-        store = self.screen._console_chat_store
-        if not store:
-            return
-        runtime = self.runtime()
-        session_id = store.active_session_id
-        if not session_id:
-            return
-        if self._session_id != session_id or self._confirmation() is None:
-            self._render_generation += 1
-            await surface.remove_children()
-            self._rendered_sets.clear()
-            self._rendered_receipts.clear()
-            self._receipt_actions.clear()
-            self._session_id = session_id
-            await surface.mount(ArchiveRecoveryConfirmCard())
-        presentations = runtime.presentations(session_id)
-        live_sets = {record.projection["result_set_id"] for record in presentations}
-        for card in list(surface.query(ArchiveRecoveryResultsCard)):
-            if card.record.projection["result_set_id"] not in live_sets:
-                await card.remove()
-        self._rendered_sets.intersection_update(live_sets)
-        for record in presentations:
-            await self._mount_results(record)
-        imported = not presentations and any(
-            "result_set_id" in message.content and "result_ref" in message.content
-            for message in store.messages_for_session(session_id)
-        )
-        if imported and not surface.query("#recovery-manual-library"):
-            library_button = RecoveryActionButton(
-                "Search archived chats in Library", id="recovery-manual-library"
+        async with self._sync_lock:
+            if not hasattr(self.screen, "_nodes"):
+                return
+            roots = self.screen.query("#console-archive-recovery")
+            if not roots:
+                return
+            root = roots.first()
+            if not root.is_mounted or not root.is_attached:
+                return
+            surface = self._surface()
+            if surface is None:
+                surface = ConsoleArchiveRecoverySurface(self)
+                await root.mount(surface)
+            if not root.is_attached or not surface.is_attached:
+                return
+            root.display = True
+            store = self.screen._console_chat_store
+            if not store:
+                return
+            runtime = self.runtime()
+            session_id = store.active_session_id
+            if not session_id:
+                return
+            if self._session_id != session_id or self._confirmation() is None:
+                self._render_generation += 1
+                await surface.remove_children()
+                if not surface.is_attached:
+                    return
+                self._rendered_sets.clear()
+                self._rendered_receipts.clear()
+                self._receipt_actions.clear()
+                self._session_id = session_id
+                await surface.mount(ArchiveRecoveryConfirmCard())
+            presentations = runtime.presentations(session_id)
+            live_sets = {record.projection["result_set_id"] for record in presentations}
+            for card in list(surface.query(ArchiveRecoveryResultsCard)):
+                if card.record.projection["result_set_id"] not in live_sets:
+                    await card.remove()
+            self._rendered_sets.intersection_update(live_sets)
+            for record in presentations:
+                await self._mount_results(record)
+            if not surface.is_attached:
+                return
+            imported = not presentations and any(
+                "result_set_id" in message.content and "result_ref" in message.content
+                for message in store.messages_for_session(session_id)
             )
-            library_button.source_session_id = session_id
-            await surface.mount(
-                Vertical(
-                    Static(
-                        "Saved recovery text has no live action provenance. Search again in Library.",
-                        markup=False,
-                        classes="archive-recovery-copy",
-                    ),
-                    library_button,
-                    classes="archive-recovery-card",
+            if imported and not surface.query("#recovery-manual-library"):
+                library_button = RecoveryActionButton(
+                    "Search archived chats in Library", id="recovery-manual-library"
                 )
+                library_button.source_session_id = session_id
+                await surface.mount(
+                    Vertical(
+                        Static(
+                            "Saved recovery text has no live action provenance. Search again in Library.",
+                            markup=False,
+                            classes="archive-recovery-copy",
+                        ),
+                        library_button,
+                        classes="archive-recovery-card",
+                    )
+                )
+            snapshot = runtime.coordinator.snapshot(session_id)
+            self.show_confirmation(snapshot.confirmation if snapshot else None)
+            receipts = runtime.coordinator.receipts(session_id)
+            live_receipts = {receipt.operation_id for receipt in receipts}
+            for card in list(surface.query(".archive-recovery-receipt")):
+                if card.name not in live_receipts:
+                    await card.remove()
+            self._rendered_receipts.intersection_update(live_receipts)
+            self._receipt_actions = {
+                key: receipt
+                for key, receipt in self._receipt_actions.items()
+                if receipt.operation_id in live_receipts
+            }
+            for receipt in receipts:
+                await self._mount_receipt(receipt)
+            surface.display = bool(
+                self._rendered_sets
+                or self._rendered_receipts
+                or (snapshot and snapshot.confirmation)
+                or imported
             )
-        snapshot = runtime.coordinator.snapshot(session_id)
-        self.show_confirmation(snapshot.confirmation if snapshot else None)
-        receipts = runtime.coordinator.receipts(session_id)
-        live_receipts = {receipt.operation_id for receipt in receipts}
-        for card in list(surface.query(".archive-recovery-receipt")):
-            if card.name not in live_receipts:
-                await card.remove()
-        self._rendered_receipts.intersection_update(live_receipts)
-        self._receipt_actions = {
-            key: receipt
-            for key, receipt in self._receipt_actions.items()
-            if receipt.operation_id in live_receipts
-        }
-        for receipt in receipts:
-            await self._mount_receipt(receipt)
-        surface.display = bool(
-            self._rendered_sets
-            or self._rendered_receipts
-            or (snapshot and snapshot.confirmation)
-            or imported
-        )
 
     def show_results(self, projection: ArchiveRecoveryPresentation) -> None:
         """Schedule a projection; runtime retains it if the view goes away."""

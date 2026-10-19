@@ -138,6 +138,10 @@ class RecoveryGateway(_RecordingGateway):
         (True, True, "received"),
         (False, True, "received"),
         (True, True, "received_unproven"),
+        (True, True, "cold_view"),
+        (False, True, "cold_view"),
+        (True, True, "received_cold_view"),
+        (True, True, "prepare_error"),
         (True, False, None),
         (True, True, "kill"),
         (True, True, "persona"),
@@ -208,6 +212,21 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
         return True
 
     recovery.present_confirmation = present
+    prepared = []
+    if restriction in {"cold_view", "received_cold_view", "prepare_error"}:
+        view_ready = False
+        recovery.is_answerable = lambda sid: view_ready and sid == source.id
+
+        async def prepare_view():
+            nonlocal view_ready
+            assert owner.has_custodied_turns(source.id)
+            prepared.append(source.id)
+            await asyncio.sleep(0)
+            if restriction == "prepare_error":
+                raise RuntimeError("View unavailable")
+            view_ready = True
+
+        recovery.prepare_view = prepare_view
     native_keys = []
     original_request = recovery.coordinator.request
 
@@ -260,7 +279,8 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
         {
             "set_pending_approval": pending,
             "present_confirmation": present,
-            "is_answerable": lambda sid: sid == source.id,
+            "is_answerable": recovery.is_answerable,
+            "prepare_view": recovery.prepare_view,
             "present_results": presented.append,
         }
     )
@@ -379,7 +399,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             return await owner.wait_for_turn(await wake_turn_id)
 
         turn = asyncio.create_task(await_wake())
-    elif restriction in {"received", "received_unproven"}:
+    elif restriction in {"received", "received_unproven", "received_cold_view"}:
         from tldw_chatbook.Chat.console_configuration_preparation import (
             ConsoleTurnCaptureSelection,
         )
@@ -410,7 +430,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             view_attachment_generation=attached,
             recovery_user_origin=(
                 recovery.issue_user_proof(source.id)
-                if restriction == "received"
+                if restriction != "received_unproven"
                 else None
             ),
         )
@@ -454,7 +474,14 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
                 },
                 round_id=payload["round_id"],
             )
-        if allowed and restriction in {None, "ask_allow", "queued_block", "received"}:
+        if allowed and restriction in {
+            None,
+            "ask_allow",
+            "queued_block",
+            "received",
+            "cold_view",
+            "received_cold_view",
+        }:
             ready = asyncio.create_task(confirmation_ready.wait())
             await asyncio.wait_for(
                 asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED), 15
@@ -537,6 +564,8 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
                 assert "not permitted" in str(gateway.messages_seen[-1]).lower()
             else:
                 assert "kill switch" in str(gateway.messages_seen[-1]).lower()
+        if restriction in {"cold_view", "received_cold_view", "prepare_error"}:
+            assert prepared == [source.id]
         if restriction == "agent_wake":
             assert len(wake_dispatch) == 1
             assert wake_dispatch[0]["work_origin"] is WorkOrigin.AUTOMATIC
@@ -853,3 +882,33 @@ async def test_shutdown_joins_first_search_already_owned_by_session_close(
     assert not runtime._searches
     if cancel_waiters:
         assert close.cancelled() and shutdown.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_first_queue_edit_initializes_recovery_for_the_existing_controller(
+    recovery_stores,
+):
+    from dataclasses import dataclass
+
+    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+        ConsolePromptQueueUIController,
+    )
+
+    @dataclass(frozen=True)
+    class Configuration:
+        recovery_user_origin: object = None
+
+    app, _, _ = recovery_stores
+    owner = app.console_runtime = ConsoleRuntime(app)
+    controller = SimpleNamespace()
+    owner.set_chat_controller(controller)
+    assert owner._archive_recovery is None
+    editor = ConsolePromptQueueUIController.__new__(ConsolePromptQueueUIController)
+    editor._chat_controller_accessor = lambda: controller
+    editor._capture_configuration = lambda _: Configuration()
+    captured = editor._capture_user_configuration("source")
+    assert owner._archive_recovery is not None
+    assert controller._archive_recovery_runtime is owner._archive_recovery
+    proof = captured.recovery_user_origin
+    assert owner._archive_recovery._proofs[id(proof)] is proof
+    await owner.dispose()

@@ -95,10 +95,12 @@ if TYPE_CHECKING:
         REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
     )
     from .run_tool_policy import RunToolPolicy
+    from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
 
-from .archive_recovery_tool_provider import (
-    RECOVERY_RESERVED_TOOL_NAMES,
-    ArchiveRecoveryToolProvider,
+SEARCH_ARCHIVED_CONVERSATIONS = "search_archived_conversations"
+REQUEST_CONVERSATION_RESTORE = "request_conversation_restore"
+RECOVERY_RESERVED_TOOL_NAMES = frozenset(
+    {SEARCH_ARCHIVED_CONVERSATIONS, REQUEST_CONVERSATION_RESTORE}
 )
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
@@ -1950,6 +1952,8 @@ class ToolCatalogRegistry:
         self, provider: ArchiveRecoveryToolProvider, authority: object
     ) -> bool:
         """Register exact app-issued turn authority; pending cannot execute."""
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
         if (
             type(provider) is not ArchiveRecoveryToolProvider
             or self._ephemeral
@@ -1972,10 +1976,16 @@ class ToolCatalogRegistry:
         return True
 
     def _authenticated_recovery_name(self, provider: object, name: str) -> bool:
+        if (
+            name not in RECOVERY_RESERVED_TOOL_NAMES
+            or provider is None
+            or provider is not self._archive_recovery_provider
+        ):
+            return False
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
         return bool(
-            name in RECOVERY_RESERVED_TOOL_NAMES
-            and provider is self._archive_recovery_provider
-            and type(provider) is ArchiveRecoveryToolProvider
+            type(provider) is ArchiveRecoveryToolProvider
             and provider.authenticates_authority(self._archive_recovery_authority)
         )
 

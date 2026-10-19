@@ -932,7 +932,12 @@ class ConsolePromptQueueUIController:
         from dataclasses import replace
 
         configuration = self._capture_configuration(session_id)
-        runtime = getattr(self._chat_controller_accessor(), "_archive_recovery_runtime", None)
+        controller = self._chat_controller_accessor()
+        runtime = getattr(controller, "_archive_recovery_runtime", None)
+        if runtime is None:
+            owner = getattr(getattr(controller, "app", None), "console_runtime", None)
+            if owner is not None:
+                runtime = owner.ensure_archive_recovery()
         if runtime is None or configuration is None:
             return configuration
         return replace(configuration, recovery_user_origin=runtime.issue_user_proof(session_id))
