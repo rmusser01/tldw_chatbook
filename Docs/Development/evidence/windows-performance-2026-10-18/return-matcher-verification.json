@@ -1,9 +1,21 @@
 {
   "baseline_revision": "48339e4d6d2fa82b561e6fa1651f8e82928177b2",
-  "initial_subject_regression": {"failed": 3, "expected": true},
-  "initial_css_checks": {"passed": 15, "failed": 0},
-  "review_combinator_regression": {"failed": 4, "expected": true},
-  "review_corrected_css_checks": {"passed": 20, "failed": 0},
+  "initial_subject_regression": {
+    "failed": 3,
+    "expected": true
+  },
+  "initial_css_checks": {
+    "passed": 15,
+    "failed": 0
+  },
+  "review_combinator_regression": {
+    "failed": 4,
+    "expected": true
+  },
+  "review_corrected_css_checks": {
+    "passed": 20,
+    "failed": 0
+  },
   "initial_broader_checks": {
     "passed": 45,
     "failed": 2,
@@ -17,7 +29,7 @@
   "unchanged_baseline_controls": {
     "failed": 2,
     "same_teardown_errors": true,
-    "seconds": 73.80,
+    "seconds": 73.8,
     "audited_module_loads": "return-matcher-baseline-receipts.jsonl",
     "earlier_runner_attempt": "The legacy runner defaulted to shared Temp and was refused during collection. The successful baseline comparison uses matching_tests.py with genuine user-owned native fixtures. No guard was bypassed."
   },
@@ -45,5 +57,17 @@
     "remaining_findings": 0,
     "fixture_and_measurement_controls_reviewed": true,
     "code_verdict": "Ready to merge; final comparative measurements pending at review time."
-  }
+  },
+  "integrated_recheck": {
+    "passed": 26,
+    "failed": 0,
+    "seconds": 38.17,
+    "checkout_revision": "5c47d092739b5800e1c79cd7e35b1960b14567d8",
+    "overlaps_prior_checks": true,
+    "independent_review": "Combined product and controls reviewed; no remaining code findings."
+  },
+  "summary_failure_receipt_negative_check": "Failed benchmark exit rejected without overwriting completed summary.",
+  "lint_and_format": "All changed Python checks pass; no probe findings.",
+  "final_integrated_profile_receipts": "All four exact successful exits, three final source hashes, explicit two-module control scope and all24 retained/attached journeys verified. No network/profile refusal or periodic dump.",
+  "cleanup": "20 exact completed disposable roots removed; validation parameter error and corrected post-check retained in cleanup receipt."
 }

@@ -104,6 +104,53 @@ long-conversation performance or complete Send/Stop journeys. The still-variable
 native preparation and replay waits remain the larger attachment target; this
 change does not claim to fix them.
 
+## Final integrated-code verification
+
+Before publication, the remote PR advanced with TASK-35615's four-line
+acknowledgement correction and its existing evidence. It was preserved by
+rebasing onto `efdd8b2b21`; the reviewed matcher commit became `5c47d09273`.
+The correction avoids an acknowledgement-only FULL when the original fresh
+visit/read finds no unread token. Marked visits still perform FULL, paint,
+original navigation/profile/service/session checks and token compare-and-clear.
+Ordinary attachment still performs FULL. Twenty-six combined native rechecks
+pass in 38.17 seconds; these overlap the earlier 48 and are not an additional
+26 distinct cases.
+
+A fresh, separate serial ABBA compares **both** fixes against their exact
+`48339e4d6d` implementations. Only CSS and `UI/Console_Modules/session.py` are
+restored in controls, explicitly recorded in `baseline_scope`; the rest of the
+combined application is retained. This experiment cannot isolate either fix's
+standalone time saving. It does not replace or blend the matcher-only results.
+
+| Arm | Median input | Worst input | Median attach | Median largest heartbeat overshoot |
+| --- | ---: | ---: | ---: | ---: |
+| Integrated original 1 | 181.42 ms | 345.52 ms | 1250.77 ms | 120.28 ms |
+| Integrated updated 1 | 226.99 ms | 517.00 ms | 1510.01 ms | 155.83 ms |
+| Integrated updated 2 | 150.35 ms | 171.01 ms | 1140.14 ms | 105.30 ms |
+| Integrated original 2 | 170.57 ms | 209.54 ms | 1127.89 ms | 94.23 ms |
+
+Across 12 returns per arm, input medians are **170.57/170.14 ms**, effectively
+flat. Attachment medians are **1127.89/1379.36 ms**, **22.3% worse** updated.
+Worst attachment is **2243.36/3579.77 ms**, also worse. The prior attachment
+experiment's observed median improvement does not reproduce consistently here.
+The two updated runs differ substantially; retaining both is necessary.
+
+The 3.58-second updated return accepts its key at 491 ms, including only 30 ms
+after the driver posts it; 171/208 stage samples are in the event-loop poll.
+The other slow-input return accepts its key at 517 ms and attaches at 2017 ms,
+with 93/110 samples in the poll. CSS appears in 16/10 inclusive samples and
+config posture in 1/1. These counts overlap, cover input plus attachment, and
+cannot identify the exact awaited callback or turn into elapsed CPU budgets.
+`return-matcher-integrated-outliers.json` retains the original leaf stacks and
+journey scalars. No historical-regression or tail fix is claimed.
+
+All 24 integrated drafts are retained and attachments complete. All four exits
+are zero, with zero network attempts/profile refusals and zero periodic traceback
+dumps. No tests or instrumented discovery overlap this experiment. Receipts hash
+the final checkout's CSS, session and ChatScreen sources; controls additionally
+identify the pinned substituted modules. Full run results remain in
+`return-matcher-integrated-comparison.json` and four exact exit receipts.
+
 ## Verification
 
 The final native targeted run passes **48 checks in 135.07 seconds**, covering
@@ -141,6 +188,8 @@ optimization; it preserves all later Console return and storage code.
 ```powershell
 .venv/Scripts/python.exe Docs/Development/evidence/windows-performance-2026-10-18/run_subject_profiles.py --return-matcher
 .venv/Scripts/python.exe Docs/Development/evidence/windows-performance-2026-10-18/summarize_subject.py --return-matcher
+.venv/Scripts/python.exe Docs/Development/evidence/windows-performance-2026-10-18/run_subject_profiles.py --return-matcher --integrated
+.venv/Scripts/python.exe Docs/Development/evidence/windows-performance-2026-10-18/summarize_subject.py --return-matcher --integrated
 ```
 
 The separate CSS benchmark alternates four pairs on the same mounted screen,

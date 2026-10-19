@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-19 21:24'
-updated_date: '2026-10-19 21:45'
+updated_date: '2026-10-19 21:57'
 labels: []
 dependencies: []
 ---
@@ -33,5 +33,9 @@ ADR required: no. ADR path: N/A. Reason: optimize the existing private Textual m
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Investigated historical and fresh Console return profiles without changing storage safety. Separate identity-preserving native observations measured 98-135 ms full styling, 388-1332 ms config waits, deferred FULL replay, and a 5.71 s config read crossing leave/return. These identify fresh delay contributors; the historical regression cause remains unproved. Direct subject-only selector matching now avoids ancestor scans when initial DESCENDENT and SAME/zero-advance shape prove equivalence. Original checks, dynamic state, invalidation and ancestry fallback remain. Four review edge controls failed before the guard and pass after it. Final targeted Windows verification:48 passed in135.07s. Two pre-existing native teardown failures reproduced on exact baseline CSS; real-app fixture construction repairs them without changing assertions or retirement gates. Serial ABBA:input medians189.77/170.35/166.20/167.72ms; first pair10.2%better, reverse effectively flat0.9%; attachment16.9%worse/8.8%better. No consistent end-to-end improvement established. CSS median94.32 to91.84ms(2.6%,overlapping), zero style differences513widgets. All24drafts retained, five processes exit0, no network/profile guard events. Eleven safety/ownership modules unchanged; lint/format checks pass; independent review has no remaining findings. ADR required:no; existing boundaries preserved. Evidence in RETURN_MATCHER_RESULTS.md. PR publication pending.
+Implemented direct subject-only CSS matching within the existing private matcher, retaining original selector checks, live state, invalidation and ancestry fallback. Independent review found an initial-combinator edge; four controls reproduced it before the guard and passed afterward. No findings remain. Eleven safety/ownership modules and seven reminder-fencing methods are unchanged. ADR required: no; existing ADR-126/230 boundaries remain.
+
+Separate native observations identify full-screen styling, config/workspace waits, deferred FULL replay and background reads crossing return boundaries. The exact historical regression cause remains unproved. CSS median was 94.32 to 91.84 ms (2.6%, overlapping timings), with zero style differences across 513 widgets. Matcher-only ABBA was mixed. The final targeted native batch passed 48 checks; two baseline-reproduced mocked-app teardown failures were repaired using real app construction without changing assertions or retirement gates.
+
+Preserved concurrent TASK-35615's redundant acknowledgement FULL correction by rebasing onto efdd8b2b21. Integration added no further product changes. Twenty-six overlapping combined rechecks passed. Fresh combined ABBA retained all 24 drafts and attachments, with four zero exits and no guard events. Pooled input was essentially flat (170.57/170.14 ms); attachment worsened (1127.89/1379.36 ms), with a worse 3.58-second tail. No consistent end-to-end or tail improvement is claimed. All adverse results remain in RETURN_MATCHER_RESULTS.md and exact receipts. Lint/format checks pass; no full suite. Twenty exact disposable roots were removed; the cleanup receipt retains its validation parameter error and corrected post-check. PR publication pending.
 <!-- SECTION:NOTES:END -->
