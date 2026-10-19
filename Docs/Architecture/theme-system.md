@@ -6,7 +6,7 @@ This document describes theming: the shipped theme catalog and its readability g
 
 | Concern | File | Key symbols |
 | --- | --- | --- |
-| Catalog | `css/Themes/themes.py` | `ALL_THEMES` (the shipped-theme catalog — the count drifts, trust the list), `create_theme_from_dict`, `load_user_themes`, `sanitize_theme_variables`, `ensure_readable_text_hues`, guard variables (`$tldw-boundary`, `$tldw-focus-fill`), reserved prefixes `custom_` / `unreadable:` |
+| Catalog | `css/Themes/themes.py` | `ALL_THEMES` (the shipped-theme catalog — the count drifts, trust the list), `create_theme_from_dict`, `load_user_themes`, `sanitize_theme_variables`, `ensure_readable_text_hues`, `GUARD_VARIABLES` (`$tldw-boundary`, `$tldw-focus-fill`, `$tldw-active-edge`), reserved prefixes `custom_` / `unreadable:` |
 | Switch/persist engine | `css/Themes/theme_catalog.py` | `use_theme`, `use_theme_toast`, `revert_theme`, `start_revert`, `queue_launch_default` / `settle_launch_default` (single writer thread, latest-wins) |
 | Palette | `app_command_providers.py` | `ThemeProvider` — "Theme: Change Theme" + per-theme switch hits |
 | Picker | `Widgets/settings_theme_picker.py` | `ThemePicker` — Use / Try / Revert / Clone / New / Edit / Rename / Delete / Export / Import |
@@ -23,8 +23,8 @@ This document describes theming: the shipped theme catalog and its readability g
 ## Readability and safety guarantees
 
 - `ensure_readable_text_hues` blends/overrides generated text hues for contrast at import time (shipped themes and Textual built-ins both pass through it); contrast gates are pinned by `Tests/UI/test_theme_contrast.py`.
-- Every theme must define the guard variables (`$tldw-boundary`, `$tldw-focus-fill`) or stylesheet parsing fails; a defaults mixin backstops themes that omit them.
-- User-theme loading is hostile-input tolerant: unreadable files, files without `primary`, and non-regular files (symlinks/hardlinks) are skipped with a warning that carries only the file **name** — one bad file never blocks startup. `sanitize_theme_variables` rejects unsafe variable values; colours are restricted to hex forms.
+- Every theme must define the guard variables (`GUARD_VARIABLES`: `$tldw-boundary`, `$tldw-focus-fill`, and `$tldw-active-edge`, the active top tab's outline) or stylesheet parsing fails; a defaults mixin backstops themes that omit them.
+- User-theme loading is hostile-input tolerant: unreadable files, files without `primary`, and non-regular files (symlinks/hardlinks) are skipped with a warning that carries only the file **name** — one bad file never blocks startup. `sanitize_theme_variables` rejects unsafe variable values: it keeps only a colour (optionally with " NN%"), space-separated text-style keywords, or `auto NN%`. Its rules are name-aware (TASK-33003.16): `auto NN%` is dropped on a guard variable and on every name Textual generates except the seven it generates as auto (`text`, `text-muted`, `text-disabled`, `link-color`, `link-color-hover`, `block-cursor-foreground`, `button-color-foreground`), and a text style on a colour name, a colour on a text-style name, and `none` combined with other words are dropped too.
 - Reserved names: saved themes may not use the `custom_` or `unreadable:` prefixes.
 
 ## How themes relate to `$ds-*` tokens (the load-bearing rule)
