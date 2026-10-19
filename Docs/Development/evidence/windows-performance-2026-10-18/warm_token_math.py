@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.argv.extend(["--tag", "warm-token-math"])
-import probe  # Sets up the same protected private profile/native fixture owner.
+import probe  # noqa: E402 - select the private-profile tag before initialization.
 
 probe.stop_sampling.set()
 probe.sampler.join(1)
