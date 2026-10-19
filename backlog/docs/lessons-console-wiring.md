@@ -11,6 +11,36 @@ bring the incident.
 
 ---
 
+## A switch-progress guard comparing binding to active state cannot fire mid-resume (TASK-35310, 2026-10-18)
+
+**Incident.** Console UAT 2026-10-17 round 11 (`qa/console-uat-2026-10-17/`,
+dev `6c0bde2437`): clicking a workspace-rail conversation row and pressing
+Send ~2 s later was **silently dropped** — no provider POST, no persisted
+turn, no notice; a 1.5 s settle made it work. The shipped TASK-33622.7 guard
+(`refuse_send_from_unbound_composer`) never fired, and the reason is
+structural, not timing: `open_console_workspace_conversation`'s slow path
+hydrates across many awaits during which `active_session_id` AND the composer
+binding still name the OLD chat, so the guard's bound-vs-active comparison
+sees a consistent OLD state and waves the send through, pinned to OLD; the
+decoupled send task then dies in `return False` branches that notify nobody.
+A second face of the same window: a seeded conversation resumed with the
+sandbox's default `chat_defaults` (openai, no key) left Send disabled, so
+Enter hit the Enter-guard's silent release.
+
+**What to do.** A guard that detects switches by comparing two pointers can
+only see a switch once one pointer has moved. For a multi-await activation
+you need an explicit in-flight flag set for the whole window
+(`conversation_activation_window` on the session controller) that the guard
+reads INDEPENDENTLY of the pointer comparison — and every `return False` on
+a send path needs a notice, because each silent branch is where a raced
+press goes to die. When reproducing: seeded conversations need a file-backed
+DB at the sandbox path plus `app._wire_chat_conversation_services()` after
+attach (the conversation browser wires from `app.chachanotes_db` during
+`__init__`), and a resumed session's base settings come from
+`chat_defaults`, not from the seeding session.
+
+---
+
 ## A warning-free batch can still retain worker-owned database files
 
 **TASK-31245 / TASK-33620.9, 2026-10-04.** After explicit Console fixture
