@@ -175,7 +175,12 @@ provides the valid baseline result above; no admission check was relaxed.
 
 Independent review confirmed the first-combinator repair, unchanged storage
 boundaries, corrected fixtures and baseline controls, with no remaining code
-findings. Its measurement verdict was pending the final serial comparison.
+findings. After the final serial comparison, independent review recommends
+keeping auto-merge off: pooled input latency is flat, attachment latency is
+22.3% worse and the worst attachment increased from 2.24 to 3.58 seconds. These
+results do not establish that the changes caused the slowdown, but they do not
+qualify an overall performance improvement. PR #3166 retains the reviewed code
+and evidence; TASK-35644 stays In Progress until that qualification is resolved.
 
 ## Reproduction
 

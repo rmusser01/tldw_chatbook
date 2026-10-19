@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-19 21:24'
-updated_date: '2026-10-19 21:57'
+updated_date: '2026-10-19 22:00'
 labels: []
 dependencies: []
 ---
@@ -21,7 +21,7 @@ Explain the slower Console return comparison and reduce the next demonstrated bo
 - [x] #1 The investigation separates observed input, styling, native work and scheduling delays and reports limits of causal attribution.
 - [x] #2 A focused regression fails before the measured fix and passes afterward without weakening storage safety, freshness or physical retirement.
 - [x] #3 Serial native Windows before/after profiles retain all outcomes, exact exits and guard counts.
-- [ ] #4 Targeted verification, documentation, review and PR 3166 update are complete.
+- [x] #4 Targeted verification, documentation, review and PR 3166 update are complete.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,5 +37,5 @@ Implemented direct subject-only CSS matching within the existing private matcher
 
 Separate native observations identify full-screen styling, config/workspace waits, deferred FULL replay and background reads crossing return boundaries. The exact historical regression cause remains unproved. CSS median was 94.32 to 91.84 ms (2.6%, overlapping timings), with zero style differences across 513 widgets. Matcher-only ABBA was mixed. The final targeted native batch passed 48 checks; two baseline-reproduced mocked-app teardown failures were repaired using real app construction without changing assertions or retirement gates.
 
-Preserved concurrent TASK-35615's redundant acknowledgement FULL correction by rebasing onto efdd8b2b21. Integration added no further product changes. Twenty-six overlapping combined rechecks passed. Fresh combined ABBA retained all 24 drafts and attachments, with four zero exits and no guard events. Pooled input was essentially flat (170.57/170.14 ms); attachment worsened (1127.89/1379.36 ms), with a worse 3.58-second tail. No consistent end-to-end or tail improvement is claimed. All adverse results remain in RETURN_MATCHER_RESULTS.md and exact receipts. Lint/format checks pass; no full suite. Twenty exact disposable roots were removed; the cleanup receipt retains its validation parameter error and corrected post-check. PR publication pending.
+Preserved concurrent TASK-35615's redundant acknowledgement FULL correction by rebasing onto efdd8b2b21. Integration added no further product changes. Twenty-six overlapping combined rechecks passed. Fresh combined ABBA retained all 24 drafts and attachments, with four zero exits and no guard events. Pooled input was essentially flat (170.57/170.14 ms); attachment worsened (1127.89/1379.36 ms), with a worse 3.58-second tail. No consistent end-to-end or tail improvement is claimed. All adverse results remain in RETURN_MATCHER_RESULTS.md and exact receipts. Lint/format checks pass; no full suite. Twenty exact disposable roots were removed; the cleanup receipt retains its validation parameter error and corrected post-check. Published code and all results to PR #3166, including its leading adverse-result summary. Final independent review recommends retaining auto-merge off: the overall performance objective remains unqualified. Keep this task In Progress until that qualification is resolved.
 <!-- SECTION:NOTES:END -->
