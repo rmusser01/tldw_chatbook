@@ -8,7 +8,8 @@ import functools
 import hashlib
 import json
 import os
-from dataclasses import dataclass, replace
+import threading
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -59,6 +60,7 @@ from .service import (
 )
 
 if TYPE_CHECKING:
+    from .download_control import DownloadControl
     from .service import (
         ArtifactDescriptor,
         ArtifactFile,
@@ -84,6 +86,21 @@ _PREFLIGHT_PROBE_TIMEOUT_SECONDS = 10.0
 _SESSION_LEASE_TIMEOUT_SECONDS = NONBLOCKING_LEASE_TIMEOUT_SECONDS
 
 _CoreCallResult = TypeVar("_CoreCallResult")
+
+# TASK-34100.14 ([voice-speech-11]): a single large file (the 633 MiB
+# Parakeet encoder) used to be checkpointed only once it finished, so a
+# download killed part-way through restarted from byte zero. The fetch now
+# fsyncs and records its durable length in the fetch-state sidecar every
+# this-many bytes; preflight already credits checkpointed bytes, and the
+# retry resumes with a Range request from the last checkpoint. Read at call
+# time so tests can shrink it.
+FETCH_CHECKPOINT_BYTES = 8 * 1024 * 1024
+
+# How often a DownloadControl's cancel request is polled while a provision
+# runs, and how often a queued provision retries the session lease.
+_CANCEL_POLL_SECONDS = 0.1
+_QUEUE_RETRY_SECONDS = 0.5
+_NOT_WAITING = object()
 
 # Credential hint named in gating_errors -- never a token value. Matches the
 # precedence EnvConfigCredentialResolver (below) actually implements against
@@ -158,7 +175,41 @@ class PreflightNotGrantableError(AcquisitionError):
 class AcquisitionBusyError(AcquisitionError):
     """Another acquisition session is already active."""
 
-    pass
+    def __init__(self, message: str, *, holder_label: str | None = None) -> None:
+        """Record which download holds the session, when this process knows.
+
+        Args:
+            message: The error message.
+            holder_label: User-visible name of the model whose download holds
+                the session in THIS process (``None`` when the holder is
+                another process or did not name itself), so the busy copy
+                names the model actually downloading, not the caller's.
+        """
+        super().__init__(message)
+        self.holder_label = holder_label
+
+
+class AcquisitionCancelledError(AcquisitionError):
+    """The user cancelled a download through its ``DownloadControl``."""
+
+    def __init__(
+        self,
+        *,
+        installed_refs: tuple[ArtifactRef, ...] = (),
+        staging_removed: bool = True,
+    ) -> None:
+        """Describe what a cancelled provision left behind.
+
+        Args:
+            installed_refs: Closure members that finished installing during
+                this run before the cancel landed (kept: they are complete,
+                verified artifacts). Empty when nothing was saved.
+            staging_removed: Whether every download stage this run touched
+                was removed. False only when a discard failed.
+        """
+        super().__init__("managed download cancelled")
+        self.installed_refs = installed_refs
+        self.staging_removed = staging_removed
 
 
 class InsufficientSpaceError(AcquisitionError):
@@ -385,13 +436,67 @@ class _GatingTarget:
 
 @dataclass(frozen=True)
 class AcquisitionProgress:
-    """Progress during an active acquisition operation."""
+    """Progress during an active acquisition operation.
 
-    phase: Literal["fetch", "pre-verify", "verify-install", "activate"]
+    ``queued`` (TASK-34100.14) is emitted before any other phase when the
+    caller's ``DownloadControl`` asked to wait for another install holding
+    the session lease; ``waiting_for`` then names that install's model (or
+    is ``None`` when the holder is another process).
+    """
+
+    phase: Literal["queued", "fetch", "pre-verify", "verify-install", "activate"]
     ref: ArtifactRef
     file: str | None
     bytes_done: int
     bytes_total: int
+    waiting_for: str | None = None
+
+
+@dataclass(frozen=True)
+class ActiveAcquisition:
+    """The download currently holding this process's acquisition session."""
+
+    root: ArtifactRef
+    label: str
+
+
+_ACTIVE_LOCK = threading.Lock()
+_ACTIVE_ACQUISITION: ActiveAcquisition | None = None
+
+
+def active_acquisition() -> ActiveAcquisition | None:
+    """Return the in-process download holding the session lease, if any.
+
+    The session lease is exclusive across threads AND processes, so at most
+    one provision in this process holds it at a time. Another process's
+    holder is invisible here (returns ``None``).
+    """
+    with _ACTIVE_LOCK:
+        return _ACTIVE_ACQUISITION
+
+
+def _set_active_acquisition(value: ActiveAcquisition | None) -> None:
+    global _ACTIVE_ACQUISITION
+    with _ACTIVE_LOCK:
+        _ACTIVE_ACQUISITION = value
+
+
+@dataclass
+class _CancelScope:
+    """One provision run's cancel bookkeeping, shared with its watcher.
+
+    ``cancellable`` is cleared around install/activate: a request that lands
+    there is deferred, never allowed to interrupt a promotion it would then
+    have to misreport. ``requested`` is set only when the watcher actually
+    cancelled the run on the control's behalf.
+    """
+
+    control: DownloadControl | None
+    cancellable: bool = True
+    requested: bool = False
+    installed: tuple[ArtifactRef, ...] = ()
+    staging_removed: bool = True
+    touched: list[ArtifactDescriptor] = field(default_factory=list)
 
 
 @dataclass
@@ -1088,6 +1193,7 @@ class ArtifactAcquisitionService:
         sources: ArtifactSourceMap | None = None,
         progress: Callable[[AcquisitionProgress], None] | None = None,
         activate: bool = True,
+        control: DownloadControl | None = None,
     ) -> ArtifactRef:
         """Acquire one consented closure and optionally activate it, resuming idempotently.
 
@@ -1153,13 +1259,25 @@ class ArtifactAcquisitionService:
             activate: Whether to select the provisioned root for use after
                 installing its closure. Defaults to ``True`` for existing
                 callers.
+            control: TASK-34100.14: the host's ``DownloadControl`` -- names
+                this download for other installs that must wait for it, can
+                ask to wait in line (``wait_if_busy``; a ``queued`` progress
+                event names the holder) instead of failing fast, and carries
+                a cancel switch any thread may flip. A cancel request is
+                honoured while waiting, fetching or pre-verifying (within
+                about ``_CANCEL_POLL_SECONDS``), never mid-install or
+                mid-activation; the stages this run touched are removed.
 
         Returns:
             The provisioned root artifact reference.
 
         Raises:
             AcquisitionBusyError: Another acquisition session -- in this
-                process or another -- already holds the session lease.
+                process or another -- already holds the session lease, and
+                ``control`` did not ask to wait. ``holder_label`` names the
+                in-process holder when known.
+            AcquisitionCancelledError: ``control.cancel()`` stopped the run;
+                says which closure members (if any) had already installed.
             ConsentMismatchError: The re-walked closure fingerprint no
                 longer matches ``consent`` (the catalog changed since
                 ``preflight()``).
@@ -1175,39 +1293,141 @@ class ArtifactAcquisitionService:
                 contention -- see ``_run_core_call``). Nothing further is
                 installed or activated for that artifact once this is raised.
         """
-        async with self._lock:
-            loop = asyncio.get_running_loop()
+        scope = _CancelScope(control)
+        if control is None:
+            return await self._provision_session(
+                root, consent, catalog, sources, progress, activate, scope
+            )
+        # TASK-34100.14: the host's cancel switch is polled here, on this
+        # worker thread's own loop -- Textual's Worker.cancel() cannot reach
+        # an asyncio.run() inside a thread worker. Cancelling the session
+        # task interrupts whatever it is awaiting (stream_fetch's finally
+        # closes the HTTP stream); the session discards the stages it
+        # touched before releasing the lease.
+        session = asyncio.ensure_future(
+            self._provision_session(
+                root, consent, catalog, sources, progress, activate, scope
+            )
+        )
+        watcher = asyncio.ensure_future(self._watch_cancel(session, scope))
+        try:
+            return await session
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if scope.requested and (current is None or current.cancelling() == 0):
+                raise AcquisitionCancelledError(
+                    installed_refs=scope.installed,
+                    staging_removed=scope.staging_removed,
+                ) from None
+            raise
+        finally:
+            watcher.cancel()
+
+    @staticmethod
+    async def _watch_cancel(session: asyncio.Future, scope: _CancelScope) -> None:
+        """Cancel ``session`` once its control asks, outside install/activate."""
+        control = scope.control
+        assert control is not None
+        while not session.done():
+            if control.cancel_requested and scope.cancellable:
+                scope.requested = True
+                session.cancel()
+                return
+            await asyncio.sleep(_CANCEL_POLL_SECONDS)
+
+    async def _acquire_session_lease(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        root: ArtifactRef,
+        progress: Callable[[AcquisitionProgress], None] | None,
+        control: DownloadControl | None,
+    ) -> ArtifactOperationLease:
+        """Take the global session lease, waiting in line when asked to.
+
+        The acquire runs in an executor and cannot be interrupted once
+        started, so a CancelledError delivered while it is in flight first
+        waits for it to settle (asyncio.shield keeps the future running) and
+        releases the lease if it was in fact acquired -- never leaking it.
+
+        Raises:
+            AcquisitionBusyError: The lease is held and ``control`` did not
+                ask to wait; names the in-process holder when known.
+        """
+        waiting_for: object = _NOT_WAITING
+        while True:
             lease = ArtifactOperationLease(
                 self._core.locks_path,
                 ACQUISITION_SESSION_LEASE_KEY,
                 LeaseMode.EXCLUSIVE,
                 timeout_seconds=_SESSION_LEASE_TIMEOUT_SECONDS,
             )
-            # The acquire itself must live INSIDE this try/finally, not
-            # before it (a prior review found the release leaked): once
-            # lease.acquire() has started running in its worker thread, it
-            # cannot be interrupted, so a CancelledError delivered while it
-            # is still in flight must not skip past the finally below
-            # without first learning whether the acquire actually
-            # succeeded. asyncio.shield keeps the executor future running
-            # even if THIS await is cancelled; the except-CancelledError
-            # branch then waits for that same future to actually settle
-            # (ignoring whatever it raises) before re-raising, so
-            # `lease.acquired` below always reflects the true outcome
-            # instead of a stale "not yet" snapshot.
             acquire_future = loop.run_in_executor(None, lease.acquire)
             try:
-                try:
-                    await asyncio.shield(acquire_future)
-                except ArtifactLeaseTimeoutError as error:
+                await asyncio.shield(acquire_future)
+                return lease
+            except ArtifactLeaseTimeoutError as error:
+                holder = active_acquisition()
+                holder_label = holder.label if holder is not None else None
+                if control is None or not control.wait_if_busy:
                     raise AcquisitionBusyError(
-                        "another managed acquisition session is already active"
+                        "another managed acquisition session is already active",
+                        holder_label=holder_label,
                     ) from error
-                except asyncio.CancelledError:
+            except asyncio.CancelledError:
+                with contextlib.suppress(BaseException):
+                    await self._settle_native(acquire_future)
+                if lease.acquired:
                     with contextlib.suppress(BaseException):
-                        await self._settle_native(acquire_future)
-                    raise
+                        await self._settle_native(
+                            loop.run_in_executor(None, lease.release)
+                        )
+                raise
+            if holder_label != waiting_for and progress is not None:
+                progress(
+                    AcquisitionProgress(
+                        phase="queued",
+                        ref=root,
+                        file=None,
+                        bytes_done=0,
+                        bytes_total=0,
+                        waiting_for=holder_label,
+                    )
+                )
+            waiting_for = holder_label
+            await asyncio.sleep(_QUEUE_RETRY_SECONDS)
 
+    async def _provision_session(
+        self,
+        root: ArtifactRef,
+        consent: AcquisitionConsent,
+        catalog: ArtifactCatalog,
+        sources: ArtifactSourceMap | None,
+        progress: Callable[[AcquisitionProgress], None] | None,
+        activate: bool,
+        scope: _CancelScope,
+    ) -> ArtifactRef:
+        """Run one provision under the session lease; see ``provision()``."""
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            lease: ArtifactOperationLease | None = None
+            # The acquire lives INSIDE this try/finally (a prior review found
+            # the release leaked when it did not); _acquire_session_lease
+            # itself settles and releases a lease whose acquire was
+            # interrupted by cancellation.
+            try:
+                lease = await self._acquire_session_lease(
+                    loop, root, progress, scope.control
+                )
+                _set_active_acquisition(
+                    ActiveAcquisition(
+                        root=root,
+                        label=(
+                            scope.control.label
+                            if scope.control is not None
+                            else root.artifact_id
+                        ),
+                    )
+                )
                 self._maintenance_session = (asyncio.current_task(), lease)
                 closure, report, _gating_targets, resolved_sources = (
                     self._aggregate_closure(root, catalog, sources)
@@ -1239,67 +1459,137 @@ class ArtifactAcquisitionService:
                         if descriptor.reference not in installed_refs
                     ),
                 )
-
-                for descriptor in closure:
-                    if descriptor.reference in installed_refs:
-                        continue
-                    # TASK-1694: a service-owned, marked download stage
-                    # replaces the old bare
-                    # ``staging/managed/<id>/<rev>/<variant>`` directory.
-                    # ``stage.payload`` is where fetch/pre-verify write and
-                    # read declared files -- the exact subtree
-                    # ``_install_artifact`` (via
-                    # ``core._finalize_download_stage``) verifies and
-                    # RENAMES into the immutable destination. Resume
-                    # metadata (the fetch-state sidecar) is written under
-                    # ``stage.state`` -- a sibling of ``payload``, never
-                    # promoted -- see ``_fetch_sidecar_path``.
-                    stage = await self._run_core_call(
-                        "stage",
-                        descriptor.reference,
-                        functools.partial(
-                            self._core._download_stage_for, descriptor, create=True
-                        ),
+                try:
+                    return await self._provision_closure(
+                        root,
+                        closure,
+                        installed_refs,
+                        resolved_sources,
+                        progress_state,
+                        activate,
+                        scope,
                     )
-                    # create=True always returns a stage (never None); the
-                    # Optional return type only covers the create=False
-                    # lookup path (see _staged_bytes_for).
-                    assert stage is not None
-                    # TASK-1695: this descriptor's slice of the closure-wide
-                    # resolved source map -- already validated (complete,
-                    # credential-free) by the _aggregate_closure call above,
-                    # for both this artifact's fetch AND its pre-verify
-                    # phase's own internal refetch-on-mismatch path.
-                    file_sources = resolved_sources.get(descriptor.reference)
-                    await self._fetch_artifact(
-                        descriptor, stage.payload, progress_state, file_sources
-                    )
-                    await self._preverify_artifact(
-                        descriptor, stage.payload, progress_state, file_sources
-                    )
-                    await self._install_artifact(descriptor, stage)
-                    # _install_artifact's signature is (descriptor, stage)
-                    # -- no progress_state -- so the per-artifact
-                    # "verify-install" event is emitted here, by the caller
-                    # that already has it, immediately after the phase it
-                    # describes actually completes.
-                    self._emit_indeterminate_progress(
-                        progress_state, "verify-install", descriptor.reference
-                    )
-
-                if not activate:
-                    return root
-                activated = await self._run_core_call(
-                    "activate", root, functools.partial(self._core.activate, root)
-                )
-                self._emit_indeterminate_progress(progress_state, "activate", root)
-                return activated
+                except asyncio.CancelledError:
+                    if scope.requested:
+                        await self._discard_cancelled_stages(installed_refs, scope)
+                    raise
             finally:
-                if lease.acquired:
+                if lease is not None and lease.acquired:
+                    _set_active_acquisition(None)
                     try:
                         await self._settle_native(loop.run_in_executor(None, lease.release))
                     finally:
                         self._maintenance_session = None
+
+    async def _provision_closure(
+        self,
+        root: ArtifactRef,
+        closure: tuple[ArtifactDescriptor, ...],
+        installed_refs: set[ArtifactRef],
+        resolved_sources: Mapping[ArtifactRef, Mapping[str, str]],
+        progress_state: _ProvisionProgressState,
+        activate: bool,
+        scope: _CancelScope,
+    ) -> ArtifactRef:
+        """Fetch, pre-verify, install (and optionally activate) the closure."""
+        for descriptor in closure:
+            if descriptor.reference in installed_refs:
+                continue
+            scope.cancellable = True
+            # TASK-1694: a service-owned, marked download stage
+            # replaces the old bare
+            # ``staging/managed/<id>/<rev>/<variant>`` directory.
+            # ``stage.payload`` is where fetch/pre-verify write and
+            # read declared files -- the exact subtree
+            # ``_install_artifact`` (via
+            # ``core._finalize_download_stage``) verifies and
+            # RENAMES into the immutable destination. Resume
+            # metadata (the fetch-state sidecar) is written under
+            # ``stage.state`` -- a sibling of ``payload``, never
+            # promoted -- see ``_fetch_sidecar_path``.
+            stage = await self._run_core_call(
+                "stage",
+                descriptor.reference,
+                functools.partial(
+                    self._core._download_stage_for, descriptor, create=True
+                ),
+            )
+            # create=True always returns a stage (never None); the
+            # Optional return type only covers the create=False
+            # lookup path (see _staged_bytes_for).
+            assert stage is not None
+            scope.touched.append(descriptor)
+            # TASK-1695: this descriptor's slice of the closure-wide
+            # resolved source map -- already validated (complete,
+            # credential-free) by the _aggregate_closure call above,
+            # for both this artifact's fetch AND its pre-verify
+            # phase's own internal refetch-on-mismatch path.
+            file_sources = resolved_sources.get(descriptor.reference)
+            await self._fetch_artifact(
+                descriptor, stage.payload, progress_state, file_sources
+            )
+            await self._preverify_artifact(
+                descriptor, stage.payload, progress_state, file_sources
+            )
+            scope.cancellable = False
+            await self._install_artifact(descriptor, stage)
+            # _install_artifact's signature is (descriptor, stage)
+            # -- no progress_state -- so the per-artifact
+            # "verify-install" event is emitted here, by the caller
+            # that already has it, immediately after the phase it
+            # describes actually completes.
+            self._emit_indeterminate_progress(
+                progress_state, "verify-install", descriptor.reference
+            )
+
+        scope.cancellable = False
+        if not activate:
+            return root
+        activated = await self._run_core_call(
+            "activate", root, functools.partial(self._core.activate, root)
+        )
+        self._emit_indeterminate_progress(progress_state, "activate", root)
+        return activated
+
+    async def _discard_cancelled_stages(
+        self, installed_refs: set[ArtifactRef], scope: _CancelScope
+    ) -> None:
+        """Record what a cancelled run kept, and remove what it staged.
+
+        Runs while the session lease is still held, so no reconcile pass can
+        race the removal. Whatever finished installing (re-read, never
+        assumed) is kept and reported; every other stage this run touched is
+        discarded -- the user asked for the download to stop, not to be
+        resumed later.
+        """
+        try:
+            now_installed = {
+                item.descriptor.reference
+                for item in self._maintenance_core_read(self._core.list_installed)
+                if item.descriptor is not None
+            }
+        except (ArtifactError, OSError):
+            now_installed = set(installed_refs)
+        scope.installed = tuple(
+            descriptor.reference
+            for descriptor in scope.touched
+            if descriptor.reference in now_installed
+            and descriptor.reference not in installed_refs
+        )
+        for descriptor in scope.touched:
+            if descriptor.reference in now_installed:
+                continue
+            try:
+                await self._run_core_call(
+                    "discard",
+                    descriptor.reference,
+                    functools.partial(
+                        self._core._discard_download_stage_for, descriptor
+                    ),
+                )
+            except (AcquisitionError, ArtifactError, OSError):
+                scope.staging_removed = False
+
 
     async def _fetch_artifact(
         self,
@@ -1597,6 +1887,19 @@ class ArtifactAcquisitionService:
                     )
                 )
 
+        def on_checkpoint(durable_bytes: int, current: FetchValidators) -> None:
+            # TASK-34100.14 ([voice-speech-11]): stream_fetch has fsynced
+            # ``durable_bytes`` of this file under ``current`` (strong)
+            # validators -- record it so a run killed mid-file resumes
+            # here. ``complete`` stays False until stream_fetch returns.
+            sidecar["files"][file.path] = {
+                "etag": current.etag,
+                "last_modified": current.last_modified,
+                "bytes_done": durable_bytes,
+                "complete": False,
+            }
+            atomic_write_json(sidecar_path, sidecar)
+
         try:
             result, used_resume_from = await self._stream_with_restart(
                 url,
@@ -1607,6 +1910,7 @@ class ArtifactAcquisitionService:
                 validators=validators,
                 headers=headers,
                 on_chunk=on_chunk,
+                on_checkpoint=on_checkpoint,
             )
         except OSError as exc:
             raise TransferError(
@@ -1659,6 +1963,7 @@ class ArtifactAcquisitionService:
         validators: FetchValidators | None,
         headers: Mapping[str, str] | None = None,
         on_chunk: Callable[[int], None],
+        on_checkpoint: Callable[[int, FetchValidators], None] | None = None,
     ) -> tuple[FetchResult, int]:
         """Call ``stream_fetch``, restarting once from zero on FetchRestartRequired.
 
@@ -1676,6 +1981,9 @@ class ArtifactAcquisitionService:
                 ``stream_fetch`` itself strips them on any cross-origin
                 redirect hop regardless of what's passed here.
             on_chunk: Progress callback forwarded to ``stream_fetch``.
+            on_checkpoint: TASK-34100.14: mid-file durable-checkpoint sink,
+                forwarded to ``stream_fetch`` with ``FETCH_CHECKPOINT_BYTES``
+                (read at call time) for both attempts.
 
         Returns:
             The successful ``FetchResult`` together with the ``resume_from``
@@ -1701,6 +2009,8 @@ class ArtifactAcquisitionService:
                 headers=headers,
                 trusted_origins=self._trusted_origins,
                 on_chunk=on_chunk,
+                checkpoint_every=FETCH_CHECKPOINT_BYTES,
+                on_checkpoint=on_checkpoint,
             )
             return result, resume_from
         except FetchRestartRequired:
@@ -1718,6 +2028,8 @@ class ArtifactAcquisitionService:
                 headers=headers,
                 trusted_origins=self._trusted_origins,
                 on_chunk=on_chunk,
+                checkpoint_every=FETCH_CHECKPOINT_BYTES,
+                on_checkpoint=on_checkpoint,
             )
             return result, 0
 
@@ -1988,7 +2300,7 @@ class ArtifactAcquisitionService:
 
     async def _run_core_call(
         self,
-        operation: Literal["stage", "finalize", "activate"],
+        operation: Literal["stage", "finalize", "activate", "discard"],
         ref: ArtifactRef,
         func: Callable[[], _CoreCallResult],
     ) -> _CoreCallResult:

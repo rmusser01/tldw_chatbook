@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+import time
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
@@ -72,6 +75,92 @@ class PlanRow:
     already_installed: bool
     provenance: str
     usage_notice: str = ""
+    role: str = ""
+    purpose: str = ""
+
+
+@dataclass(frozen=True)
+class ComponentCopy:
+    """Plain-words install-review copy for one curated component.
+
+    TASK-34100.14 ([voice-speech-18]). A descriptor's ``usage_notice`` is
+    part of its identity: it is written into every installed manifest and
+    hashed into the download stage's name, and Parakeet's managed-copy path
+    compares installed descriptors by equality. Rewording it would orphan
+    in-flight partial downloads and make an existing install look foreign.
+    So the install review substitutes this copy at display time instead.
+
+    Attributes:
+        role: Short noun for the summary's licence line ("speech model").
+        purpose: What the component does, in plain words.
+        notice: Replacement for the descriptor's usage notice; ``""`` shows
+            none (the panel's own closing line already says every file is
+            checked against its recorded size and SHA-256).
+    """
+
+    role: str
+    purpose: str
+    notice: str = ""
+
+
+# Keyed by artifact id; Tests/UI/test_model_artifact_widgets.py pins these
+# keys to the constants in Local_Ingestion/parakeet_v2_artifact.py.
+_CURATED_COMPONENT_COPY: dict[str, ComponentCopy] = {
+    "parakeet-v2": ComponentCopy("speech model", "turns speech into text"),
+    "parakeet-v3": ComponentCopy("speech model", "turns speech into text"),
+    "silero-vad": ComponentCopy(
+        "voice-activity detector", "splits long recordings into chunks"
+    ),
+}
+
+# Canonical SPDX spellings for the ids Hugging Face model cards publish in
+# lower case ("mit", "cc-by-4.0"). Unknown ids are shown as given.
+_SPDX_CANONICAL = {
+    spdx.casefold(): spdx
+    for spdx in (
+        "AGPL-3.0",
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "CC-BY-4.0",
+        "CC-BY-NC-4.0",
+        "CC-BY-NC-SA-4.0",
+        "CC-BY-SA-4.0",
+        "CC0-1.0",
+        "GPL-2.0",
+        "GPL-3.0",
+        "ISC",
+        "LGPL-2.1",
+        "LGPL-3.0",
+        "MIT",
+        "MPL-2.0",
+        "Unlicense",
+    )
+}
+
+
+def component_copy(artifact_id: str) -> ComponentCopy | None:
+    """Return the curated plain-words copy for one component, if any."""
+    return _CURATED_COMPONENT_COPY.get(artifact_id)
+
+
+def display_license(license_id: str) -> str:
+    """Render a declared licence id for people, not parsers.
+
+    Args:
+        license_id: The descriptor's licence id (SPDX, ``other`` or the
+            ``NOASSERTION`` sentinel).
+
+    Returns:
+        The canonical SPDX spelling (``MIT``, ``CC-BY-4.0``), ``Unknown /
+        not declared`` for the sentinel, ``Other`` for ``other``, or the id
+        unchanged.
+    """
+    if license_id == "NOASSERTION":
+        return "Unknown / not declared"
+    if license_id.casefold() == "other":
+        return "Other"
+    return _SPDX_CANONICAL.get(license_id.casefold(), license_id)
 
 
 @dataclass(frozen=True)
@@ -325,22 +414,27 @@ def plan_rows(report: PreflightReport) -> tuple[PlanRow, ...]:
     Returns:
         One row for every model in the dependency closure.
     """
-    return tuple(
-        PlanRow(
-            reference=entry.ref,
-            repository=entry.repository,
-            revision=entry.revision,
-            license_id=entry.license_id,
-            license_url=entry.license_url,
-            precision=entry.precision,
-            file_count=entry.file_count,
-            total_bytes=entry.total_bytes,
-            already_installed=entry.already_installed,
-            provenance=provenance_label(entry.provenance),
-            usage_notice=entry.usage_notice,
+    rows = []
+    for entry in report.entries:
+        copy = component_copy(entry.ref.artifact_id)
+        rows.append(
+            PlanRow(
+                reference=entry.ref,
+                repository=entry.repository,
+                revision=entry.revision,
+                license_id=entry.license_id,
+                license_url=entry.license_url,
+                precision=entry.precision,
+                file_count=entry.file_count,
+                total_bytes=entry.total_bytes,
+                already_installed=entry.already_installed,
+                provenance=provenance_label(entry.provenance),
+                usage_notice=(copy.notice if copy is not None else entry.usage_notice),
+                role=copy.role if copy is not None else "",
+                purpose=copy.purpose if copy is not None else "",
+            )
         )
-        for entry in report.entries
-    )
+    return tuple(rows)
 
 
 def plan_totals(report: PreflightReport) -> PlanTotals:
@@ -394,6 +488,185 @@ def format_mib(size_bytes: int) -> str:
         exactly ``1_048_576`` (1 MiB).
     """
     return f"{size_bytes / (1024 * 1024):.1f} MiB"
+
+
+_MIB = 1024 * 1024
+_GIB = 1024 * _MIB
+
+
+def format_mib_progress(done_bytes: int, total_bytes: int) -> str:
+    """Render transfer progress as ``"65.0 of 632.8 MiB"`` (one shared unit).
+
+    Args:
+        done_bytes: Bytes transferred so far.
+        total_bytes: Bytes in the whole transfer.
+
+    Returns:
+        Both values in MiB to one decimal, the unit written once.
+    """
+    return f"{done_bytes / _MIB:.1f} of {total_bytes / _MIB:.1f} MiB"
+
+
+def format_free_space(free_bytes: int) -> str:
+    """Render free disk space: GiB from 1 GiB up, MiB below.
+
+    Args:
+        free_bytes: Free bytes on the destination's filesystem.
+
+    Returns:
+        For example ``"112.3 GiB free"`` or ``"512.0 MiB free"``.
+    """
+    if free_bytes >= _GIB:
+        return f"{free_bytes / _GIB:.1f} GiB free"
+    return f"{format_mib(free_bytes)} free"
+
+
+def format_transfer_rate(bytes_per_second: float) -> str:
+    """Render a transfer speed: MiB/s from 1 MiB/s up, whole KiB/s below."""
+    if bytes_per_second >= _MIB:
+        return f"{bytes_per_second / _MIB:.1f} MiB/s"
+    return f"{max(bytes_per_second, 0) / 1024:.0f} KiB/s"
+
+
+def format_time_left(seconds: float) -> str:
+    """Render an estimate in plain words: ``"about 2 min left"``."""
+    if seconds < 60:
+        return "less than a minute left"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"about {minutes} min left"
+    hours, minutes = divmod(minutes, 60)
+    return f"about {hours} h {minutes} min left" if minutes else f"about {hours} h left"
+
+
+class TransferRateEstimator:
+    """Estimate speed and time left from successive cumulative byte counts.
+
+    A sliding window (about the last eight seconds) smooths bursty chunk
+    delivery without lagging behind a real change of speed. A new phase or
+    file (``key``), or a count that goes backwards (a restarted transfer),
+    starts a fresh window. No estimate is offered until the window spans at
+    least a second.
+    """
+
+    WINDOW_SECONDS = 8.0
+    MIN_SPAN_SECONDS = 1.0
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        """Create an empty estimator.
+
+        Args:
+            clock: Monotonic seconds source (tests inject a fake).
+        """
+        self._clock = clock
+        self._key: object = None
+        self._samples: deque[tuple[float, int]] = deque()
+
+    def reset(self) -> None:
+        """Forget every sample."""
+        self._key = None
+        self._samples.clear()
+
+    def observe(self, key: object, bytes_done: int) -> None:
+        """Record one cumulative byte count.
+
+        Args:
+            key: Identifies one continuous transfer (e.g. the phase).
+            bytes_done: Cumulative bytes transferred in that transfer.
+        """
+        now = self._clock()
+        if key != self._key or (self._samples and bytes_done < self._samples[-1][1]):
+            self._samples.clear()
+            self._key = key
+        self._samples.append((now, bytes_done))
+        while (
+            len(self._samples) > 2
+            and now - self._samples[1][0] >= self.WINDOW_SECONDS
+        ):
+            self._samples.popleft()
+
+    @property
+    def bytes_per_second(self) -> float | None:
+        """Current speed, or ``None`` until the window spans a second."""
+        if len(self._samples) < 2:
+            return None
+        (first_time, first_bytes), (last_time, last_bytes) = (
+            self._samples[0],
+            self._samples[-1],
+        )
+        span = last_time - first_time
+        if span < self.MIN_SPAN_SECONDS:
+            return None
+        return max(last_bytes - first_bytes, 0) / span
+
+    def seconds_left(self, remaining_bytes: int) -> float | None:
+        """Time to move ``remaining_bytes`` at the current speed, if known."""
+        rate = self.bytes_per_second
+        if not rate:
+            return None
+        return max(remaining_bytes, 0) / rate
+
+
+def transfer_summary(
+    done_bytes: int,
+    total_bytes: int,
+    estimator: TransferRateEstimator | None = None,
+) -> str:
+    """``"65.0 of 632.8 MiB · 4.1 MiB/s · about 2 min left"`` (shared copy).
+
+    Args:
+        done_bytes: Bytes transferred so far.
+        total_bytes: Bytes in the whole transfer.
+        estimator: Speed source; speed and time left are omitted until it
+            has an estimate.
+
+    Returns:
+        The progress clause shared by the progress widget and the steps
+        that echo it in their own status line.
+    """
+    parts = [format_mib_progress(done_bytes, total_bytes)]
+    rate = estimator.bytes_per_second if estimator is not None else None
+    if rate is not None:
+        parts.append(format_transfer_rate(rate))
+        left = estimator.seconds_left(total_bytes - done_bytes)
+        if left is not None:
+            parts.append(format_time_left(left))
+    return " · ".join(parts)
+
+
+def waiting_for_copy(waiting_for: str | None) -> str:
+    """The queued-install line: name the download being waited for."""
+    if waiting_for:
+        return f"Waiting for the {waiting_for} download to finish…"
+    return "Waiting for another model download to finish…"
+
+
+def download_cancelled_message(
+    installed_count: int = 0, *, staging_removed: bool = True
+) -> str:
+    """What a user-cancelled download left behind, stated plainly.
+
+    Args:
+        installed_count: Components that had already finished installing
+            before the cancel landed (complete and verified, so kept).
+        staging_removed: Whether the partial download was removed.
+
+    Returns:
+        ``"Download cancelled — nothing was saved."`` in the common case.
+    """
+    if not staging_removed:
+        return (
+            "Download cancelled. Its partial download could not be removed; "
+            "installing again resumes from it."
+        )
+    if installed_count == 0:
+        return "Download cancelled — nothing was saved."
+    kept = (
+        "1 component that had finished installing was kept"
+        if installed_count == 1
+        else f"{installed_count} components that had finished installing were kept"
+    )
+    return f"Download cancelled — the partial download was removed; {kept}."
 
 
 def inventory_rows(
@@ -515,6 +788,7 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
     """
     from tldw_chatbook.Model_Artifacts.acquisition import (
         AcquisitionBusyError,
+        AcquisitionCancelledError,
         CatalogError,
         ConsentMismatchError,
         GatedRepositoryError,
@@ -531,9 +805,22 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
             "This model's repository requires a credential. Configure "
             "HUGGINGFACE_API_KEY (or HF_TOKEN) and retry."
         )
+    if isinstance(exc, AcquisitionCancelledError):
+        return download_cancelled_message(
+            len(exc.installed_refs), staging_removed=exc.staging_removed
+        )
     if isinstance(exc, AcquisitionBusyError):
+        # TASK-34100.14 ([voice-speech-08]): name the model whose download
+        # holds the session, never the caller's own model_label -- starting
+        # Parakeet while OmniVoice downloads used to blame "Parakeet".
+        holder = getattr(exc, "holder_label", None)
+        if holder:
+            return (
+                f"The {holder} download is still running. Try again when it "
+                "finishes."
+            )
         return (
-            f"Another {model_label} install is already in progress. Try again shortly."
+            "Another model download is already running. Try again when it finishes."
         )
     if isinstance(exc, ConsentMismatchError):
         return "The install plan changed. Retry Install to review the current plan."

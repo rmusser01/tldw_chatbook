@@ -1647,6 +1647,19 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_preflight.py",
             "test_provision_install.py",
             "test_provision_crash_recovery.py",
+            # TASK-34100.14: the cancel/queue/mid-file-resume suite drives
+            # provision() and preflight() on worker threads against loopback
+            # fixture servers -- the same egress._config_enabled ->
+            # get_cli_setting read, and the same admission signature (every
+            # node red at setup-free first fetch without this). It fakes the
+            # HTTP source, not the config getters, and never re-selects a
+            # config. The provision lease/serialization suite is the same
+            # class and was missed when its siblings were enrolled: 2 of its
+            # 7 nodes were red with RecoveryRequired("raw_source_selection_
+            # changed") on a clean dev export (4de437a5c5), 7/7 green
+            # enrolled -- and it pins the lease code this task restructured.
+            "test_download_control.py",
+            "test_provision_serialization.py",
             # TASK-32171: the Library media-reader traversal suite mounts
             # real production-CSS apps through _flow_app -> _build_test_app ->
             # load_settings on the guarded config loader, so the per-test env
