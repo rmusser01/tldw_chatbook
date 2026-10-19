@@ -2,7 +2,7 @@
 id: TASK-35576
 title: An overlapping open that reused a chat's session keeps it when the first open rolls back
 status: To Do
-created_date: 2026-10-19 09:10
+created_date: 2026-10-19 08:55
 dependencies: []
 labels:
 - model-config-redesign
