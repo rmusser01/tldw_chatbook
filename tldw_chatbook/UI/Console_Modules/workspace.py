@@ -3792,7 +3792,9 @@ class ConsoleWorkspaceController:
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
         """Return persisted global/workspace rows for grouped browser search."""
         runtime = self._workspace_availability_runtime()
-        if runtime is not None and runtime._disposed:
+        if getattr(self.app_instance, "_shutting_down", False) or (
+            runtime is not None and runtime._disposed
+        ):
             raise asyncio.CancelledError
         services: list[tuple[Any, bool]] = []
         scope_service = getattr(
@@ -4050,7 +4052,8 @@ class ConsoleWorkspaceController:
             # minting a coroutine that can never be awaited.
             runtime = self._workspace_availability_runtime()
             if self._screen_running_accessor() and not (
-                runtime is not None and runtime._disposed
+                getattr(self.app_instance, "_shutting_down", False)
+                or runtime is not None and runtime._disposed
             ):
                 self._console_persisted_rows_refresh_key = refresh_key
                 self.run_worker(
