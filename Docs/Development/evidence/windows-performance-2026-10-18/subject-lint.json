@@ -15,5 +15,9 @@
     "F401: `...Chat.console_chat_models.MessageAttachment` imported but unused": 1,
     "E721: Do not compare types, use `isinstance()`": 17
   },
-  "unchanged": true
+  "unchanged": true,
+  "chat_screen_format_check_exit": {
+    "before": 1,
+    "after": 1
+  }
 }

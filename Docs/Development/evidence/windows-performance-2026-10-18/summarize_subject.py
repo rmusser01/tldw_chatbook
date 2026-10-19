@@ -7,7 +7,7 @@ from statistics import median
 
 OUT = Path(__file__).parent
 result = {}
-for tag in ("control1", "after1", "after2", "control2"):
+for tag in ("control1", "after1", "after2", "control2", "final", "final-control"):
     data = json.loads((OUT / f"plain-ready-subject-{tag}.json").read_text())
     receipt = json.loads((OUT / f"subject-{tag}-exit.json").read_text())
     returns = data.get("console_resume", [])
