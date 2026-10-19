@@ -107,9 +107,10 @@ jobs:
       - name: Install fast-lane dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
 
-      # Phase 9's whole-PR review, round 1: the last 13 targets are model-config
-      # evidence that ran in no PR lane (Tests/CI's FAST_LANE_TARGETS names each
-      # rider); about 50 s serial in this job's install set.
+      # Phase 9: the last 15 targets are model-config evidence that ran in no PR
+      # lane (13 from the whole-PR review's round 1, 2 from the Stop-claim fix;
+      # Tests/CI's FAST_LANE_TARGETS names each rider); about 1 min serial in
+      # this job's install set.
       - name: Run fast PR contract
         run: |
           pytest \
@@ -232,6 +233,8 @@ jobs:
             Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
             Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section \
             Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api \
+            Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work \
+            Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits \
             --timeout=180 \
             --tb=short
 
@@ -245,7 +248,7 @@ jobs:
     #
     # timeout-minutes: the 35 the owner set for exactly these suites
     # (TASK-33910.2). TASK-35575 (owner decision, 2026-10-19): this job keeps
-    # dev's 41 targets and Phase 9's 52 run beside it in
+    # dev's 41 targets and Phase 9's 54 run beside it in
     # pr-fast-lane-admission-2, below. With all 93 here, PR #3169's two runs
     # took 29.8 and 27.4 min of the 35 (the pytest step 1737 s and 1590 s), so
     # one hung test at --timeout=300 (about 5.3 min with the private-profile
@@ -330,12 +333,13 @@ jobs:
   pr-fast-lane-admission-2:
     # TASK-35575 (owner decision, 2026-10-19): the admission-sensitive suites
     # run in two jobs side by side. pr-fast-lane-admission keeps dev's 41
-    # targets; this job holds Phase 9's 52 model-config targets in the order
-    # they had there. Together in one job, PR #3169's two runs took 29.8 and
+    # targets; this job holds Phase 9's 54 model-config targets: the 52 in the
+    # order they had there, then the Stop-claim fix's two (TASK-33666). Together in one job, PR #3169's two runs took 29.8 and
     # 27.4 min of its 35 (the pytest step 1737 s and 1590 s), so one hung
     # test at --timeout=300 (about 5.3 min with the private-profile wrapper's
     # report) would have passed the cap. Serial in this job's install set the
-    # 52 alone took 266.9 s (959 passed, 2026-10-19, load 7-9), where all 93
+    # 52 alone took 266.9 s (959 passed, 2026-10-19, load 7-9; the two added
+    # after are about 10-14 s each), where all 93
     # took 1744.6 s and then 1737 s and 1590 s on CI, so expect about 5 min
     # of pytest and 6-7 min with setup: a hung test's report ends well over
     # 20 min under the cap.
@@ -425,6 +429,8 @@ jobs:
             Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result \
             Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result \
             Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result \
+            Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits \
+            Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits \
             --timeout=300 \
             --tb=short
 

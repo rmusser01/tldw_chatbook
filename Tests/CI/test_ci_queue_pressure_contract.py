@@ -234,6 +234,10 @@ FAST_LANE_TARGETS = (
     # and a kept stored key is written only into such a table.
     "Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section",
     "Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api",
+    # TASK-33666 (Phase 9 fix): a fleet wake and the shared drain keep the
+    # automatic slot until the conversation's physical work exits.
+    "Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work",
+    "Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -429,6 +433,10 @@ ADMISSION_2_TARGETS = (
     "Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result",
     "Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result",
     "Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result",
+    # TASK-33666 (Phase 9 fix): a Stop keeps the chat start's automatic slot
+    # until the provider worker, and the bridge worker, exit (bootstrap_profile).
+    "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits",
+    "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
