@@ -859,6 +859,24 @@ Depends on: Task 6 (TASK-33006.19, integrated in Wave 4)
     - F3 and review round 1: Tests/UI/test_settings_connect_rows.py::test_the_revert_dialog_leaves_focus_off_the_navigation_bar. Its Providers & Models case now releases focus with Esc from the Session summary duration field (a field with a tooltip), not from the edited Endpoint field.
     - 72eb26c373 (TASK-33001.12): Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_no_resume_keeps_blocking_modal_focus_transfer now waits for the setup card to settle before it forces focus.
   - Follow-ups for pre-existing problems: TASK-35560 to TASK-35566, TASK-35568 and TASK-35569 from the captures; TASK-35567 (a red test with no owner) and TASK-35570 (a CI contract for bootstrap_profile census entries) from the capture phase's runs and reviews.
+- Whole-PR review (2026-10-18/19), the phase as one PR (111f8e48fc..f417c89c86), in five slices: Settings; Chat settings and the Console; Switch model; config, themes, CSS, Home and Schedules; process, lanes and records. Every slice came back "with fixes".
+  - Product fixes (253fe41364..491f3b49fa, 84a8dfef6c):
+    - TASK-35190: an unseen pick keeps the chat's Endpoint only on llama.cpp's direct path, the one path that sends on an Endpoint set only on the chat. Every other provider lands on its saved endpoint again, instead of "endpoint not saved". AC#5 records the scope. Switch model checks the saved server too only when the chat's Endpoint differs from it.
+    - TASK-33641.9: `_capped`'s keep is reachable (a namesake provider's 30 rows), so it is pinned, not deleted.
+    - TASK-33005.15: the Overview's readiness tick repaints the Last connection test row beside the Status. A draft that keeps the saved pair says only "Unsaved Providers & Models edits".
+    - TASK-33005.7: the endpoint reason reads "Send blocked — save the endpoint to continue".
+    - Docs: TASK-33007.11, TASK-33002.10, TASK-33641.11, TASK-33641.1 and TASK-33003.16.
+    - Size rows lowered to the files: settings_screen.py 35,771 and console_settings_modal.py 6,153 (TASK-33002.7).
+  - Lanes (d6ec582cb5..b0a0ca655a, d372e668e2): 42 new evidence tests from Waves 1 and 2 ran in no PR lane (reviewer E's probe over 111f8e48fc..f417c89c86). All 42 are now placed by marker, under ledger R11:
+    - 37 targets go to the admission-sensitive step and ADMISSION_TARGETS. These include the four test_console_settings_geometry.py census nodes, which TASK-33006.24's module-level marker made bootstrap_profile, and the two Wave 2 view-tab nodes.
+    - 13 go to the sandboxed step and FAST_LANE_TARGETS.
+    - 4 Tests/UI nodes that are not bootstrap_profile take the geometry nodes' census slots, so the census stays at 355 (floor 355).
+    - Two rewritten Schedules pins gain a bootstrap_profile marker; unmarked, they fail at setup.
+    - test_settings_discovered_model_toggle.py stays whole in the census, with one bootstrap node inside: a known exception to R11 (TASK-33003.17's notes; TASK-35570 decides the rule).
+    - Rider records corrected: TASK-33003.11 and TASK-33006.21.
+  - Pins rewritten on purpose, which the PR must call out: Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers (the endpoint reason's 3 strings, TASK-33005.7).
+  - Records (13b8dee5f6): this plan's corrections; the 04m capture row; TASK-35570 rescoped to decide the rule first; TASK-33005.11's AC#3 rewording noted.
+  - Follow-up: TASK-35571 (reopening Chat settings marks a passed generation test stale; pre-existing).
 
 ## Closed without code
 
