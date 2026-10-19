@@ -384,6 +384,9 @@ class HomeScreen(BaseAppScreen):
         self._home_refresh_timer = None
         self._home_live_active_work_signature: tuple | None = None
         self._home_pending_live_active_work_sync = False
+        # Late worker completion may land while this reusable screen is hidden.
+        # Replay presentation only after the next visit's cache worker settles.
+        self._home_pending_refresh_sync = False
         # T190: cached content/readiness snapshot, refreshed by the
         # ``_refresh_home_content_snapshot`` worker off the compose path and
         # merged into every ``_build_dashboard_input``. Per-instance --
@@ -511,8 +514,19 @@ class HomeScreen(BaseAppScreen):
         # TASK-33264: sync in place. A whole-screen recompose here ran once
         # per visit of this reused screen (~68 ms vs ~3 ms) and left each
         # discarded tree pinned in the screen's query_one cache.
-        if self.is_mounted:
-            self._sync_home_triage()
+        self._sync_home_triage_after_refresh()
+
+    def _sync_home_triage_after_refresh(self, *, cache_ready: bool = False) -> None:
+        """Keep hidden completion pending until visible, warmed presentation."""
+        if not self.is_mounted:
+            return
+        if self.app.screen is not self:
+            self._home_pending_refresh_sync = True
+            return
+        if self._home_pending_refresh_sync and not cache_ready:
+            return
+        self._sync_home_triage()
+        self._home_pending_refresh_sync = False
 
     @work(exclusive=True, group="home-content-snapshot")
     async def _refresh_home_content_snapshot(self) -> None:
@@ -530,8 +544,8 @@ class HomeScreen(BaseAppScreen):
         # Only re-sync when the snapshot actually changes what Home shows --
         # an all-default snapshot (nothing ready, nothing counted) must not
         # trigger a redundant adapter rebuild/refresh cycle.
-        if self.is_mounted and snapshot != (previous or HomeContentSnapshot()):
-            self._sync_home_triage()
+        if snapshot != (previous or HomeContentSnapshot()):
+            self._sync_home_triage_after_refresh()
 
     @work(exclusive=True, group="home-active-work-cache")
     async def _refresh_home_active_work_cache(self) -> None:
@@ -556,25 +570,31 @@ class HomeScreen(BaseAppScreen):
             # compute runs inline on the event loop, where it measurably
             # delayed mount settling (phase6 power-user replay gate).
             self._home_pending_live_active_work_sync = False
+            if self._home_pending_refresh_sync:
+                self._sync_home_triage_after_refresh(cache_ready=True)
             return
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         refresh = getattr(adapter, "refresh_active_work_cache_async", None)
         if not inspect.iscoroutinefunction(refresh):
             self._home_pending_live_active_work_sync = False
+            if self._home_pending_refresh_sync:
+                self._sync_home_triage_after_refresh(cache_ready=True)
             return
         try:
             refreshed = await refresh()
         except Exception as exc:
             logger.debug(f"Home active-work cache refresh failed: {exc}")
-            refreshed = False
+            # Retain deferred presentation rather than falling into a cold
+            # synchronous dashboard read after an unsuccessful warm.
+            return
         # TASK-2763: a re-sync is warranted when the adapter actually
         # recomputed (a fresh cache means nothing changed) OR when the
         # auto-refresh tick saw the live ingest feed move inside a fresh
         # cache window (the pending flag).
         pending_live_change = self._home_pending_live_active_work_sync
         self._home_pending_live_active_work_sync = False
-        if (refreshed or pending_live_change) and self.is_mounted:
-            self._sync_home_triage()
+        if refreshed or pending_live_change or self._home_pending_refresh_sync:
+            self._sync_home_triage_after_refresh(cache_ready=True)
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
         """Assemble the T190 content snapshot from real seams, degrading quietly."""

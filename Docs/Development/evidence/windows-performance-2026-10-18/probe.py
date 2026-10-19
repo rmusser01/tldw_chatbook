@@ -13,6 +13,8 @@ Add --clock-safe to keep probe polling above the Windows loop clock resolution.
 Add --presentation-baseline for the pre-CSS/inspector/appearance modules.
 Add --matching-baseline for the exact pre-static-filter CSS module.
 Add --matching-observe or --matching-benchmark for separate CSS diagnostics.
+Add --stalls-baseline for the pre-TASK-35612 presentation modules.
+Add --traceback-seconds 1 for a separate accelerated dump stress run (not timing).
 Add --profile for cProfile discovery (this Python 3.12 build captures workers
 too; its cumulative timings/callers are not trustworthy main-thread evidence).
 The separate sampler explicitly selects the main thread. Fresh temporary app
@@ -86,7 +88,30 @@ if AB:
 if "--tag" in sys.argv:
     TAG += "-" + sys.argv[sys.argv.index("--tag") + 1]
 stack_log = (OUT / f"{TAG}-stacks.txt").open("w", encoding="utf-8")
-faulthandler.dump_traceback_later(60, repeat=True, file=stack_log)
+# A prior process exited halfway through the C timer's all-thread dump. The
+# cause is unproven, but CPython gh-140815 documents races in that GIL-free
+# watchdog. Invoke the synchronous dumper from a Python thread instead. This
+# cannot diagnose a thread holding the GIL indefinitely (use an external debugger).
+stop_tracebacks = threading.Event()
+traceback_seconds = (
+    float(sys.argv[sys.argv.index("--traceback-seconds") + 1])
+    if "--traceback-seconds" in sys.argv
+    else 60.0
+)
+if traceback_seconds <= 0:
+    raise ValueError("traceback interval must be positive")
+traceback_dumps = 0
+
+
+def periodic_tracebacks():
+    global traceback_dumps
+    while not stop_tracebacks.wait(traceback_seconds):
+        faulthandler.dump_traceback(file=stack_log)
+        traceback_dumps += 1
+
+
+traceback_thread = threading.Thread(target=periodic_tracebacks, daemon=True)
+traceback_thread.start()
 report = {
     "python": sys.version,
     "platform": platform.platform(),
@@ -97,6 +122,8 @@ report = {
     "typing": [],
     "attach_poll": "--attach-poll" in sys.argv,
     "temporary_profile": str(scratch),
+    "periodic_tracebacks": "python-thread-synchronous",
+    "traceback_interval_seconds": traceback_seconds,
 }
 stage = "startup"
 poll_seconds = 0.005
@@ -162,6 +189,10 @@ async def main():
         probe_poll_seconds=poll_seconds,
         probe_heartbeat_seconds=heartbeat_seconds,
     )
+    if "--stalls-baseline" in sys.argv:
+        import stalls_baseline
+
+        report["baseline_revision"] = stalls_baseline.BASE_REVISION
     if "--presentation-baseline" in sys.argv:
         import presentation_baseline
 
@@ -577,6 +608,7 @@ async def main():
                 stats.sort_stats("tottime").print_stats(50)
         report["blocked_network_attempts"] = len(network_guard.blocked_attempts())
         report["real_profile_refusals"] = len(real_profile_guard.take_violations())
+        report["periodic_traceback_dumps"] = traceback_dumps
         save()
     print(json.dumps(report, indent=2))
 
@@ -585,6 +617,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     finally:
-        faulthandler.cancel_dump_traceback_later()
+        stop_tracebacks.set()
+        traceback_thread.join()
         stack_log.close()
         fixture_owner.__exit__(None, None, None)

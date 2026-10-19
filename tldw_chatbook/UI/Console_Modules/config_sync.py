@@ -53,7 +53,10 @@ def run_console_config_sync(
         defer()
         return False
     if checked_projection is not None:
-        from .console_spend_projection import _run_checked_display_sync
+        from .console_spend_projection import (
+            _CheckedDisplayRefused,
+            _run_checked_display_sync,
+        )
 
         displayed = _run_checked_display_sync(checked_projection, sync, defer)
         if displayed is not None:
@@ -92,6 +95,12 @@ def run_console_config_sync(
         if failure is not None and error is not failure:
             raise error from failure
         raise
+    if checked_projection is not None and type(failure) is _CheckedDisplayRefused:
+        # An expired display may have selected this native route. A later
+        # metadata refusal still requests replay, but only after native exit.
+        # Cleanup errors propagate through the exception path above.
+        defer()
+        return False
     if failure is not None:
         raise failure
     return True

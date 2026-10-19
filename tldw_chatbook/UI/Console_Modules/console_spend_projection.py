@@ -605,7 +605,8 @@ def _checked_display_status(projection: Any) -> bool | None:
     """Return fresh display acceptance, owner refusal, or native fallback.
 
     All checks here are in-memory identity or lexical source checks. The
-    coordinator lock protects only installed participant mappings, never IO.
+    coordinator lock protects the installed participant mappings. Contention
+    defers presentation to the existing retry; it never grants acceptance.
     """
     if type(projection) is not ConsoleReadinessConfigProjection:
         return None
@@ -691,7 +692,9 @@ def _checked_display_status(projection: Any) -> bool | None:
         return False
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-    with storage._lock:
+    if not storage._lock.acquire(blocking=False):
+        return False
+    try:
         try:
             state = raw._participant_identity(proof.participant)
         except RecoveryRequired as error:
@@ -707,6 +710,8 @@ def _checked_display_status(projection: Any) -> bool | None:
             or storage._pause is not None
         ):
             return False
+    finally:
+        storage._lock.release()
     if not _same_readiness_key(projection._key(), projection.key):
         return False
     if projection.at != proof.at:
@@ -723,8 +728,8 @@ def _checked_display_status(projection: Any) -> bool | None:
     return True
 
 
-class _ContextCapacityDisplayRefused(Exception):
-    """A captured metadata source changed before display publication."""
+class _CheckedDisplayRefused(Exception):
+    """Display ownership changed or its coordinator is busy; request a retry."""
 
 
 def _original_capacity_method(owner: Any, module: Any, entry: tuple) -> Any:
@@ -848,7 +853,10 @@ def _context_capacity_display_sources(gateway: Any, app: Any) -> Any:
 def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) -> Any:
     """Use an issued copy for metadata only; custom/direct routes stay fresh."""
     projection = getattr(screen, "_console_readiness_config_projection", None)
-    if _checked_display_status(projection) is not True:
+    status = _checked_display_status(projection)
+    if status is False:
+        raise _CheckedDisplayRefused()
+    if status is None:
         return gateway.cached_context_window(settings)
     proof = projection._display_proof
     captured = _context_capacity_display_sources(gateway, proof.owner[1])
@@ -870,7 +878,7 @@ def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) 
         or projection._display_proof is not proof
         or _checked_display_status(projection) is not True
     ):
-        raise _ContextCapacityDisplayRefused()
+        raise _CheckedDisplayRefused()
     return value
 
 
@@ -920,7 +928,10 @@ def _checked_pricing_current(projection, proof) -> bool:
 def pricing_catalog_for_display(screen: Any, get_catalog: Callable) -> Any:
     """Supply detached prices only inside the qualified synchronous UI route."""
     projection = getattr(screen, "_console_readiness_config_projection", None)
-    if _checked_display_status(projection) is True:
+    status = _checked_display_status(projection)
+    if status is False:
+        raise _CheckedDisplayRefused()
+    if status is True:
         return projection.pricing
     return get_catalog()
 
@@ -958,7 +969,7 @@ def _run_checked_display_sync(
         if failure is not None and error is not failure:
             raise error from failure
         raise
-    if type(failure) is _ContextCapacityDisplayRefused:
+    if type(failure) is _CheckedDisplayRefused:
         if accepted:
             request_retry()
         return False

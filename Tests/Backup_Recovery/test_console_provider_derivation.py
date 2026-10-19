@@ -31,8 +31,9 @@ async def main():
         loads = []
         original = chat_screen.load_settings
         def counted(*args, **kwargs):
-            loads.append(True)
-            return original(*args, **kwargs)
+            result = original(*args, **kwargs)
+            loads.append(result)
+            return result
         chat_screen.load_settings = counted
         try:
             selection = screen._build_console_provider_selection()
@@ -40,7 +41,24 @@ async def main():
             assert selection.configured_model == 'configured-before', selection
             assert len(loads) == 1, len(loads)
             assert screen._console_derivation_memo is None
-            if sys.argv[2] == 'freshness':
+            if sys.argv[2] == 'inspector':
+                loads.clear()
+                before = screen._build_console_inspector_state(None)
+                assert len(loads) == 1, len(loads)
+                assert loads[0]['api_settings']['llama_cpp']['model'] == 'configured-before'
+                assert screen._console_derivation_memo is None
+                from tldw_chatbook import config
+                assert config.save_settings_to_cli_config(
+                    {'api_settings.llama_cpp': {'model': 'configured-after'}})
+                loads.clear()
+                after = screen._build_console_inspector_state(None)
+                assert len(loads) == 1, len(loads)
+                assert loads[0]['api_settings']['llama_cpp']['model'] == 'configured-after'
+                # The active session's explicit model still overrides defaults.
+                assert next(row for row in before.rows if row.label == 'Run recipe') == next(
+                    row for row in after.rows if row.label == 'Run recipe')
+                assert screen._console_derivation_memo is None
+            elif sys.argv[2] == 'freshness':
                 from tldw_chatbook import config
                 assert config.save_settings_to_cli_config(
                     {'api_settings.llama_cpp': {'model': 'configured-after'}})
@@ -100,6 +118,8 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("case", ["once", "freshness", "sessions", "exception"])
+@pytest.mark.parametrize(
+    "case", ["once", "freshness", "sessions", "exception", "inspector"]
+)
 def test_actual_provider_derivation_scope(tmp_path, case):
     _run(tmp_path, "derive", case, script=_DERIVE)
