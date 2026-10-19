@@ -211,17 +211,23 @@ def run_retention_for_app(
             service.
 
     Returns:
-        The pass report, or ``None`` when git is unavailable or the pass
-        could not run (never raises).
+        The pass report, or ``None`` when there is no runs DB yet, git is
+        unavailable, or the pass could not run (never raises).
     """
     try:
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+        runs_path = Path(db_path).parent / "agent_runs.db"
+        if not runs_path.exists():
+            # No runs DB holds no snapshot rows. Opening one here created a new
+            # store 65 s after launch, which voided a backup Review taken
+            # before it with scope_changed (TASK-34100.16.1).
+            return None
         if service is None:
             service = ShadowRepoService()
         if not service.available:
             return None
-        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+        runs_db = AgentRunsDB(runs_path)
         try:
             return prune_change_history(runs_db, service)
         finally:
