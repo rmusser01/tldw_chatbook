@@ -4,13 +4,16 @@ from copy import deepcopy
 from typing import Any
 
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolResult, ToolSchema
-from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveSearchRequest
-
-SEARCH_ARCHIVED_CONVERSATIONS = "search_archived_conversations"
-REQUEST_CONVERSATION_RESTORE = "request_conversation_restore"
-RECOVERY_RESERVED_TOOL_NAMES = frozenset(
-    {SEARCH_ARCHIVED_CONVERSATIONS, REQUEST_CONVERSATION_RESTORE}
+from tldw_chatbook.Agents.tool_catalog import (
+    RECOVERY_RESERVED_TOOL_NAMES as RECOVERY_RESERVED_TOOL_NAMES,  # noqa: PLC0414 - public re-export
 )
+from tldw_chatbook.Agents.tool_catalog import (
+    REQUEST_CONVERSATION_RESTORE as REQUEST_CONVERSATION_RESTORE,  # noqa: PLC0414 - public re-export
+)
+from tldw_chatbook.Agents.tool_catalog import (
+    SEARCH_ARCHIVED_CONVERSATIONS as SEARCH_ARCHIVED_CONVERSATIONS,  # noqa: PLC0414 - public re-export
+)
+from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveSearchRequest
 
 
 def _schemas() -> dict[str, ToolSchema]:

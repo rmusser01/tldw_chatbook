@@ -126,6 +126,7 @@ class ArchiveRecoveryRuntime:
         self.owner_thread = get_ident()
         self.results = ArchiveResultStore()
         self.coordinator = ArchiveRecoveryCoordinator(app, self.results)
+        self.prepare_view: Callable[[], Awaitable[None]] | None = None
         self.present_results: Callable[[ArchiveRecoveryPresentation], object] | None = (
             None
         )
@@ -198,6 +199,20 @@ class ArchiveRecoveryRuntime:
             )
         except Exception:  # noqa: BLE001 - presentation cannot grant by failure
             return False
+
+    async def prepare_for_admission(self, session_id: str) -> None:
+        """Prepare first-use controls after custody; admission still checks them."""
+        if (
+            self._closing
+            or session_id in self._closed_sessions
+            or self.answerable(session_id)
+            or self.prepare_view is None
+        ):
+            return
+        try:
+            await self.prepare_view()
+        except Exception:  # noqa: BLE001 - failed optional presentation cannot grant authority
+            return
 
     def issue_user_proof(self, session_id: str) -> object:
         """Issue only at actual UI send/queue/edit producers, never generic APIs."""
@@ -657,3 +672,124 @@ def build_archive_recovery_tool_closures(
         return invoke(arguments, call_id=call_id)
 
     return search, restore
+
+
+async def prepare_archive_followup(
+    controller: Any,
+    recovery_runtime: ArchiveRecoveryRuntime,
+    recovery_provider: Any,
+    turn_context: Any,
+    resolution: Any,
+    agent_messages: list[dict[str, Any]],
+    trace_request: Any,
+    trusted_profile_user_message_id: str | None,
+) -> tuple[list[dict[str, Any]], Any]:
+    """Apply the exact admitted rider before shared fitting and capture."""
+    from tldw_chatbook.Agents.archive_recovery_tool_provider import (
+        SEARCH_ARCHIVED_CONVERSATIONS,
+    )
+    from tldw_chatbook.Agents.persona_policy import (
+        evaluate_tool_policy,
+        parse_persona_policy_from_rules,
+    )
+
+    from .. import console_chat_controller as _controller
+
+    verdict = evaluate_tool_policy(
+        parse_persona_policy_from_rules(turn_context.persona_policy_rules),
+        rule_kind="mcp_tool",
+        tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+    )
+    kill_reader = controller._console_tool_kill_switch_reader()
+    try:
+        killed = bool(kill_reader and kill_reader())
+    except Exception:  # noqa: BLE001 - unreadable kill switch fails closed
+        killed = True
+    if (
+        not killed
+        and verdict.advertised
+        and not verdict.requires_confirmation
+        and turn_context.tool_configuration.get("native_tool_calls_enabled", True)
+        and (getattr(resolution, "execution_key", None) or resolution.provider)
+        in _controller.CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+    ):
+        context = recovery_runtime.followup_context(recovery_provider.authority)
+        if context:
+            # Before the bridge's shared first-request fitting/counting.
+            transformed_messages = controller._prepend_evidence_context(
+                agent_messages, context
+            )
+            if trace_request is not None:
+                trace_request = await controller._run_durable_db_call(
+                    controller._reseal_archive_followup_trace_request,
+                    trace_request,
+                    agent_messages,
+                    transformed_messages,
+                    trusted_profile_user_message_id,
+                )
+            agent_messages = transformed_messages
+    return agent_messages, trace_request
+
+
+def pending_recovery_reviews(
+    recovery_provider_reader: Callable[[], Any] | None,
+    recovery_persona_rules: tuple[Any, ...],
+    calls: list[Any],
+    run_id: str,
+    actor: Any,
+    read_global_MCPPendingCall: Callable[[], Any],
+) -> tuple[list[Any], dict[str, str]]:
+    """Collect exact primary recovery asks without granting execution."""
+    recovery_pending: list[Any] = []
+    recovery_refusals: dict[str, str] = {}
+    if recovery_provider_reader is not None and recovery_persona_rules:
+        from tldw_chatbook.Agents.archive_recovery_tool_provider import (
+            SEARCH_ARCHIVED_CONVERSATIONS,
+            ArchiveRecoveryToolProvider,
+        )
+        from tldw_chatbook.Agents.persona_policy import (
+            evaluate_tool_policy,
+            parse_persona_policy_from_rules,
+        )
+
+        recovery_provider = recovery_provider_reader()
+        verdict = evaluate_tool_policy(
+            parse_persona_policy_from_rules(recovery_persona_rules),
+            rule_kind="mcp_tool",
+            tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+        )
+        for call in calls:
+            if call.name != SEARCH_ARCHIVED_CONVERSATIONS:
+                continue
+            call_id = str(call.call_id or "")
+            if not verdict.advertised:
+                recovery_refusals[call_id or call.name] = (
+                    f"Tool not permitted: {call.name}"
+                )
+                continue
+            if not verdict.requires_confirmation:
+                continue
+            if (
+                type(recovery_provider) is not ArchiveRecoveryToolProvider
+                or not recovery_provider.can_request_review(run_id)
+                or actor is None
+                or actor.kind != "primary"
+                or not call_id
+            ):
+                recovery_refusals[call_id or call.name] = (
+                    "Recovery search approval unavailable."
+                )
+                continue
+            recovery_pending.append(
+                read_global_MCPPendingCall()(
+                    llm_name=call.name,
+                    server_key="agent:archive_recovery",
+                    tool_name=call.name,
+                    server_label="Archive recovery",
+                    arguments=dict(call.args),
+                    call_id=call_id,
+                    reason="ask",
+                    options=("approve_once", "deny"),
+                )
+            )
+    return recovery_pending, recovery_refusals

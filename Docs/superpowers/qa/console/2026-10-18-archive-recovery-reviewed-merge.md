@@ -38,3 +38,7 @@ The fresh independent review is [recorded here](2026-10-18-archive-recovery-revi
 No full suite, new live/model requests, installed-build qualification or long five-cycle descriptor repeat was run. The approved localhost request cap remains30/30 consumed. Prior qualified descriptor/owned-handle plateau evidence remains historical; current targeted logs report no descriptor-growth warning. Two previously demonstrated unrelated voice controls and inherited lint debt remain outside this change.
 
 MERGE_QUEUE was freshlyon; the PR was still draft with auto-mergeoff at the last prepublication read. Publish with an exact lease, mark ready, obtain Qodo review on the exact current head and resolve every review thread before arming. The queue owns subsequent rebases and required pull_request CI; never manually merge/update an armed branch or dispatch the required gate. Actual mergedAt/mergeCommit must be checked before reporting the user's merge request complete.
+
+## Hosted startup and final local follow-up
+
+See [final local qualification](2026-10-18-archive-recovery-reviewed-merge/merge-qualification-final.md), [first-use review](2026-10-18-archive-recovery-reviewed-merge/review-first-use.md), and [final extraction review](2026-10-18-archive-recovery-reviewed-merge/review-final-extraction.md). These later records supersede the local source checkpoint only; the earlier evidence remains immutable. The human authorized requesting-code-review instead of Qodo for this PR.

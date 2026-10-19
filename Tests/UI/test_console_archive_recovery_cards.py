@@ -274,3 +274,156 @@ async def test_queued_results_retire_on_source_loss_and_remount_on_return(
         monkeypatch.setattr(surface, "mount", mount)
         await view._mount_results(record)
         assert len(surface.query(ArchiveRecoveryResultsCard)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concurrent", [False, True])
+async def test_sync_waits_for_recovery_root_mount_then_initializes_controls(
+    monkeypatch, concurrent
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    class RecoveryRoot(Vertical):
+        async def on_mount(self):
+            assert not self.is_mounted
+            await self.app.view.sync()
+            assert not self.query("#console-archive-recovery-controls")
+            self.app.checked_pending_mount = True
+
+    class MountApp(App):
+        checked_pending_mount = False
+
+        def compose(self):
+            store = SimpleNamespace(
+                active_session_id="source", messages_for_session=lambda _: []
+            )
+            runtime = SimpleNamespace(
+                presentations=lambda _: [],
+                coordinator=SimpleNamespace(
+                    snapshot=lambda _: None, receipts=lambda _: []
+                ),
+            )
+            self.screen._console_chat_store = store
+            self.screen._console_runtime = lambda: SimpleNamespace(
+                ensure_archive_recovery=lambda: runtime
+            )
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            yield RecoveryRoot(id="console-archive-recovery")
+
+    app = MountApp()
+    async with app.run_test():
+        assert app.checked_pending_mount
+        assert app.query_one("#console-archive-recovery").is_mounted
+        if concurrent:
+            root = app.query_one("#console-archive-recovery")
+            mount = root.mount
+            entered, release = asyncio.Event(), asyncio.Event()
+            mount_calls = []
+
+            async def blocked_mount(*args, **kwargs):
+                mount_calls.append(args)
+                entered.set()
+                await release.wait()
+                await mount(*args, **kwargs)
+
+            monkeypatch.setattr(root, "mount", blocked_mount)
+            first = asyncio.create_task(app.view.sync())
+            await asyncio.wait_for(entered.wait(), 2)
+            second = asyncio.create_task(app.view.sync())
+            try:
+                await asyncio.sleep(0)
+                assert len(mount_calls) == 1
+            finally:
+                release.set()
+                await asyncio.gather(first, second)
+        else:
+            await app.view.sync()
+        assert len(app.query(ArchiveRecoveryConfirmCard)) == 1
+        assert app.query_one(ArchiveRecoveryConfirmCard).is_mounted
+        assert app.view._session_id == "source"
+
+
+@pytest.mark.asyncio
+async def test_sync_ignores_recovery_root_during_app_exit():
+    from textual.containers import Vertical
+
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    class MountApp(App):
+        def compose(self):
+            yield Vertical(id="console-archive-recovery")
+
+    app = MountApp()
+    async with app.run_test():
+        root = app.query_one("#console-archive-recovery")
+        assert root.is_mounted and not root._pruning and not root._closing
+        view = ConsoleArchiveRecoveryView(app.screen)
+        app._exit = True
+        try:
+            assert not root.is_attached
+            await view.sync()
+            assert not root.children
+        finally:
+            app._exit = False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_during_mount", [False, True])
+async def test_recovery_controls_are_inert_when_app_exits(
+    monkeypatch, exit_during_mount
+):
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    class MountApp(App):
+        def compose(self):
+            self.screen._console_chat_store = SimpleNamespace(
+                active_session_id="source", messages_for_session=lambda _: []
+            )
+            runtime = SimpleNamespace(
+                presentations=lambda _: [],
+                coordinator=SimpleNamespace(
+                    snapshot=lambda _: None, receipts=lambda _: []
+                ),
+            )
+            self.screen._console_runtime = lambda: SimpleNamespace(
+                view=self.screen, ensure_archive_recovery=lambda: runtime
+            )
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            yield Vertical(id="console-archive-recovery")
+
+    app = MountApp()
+    async with app.run_test():
+        root = app.query_one("#console-archive-recovery")
+        mount = root.mount
+
+        async def mount_then_exit(*args, **kwargs):
+            await mount(*args, **kwargs)
+            app._exit = True
+
+        if exit_during_mount:
+            monkeypatch.setattr(root, "mount", mount_then_exit)
+        try:
+            await app.view.sync()
+            if exit_during_mount:
+                assert not app.query(ArchiveRecoveryConfirmCard)
+            else:
+                assert app.view.is_answerable("source")
+                app._exit = True
+            assert not app.view.is_answerable("source")
+        finally:
+            app._exit = False

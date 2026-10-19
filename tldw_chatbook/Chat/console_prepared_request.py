@@ -1961,3 +1961,127 @@ def prepare_provider_request(
         effective_thinking_policy=selected.effective_thinking_policy,
         provenance=provider_provenance,
     )
+
+
+def _is_current_user_text_transform(
+    source: Mapping[str, Any], visible: Mapping[str, Any]
+) -> bool:
+    """Admit text-only changes; retain every role, attachment and sidecar."""
+    if source.get("role") != "user" or {
+        key: value for key, value in source.items() if key != "content"
+    } != {key: value for key, value in visible.items() if key != "content"}:
+        return False
+    before, after = source.get("content"), visible.get("content")
+    if type(before) is str and type(after) is str:
+        return True
+    if (
+        type(before) is not list
+        or type(after) is not list
+        or len(before) != len(after)
+    ):
+        return False
+    for original, transformed in zip(before, after, strict=True):
+        if original == transformed:
+            continue
+        if (
+            type(original) is not dict
+            or type(transformed) is not dict
+            or original.get("type") != "text"
+            or type(original.get("text")) is not str
+            or type(transformed.get("text")) is not str
+            or {key: value for key, value in original.items() if key != "text"}
+            != {key: value for key, value in transformed.items() if key != "text"}
+        ):
+            return False
+    return True
+
+
+def _reseal_archive_followup_trace_request(
+    self,
+    request: PreparedConsoleRequest,
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    current_user_id: str | None,
+) -> PreparedConsoleRequest:
+    """Bind authorized selection text to its exact admitted current source."""
+    from . import console_chat_controller as _controller
+
+    try:
+        if (
+            type(request) is not _controller.PreparedConsoleRequest
+            or request.provenance is None
+            or len(request.active_request) != 1
+            or not before
+            or len(before) != len(after)
+            or before[:-1] != after[:-1]
+            or not self._is_current_user_text_transform(before[-1], after[-1])
+        ):
+            raise ValueError("archive_trace_current_text")
+        # Native owner annotations are not provider values. Keep them
+        # unchanged above, then compare the same shape admission froze.
+        owner_keys = {
+            _controller.NATIVE_MESSAGE_ID_KEY,
+            _controller.PERSISTED_MESSAGE_ID_KEY,
+            _controller.PERSISTED_CONVERSATION_ID_KEY,
+        }
+        visible = tuple(
+            {key: value for key, value in row.items() if key not in owner_keys}
+            for row in before
+        )
+        admitted = tuple(
+            {key: value for key, value in row.items() if key not in owner_keys}
+            for row in _controller._flatten_preflight_messages(request)
+        )
+        if admitted and admitted[0].get("role") == "system":
+            admitted = admitted[1:]
+        if _controller.freeze_json(visible) != _controller.freeze_json(admitted):
+            raise ValueError("archive_trace_admitted_rows")
+        descriptor = request.provenance.active_request[0]
+        source_id = _controller.current_turn_source_revision_id(descriptor)
+        if source_id is None or current_user_id is None:
+            raise ValueError("archive_trace_source")
+        current = self.store.get_message(current_user_id)
+        session_id = self.store.session_id_for_message(current_user_id)
+        session = next(
+            item for item in self.store.sessions() if item.id == session_id
+        )
+        persistence = self.store.persistence
+        with persistence.db.transaction() as cursor:
+            source = persistence.console_trace_repository.get_semantic_revision(
+                cursor, source_id
+            )
+        if (
+            current.role is not _controller.ConsoleMessageRole.USER
+            or source is None
+            or source.normalized_role != "user"
+            or source.source_message_id != current.persisted_message_id
+            or source.source_conversation_id != session.persisted_conversation_id
+        ):
+            raise ValueError("archive_trace_source_owner")
+        saved = (
+            descriptor
+            if type(descriptor) is _controller.SavedRevisionTraceProvenance
+            else descriptor.inputs[0]
+        )
+        transformed = _controller.DerivedTraceProvenance(
+            _controller.TraceTransformKind.CURRENT_TURN_TEXT,
+            inputs=(saved,),
+            artifact=_controller.ProviderArtifactTraceProvenance(
+                _controller.TraceProvenanceSource.ACTIVE_REQUEST,
+                request.provenance.capture_policy,
+            ),
+        )
+        row = {
+            key: value for key, value in after[-1].items() if key not in owner_keys
+        }
+        return _controller.replace(
+            request,
+            active_request=(row,),
+            provenance=_controller.replace(request.provenance, active_request=(transformed,)),
+        )
+    except Exception:  # noqa: BLE001 - failed source proof must refuse capture
+        # This seam precedes the bridge's first trace reservation. Use the
+        # ordinary controlled capture recovery path, never an unowned send.
+        raise _controller.TraceCallPersistenceError(
+            reservation_status="not_established"
+        ) from None

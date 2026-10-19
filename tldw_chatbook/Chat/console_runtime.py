@@ -930,6 +930,11 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         why="Inert view projection; app-owned rule work and status survive detachment.",
     ),
     ConsoleViewHookSlot(
+        "prepare_view",
+        "archive_recovery",
+        why="First-use controls prepare only after input custody; detachment cannot grant authority.",
+    ),
+    ConsoleViewHookSlot(
         "present_results",
         "archive_recovery",
         why="Typed results remain app-owned for remount; absent projection is inert.",
@@ -2937,6 +2942,11 @@ class ConsoleRuntime:
                 request.session_id,
                 request.turn_id,
             )
+        if self._archive_recovery is not None and origin in {
+            ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED
+        }:
+            await self._archive_recovery.prepare_for_admission(request.session_id)
+            require_received()
         if record.archive_conversation_id:
             from tldw_chatbook.Chat.conversation_archive_actions import (
                 conversation_send_refusal,
@@ -5058,6 +5068,8 @@ class ConsoleRuntime:
             )
 
             self._archive_recovery = ArchiveRecoveryRuntime(self._app)
+            if self._chat_controller is not None:
+                self._chat_controller._archive_recovery_runtime = self._archive_recovery
             self._bind_view_hooks()
         return self._archive_recovery
 
@@ -5142,7 +5154,7 @@ class ConsoleRuntime:
             getattr(raw_cli_runtime, "cancel_session", None),
         )
         self.set_chat_controller(ConsoleChatController(**kwargs))
-        self._chat_controller._archive_recovery_runtime = self.ensure_archive_recovery()
+        self._chat_controller._archive_recovery_runtime = self._archive_recovery
         self._chat_controller.prompt_history = self.ensure_prompt_history()
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not

@@ -123,6 +123,7 @@ _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
 
 _VIEW_HOOK_OWNERSHIP = {
     "response_rules_changed": "view-projection",
+    "prepare_view": "view-projection",
     "present_results": "view-projection",
     "present_confirmation": "view-projection",
     "is_answerable": "view-projection",
@@ -683,7 +684,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
 
     assert set(_VIEW_HOOK_OWNERSHIP) == {
         "response_rules_changed",
-        "present_results", "present_confirmation", "is_answerable", "on_settled",
+        "prepare_view", "present_results", "present_confirmation", "is_answerable", "on_settled",
         "_chat_dictionary_applier",
         "_world_info_applier",
         "_rag_capture_provider",

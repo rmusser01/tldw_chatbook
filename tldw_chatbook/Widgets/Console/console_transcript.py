@@ -163,12 +163,13 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from textual.screen import Screen
+
     from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         ConsoleVoicePreview,
         VoicePreviewProjection,
     )
-    from textual.screen import Screen
 
 
 # TASK-17658: rule separators paint via the stylesheet's hatch fill

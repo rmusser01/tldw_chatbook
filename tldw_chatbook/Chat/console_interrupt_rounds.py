@@ -39,9 +39,9 @@ if TYPE_CHECKING:
         ApprovalDecisions,
         BuiltinToolGate,
         BuiltinToolProvider,
+        ManagedSkillProposalGate,
         MCPPendingCall,
         MCPToolProvider,
-        ManagedSkillProposalGate,
         RawShellToolProvider,
         ToolCall,
         ToolReviewDecision,
@@ -51,6 +51,9 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from tldw_chatbook.Agents.approval_provenance import (
+    approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
+)
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from .console_local_review_hook import (
     build_local_review_hook as build_local_review_hook,
@@ -3448,8 +3451,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
             (deny, cancel, stop, timeout, no wired UI) returns
             ``allow=False``.
         """
-        from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
         from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
+        from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 
         owning_session_id = (
             session_id
@@ -5327,29 +5330,6 @@ def _stamp_skill_script_round_closed(state: dict[str, Any]) -> None:
         decision["remember"] = False
 
 
-def approval_was_unanswered(
-    row: "MCPPendingCall",
-    decisions: Mapping[str, str],
-    *,
-    read_global_approval_key_unanswered: Callable[[], Any],
-    read_global_selected_approval_key: Callable[[], Any],
-) -> bool:
-    """True when ``row``'s deny came from a Stop/revoke, not from the user.
-
-    Args:
-        row: The pending call whose verdict is being recorded.
-        decisions: The map ``request_mcp_approvals`` returned -- an
-            `ApprovalDecisions` in production, a bare dict in tests and in
-            any other `request_approvals` shape (which then reports
-            "answered", the pre-fix behaviour).
-
-    Returns:
-        Whether the verdict for ``row`` was defaulted by an unresolved round.
-    """
-    key = read_global_selected_approval_key()(
-        decisions, str(getattr(row, "call_id", "") or ""), row.llm_name
-    )
-    return read_global_approval_key_unanswered()(decisions, key)
 
 
 def build_combined_review_hook(
@@ -6014,58 +5994,14 @@ def build_tool_review_hook(
                 )
             )
 
-        recovery_pending: list[MCPPendingCall] = []
-        recovery_refusals: dict[str, str] = {}
+        recovery_pending, recovery_refusals = [], {}
         if recovery_provider_reader is not None and recovery_persona_rules:
-            from tldw_chatbook.Agents.archive_recovery_tool_provider import (
-                SEARCH_ARCHIVED_CONVERSATIONS,
-                ArchiveRecoveryToolProvider,
-            )
-            from tldw_chatbook.Agents.persona_policy import (
-                evaluate_tool_policy,
-                parse_persona_policy_from_rules,
-            )
+            from .archive_recovery.runtime import pending_recovery_reviews
 
-            recovery_provider = recovery_provider_reader()
-            verdict = evaluate_tool_policy(
-                parse_persona_policy_from_rules(recovery_persona_rules),
-                rule_kind="mcp_tool",
-                tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+            recovery_pending, recovery_refusals = pending_recovery_reviews(
+                recovery_provider_reader, recovery_persona_rules, calls, run_id,
+                actor, read_global_MCPPendingCall,
             )
-            for call in calls:
-                if call.name != SEARCH_ARCHIVED_CONVERSATIONS:
-                    continue
-                call_id = str(call.call_id or "")
-                if not verdict.advertised:
-                    recovery_refusals[call_id or call.name] = (
-                        f"Tool not permitted: {call.name}"
-                    )
-                    continue
-                if not verdict.requires_confirmation:
-                    continue
-                if (
-                    type(recovery_provider) is not ArchiveRecoveryToolProvider
-                    or not recovery_provider.can_request_review(run_id)
-                    or actor is None
-                    or actor.kind != "primary"
-                    or not call_id
-                ):
-                    recovery_refusals[call_id or call.name] = (
-                        "Recovery search approval unavailable."
-                    )
-                    continue
-                recovery_pending.append(
-                    read_global_MCPPendingCall()(
-                        llm_name=call.name,
-                        server_key="agent:archive_recovery",
-                        tool_name=call.name,
-                        server_label="Archive recovery",
-                        arguments=dict(call.args),
-                        call_id=call_id,
-                        reason="ask",
-                        options=("approve_once", "deny"),
-                    )
-                )
         all_pending = mcp_pending + builtin_pending + lesson_pending + recovery_pending
         if not all_pending:
             return {**lesson_refusals, **recovery_refusals}
