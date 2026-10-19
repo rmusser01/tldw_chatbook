@@ -10,7 +10,7 @@ labels:
 priority: high
 assignee:
 - '@claude'
-updated_date: '2026-10-19 04:40'
+updated_date: '2026-10-19 04:14'
 ---
 
 ## Description
@@ -82,17 +82,19 @@ Re-measured after #3152, 2026-10-18. Data: every completed attempt of the pull_r
 - test_applying_on_anthropic_submits_none_of_the_hidden_fields: one failure, 39149827283/1 on feat/18925-os-notifications (#3155, which changes tldw_chatbook/UI/Screens/settings_screen.py and failed its own module-size ratchet in the same run), a timeout past 180 s; not shown to be a flake on unchanged code.
 - The rules-phase test failed 5 times; the cause is found and fixed under TASK-35444.
 - mapped-learning and resend: no failure.
+
 AC 1, 2026-10-19 UTC. Data: every completed attempt of the pull_request runs of derived-artifacts.yml created from 2026-10-17 18:00Z to 2026-10-19 01:00Z (65 runs, 78 attempts), each test counted on the attempts whose job for it finished (success or failure):
-- test_applying_on_anthropic_submits_none_of_the_hidden_fields (UI Fast Lane (3)): one failure, the #3155 timeout above (2026-10-18 17:29Z), then 25 attempts, 24 distinct runs on 12 branches, with no failure. Still not root-caused; it meets the AC by passing.
+- test_applying_on_anthropic_submits_none_of_the_hidden_fields (UI Fast Lane (3)): one failure, the #3155 timeout above (2026-10-18 17:29Z), then 25 attempts, 24 distinct runs on 12 branches, with no failure. That failure's child stacks (the #3091 report) show the test waiting in _drain_settings_tasks on a gather over the app's Console settings durability owner's tasks; #3155 changes settings_screen.py, and whether that reaches those tasks was not checked. Still not root-caused; it meets the AC by passing. On its next hang on unchanged code, file a task that starts from those child stacks.
 - test_opening_console_during_a_headless_delivery_arms_the_poll (PR Fast Lane (admission-sensitive)): 55 attempts, 52 runs, no failure.
-- test_session_owned_pending_projection_journeys (UI Fast Lane (10)): 51 attempts, 50 runs, no failure.
-- The six fixed tests failed in none of these attempts.
+- test_session_owned_pending_projection_journeys (UI Fast Lane (10)): 51 attempts, 50 runs, no failure. Its call took 90.6 to 124.4 s in the five shard-10 logs read after #3152, against the lane's 180 s, so a timeout there may be that margin rather than a new flake.
+- The six fixed tests, each on its own job (the notes-sync test in PR Fast Lane (admission-sensitive), the others in UI Fast Lane (1), (2), (3), (4) and (6)): 55 attempts and 52 runs each, no failure.
+- The two flakes the description names outside the required check: the Perf Guard module census is tracked by TASK-34915; test_supervisor_terminates_a_descendant_in_a_new_session now runs in the required PR Fast Lane (Tests/CI whole): 54 attempts, 51 runs, no failure.
 The other flakes found on the way are tracked on their own: the rules-phase test under TASK-35444 (fix merged in #3163, its 20-run count pending), and the session-close tests under TASK-35443 (a test fault, fixed by 623df0136e).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Of the nine tests that evicted good PRs on 2026-10-10, six were fixed (notes sync product race, flashcards wait, resend, Library delete refresh, rail round trip, sync delete/restore) and three now pass more than 20 consecutive PR runs (hidden fields, headless delivery, pending projection), the hidden-fields one without a found cause. The first-attempt failure rate was measured, and the owner kept the fail-twice eviction (2026-10-13).
+Of the nine tests that evicted good PRs on 2026-10-10, six were fixed (notes sync product race, flashcards wait, resend, Library delete refresh, rail round trip, sync delete/restore) and three now pass more than 20 consecutive PR runs (hidden fields, headless delivery, pending projection), the hidden-fields one without a found cause. Of the two flakes outside the required check, the module census is tracked by TASK-34915 and the parakeet supervisor test passed 51 runs. The first-attempt failure rate was measured (46% on 2026-10-08 to 10-11, re-measured in the notes), and the owner kept the fail-twice eviction (2026-10-13). Side threads found on the way are in the notes: the rules-phase test (TASK-35444), the session-close tests (TASK-35443), mapped-learning and resend.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
