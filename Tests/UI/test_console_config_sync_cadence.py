@@ -16,14 +16,17 @@ a skipped tick, the stop renders. When it runs, it runs as before: same
 locks, same refusal and deferral during a local storage pause.
 
 These tests drive the real ChatScreen poll callback (the timer's own
-coroutine) on the mounted send harness and count, per tick, the calls into
-``run_console_config_sync`` made by the tick itself. The clock the backstop
-reads is replaced, so no test depends on real elapsed time.
+coroutine) on the mounted send harness and count, per tick, the tick's own
+projection attempts (``_sync_console_rail_and_controls``, which enters the
+checked config read: dev's checked display or the native operation). The
+clock the backstop reads is replaced, so no test depends on real elapsed
+time.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -48,6 +51,29 @@ class _Clock:
         return self.now
 
 
+def _install_clock(monkeypatch) -> _Clock:
+    """Replace the backstop's clock, and dev's checked-display clock with it.
+
+    On dev (PR #3023) the tick's projection renders from a checked display
+    that a worker refreshes once a (monotonic) second; a stale one is
+    re-read and, while that read is pending, defers the projection to the
+    delayed replay. On a loaded runner real seconds pass between ticks, so
+    the same clock drives both: the display goes stale exactly when the
+    test moves the backstop's clock a second on.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import config_sync, console_spend_projection
+
+    clock = _Clock()
+    # raising=False: the parent build has no backstop clock (and fails below).
+    monkeypatch.setattr(config_sync, "_clock", clock, raising=False)
+    monkeypatch.setattr(
+        console_spend_projection, "time", SimpleNamespace(monotonic=clock)
+    )
+    return clock
+
+
 class _Projections:
     """Counts the projections the test's own ticks attempt and render.
 
@@ -57,21 +83,22 @@ class _Projections:
     """
 
     def __init__(self, monkeypatch, console) -> None:
-        from tldw_chatbook.UI.Console_Modules import config_sync
-
         self.task = asyncio.current_task()
         self.calls = 0
         self.deferred = 0
         self.renders = 0
         self.renders_anywhere = 0
-        real_sync = config_sync.run_console_config_sync
+        # Rebased onto dev (PR #3023): a sync now makes other checked config
+        # calls the cadence does not gate (rail visibility, the cost chip),
+        # so count the tick's projection itself, the one entry it gates.
+        real_project = console._sync_console_rail_and_controls
         real_render = console._sync_console_control_bar_under_config
 
-        def counting_sync(sync, **kwargs):
+        def counting_project():
             if asyncio.current_task() is not self.task:
-                return real_sync(sync, **kwargs)
+                return real_project()
             self.calls += 1
-            result = real_sync(sync, **kwargs)
+            result = real_project()
             if result is False:
                 self.deferred += 1
             return result
@@ -82,7 +109,7 @@ class _Projections:
                 self.renders += 1
             return real_render(*args, **kwargs)
 
-        monkeypatch.setattr(config_sync, "run_console_config_sync", counting_sync)
+        console._sync_console_rail_and_controls = counting_project
         console._sync_console_control_bar_under_config = counting_render
 
 
@@ -97,20 +124,28 @@ async def _settle(console) -> None:
         await until(lambda: not console._console_sync_in_progress, timeout=30)
 
 
+def _replay_pending(console) -> bool:
+    return getattr(console, "_console_control_bar_replay_whole_sync", False)
+
+
 async def _explicit_sync(console, seen) -> None:
     """Run one explicit sync in the test's task (retrying one that deferred).
 
     A sync the app re-armed can still start between ``_settle`` and the
     call when it was queued behind a deferred control-bar replay; the
-    explicit call then hands its work to that sync, so try again.
+    explicit call then hands its work to that sync, so try again. On dev
+    (PR #3023) the projection itself defers while its checked display is
+    cold, handing the render to the delayed whole-sync replay; wait that
+    out and try again, until one renders.
     """
     for _ in range(20):
+        await until(lambda: not _replay_pending(console), timeout=30)
         await _settle(console)
-        before = seen.calls
+        before = (seen.calls, seen.deferred)
         await console._sync_native_console_chat_ui()
-        if seen.calls > before:
+        if seen.calls > before[0] and seen.deferred == before[1]:
             return
-    raise AssertionError("no explicit sync ran in the test's task")
+    raise AssertionError("no explicit sync rendered in the test's task")
 
 
 class _Poll:
@@ -148,7 +183,9 @@ class _Poll:
 
         console._sync_native_console_chat_ui = held
 
-    async def __call__(self) -> None:
+    async def __call__(self, *, wait_replay: bool = True) -> None:
+        if wait_replay:  # Else the sync refuses at entry and the tick is void.
+            await until(lambda: not _replay_pending(self.console), timeout=30)
         await _settle(self.console)
         await self._poll()
 
@@ -162,6 +199,7 @@ class _Poll:
         Returns:
             What ``change`` returned.
         """
+        await until(lambda: not _replay_pending(self.console), timeout=30)
         await _settle(self.console)
         result = change()
         await self._poll()
@@ -184,11 +222,18 @@ async def _quiesce(tick, seen, limit: int = 10) -> None:
     its dictionary scope refreshed, continuation and usage writes move the
     display revision. Each is an input change and projects, correctly; a
     count of "unchanged" ticks starts once they have.
+
+    The same holds after any projection on dev (PR #3023): one whose
+    presentation reads find a changed owner (a run status, a revision)
+    refreshes them on a worker and publishes a whole sync with the result,
+    which the next tick serves (a sync other than the poll's asked).
     """
     for _ in range(limit):
+        # A tick refused while a replay is pending would look quiet.
+        await until(lambda: not _replay_pending(tick.console), timeout=30)
         before = seen.calls
         await tick()
-        if seen.calls == before:
+        if seen.calls == before and not _replay_pending(tick.console):
             return
     raise AssertionError(f"inputs still moving after {limit} ticks")
 
@@ -227,11 +272,7 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
     status; ticks in that tail get the backstop too, and the tick on which
     the poll stops itself leaves the controls rendered.
     """
-    from tldw_chatbook.UI.Console_Modules import config_sync
-
-    clock = _Clock()
-    # raising=False: the parent build has no backstop clock (and fails below).
-    monkeypatch.setattr(config_sync, "_clock", clock, raising=False)
+    clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -240,26 +281,29 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
             seen = _Projections(monkeypatch, console)
             try:
                 await _explicit_sync(console, seen)
-                assert (seen.calls, seen.renders) == (1, 1)
+                await _quiesce(tick, seen)  # The sync's published follow-up.
+                base = seen.calls
 
                 # (a) Within a run's second, ticks with no input change skip.
                 for _ in range(5):
                     await tick()
-                assert seen.calls == 1, (
-                    f"{seen.calls - 1} checked config operations in 5 unchanged ticks"
+                assert seen.calls == base, (
+                    f"{seen.calls - base} projections in 5 unchanged ticks"
                 )
 
                 # (c) The backstop: once a second during a run, not before.
                 clock.now += 0.6
                 await tick()
-                assert seen.calls == 1, "a backstop projection before a second"
+                assert seen.calls == base, "a backstop projection before a second"
                 clock.now += 0.4
                 await tick()
-                await tick()
-                assert seen.calls == 2, "no backstop projection a second later"
+                assert seen.calls == base + 1, "no backstop projection a second later"
+                await _quiesce(tick, seen)
+                base = seen.calls
                 clock.now += 1.0
                 await tick()
-                assert (seen.calls, seen.renders) == (3, 3)
+                assert seen.calls == base + 1, "no second backstop projection"
+                assert seen.renders == seen.calls - seen.deferred
             finally:
                 tick.release()
                 gateway.validation_release.set()
@@ -312,15 +356,18 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
 
 @pytest.mark.asyncio
 async def test_each_input_change_is_one_projection_on_the_next_poll_tick(monkeypatch):
-    """(b) A reinstalled config or settings, or an explicit sync: one each.
+    """(b) A reinstalled config or settings: the very next tick projects.
 
     The clock stands still, so no backstop runs; the run is held at provider
-    validation, so nothing else changes between the ticks.
+    validation, so nothing else changes between the ticks. On dev (PR
+    #3023) a projection after a config change can be followed by the
+    whole sync its refreshed presentation reads publish (or by the replay
+    of a cold checked display's deferral), so after the change's own tick
+    the inputs are left to settle, and must.
     """
     from tldw_chatbook import config
-    from tldw_chatbook.UI.Console_Modules import config_sync
 
-    monkeypatch.setattr(config_sync, "_clock", _Clock(), raising=False)
+    _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -329,13 +376,14 @@ async def test_each_input_change_is_one_projection_on_the_next_poll_tick(monkeyp
             seen = _Projections(monkeypatch, console)
             try:
                 await _explicit_sync(console, seen)
-                assert seen.calls == 1
 
-                async def projections_in_two_ticks_after(change) -> int:
+                async def projections_on_the_tick_after(change) -> int:
+                    await _quiesce(tick, seen)
                     before = seen.calls
                     await tick.right_after(change)
-                    await tick()
-                    return seen.calls - before
+                    projected = seen.calls - before
+                    await _quiesce(tick, seen)
+                    return projected
 
                 for name, change in (
                     (
@@ -349,18 +397,11 @@ async def test_each_input_change_is_one_projection_on_the_next_poll_tick(monkeyp
                         lambda: config.load_settings(force_reload=True),
                     ),
                 ):
-                    count = await projections_in_two_ticks_after(change)
+                    count = await projections_on_the_tick_after(change)
                     assert count == 1, (
-                        f"{count} projections in the two ticks after {name}; want 1"
+                        f"{count} projections on the tick after {name}; want 1"
                     )
-                before = seen.calls
-                await _explicit_sync(console, seen)
-                await tick()
-                assert seen.calls - before == 1, (
-                    f"{seen.calls - before} projections for an explicit sync and "
-                    "the tick after it; want 1"
-                )
-                assert seen.renders == seen.calls
+                assert seen.renders == seen.calls - seen.deferred
             finally:
                 tick.release()
                 gateway.validation_release.set()
@@ -377,9 +418,8 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
     instead leave no retry behind.
     """
     from tldw_chatbook.Backup_Recovery import storage_admission
-    from tldw_chatbook.UI.Console_Modules import config_sync
 
-    monkeypatch.setattr(config_sync, "_clock", _Clock(), raising=False)
+    _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -391,21 +431,25 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
             )
             seen = _Projections(monkeypatch, console)
             await _explicit_sync(console, seen)
+            await _quiesce(tick, seen)  # The sync's published follow-up.
+            base, rendered, deferred = seen.calls, seen.renders, seen.deferred
             for _ in range(3):
                 await tick()
-            assert (seen.calls, seen.renders) == (1, 1), (
-                f"{seen.calls - 1} checked config operations in 3 unchanged ticks"
+            assert (seen.calls, seen.renders) == (base, rendered), (
+                f"{seen.calls - base} projections in 3 unchanged ticks"
             )
-            assert not console._console_control_bar_replay_whole_sync
+            assert not getattr(console, "_console_control_bar_replay_whole_sync", False)
             # The pause half needs the app's own delayed replay to run.
             tick.unhold()
             pause = await tick.right_after(storage_admission._begin_local_pause)
             try:
-                assert (seen.calls, seen.deferred, seen.renders) == (2, 1, 1)
+                assert (seen.calls, seen.renders) == (base + 1, rendered)
+                assert seen.deferred == deferred + 1
                 assert console._console_control_bar_replay_whole_sync
                 assert console._console_control_bar_sync_scheduled
-                await tick()  # The replay owns the refresh; the tick waits.
-                assert seen.calls == 2
+                # The replay owns the refresh; a tick while it is pending waits.
+                await tick(wait_replay=False)
+                assert seen.calls == base + 1
             finally:
                 pause.resume()
                 tick.release()
@@ -428,9 +472,7 @@ async def test_agent_progress_and_cost_total_project_on_the_next_tick(monkeypatc
     a skipped tick left them up to a second late. Both are inputs now. The
     clock stands still, so only the change itself can project.
     """
-    from tldw_chatbook.UI.Console_Modules import config_sync
-
-    monkeypatch.setattr(config_sync, "_clock", _Clock(), raising=False)
+    _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -440,8 +482,10 @@ async def test_agent_progress_and_cost_total_project_on_the_next_tick(monkeypatc
             agent = console._agent
             try:
                 await _explicit_sync(console, seen)
+                await _quiesce(tick, seen)  # The sync's published follow-up.
+                base = seen.calls
                 await tick()
-                assert seen.calls == 1, "an unchanged tick projected"
+                assert seen.calls == base, "an unchanged tick projected"
 
                 # A step: the bridge publishes the run's next step. The send
                 # harness has no agent bridge, so the rail's own reader
@@ -452,18 +496,19 @@ async def test_agent_progress_and_cost_total_project_on_the_next_tick(monkeypatc
                         agent, "_console_agent_section_lines", lambda: step
                     )
                 )
-                assert seen.calls == 2, "an Agent rail step change waited"
+                assert seen.calls == base + 1, "an Agent rail step change waited"
                 await tick()
-                assert seen.calls == 2
+                assert seen.calls == base + 1
 
                 # The running total: a sub-agent bills tokens.
                 monkeypatch.setattr(
                     agent, "_console_agent_fleet_token_total", lambda: 1_204
                 )
                 await tick()
-                assert seen.calls == 3, "a cost-total change waited"
+                assert seen.calls == base + 2, "a cost-total change waited"
                 await tick()
-                assert (seen.calls, seen.renders) == (3, 3)
+                assert seen.calls == base + 2
+                assert seen.renders == seen.calls - seen.deferred
             finally:
                 tick.release()
                 gateway.validation_release.set()
@@ -483,11 +528,16 @@ async def test_a_skipped_tick_under_a_native_pause_request_runs_its_later_steps_
     scope (the only place a native pause request refuses) is entered, so
     nothing raises. A local pause or a config cache miss are inputs, so
     those ticks still attempt (and defer) the projection as before.
+
+    Only the loop thread's scope checks count: on dev (PR #3023) the checked
+    display's once-a-second refresh reads config on a worker thread, under
+    its own scope, and may run while the tick awaits; a pause refuses that
+    read inside the worker, which stays cold and retries, as without this
+    cadence.
     """
     from tldw_chatbook.Backup_Recovery import admission
-    from tldw_chatbook.UI.Console_Modules import config_sync
 
-    monkeypatch.setattr(config_sync, "_clock", _Clock(), raising=False)
+    _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -496,17 +546,20 @@ async def test_a_skipped_tick_under_a_native_pause_request_runs_its_later_steps_
             seen = _Projections(monkeypatch, console)
             try:
                 await _explicit_sync(console, seen)
+                await _quiesce(tick, seen)  # The sync's published follow-up.
+                base = seen.calls
                 probes: list[tuple[str, ...]] = []
 
                 def requested(self, names):
-                    probes.append(names)
+                    if threading.current_thread() is threading.main_thread():
+                        probes.append(names)
                     return True  # Another process asked to pause storage.
 
                 monkeypatch.setattr(admission.Admission, "pause_requested", requested)
                 # The heaviest later path: re-render the transcript (receipts).
                 console._last_native_transcript_refresh_key = None
                 await tick()
-                assert seen.calls == 1, "the tick did not skip"
+                assert seen.calls == base, "the tick did not skip"
                 assert probes == [], f"later steps entered {len(probes)} scopes"
             finally:
                 monkeypatch.undo()
