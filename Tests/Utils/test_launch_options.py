@@ -479,7 +479,11 @@ def test_without_the_flag_the_configured_splash_still_plays(monkeypatch):
     """
     from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
-    first, _sentinel, stub = _compose_first(monkeypatch)
+    # TASK-34100.13 (entry-exit-handoff-17): a profile's FIRST launch plays no
+    # splash, so the control is a profile that has launched before.
+    first, _sentinel, stub = _compose_first(
+        monkeypatch, app_config={"first_run": {"setup_completed": True}}
+    )
     assert isinstance(first, SplashScreen)
     assert stub.splash_screen_active is True
 
