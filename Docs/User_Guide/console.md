@@ -888,11 +888,13 @@ listing is not llama.cpp's rows. They are what this chat's endpoint listed
 (in Chat settings, a listing there), else the saved and cached models. Any
 other provider cannot send on an endpoint that is not saved, so a pick there
 lands on the configured server, and its rows and words are that server's.
-In Chat settings the same holds for an Endpoint you typed, and for a
-provider picked earlier in the draft, whose pick brings back the endpoint it
-had. Where the rows read an endpoint other than the saved one, Switch
-model's background check covers both servers: that endpoint for the rows,
-and the configured one, which new chats use and **Ctrl+N** checks. A listing is read up to 100 models, and
+In Chat settings an Endpoint you typed is kept on any provider, and a
+provider picked earlier in the draft brings back the endpoint it had:
+their rows and words are that endpoint's. Where the rows read an endpoint
+other than the saved one, the background check that **Alt+M** starts
+covers both servers: that endpoint for the rows, and the configured one,
+which new chats use and **Ctrl+N** checks. Pick mode, which has no
+**Ctrl+N**, checks only that endpoint. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
 stay after the listed ones; this chat's own model stays listed first.
 Until then (not checked yet, refused or timed out) the rows are the saved

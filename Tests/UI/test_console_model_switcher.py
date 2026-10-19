@@ -3779,13 +3779,13 @@ def _switcher_sources_over(draft, config, monkeypatch, *, full_surface=False):
 async def test_an_unseen_pick_on_a_url_server_lands_on_its_saved_endpoint(
     full_surface, monkeypatch
 ) -> None:
-    """TASK-35190 review round 4: only llama.cpp's direct path sends on an
-    Endpoint set only on the chat; every other URL provider blocks one it has
-    not saved. An Ollama chat holding :11500 while the config says :11434
-    (Settings does not move a chat that holds work, ADR-095) kept :11500 on a
-    pick of another Ollama model and read "endpoint unsaved", while Switch
-    model's row, read over the held URL, said Ready. The pick lands on :11434
-    now, ready to send, and the row reads its word."""
+    """Whole-PR review, round 1 (TASK-35190): only llama.cpp's direct path
+    sends on an Endpoint set only on the chat; every other URL provider blocks
+    one it has not saved. An Ollama chat holding :11500 while the config says
+    :11434 (Settings does not move a chat that holds work, ADR-095) kept
+    :11500 on a pick of another Ollama model and read "endpoint unsaved",
+    while Switch model's row, read over the held URL, said Ready. The pick
+    lands on :11434 now, ready to send, and the row reads its word."""
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_session_settings import (
         build_console_settings_readiness,
@@ -3833,10 +3833,11 @@ async def test_an_unseen_pick_on_a_url_server_lands_on_its_saved_endpoint(
 async def test_switch_model_checks_the_saved_server_too_only_off_it(
     held, probers, monkeypatch
 ) -> None:
-    """TASK-35190 review round 4: ``with_provider_endpoint`` always returns a
-    copy, so a chat that holds its saved URL explicitly counted as moved, and
-    every such Alt+M open built a second prober over an identical copy. Only
-    an Endpoint off the saved one builds the configured server's prober."""
+    """Whole-PR review, round 1 (TASK-35190): ``with_provider_endpoint``
+    always returns a copy, so a chat that holds its saved URL explicitly
+    counted as moved, and every such Alt+M open built a second prober over an
+    identical copy. Only an Endpoint off the saved one builds the configured
+    server's prober."""
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsModal,
     )
