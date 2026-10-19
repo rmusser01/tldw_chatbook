@@ -28,6 +28,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioButton,
     SetupRadioSet,
 )
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:
@@ -188,7 +189,7 @@ def compose_speech_step(step: "SpeechSetupStep") -> Iterator[Widget]:
             if step._use_as_default_offer():
                 # Review NEW-2: installed + active + configured elsewhere.
                 yield Button(
-                    f"Use {step._model_label()} as my default",
+                    f"Use {escape_markup(step._model_label())} as my default",
                     id="setup-speech-use-as-default",
                     variant="primary",
                 )
