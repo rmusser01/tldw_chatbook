@@ -269,7 +269,10 @@ def remember_session_pair(
     """Return a reopened Chat settings draft remembering the chat's own pair.
 
     TASK-35190: the chat's own pair stays remembered across a Settings round
-    trip, so a pick back on its provider keeps the chat's Endpoint.
+    trip, so a pick back lands where it would without the round trip: the
+    chat's own pair keeps its Endpoint, and on llama.cpp (whose direct path
+    sends on an Endpoint set only on the chat, AC#5) an unseen model keeps
+    it too.
 
     Args:
         draft: The draft Chat settings reopens on (a suspended one, whose

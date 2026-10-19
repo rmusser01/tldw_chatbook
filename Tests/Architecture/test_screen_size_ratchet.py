@@ -104,8 +104,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: footer to Console_Modules/left_rail.py::rail_focus_shortcuts and
     #: TASK-33005.7's composer setup copy to Chat/console_display_state.py::
     #: console_setup_blocked_reason. Dev 69771c1811 measured 24378/737 (over
-    #: this row); with Phase 9, 24332/736. The row is left as it was.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24369, 740),
+    #: this row); with Phase 9, 24332/736, and the row comes down to that so
+    #: the decomposition gain is kept.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24332, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
