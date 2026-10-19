@@ -197,6 +197,11 @@ async def main():
         import subject_baseline
 
         report["baseline_revision"] = subject_baseline.BASE_REVISION
+    if "--subject-scoped-baseline" in sys.argv:
+        import subject_scoped_baseline
+
+        report["baseline_revision"] = subject_scoped_baseline.BASE_REVISION
+        report["baseline_scope"] = sorted(subject_scoped_baseline.METHODS)
     if "--stalls-baseline" in sys.argv:
         import stalls_baseline
 

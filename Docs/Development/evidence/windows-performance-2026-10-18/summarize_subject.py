@@ -4,10 +4,15 @@ from collections import Counter
 import json
 from pathlib import Path
 from statistics import median
+import sys
 
 OUT = Path(__file__).parent
 result = {}
-for tag in ("control1", "after1", "after2", "control2", "final", "final-control"):
+confirm = "--confirm" in sys.argv
+tags = ("control1", "after1", "after2", "control2", "final", "final-control")
+if confirm:
+    tags = tuple("verify-" + tag for tag in tags[:4])
+for tag in tags:
     data = json.loads((OUT / f"plain-ready-subject-{tag}.json").read_text())
     receipt = json.loads((OUT / f"subject-{tag}-exit.json").read_text())
     returns = data.get("console_resume", [])
@@ -46,7 +51,31 @@ for tag in ("control1", "after1", "after2", "control2", "final", "final-control"
             )
         },
     }
-(OUT / "subject-comparison.json").write_text(
-    json.dumps(result, indent=2), encoding="utf-8"
-)
+if confirm:
+    receipt = json.loads((OUT / "subject-verify-benchmark-exit.json").read_text())
+    if receipt.get("exit_code") != 0:
+        raise ValueError("Cannot summarize an incomplete or failed CSS benchmark")
+    benchmark = json.loads(
+        (OUT / "plain-ready-subject-verify-benchmark.json").read_text()
+    )
+    if "final_screen" not in benchmark:
+        raise ValueError("CSS benchmark report was not finalized")
+    value = benchmark["subject_benchmark"]
+    result["benchmark"] = {
+        key: value[key] for key in ("nodes", "warm_ms", "cold_ms", "style_mismatches")
+    }
+    result["benchmark"]["matcher"] = {
+        arm: {
+            "calls": row["calls"],
+            "matches": row["matches"],
+            "total_instrumented_ms": sum(rule["ms"] for rule in row["rules"]),
+        }
+        for arm, row in value["matcher"].items()
+    }
+    result["benchmark"]["network_attempts"] = benchmark["blocked_network_attempts"]
+    result["benchmark"]["profile_refusals"] = benchmark["real_profile_refusals"]
+    result["benchmark"]["exit_code"] = receipt["exit_code"]
+(
+    OUT / ("subject-confirmation.json" if confirm else "subject-comparison.json")
+).write_text(json.dumps(result, indent=2), encoding="utf-8")
 print(json.dumps(result, indent=2))
