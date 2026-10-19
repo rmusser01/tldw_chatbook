@@ -25,8 +25,11 @@ Follow-up from the TASK-34844 review: config.py builds kobold_api.temperature (d
 
 ## Implementation Notes
 
-OVERTAKEN BY EVENTS — closed with no change; ACs checked only to satisfy DoD tooling. TASK-34895 (PR #3105, commit 4898f20728, 2026-10-14) deleted the entire per-provider summarizer family — all 19 summarize_with_* functions including summarize_with_kobold, _post_with_retry, and the whole Local_Summarization_Lib module — routing summarization through the chat provider dispatch via the task-3796 ledger-correction procedure. The consumer this task would have wired no longer exists.
+CLOSED with no production change; ACs checked only to satisfy DoD tooling. **Review round 1 corrected the record — the first draft trusted commit 4898f20728's message instead of its diff.** Verified state of origin/dev (2026-10-19):
 
-Residual, folded into that task's orbit rather than re-filed: config.py still builds kobold_temperature/kobold_top_p/kobold_top_k/kobold_max_tokens defaults (and the analogous keys for the other deleted local summarizers) that now reference nothing — a config-defaults cleanup belonging to 34895's follow-ups, recorded here so it is not lost. summarize_chunk survives on dev (the Summarization_General_Lib retains it at 1.3k lines), so TASK-34845's rotation fix remains live.
+- TASK-34895's tranche 4 (PR #3105, commit 4898f20728) deleted the NINE hosted summarize_with_* functions, _post_with_retry, and summarize_chunk from Summarization_General_Lib (3.3k→1.3k lines), with the task-3796 ledger re-freeze. Its message claims more than it did.
+- **Local_Summarization_Lib.py SURVIVES on dev, orphaned** (2,321 lines; nothing in tldw_chatbook/ imports it; summarize_with_kobold still defined at :544). The ledger records its sites as outcome=deleted while the module remains on disk — 34895's deletion was recorded but not performed (filed as TASK-35553).
+- The close verdict stands on the LIVE path: summarization routes through chat dispatch; nothing live consumes kobold_temperature/top_p/top_k/max_tokens (the kobold summarizer spec lacks config_temp=True, and the orphaned module is unreachable). The analogous llama/ooba/vllm/ollama temperature keys ARE live via config_temp=True specs — the first draft's "all reference nothing" generalization was wrong.
+- **summarize_chunk was deleted by 4898f20728 itself**, so TASK-34845's rotation fix is not live; its routing test dangled red on dev (calling the deleted function) and is removed in this PR.
 
 ADR: not required (no change; premise documentation only).
