@@ -8843,13 +8843,14 @@ class ChatScreen(BaseAppScreen):
         (task-15452): the control state and the Workbench state built off it
         each re-derive this leg.
         """
-        memo = self._console_derivation_memo
-        if memo is not None and "provider_model_display" in memo:
-            return memo["provider_model_display"]
-        display = self._active_console_provider_model_display_uncached()
-        if memo is not None:
-            memo["provider_model_display"] = display
-        return display
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            if memo is not None and "provider_model_display" in memo:
+                return memo["provider_model_display"]
+            display = self._active_console_provider_model_display_uncached()
+            if memo is not None:
+                memo["provider_model_display"] = display
+            return display
 
     def _active_console_provider_model_display_uncached(
         self,
@@ -8877,13 +8878,14 @@ class ChatScreen(BaseAppScreen):
         blocker each re-derive it, and `build_console_settings_readiness`
         is the single most expensive leg of a draft-edit sync.
         """
-        memo = self._console_derivation_memo
-        if memo is not None and "settings_readiness" in memo:
-            return memo["settings_readiness"]
-        readiness = self._active_console_settings_readiness_uncached()
-        if memo is not None:
-            memo["settings_readiness"] = readiness
-        return readiness
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            if memo is not None and "settings_readiness" in memo:
+                return memo["settings_readiness"]
+            readiness = self._active_console_settings_readiness_uncached()
+            if memo is not None:
+                memo["settings_readiness"] = readiness
+            return readiness
 
     def _active_console_settings_readiness_uncached(
         self,

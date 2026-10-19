@@ -41,7 +41,38 @@ async def main():
             assert selection.configured_model == 'configured-before', selection
             assert len(loads) == 1, len(loads)
             assert screen._console_derivation_memo is None
-            if sys.argv[2] == 'inspector':
+            if sys.argv[2] in ('readiness', 'model_display'):
+                derive = (screen._active_console_settings_readiness if sys.argv[2] == 'readiness'
+                          else screen._active_console_provider_model_display)
+                loads.clear()
+                before = derive()
+                assert len(loads) == 1, len(loads)
+                assert screen._console_derivation_memo is None
+                from tldw_chatbook import config
+                assert config.save_settings_to_cli_config(
+                    {'api_settings.llama_cpp': {'model': 'configured-after'}})
+                loads.clear()
+                after = derive()
+                assert len(loads) == 1, len(loads)
+                assert loads[0]['api_settings']['llama_cpp']['model'] == 'configured-after'
+                assert screen._console_derivation_memo is None
+                original_selection = screen._build_console_provider_selection
+                def fail_selection(*args, **kwargs):
+                    raise RuntimeError('derivation failed')
+                screen._build_console_provider_selection = fail_selection
+                try:
+                    derive()
+                except RuntimeError as error:
+                    assert str(error) == 'derivation failed'
+                else:
+                    raise AssertionError('missing failure')
+                finally:
+                    screen._build_console_provider_selection = original_selection
+                assert screen._console_derivation_memo is None
+                loads.clear()
+                assert derive() == after
+                assert len(loads) == 1, len(loads)
+            elif sys.argv[2] == 'inspector':
                 loads.clear()
                 before = screen._build_console_inspector_state(None)
                 assert len(loads) == 1, len(loads)
@@ -119,7 +150,18 @@ print('retired and reopened')
 
 
 @pytest.mark.parametrize(
-    "case", ["once", "freshness", "sessions", "exception", "inspector"]
+    "case",
+    [
+        "once",
+        "freshness",
+        "sessions",
+        "exception",
+        "inspector",
+        "readiness",
+        "model_display",
+    ],
 )
 def test_actual_provider_derivation_scope(tmp_path, case):
-    _run(tmp_path, "derive", case, script=_DERIVE)
+    # The freshness/failure probes include a real Settings save and a second
+    # derivation. Allow cold native Windows app initialization to finish too.
+    _run(tmp_path, "derive", case, script=_DERIVE, timeout=90)

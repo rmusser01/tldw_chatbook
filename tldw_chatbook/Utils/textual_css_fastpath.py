@@ -86,6 +86,9 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any
 
+from textual.css import stylesheet
+from textual.css.match import _check_selectors as _upstream_check_selectors
+from textual.css.model import Selector
 from textual.css.stylesheet import Stylesheet
 
 __all__ = ["install_stylesheet_fastpath", "is_installed"]
@@ -230,6 +233,26 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
     return surviving
 
 
+def _check_subject_pseudo_classes(
+    selectors: list[Selector], css_path_nodes: list
+) -> bool:
+    """Reject a false live subject state before upstream scans its ancestors.
+
+    Every successful upstream match ends on the final selector and subject.
+    Check that necessary condition first only for dynamic selectors, where
+    unsuccessful ancestor scans dominate. Keep rules in the candidate list:
+    upstream still needs their pseudo classes to set refresh/invalidation flags.
+    No state or matching result is cached; positive cases delegate in full.
+    """
+    if (
+        selectors
+        and selectors[-1].pseudo_classes
+        and not selectors[-1].check(css_path_nodes[-1])
+    ):
+        return False
+    return _upstream_check_selectors(selectors, css_path_nodes)
+
+
 def install_stylesheet_fastpath() -> bool:
     """Install the fast path on ``Stylesheet.apply``. Idempotent.
 
@@ -237,6 +260,8 @@ def install_stylesheet_fastpath() -> bool:
         ``True`` if this call installed the patch, ``False`` if it was already
         installed by an earlier call.
     """
+    # Patch only stylesheet resolution; DOM query matching stays upstream.
+    stylesheet._check_selectors = _check_subject_pseudo_classes
     upstream = Stylesheet.apply
     if getattr(upstream, _MARKER, False):
         return False
