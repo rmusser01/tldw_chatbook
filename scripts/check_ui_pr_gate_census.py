@@ -428,7 +428,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # app at collection) and moves it to the admission-sensitive step, ledger R11.
 # The census's last entry, TASK-33005.7's reason-width node, takes its slot,
 # so no other entry changes shard. Each still runs in one PR lane: 358.
-MINIMUM_FILES = 358
+# Rebased again onto dev at e3d32ce81a (2026-10-19), whose floor was 326
+# (TASK-34406.28's two entries): Phase 9's 34 entries end at 360 here.
+MINIMUM_FILES = 360
 
 
 def read_census(path: Path) -> list[str]:
