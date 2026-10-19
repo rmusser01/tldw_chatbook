@@ -130,13 +130,20 @@ async def test_approved_quit_cancels_browser_at_terminal_fence(
 
     def changed(observed_code, _offset):
         assert observed_code is changed_code
-        frame = sys._getframe(1)
+        frame = sys._getframe(2)  # selected_start delegates this callback.
+        assert frame.f_code is changed_code
         read = frame.f_locals["self"]
+        caller_is_loop_check = (
+            frame.f_back.f_code
+            is console_browser_read._StockBrowserRead.require_loop_current.__code__
+        )
         del frame
         if read.controller is not controller:
             return
         facts.setdefault("source_refusals", []).append(
             {
+                "caller_is_loop_check": caller_is_loop_check,
+                "read_cancelled": read.cancelled,
                 "runtime_is_original": read._runtime is runtime,
                 "runtime_disposed": runtime._disposed,
                 "issuer_new_cancellation": read._issuer.cancelling()
