@@ -122,6 +122,11 @@ _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
 
 _VIEW_HOOK_OWNERSHIP = {
     "response_rules_changed": "view-projection",
+    "prepare_view": "view-projection",
+    "present_results": "view-projection",
+    "present_confirmation": "view-projection",
+    "is_answerable": "view-projection",
+    "on_settled": "view-projection",
     "_chat_dictionary_applier": "app-owned-domain",
     "_world_info_applier": "app-owned-domain",
     "_rag_capture_provider": "runtime-custody",
@@ -678,6 +683,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
 
     assert set(_VIEW_HOOK_OWNERSHIP) == {
         "response_rules_changed",
+        "prepare_view", "present_results", "present_confirmation", "is_answerable", "on_settled",
         "_chat_dictionary_applier",
         "_world_info_applier",
         "_rag_capture_provider",
@@ -1982,6 +1988,7 @@ def test_detach_releases_the_old_chat_screen_from_every_runtime_hook():
     assert any(
         inspect.ismethod(getattr(runtime._hook_target(slot.target), slot.name))
         for slot in CONSOLE_VIEW_HOOK_SLOTS
+        if runtime._hook_target(slot.target) is not None
     )
 
     dead_screen = weakref.ref(screen)

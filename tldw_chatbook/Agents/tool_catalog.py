@@ -95,6 +95,13 @@ if TYPE_CHECKING:
         REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
     )
     from .run_tool_policy import RunToolPolicy
+    from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+SEARCH_ARCHIVED_CONVERSATIONS = "search_archived_conversations"
+REQUEST_CONVERSATION_RESTORE = "request_conversation_restore"
+RECOVERY_RESERVED_TOOL_NAMES = frozenset(
+    {SEARCH_ARCHIVED_CONVERSATIONS, REQUEST_CONVERSATION_RESTORE}
+)
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
@@ -1840,6 +1847,8 @@ class ToolCatalogRegistry:
         self._providers: list[ToolProvider] = []
         self._builtin_library_provider: ToolProvider | None = None
         self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+        self._archive_recovery_provider = None
+        self._archive_recovery_authority = None
         self._canvas_provider: ToolProvider | None = None
         self._canvas_authority: object | None = None
         # Whether the Console session owning THIS run is temporary ("not
@@ -1939,6 +1948,58 @@ class ToolCatalogRegistry:
             self._catalog_generation += 1
         return True
 
+    def register_archive_recovery_provider(
+        self, provider: ArchiveRecoveryToolProvider, authority: object
+    ) -> bool:
+        """Register exact app-issued turn authority; pending cannot execute."""
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+        if (
+            type(provider) is not ArchiveRecoveryToolProvider
+            or self._ephemeral
+            or not provider.authenticates_authority(authority)
+        ):
+            return False
+        entries = provider.list_catalog()
+        if frozenset(e.name for e in entries) != RECOVERY_RESERVED_TOOL_NAMES or any(
+            e.source != "archive_recovery" for e in entries
+        ):
+            return False
+        with self._catalog_lock:
+            if self._archive_recovery_provider is not None:
+                return False
+            self._archive_recovery_provider = provider
+            self._archive_recovery_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def _authenticated_recovery_name(self, provider: object, name: str) -> bool:
+        if (
+            name not in RECOVERY_RESERVED_TOOL_NAMES
+            or provider is None
+            or provider is not self._archive_recovery_provider
+        ):
+            return False
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+        return bool(
+            type(provider) is ArchiveRecoveryToolProvider
+            and provider.authenticates_authority(self._archive_recovery_authority)
+        )
+
+    def check_archive_recovery_call(self, name: str) -> ToolResult | None:
+        """Apply exact owner and persona caps to native in-loop dispatch."""
+        provider = self._archive_recovery_provider
+        if self._ephemeral or not self._authenticated_recovery_name(provider, name):
+            return ToolResult.blocked("Recovery authority is unavailable.")
+        if self._run_tool_policy is not None:
+            allowed, refusal = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return ToolResult.blocked(refusal)
+        return None
+
     def register_canvas_provider(self, provider: object, authority: object) -> bool:
         """Register only an exact live scoped Canvas provider and capability.
 
@@ -2034,10 +2095,18 @@ class ToolCatalogRegistry:
         return [
             entry
             for entry in entries
-            if entry.name not in CANVAS_RESERVED_TOOL_NAMES
-            or (
-                provider is not None
-                and self._authenticated_canvas_name(provider, entry.name)
+            if (
+                entry.name not in CANVAS_RESERVED_TOOL_NAMES
+                or (
+                    provider is not None
+                    and self._authenticated_canvas_name(provider, entry.name)
+                )
+            )
+            and (
+                entry.name not in RECOVERY_RESERVED_TOOL_NAMES
+                or self._authenticated_recovery_name(
+                    self._archive_recovery_provider, entry.name
+                )
             )
         ]
 
@@ -2101,6 +2170,11 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    entry.name in RECOVERY_RESERVED_TOOL_NAMES
+                    and not self._authenticated_recovery_name(provider, entry.name)
+                ):
+                    continue
                 if (
                     entry.name in CANVAS_RESERVED_TOOL_NAMES
                     and not self._authenticated_canvas_name(provider, entry.name)

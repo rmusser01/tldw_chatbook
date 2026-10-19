@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import inspect
-from pathlib import Path
 import sqlite3
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -34,6 +34,24 @@ def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     return LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )
+
+
+@pytest.fixture(autouse=True)
+def close_test_registries(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    databases: list[WorkspaceDB] = []
+    build_registry = build_test_registry
+
+    def build_owned_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+        service = build_registry(tmp_path)
+        databases.append(service.db)
+        return service
+
+    monkeypatch.setitem(globals(), "build_test_registry", build_owned_registry)
+    try:
+        yield
+    finally:
+        for db in reversed(databases):
+            db.close()
 
 
 def test_folder_binding_without_app_owner_starts_no_change_review_thread(
@@ -219,8 +237,8 @@ def test_registry_rejects_runtime_binding_for_default_workspace(
 def test_registry_never_exposes_runtime_bindings_for_default_workspace(
     tmp_path: Path,
 ) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    service = LocalWorkspaceRegistryService(db)
+    service = build_test_registry(tmp_path)
+    db = service.db
     service.ensure_default_workspace()
 
     with db.transaction() as conn:
@@ -261,8 +279,8 @@ def test_registry_never_exposes_runtime_bindings_for_default_workspace(
 def test_registry_sanitizes_malformed_default_runtime_binding_before_parsing(
     tmp_path: Path,
 ) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    service = LocalWorkspaceRegistryService(db)
+    service = build_test_registry(tmp_path)
+    db = service.db
     service.ensure_default_workspace()
 
     with db.transaction() as conn:
@@ -343,49 +361,61 @@ def test_unlink_membership_removes_only_matching_membership_and_scope_item(
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
-    media_db = MediaDatabase(tmp_path / "media.sqlite", client_id="client-1")
-    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
-        url="file:///research-source.txt",
-        title="Canonical source",
-        media_type="document",
-        content="Canonical content must survive workspace unlink.",
-    )
-    assert media_id is not None
-    item_id = str(media_id)
-    service.create_workspace(workspace_id="ws-a", name="Workspace A")
-    service.create_workspace(workspace_id="ws-b", name="Workspace B")
-    service.link_membership("ws-a", item_type="media", item_id=item_id, role="source")
-    service.link_membership(
-        "ws-a", item_type="media", item_id=item_id, role="reference"
-    )
-    service.link_membership("ws-b", item_type="media", item_id=item_id, role="source")
-    service.set_workspace_scope(
-        "ws-a",
-        RagScope(
-            items=(
-                ScopeItem("media", item_id),
-                ScopeItem("media", "42"),
-                ScopeItem("note", item_id),
+    with closing(
+        MediaDatabase(tmp_path / "media.sqlite", client_id="client-1")
+    ) as media_db:
+        media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+            url="file:///research-source.txt",
+            title="Canonical source",
+            media_type="document",
+            content="Canonical content must survive workspace unlink.",
+        )
+        assert media_id is not None
+        item_id = str(media_id)
+        service.create_workspace(workspace_id="ws-a", name="Workspace A")
+        service.create_workspace(workspace_id="ws-b", name="Workspace B")
+        service.link_membership(
+            "ws-a", item_type="media", item_id=item_id, role="source"
+        )
+        service.link_membership(
+            "ws-a", item_type="media", item_id=item_id, role="reference"
+        )
+        service.link_membership(
+            "ws-b", item_type="media", item_id=item_id, role="source"
+        )
+        service.set_workspace_scope(
+            "ws-a",
+            RagScope(
+                items=(
+                    ScopeItem("media", item_id),
+                    ScopeItem("media", "42"),
+                    ScopeItem("note", item_id),
+                ),
+                updated_at="2026-08-24T12:00:00Z",
             ),
-            updated_at="2026-08-24T12:00:00Z",
-        ),
-    )
+        )
 
-    assert service.unlink_membership("ws-a", item_type="media", item_id=item_id) is True
-    assert (
-        service.unlink_membership("ws-a", item_type="media", item_id=item_id) is False
-    )
+        assert (
+            service.unlink_membership("ws-a", item_type="media", item_id=item_id)
+            is True
+        )
+        assert (
+            service.unlink_membership("ws-a", item_type="media", item_id=item_id)
+            is False
+        )
 
-    assert {
-        (membership.workspace_id, membership.role)
-        for membership in service.get_item_memberships("media", item_id)
-    } == {("ws-a", "reference"), ("ws-b", "source")}
-    scope = service.get_workspace_scope("ws-a")
-    assert scope is not None
-    assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
-    canonical = media_db.get_media_by_id(media_id)
-    assert canonical is not None
-    assert canonical["content"] == "Canonical content must survive workspace unlink."
+        assert {
+            (membership.workspace_id, membership.role)
+            for membership in service.get_item_memberships("media", item_id)
+        } == {("ws-a", "reference"), ("ws-b", "source")}
+        scope = service.get_workspace_scope("ws-a")
+        assert scope is not None
+        assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
+        canonical = media_db.get_media_by_id(media_id)
+        assert canonical is not None
+        assert (
+            canonical["content"] == "Canonical content must survive workspace unlink."
+        )
 
 
 def test_unlink_reference_membership_keeps_source_scope_selected(
@@ -513,8 +543,8 @@ def test_registry_normalizes_workspace_ids_at_service_boundary(tmp_path: Path) -
 def test_registry_rejects_archived_active_workspace_without_clearing_current(
     tmp_path: Path,
 ) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    service = LocalWorkspaceRegistryService(db)
+    service = build_test_registry(tmp_path)
+    db = service.db
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
     service.set_active_workspace("ws-a")
@@ -566,8 +596,8 @@ def test_registry_wraps_non_json_runtime_binding_metadata(tmp_path: Path) -> Non
 
 
 def test_registry_tolerates_corrupt_runtime_binding_metadata(tmp_path: Path) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    service = LocalWorkspaceRegistryService(db)
+    service = build_test_registry(tmp_path)
+    db = service.db
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.save_runtime_binding(
         WorkspaceRuntimeBinding(
@@ -799,48 +829,48 @@ def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None
 def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
-    db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
-    with db.connection() as conn:
-        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute(
-            "DELETE FROM schema_version WHERE version = 2"
-        )  # simulate a pre-v2 database (receipts keep later migrations idle)
-        for wid, name in (
-            ("w1", "Same Name"),
-            ("w2", "same name"),
-            ("w3", "SAME NAME"),
-        ):
+    with closing(WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")) as db:
+        with db.connection() as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
             conn.execute(
-                """
-                INSERT INTO workspace_records
-                    (workspace_id, name, description, authority, sync_status,
-                     active, archived, created_at, updated_at)
-                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
-                """,
-                (
-                    wid,
-                    name,
-                    f"2026-01-0{wid[-1]}T00:00:00+00:00",
-                    "2026-01-01T00:00:00+00:00",
-                ),
-            )
-        conn.commit()
+                "DELETE FROM schema_version WHERE version = 2"
+            )  # simulate a pre-v2 database (receipts keep later migrations idle)
+            for wid, name in (
+                ("w1", "Same Name"),
+                ("w2", "same name"),
+                ("w3", "SAME NAME"),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO workspace_records
+                        (workspace_id, name, description, authority, sync_status,
+                         active, archived, created_at, updated_at)
+                    VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                    """,
+                    (
+                        wid,
+                        name,
+                        f"2026-01-0{wid[-1]}T00:00:00+00:00",
+                        "2026-01-01T00:00:00+00:00",
+                    ),
+                )
+            conn.commit()
 
-    db._initialize_schema()
+        db._initialize_schema()
 
-    with db.connection() as conn:
-        names = [
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
-            ).fetchall()
-        ]
-        index_row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
-        ).fetchone()
+        with db.connection() as conn:
+            names = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+                ).fetchall()
+            ]
+            index_row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+            ).fetchone()
 
-    assert index_row is not None
-    assert len({n.strip().casefold() for n in names}) == len(names)
+        assert index_row is not None
+        assert len({n.strip().casefold() for n in names}) == len(names)
 
 
 def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) -> None:
@@ -848,47 +878,49 @@ def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) ->
     name reserved by a different duplicate group's rename (Qodo #943/#944)."""
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
-    db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
-    with db.connection() as conn:
-        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute(
-            "DELETE FROM schema_version WHERE version = 2"
-        )  # simulate a pre-v2 database (receipts keep later migrations idle)
-        # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
-        # "Foo (2)" that is NOT a duplicate of anything by itself, but is
-        # exactly the candidate name group 1's rename would naively produce.
-        for wid, name in (("w1", "Foo"), ("w2", "foo"), ("w3", "Foo (2)")):
+    with closing(
+        WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
+    ) as db:
+        with db.connection() as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
             conn.execute(
-                """
-                INSERT INTO workspace_records
-                    (workspace_id, name, description, authority, sync_status,
-                     active, archived, created_at, updated_at)
-                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
-                """,
-                (
-                    wid,
-                    name,
-                    f"2026-01-0{wid[-1]}T00:00:00+00:00",
-                    "2026-01-01T00:00:00+00:00",
-                ),
-            )
-        conn.commit()
+                "DELETE FROM schema_version WHERE version = 2"
+            )  # simulate a pre-v2 database (receipts keep later migrations idle)
+            # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
+            # "Foo (2)" that is NOT a duplicate of anything by itself, but is
+            # exactly the candidate name group 1's rename would naively produce.
+            for wid, name in (("w1", "Foo"), ("w2", "foo"), ("w3", "Foo (2)")):
+                conn.execute(
+                    """
+                    INSERT INTO workspace_records
+                        (workspace_id, name, description, authority, sync_status,
+                         active, archived, created_at, updated_at)
+                    VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                    """,
+                    (
+                        wid,
+                        name,
+                        f"2026-01-0{wid[-1]}T00:00:00+00:00",
+                        "2026-01-01T00:00:00+00:00",
+                    ),
+                )
+            conn.commit()
 
-    db._initialize_schema()
+        db._initialize_schema()
 
-    with db.connection() as conn:
-        names = [
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
-            ).fetchall()
-        ]
-        index_row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
-        ).fetchone()
+        with db.connection() as conn:
+            names = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+                ).fetchall()
+            ]
+            index_row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+            ).fetchone()
 
-    assert index_row is not None
-    assert len({n.strip().casefold() for n in names}) == len(names)
+        assert index_row is not None
+        assert len({n.strip().casefold() for n in names}) == len(names)
 
 
 def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) -> None:
@@ -896,44 +928,46 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
     that already looks like a generated suffix (Qodo #943/#944)."""
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
-    db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
-    with db.connection() as conn:
-        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute(
-            "DELETE FROM schema_version WHERE version = 2"
-        )  # simulate a pre-v2 database (receipts keep later migrations idle)
-        for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
+    with closing(
+        WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
+    ) as db:
+        with db.connection() as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
             conn.execute(
-                """
-                INSERT INTO workspace_records
-                    (workspace_id, name, description, authority, sync_status,
-                     active, archived, created_at, updated_at)
-                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
-                """,
-                (
-                    wid,
-                    name,
-                    f"2026-01-0{wid[-1]}T00:00:00+00:00",
-                    "2026-01-01T00:00:00+00:00",
-                ),
-            )
-        conn.commit()
+                "DELETE FROM schema_version WHERE version = 2"
+            )  # simulate a pre-v2 database (receipts keep later migrations idle)
+            for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
+                conn.execute(
+                    """
+                    INSERT INTO workspace_records
+                        (workspace_id, name, description, authority, sync_status,
+                         active, archived, created_at, updated_at)
+                    VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                    """,
+                    (
+                        wid,
+                        name,
+                        f"2026-01-0{wid[-1]}T00:00:00+00:00",
+                        "2026-01-01T00:00:00+00:00",
+                    ),
+                )
+            conn.commit()
 
-    db._initialize_schema()
+        db._initialize_schema()
 
-    with db.connection() as conn:
-        names = [
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
-            ).fetchall()
-        ]
-        index_row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
-        ).fetchone()
+        with db.connection() as conn:
+            names = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+                ).fetchall()
+            ]
+            index_row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+            ).fetchone()
 
-    assert index_row is not None
-    assert len({n.strip().casefold() for n in names}) == len(names)
+        assert index_row is not None
+        assert len({n.strip().casefold() for n in names}) == len(names)
 
 
 # ---------------------------------------------------------------------------
@@ -1146,32 +1180,46 @@ def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
+    from tldw_chatbook.Workspaces.registry_service import WorkspaceArchiveConflict
+
     winner = build_test_registry(tmp_path)
     winner.create_workspace(workspace_id="old", name="Original")
-    winner.archive_workspace("old")
+    receipt = winner.archive_workspace("old")
     loser = build_test_registry(tmp_path)
-    read_archived = Event()
+    write_ready = Event()
     winner_committed = Event()
-    get_workspace = loser.get_workspace
+    transaction = loser.db.transaction
 
-    def pause_after_initial_read(workspace_id):
-        record = get_workspace(workspace_id)
-        if record is not None and record.archived:
-            read_archived.set()
-            assert winner_committed.wait(5)
-        return record
+    @contextmanager
+    def pause_before_write(*, immediate=False):
+        write_ready.set()
+        assert winner_committed.wait(5)
+        with transaction(immediate=immediate) as conn:
+            yield conn
 
-    monkeypatch.setattr(loser, "get_workspace", pause_after_initial_read)
+    monkeypatch.setattr(loser.db, "transaction", pause_before_write)
     generation = loser.mutation_generation
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(loser.unarchive_workspace, "old", name="Losing choice")
+
+    def restore_loser():
         try:
-            assert read_archived.wait(5)
+            return loser.unarchive_workspace(
+                "old",
+                name="Losing choice",
+                expected_archive_revision=receipt.archive_revision,
+                expected_name=receipt.name,
+            )
+        finally:
+            loser.db.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(restore_loser)
+        try:
+            assert write_ready.wait(5)
             restored = winner.unarchive_workspace("old", name="Winning choice")
             assert restored.name == "Winning choice"
         finally:
             winner_committed.set()
-        with pytest.raises(WorkspaceNotFound):
+        with pytest.raises(WorkspaceArchiveConflict):
             pending.result(timeout=5)
     assert winner.get_workspace("old").name == "Winning choice"
     assert loser.mutation_generation == generation
@@ -1218,3 +1266,68 @@ def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
     assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
     first.db.close()
     second.db.close()
+
+
+def test_archive_snapshot_checks_revision_name_and_noop_retains_episode(tmp_path):
+    from tldw_chatbook.Workspaces.registry_service import WorkspaceArchiveConflict
+
+    registry = build_test_registry(tmp_path)
+    try:
+        created = registry.create_workspace(workspace_id="w", name="Workspace")
+        with pytest.raises(WorkspaceArchiveConflict):
+            registry.archive_workspace("w", expected_archive_revision=1)
+        archived = registry.archive_workspace(
+            "w", expected_archive_revision=created.archive_revision
+        )
+        with pytest.raises(WorkspaceNotFound):
+            registry.archive_workspace("w")
+        assert registry.get_workspace("w") == archived
+        with pytest.raises(WorkspaceArchiveConflict):
+            registry.unarchive_workspace(
+                "w",
+                expected_archive_revision=archived.archive_revision,
+                expected_name="Different",
+            )
+        registry.create_workspace(workspace_id="other", name="Workspace")
+        with pytest.raises(WorkspaceRegistryServiceError):
+            registry.unarchive_workspace(
+                "w",
+                expected_archive_revision=archived.archive_revision,
+                expected_name=archived.name,
+            )
+        assert registry.get_workspace("w") == archived
+        restored = registry.unarchive_workspace(
+            "w",
+            name="Recovered",
+            expected_archive_revision=archived.archive_revision,
+            expected_name=archived.name,
+        )
+        assert (
+            restored.archived_at is None
+            and restored.archive_revision == archived.archive_revision + 1
+        )
+        with pytest.raises(WorkspaceNotFound):
+            registry.unarchive_workspace("w")
+        assert registry.get_workspace("w") == restored
+    finally:
+        registry.db.close()
+
+
+def test_default_repair_advances_only_real_archive_transition(tmp_path):
+    registry = build_test_registry(tmp_path)
+    try:
+        registry.ensure_default_workspace()
+        with registry.db.transaction() as conn:
+            conn.execute(
+                "UPDATE workspace_records SET archived=1, archived_at='2026-09-20T12:00:00+00:00' WHERE workspace_id=?",
+                (DEFAULT_WORKSPACE_ID,),
+            )
+        repaired = registry.ensure_default_workspace()
+        assert (
+            not repaired.archived
+            and repaired.archived_at is None
+            and repaired.archive_revision == 1
+        )
+        assert registry.ensure_default_workspace().archive_revision == 1
+    finally:
+        registry.db.close()

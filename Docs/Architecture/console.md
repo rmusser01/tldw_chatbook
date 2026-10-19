@@ -55,6 +55,14 @@ Streaming details, transforms (skills → chat dictionaries → world info), swi
 
 Approval requests surface as `ChatApprovalCard` widgets in the session surface's task-card region. Card decisions (`approve_once`, `approve_session`, `always_allow`, deny, timeout) resolve the pending round; permission persistence itself flows through the MCP permission store (see [mcp-hub.md](./mcp-hub.md)). Approval waits are indefinite by default (`[mcp] approval_timeout_seconds = 0`, ADR-067); headless runs return all keys unresolved-deny without a card.
 
+## Saved archive recovery (ADR166)
+
+`Chat/archive_recovery/runtime.py` owns bounded session-partitioned result references, search handles and the shared restoration coordinator. `Agents/archive_recovery_tool_provider.py` authenticates app-issued capabilities separately from Library tools. The real visible Send producer issues an opaque user-origin proof; received intent, checked configuration and exact current runtime admission retain it without granting authority to generic or unattended callers. Direct and RAG-only runs still require Library Allowed, destination, Persona, kill-switch and primary-run gates.
+
+Recovery runtime, provider implementation and native cards load on first use, after the initial interactive frame. Reserved tool names stay in the resident catalog. An optional disposable `prepare_view` hook mounts controls only after runtime custody has captured a manual or queued turn, then rechecks custody before submission; current answerability still gates admission. View syncs serialize initialization and require actual DOM attachment before and after awaited mounts; Textual's latched `is_mounted` flag alone is insufficient during app exit. Trace-transform validators live in `console_prepared_request.py` with the controller class/static call seams and live controller-global reads retained; recovery-only rider and review collection stay in the first-use recovery runtime.
+
+The extracted `console_interrupt_rounds.build_tool_review_hook` handles search Persona approvals through the existing per-call review path. Restoration always uses a fresh exact-target/scope confirmation. `UI/Console_Modules/archive_recovery.py` renders trusted cards and receipts; explicit Open navigates only after settled effects and preserves original history and the source draft. Shutdown drains admitted archive work before current native owners close. Chronology appends chat schema83/workspace9 and remains local-only.
+
 ## Branching, rewind, and variants
 
 - **Regenerate/swipes** fork a sibling node under the same parent; the anchor branch stays stored and resumable. See [chat-pipeline.md](./chat-pipeline.md) for the full mechanism.

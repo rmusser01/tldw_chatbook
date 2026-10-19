@@ -1,0 +1,13 @@
+{
+  "root": "/private/tmp/archive-followup-live-0tuqm_8b",
+  "source_worktree": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "launched": false,
+  "seeded": false,
+  "direct_library_tools": false,
+  "capture": false,
+  "generic_rag_hook": "explicit deny",
+  "offline_asset_env": true,
+  "max_wire_posts": 10,
+  "max_model_turns": 5,
+  "note": "Prepared only; no app import/launch/inference. Source repair and independent review must finish first."
+}

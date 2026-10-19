@@ -1,0 +1,52 @@
+2026-10-18 08:58:09.425 | DEBUG    | tldw_chatbook.config:<module>:100 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-18 08:58:09.433 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/config-read-copy.toml
+2026-10-18 08:58:09.438 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6109 - Successfully loaded and merged CLI config from /private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/config-read-copy.toml
+2026-10-18 08:58:09.439 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'first_run', 'home']
+2026-10-18 08:58:09.439 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-18 08:58:09.440 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 08:58:09.440 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 08:58:09.442 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-18 08:58:09.443 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2188 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-18 08:58:09.446 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3403 - Ensured chat dictionaries folder exists: /private/tmp/archive-recovery-live-20261018/direct-bare-persona/data/task7_live/chat_dicts
+2026-10-18 08:58:09.448 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3413 - load_settings: Configuration cached for future use
+2026-10-18 08:58:09.449 | INFO     | tldw_chatbook.config:<module>:9618 - Default API Endpoint (from config.py global scope): openai
+2026-10-18 08:58:09.450 | DEBUG    | tldw_chatbook.config:<module>:9641 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-10-18 08:58:09.616 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-10-18 08:58:09.667 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3388 - Initializing CharactersRAGDB db_sha256=f47c88ee3171 [Client ID: offline-reservation-diagnosis]
+2026-10-18 08:58:09.738 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3633 - Opened/Reopened SQLite connection db_sha256=f47c88ee3171 thread=8461753728
+2026-10-18 08:58:09.738 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24203 - Started outermost transaction on thread 8461753728.
+2026-10-18 08:58:09.739 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8605 - Checking DB schema 'rag_char_chat_schema'. Current version: 74. Code supports: 74
+2026-10-18 08:58:09.739 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8624 - Database schema 'rag_char_chat_schema' is up to date (Version 74).
+2026-10-18 08:58:09.740 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24263 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-10-18 08:58:09.740 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3411 - CharactersRAGDB initialization completed successfully db_sha256=f47c88ee3171
+2026-10-18 08:58:09.743 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24203 - Started outermost transaction on thread 8461753728.
+2026-10-18 08:58:09.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24263 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-10-18 08:58:09.748 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24203 - Started outermost transaction on thread 8461753728.
+2026-10-18 08:58:09.751 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24300 - Transaction (outermost) rolled back due to exception (ValueError) on thread 8461753728.
+2026-10-18 08:58:09.753 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24203 - Started outermost transaction on thread 8461753728.
+2026-10-18 08:58:09.754 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24263 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-10-18 08:58:09.754 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3982 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=f47c88ee3171 thread=8461753728.
+2026-10-18 08:58:09.755 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3988 - WAL checkpoint TRUNCATE executed db_sha256=f47c88ee3171.
+2026-10-18 08:58:09.756 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3999 - Closed SQLite connection db_sha256=f47c88ee3171 thread=8461753728.
+Traceback (most recent call last):
+  File "/private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/probe.py", line 106, in <module>
+    (ROOT/'result.json').write_text(json.dumps(results,indent=2,sort_keys=True)+'\n')
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py", line 238, in dumps
+    **kw).encode(obj)
+          ^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py", line 202, in encode
+    chunks = list(chunks)
+             ^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py", line 432, in _iterencode
+    yield from _iterencode_dict(o, _current_indent_level)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py", line 406, in _iterencode_dict
+    yield from chunks
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py", line 406, in _iterencode_dict
+    yield from chunks
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py", line 439, in _iterencode
+    o = _default(o)
+        ^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type mappingproxy is not JSON serializable

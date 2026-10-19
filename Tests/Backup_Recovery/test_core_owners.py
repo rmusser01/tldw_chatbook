@@ -127,14 +127,14 @@ def test_schema_policy_matches_installed_store(core_store):
     assert policy.versions == (
         (owner._CURRENT_SCHEMA_VERSION, 4)
         if name == "prompts"
-        else (owner._CURRENT_SCHEMA_VERSION, 80, 79, 78, 77, 76, 75)
+        else (owner._CURRENT_SCHEMA_VERSION, 82, 81, 80, 79, 78, 77, 76, 75)
         if name == "chachanotes"
         else (5, 4) if name == "library_collections"
         else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        26 if name == "chachanotes" else 2 if name == "prompts" else 3 if name == "library_collections" else 1
+        34 if name == "chachanotes" else 2 if name == "prompts" else 3 if name == "library_collections" else 1
     )
     if name == "chachanotes":
         from tldw_chatbook.DB.recovery_core_schema import (
@@ -143,11 +143,13 @@ def test_schema_policy_matches_installed_store(core_store):
             CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
             CHACHANOTES_BROWSE_V79_TO_V80_SQL,
             CHACHANOTES_RULES_V80_TO_V81_SQL,
-            CHACHANOTES_V81_SCHEMAS,
+            CHACHANOTES_CANVAS_V81_TO_V82_SQL,
+            CHACHANOTES_ARCHIVE_V82_TO_V83_SQL,
+            CHACHANOTES_V83_SCHEMAS,
         )
 
         assert policy.schema_sql[-2:] == tuple(
-            (81, schema) for schema in CHACHANOTES_V81_SCHEMAS[2:]
+            (83, schema) for schema in CHACHANOTES_V83_SCHEMAS[2:]
         )
         assert policy.migration_steps == (
             (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
@@ -155,6 +157,8 @@ def test_schema_policy_matches_installed_store(core_store):
             (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
             (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
             (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
+            (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
+            (82, 83, CHACHANOTES_ARCHIVE_V82_TO_V83_SQL),
         )
     elif name == "library_collections":
         from tldw_chatbook.DB.recovery_core_schema import COLLECTIONS_V4_TO_V5_SQL

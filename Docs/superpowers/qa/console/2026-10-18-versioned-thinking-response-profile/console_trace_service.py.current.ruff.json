@@ -1,0 +1,992 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 86
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport sqlite3\nfrom collections import Counter\nfrom collections.abc import Callable, Iterable, Iterator, Mapping, Sequence\nfrom contextlib import contextmanager\nfrom dataclasses import dataclass, field, replace\nfrom types import MappingProxyType\nfrom typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload\nfrom weakref import ReferenceType, ref\n\nfrom tldw_chatbook.Chat.console_prepared_request import freeze_json\nfrom tldw_chatbook.Chat.console_semantic_revision import (\n    local_thinking_response_source_formats,\n    project_semantic_revision_provider_continuations,\n    project_semantic_revision_provider_message,\n    project_semantic_revision_provider_messages,\n)\nfrom tldw_chatbook.Chat.console_trace_custom_pii import (\n    CUSTOM_PII_RULESET_UNAVAILABLE,\n    redact_pii_value_for_ruleset_revision,\n)\nfrom tldw_chatbook.Chat.console_trace_final_values import (\n    _SURFACE_VERIFICATION_ISSUER,\n    CompletedToolTurnWitness,\n    FinalValueBinding,\n    ProviderCredentialSource,\n    ProviderOverlayProvenance,\n    ProviderRequestShadowBundle,\n    SurfaceDeltaAdmission,\n    VerifiedSurfaceDelta,\n    VerifiedSurfaceDeltaItem,\n    VerifiedSurfaceReplacement,\n    VerifiedSurfaceReplacementRange,\n    _checkpoint_semantic_value,\n    build_verified_surface_delta,\n)\nfrom tldw_chatbook.Chat.console_trace_models import (\n    MAX_SURFACE_REPLACEMENT_SPAN,\n    FrozenTracePolicy,\n    SemanticRevisionRef,\n    SurfaceReplacement,\n    TraceCallState,\n    TraceContentRef,\n    TraceOmission,\n)\nfrom tldw_chatbook.Chat.console_trace_provenance import (\n    DerivedTraceProvenance,\n    OmittedTraceProvenance,\n    ProviderArtifactTraceProvenance,\n    ProviderRequestProvenance,\n    RequestRouteTraceProvenance,\n    SavedRevisionTraceProvenance,\n    TraceOmissionReason,\n    TraceProvenance,\n    TraceProvenanceSource,\n    TraceTransformKind,\n    _project_verified_provider_request_provenance,\n)\nfrom tldw_chatbook.Chat.console_trace_redaction import (\n    CredentialSanitizer,\n    PIIRedactionSpan,\n)\nfrom tldw_chatbook.Chat.console_trace_repository import (\n    ConsoleTraceRepository,\n    HeaderComponentRef,\n    RequestHeaderRecord,\n    SurfaceNodeRecord,\n    SurfaceReplacementRecord,\n    TraceCallRecord,\n    TraceEventType,\n)\nfrom tldw_chatbook.Chat.conversation_local_marks_service import (\n    ConversationLocalMarksService,\n)\nfrom tldw_chatbook.Chat.message_metadata import MessageMetadata\nfrom tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json\nfrom tldw_chatbook.DB.base_db import operation_owned_connection\nfrom tldw_chatbook.DB.transaction_observer import (\n    current_managed_transaction,\n    register_transaction_completion,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 88
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 74,
+      "row": 189
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 74,
+            "row": 189
+          },
+          "location": {
+            "column": 54,
+            "row": 189
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 56,
+      "row": 189
+    },
+    "message": "Unused `noqa` directive (unused: `F401`; non-enabled: `E402`)",
+    "name": "unused-noqa",
+    "noqa_row": 189,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 342
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 342
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 342,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 366
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 366
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 366,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 398
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 398
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 398,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 414
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 414
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 414,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 464
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 464
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 464,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 498
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 498
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 498,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 546
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"key\",\n        \"left\",\n        \"max_sequence\",\n        \"parent\",\n        \"priority\",\n        \"right\",\n        \"sequence\",\n        \"size\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 546
+          },
+          "location": {
+            "column": 17,
+            "row": 537
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_SequenceNode.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 537
+    },
+    "message": "`_SequenceNode.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 537,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "UP046",
+    "end_location": {
+      "column": 54,
+      "row": 685
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 30,
+            "row": 685
+          },
+          "location": {
+            "column": 30,
+            "row": 685
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 55,
+            "row": 685
+          },
+          "location": {
+            "column": 30,
+            "row": 685
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 31,
+      "row": 685
+    },
+    "message": "Generic class `_PersistentSequenceNode` uses `Generic` subclass instead of type parameters",
+    "name": "non-pep695-generic-class",
+    "noqa_row": 685,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-class"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 747
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 21,
+            "row": 745
+          },
+          "location": {
+            "column": 21,
+            "row": 745
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 745
+    },
+    "message": "Generic function `_persistent_size` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 745,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 754
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 22,
+            "row": 751
+          },
+          "location": {
+            "column": 22,
+            "row": 751
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 751
+    },
+    "message": "Generic function `_persistent_merge` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 751,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 779
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 22,
+            "row": 776
+          },
+          "location": {
+            "column": 22,
+            "row": 776
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 776
+    },
+    "message": "Generic function `_persistent_split` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 776,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 812
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 40,
+            "row": 808
+          },
+          "location": {
+            "column": 40,
+            "row": 808
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 808
+    },
+    "message": "Generic function `_persistent_first_position_in_range` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 808,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 832
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 39,
+            "row": 828
+          },
+          "location": {
+            "column": 39,
+            "row": 828
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 828
+    },
+    "message": "Generic function `_persistent_without_sequence_range` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 828,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 856
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 31,
+            "row": 852
+          },
+          "location": {
+            "column": 31,
+            "row": 852
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 852
+    },
+    "message": "Generic function `_persistent_insert_entries` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 852,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 869
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 21,
+            "row": 867
+          },
+          "location": {
+            "column": 21,
+            "row": 867
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 867
+    },
+    "message": "Generic function `_persistent_iter` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 867,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 885
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 36,
+            "row": 881
+          },
+          "location": {
+            "column": 36,
+            "row": 881
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 881
+    },
+    "message": "Generic function `_persistent_domain_count_before` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 881,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1082
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_console_trace_delta\",\n        \"_console_trace_delta_ordinal\",\n        \"_domain\",\n        \"_root\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1082
+          },
+          "location": {
+            "column": 17,
+            "row": 1077
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_ProjectedDescriptors.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1077
+    },
+    "message": "`_ProjectedDescriptors.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1077,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1135
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_appended\",\n        \"_cache\",\n        \"_cursor\",\n        \"_descriptor_root\",\n        \"_domain\",\n        \"_owner_id\",\n        \"_parent\",\n        \"_replacement\",\n        \"_retained_artifact_values\",\n        \"_service\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1135
+          },
+          "location": {
+            "column": 17,
+            "row": 1124
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_ProjectedProviderValues.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1124
+    },
+    "message": "`_ProjectedProviderValues.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1124,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1255
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_delta_values\",\n        \"_issued_values\",\n        \"_service\",\n        \"messages_payload\",\n        \"provenance\",\n        \"provider_continuations\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1255
+          },
+          "location": {
+            "column": 17,
+            "row": 1248
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_PreparedSurfaceBoundary.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1248
+    },
+    "message": "`_PreparedSurfaceBoundary.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1248,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1524
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_child_capabilities\",\n        \"_parent_capabilities\",\n        \"_pending_child_uses\",\n        \"_prepared_capabilities\",\n        \"_settlement\",\n        \"_surface_ref_cache\",\n        \"repository\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1524
+          },
+          "location": {
+            "column": 17,
+            "row": 1516
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `ConsoleTraceService.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1516
+    },
+    "message": "`ConsoleTraceService.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1516,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 10,
+      "row": 1692
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        from tldw_chatbook.Chat.console_voice_trace_gateway import (\n            ProvisionalTraceRegistry,\n            ProvisionalTraceUnavailable,\n            VoiceTraceImportContext,\n            _ClaimReleaseDisposition,\n        )\n        from tldw_chatbook.Chat.console_voice_trace_promotion import (\n            ConfirmedPreCommitTraceImportError,\n        )\n",
+          "end_location": {
+            "column": 1,
+            "row": 1693
+          },
+          "location": {
+            "column": 1,
+            "row": 1684
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 9,
+      "row": 1684
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1684,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1717
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1717
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1717,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1720
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1720
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1720,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1751
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1751
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1751,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 1788
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 1788
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1788,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "PLC0208",
+    "end_location": {
+      "column": 73,
+      "row": 4169
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\"messages_payload\", \"provider_continuations\")",
+          "end_location": {
+            "column": 73,
+            "row": 4169
+          },
+          "location": {
+            "column": 27,
+            "row": 4169
+          }
+        }
+      ],
+      "message": "Convert to `tuple`"
+    },
+    "location": {
+      "column": 27,
+      "row": 4169
+    },
+    "message": "Use a sequence type instead of a `set` when iterating over values",
+    "name": "iteration-over-set",
+    "noqa_row": 4169,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/iteration-over-set"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 69,
+      "row": 4214
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "replacement_range.start_sequence",
+          "end_location": {
+            "column": 69,
+            "row": 4214
+          },
+          "location": {
+            "column": 25,
+            "row": 4214
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 25,
+      "row": 4214
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 4214,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 67,
+      "row": 4215
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "replacement_range.end_sequence",
+          "end_location": {
+            "column": 67,
+            "row": 4215
+          },
+          "location": {
+            "column": 25,
+            "row": 4215
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 25,
+      "row": 4215
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 4215,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "PLC0208",
+    "end_location": {
+      "column": 77,
+      "row": 4337
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\"messages_payload\", \"provider_continuations\")",
+          "end_location": {
+            "column": 77,
+            "row": 4337
+          },
+          "location": {
+            "column": 31,
+            "row": 4337
+          }
+        }
+      ],
+      "message": "Convert to `tuple`"
+    },
+    "location": {
+      "column": 31,
+      "row": 4337
+    },
+    "message": "Use a sequence type instead of a `set` when iterating over values",
+    "name": "iteration-over-set",
+    "noqa_row": 4337,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/iteration-over-set"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 53,
+      "row": 4594
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "admission.route_identity",
+          "end_location": {
+            "column": 53,
+            "row": 4594
+          },
+          "location": {
+            "column": 17,
+            "row": 4594
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 17,
+      "row": 4594
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 4594,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 59,
+      "row": 4928
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 4928
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 4928,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  }
+]

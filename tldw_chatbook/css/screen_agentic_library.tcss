@@ -187,6 +187,10 @@ $ds-fr-5: 5fr;
 $ds-fr-6: 6fr;
 $ds-fr-3: 3fr;
 $ds-fr-13: 13fr;
+$ds-setup-voice-preset-label-long-share: 21fr;
+$ds-setup-voice-preset-label-medium-share: 14fr;
+$ds-setup-voice-preset-label-short-share: 11fr;
+$ds-workflow-run-dialog-inline-cap: 100;
 $ds-watchlists-rail-left-share: 28fr;
 $ds-watchlists-rail-right-share: 34fr;
 $ds-watchlists-region-share: 44fr;
@@ -3326,14 +3330,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
    Horizontal clipped Undo to "Und" at the Items pane's real width (live
    2026-09-04) -- the one recovery control was unreadable exactly where it
    renders. Same multi-row grammar as the toolbars (task-30043). */
-#library-media-canvas .library-media-receipt {
-    width: $ds-width-full;
-    height: auto;
-}
-#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
-    width: $ds-width-full;
-    height: auto;
-}
+#library-media-canvas .library-media-receipt,
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy,
 #library-media-canvas .library-media-receipt > .library-media-receipt-actions {
     width: $ds-width-full;
     height: auto;

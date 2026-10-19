@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settin  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Recovery Check Chat                                                                                    │
+                  Context ◂  │         Chat 1         ✕  Recovery Check Chat  ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▾    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  Workspace    Recovery Ch…  │   User                                                                                                                │
+   Switch   New   RAG        │   Find recently archived chats across all workspaces.                                                                 │
+   Show Files                │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │  ▊ Assistant                                                                                                          │
+  ▊  Search workspaces    ▎  │  ▊   ▸ Thinking                                                                                           · done      │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │  ▊   ▸ search_archived_conversations                                                                   · success      │
+                             │  ▊   ▸ Thinking                                                                                           · done      │
+                             │  ▊                                                                                                                    │
+ ▾   ● Recovery Check    @   │  ▊  Found 3 archived items across all workspaces (all archived 2026-10-18 ~15:40 UTC; search is complete — no         │
+ └──   › Recovery Check… *   │  ▊  more pages):                                                                                                      │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Conversations          ▾    │  ▊  ┌─────────────────┬──────────┬────────────────────────┬─────────────────────────────────────────────────────┐     │
+   New conversation          │  ▊  │ Title           │ Archived │ Workspace              │ Note                                                │     │◂ Inspect
+     Archive this chat       │  ▊  ├─────────────────┼──────────┼────────────────────────┼─────────────────────────────────────────────────────┤     │
+      Archived chats         │  ▊  │ Birch itinerary │ 15:40:33 │ Vault Trips (vault)    │ Chat and workspace both archived                    │     │
+     Search all chats…       │  ▊  │ conversation    │          │                        │                                                     │     │
+   No active                 │  ▊  ├─────────────────┼──────────┼────────────────────────┼─────────────────────────────────────────────────────┤     │
+   conversation.             │  ▊  │ Linden planning │ —        │ Atlas Research (atlas) │ Chat itself is not archived — only its workspace is │     │
+                             │  ▊  │ conversation    │          │                        │                                                     │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊  ├─────────────────┼──────────┼────────────────────────┼─────────────────────────────────────────────────────┤     │
+  ▊  Filter      ▎           │  ▊  │ Maple archival  │ 15:40:33 │ none (unassigned)      │ Chat archived on its own                            │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊  │ notes           │          │                        │                                                     │     │
+                           ▂ │  ▊  └─────────────────┴──────────┴────────────────────────┴─────────────────────────────────────────────────────┘     │
+  Chats                 ▾    │  ▊                                                                                                                    │
+   ▢     Chat 1       *      │  ▊  If you'd like to restore any of them, say which and I'll ask for confirmation (e.g., chat-only, or chat +         │
+         open                │  ▊  workspace for the Birch one).                                                                                     │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ▼ Character · Model · +2    │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐   │
+                             │  │                                                                                                                │   │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent allowed     Provider: llama_cpp     Model: unsloth/Qwen3.8-27B-GG…     System Prompt: off     Character: Archive Recover
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                           Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

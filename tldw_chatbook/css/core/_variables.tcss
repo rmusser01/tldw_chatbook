@@ -346,6 +346,12 @@ $ds-fr-6: 6fr;
    hub share (agentic mcp-hub rail/inspector, scheduling). */
 $ds-fr-3: 3fr;
 $ds-fr-13: 13fr;
+/* Preserve the voice preset label shares in both row and stacked layouts. */
+$ds-setup-voice-preset-label-long-share: 21fr;
+$ds-setup-voice-preset-label-medium-share: 14fr;
+$ds-setup-voice-preset-label-short-share: 11fr;
+/* Bound the workflow setup and confirmation dialog within wide terminals. */
+$ds-workflow-run-dialog-inline-cap: 100;
 /* task 11 (ADR-161 §3.10): the Watchlists destination's region-grid
    shares (single-consumer feature geometry, spec 3.10 -- named, not on the
    mechanical scale, because each share belongs to one named region). */

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,31 @@ def seed(db, title="Archive target"):
 
 def test_archive_restore_preserves_identity_messages_and_workflow(db):
     cid, mid, version = seed(db)
+    branch = db.add_message(
+        {
+            "conversation_id": cid,
+            "parent_message_id": mid,
+            "sender": "assistant",
+            "content": "Selected branch",
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": cid,
+            "parent_message_id": mid,
+            "sender": "assistant",
+            "content": "Retained variant",
+        }
+    )
+    db.set_conversation_active_leaf(cid, branch)
+    with db.transaction() as conn:
+        graph = [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT id, parent_message_id, variant_number, content FROM messages WHERE conversation_id=? ORDER BY id",
+                (cid,),
+            )
+        ]
     service = ChatConversationService(db)
     result = service.set_conversations_archived(
         [cid, cid], archived=True, expected_versions={cid: version}
@@ -45,6 +71,16 @@ def test_archive_restore_preserves_identity_messages_and_workflow(db):
         [cid], archived=False, expected_versions=result["changed"]
     ) == {"changed": {cid: version + 2}, "failures": {}}
     assert service.get_conversation_metadata(cid)["archived"] is False
+    assert service.get_conversation_metadata(cid)["archived_at"] is None
+    assert db.get_conversation_active_leaf(cid) == branch
+    with db.transaction() as conn:
+        assert [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT id, parent_message_id, variant_number, content FROM messages WHERE conversation_id=? ORDER BY id",
+                (cid,),
+            )
+        ] == graph
 
 
 def test_bulk_reports_only_actual_changes_and_stale_undo_refuses(db):
@@ -158,7 +194,7 @@ def test_v70_migration_preserves_existing_rows_and_adds_archive_index(
     assert current.get_conversation_by_id(cid)["archived"] == 0
     assert current.get_conversation_by_id(cid)["version"] == version
     assert current.get_library_conversation_messages(cid)["messages"][0]["id"] == mid
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         assert (
             conn.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
@@ -233,7 +269,7 @@ def test_migration_failure_rolls_back_column_index_and_version(tmp_path, monkeyp
 
     with pytest.raises(SchemaError):
         CharactersRAGDB(path, client_id="archive-test")
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         assert "archived" not in {
             r[1] for r in conn.execute("PRAGMA table_info(conversations)")
         }
@@ -493,3 +529,65 @@ def test_trash_includes_chats_archived_before_deletion(db, query, deleted_only):
         query, include_deleted=not deleted_only, deleted_only=deleted_only
     )
     assert total == 1 and [row["id"] for row in rows] == [cid]
+
+
+def test_v83_chronology_upgrade_unknown_history_and_transactional_rollback(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB.ChaChaNotes_DB import SchemaError
+
+    path = tmp_path / "v82-chronology.sqlite"
+    with monkeypatch.context() as patch:
+        patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 82)
+        old = CharactersRAGDB(path, client_id="chronology")
+        cid, mid, version = seed(old)
+        # This historical fixture predates the new write column; use its real old DDL.
+        with old.transaction() as conn:
+            conn.execute("UPDATE conversations SET archived=1 WHERE id=?", (cid,))
+            conn.execute("""CREATE TRIGGER refuse_v83 BEFORE UPDATE OF version ON db_schema_version
+                WHEN NEW.version=83 BEGIN SELECT RAISE(ABORT, 'version failure'); END""")
+        old.close_connection()
+    with pytest.raises(SchemaError, match="V82 to V83"):
+        CharactersRAGDB(path, client_id="chronology")
+    with closing(sqlite3.connect(path)) as conn, conn:
+        assert (
+            conn.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+            ).fetchone()[0]
+            == 82
+        )
+        assert "archived_at" not in {
+            row[1] for row in conn.execute("PRAGMA table_info(conversations)")
+        }
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='idx_conversations_archive_chronology'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            "archived_at"
+            not in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name='conversations_sync_update'"
+            ).fetchone()[0]
+        )
+        conn.execute("DROP TRIGGER refuse_v83")
+    upgraded = CharactersRAGDB(path, client_id="chronology")
+    try:
+        row = upgraded.get_conversation_by_id(cid)
+        assert (
+            row["archived"] and row["archived_at"] is None and row["version"] == version
+        )
+        assert (
+            upgraded.get_library_conversation_messages(cid)["messages"][0]["id"] == mid
+        )
+        with upgraded.transaction() as conn:
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN SELECT id FROM conversations WHERE deleted=0 AND archived=1 ORDER BY archived_at DESC, id"
+            ).fetchall()
+            assert any(
+                "idx_conversations_archive_chronology" in str(tuple(row))
+                for row in plan
+            )
+    finally:
+        upgraded.close_connection()

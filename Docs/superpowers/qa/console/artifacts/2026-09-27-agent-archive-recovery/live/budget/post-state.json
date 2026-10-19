@@ -1,0 +1,59 @@
+{
+  "fixture": {
+    "id": "2e6b0b17-7e6f-4569-a9e6-c26675f1eb80",
+    "title": "Cedar budget archival notes",
+    "scope_type": "global",
+    "workspace_id": null,
+    "archived": 1,
+    "archived_at": "2026-09-28T00:05:19.486Z",
+    "version": 2,
+    "active_leaf_message_id": "50213930-de23-4309-85ea-8a239157054e"
+  },
+  "messages": [
+    {
+      "id": "237a9a59-c7f1-4078-bae7-f003c1ae62b4",
+      "parent_message_id": null,
+      "sender": "user",
+      "deleted": 0
+    },
+    {
+      "id": "50213930-de23-4309-85ea-8a239157054e",
+      "parent_message_id": "237a9a59-c7f1-4078-bae7-f003c1ae62b4",
+      "sender": "assistant",
+      "deleted": 0
+    }
+  ],
+  "other_conversations": [
+    {
+      "id": "29895b6a-1928-4c4b-93f0-1c65fbf29169",
+      "title": "Find my archived Cedar budg...",
+      "active_leaf_message_id": "3ab147d4-7541-4e6c-b5ab-472888e96fb6",
+      "archived": 0
+    }
+  ],
+  "message_counts_by_conversation": [
+    {
+      "conversation_id": "29895b6a-1928-4c4b-93f0-1c65fbf29169",
+      "sender": "assistant",
+      "count": 1
+    },
+    {
+      "conversation_id": "29895b6a-1928-4c4b-93f0-1c65fbf29169",
+      "sender": "user",
+      "count": 1
+    },
+    {
+      "conversation_id": "2e6b0b17-7e6f-4569-a9e6-c26675f1eb80",
+      "sender": "assistant",
+      "count": 1
+    },
+    {
+      "conversation_id": "2e6b0b17-7e6f-4569-a9e6-c26675f1eb80",
+      "sender": "user",
+      "count": 1
+    }
+  ],
+  "original_ids_equal": true,
+  "original_leaf_equal": true,
+  "original_remains_archived": true
+}

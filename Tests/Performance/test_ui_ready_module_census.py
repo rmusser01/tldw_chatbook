@@ -172,6 +172,7 @@ MAX_TLDW_MODULES_AT_UI_READY = 1031
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    "tldw_chatbook.Chat.archive_recovery",
     # TASK-21239: the Kanban interop trio is a zero-consumer subsystem
     # built lazily on first property access; its import chain (including
     # the 76-model `tldw_api.kanban_schemas`, TASK-21107) must stay off the
@@ -189,6 +190,11 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    "tldw_chatbook.Agents.archive_recovery_tool_provider",
+    "tldw_chatbook.Chat.conversation_archive_actions",
+    "tldw_chatbook.DB.conversation_archive_queries",
+    "tldw_chatbook.UI.Console_Modules.archive_recovery",
+    "tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards",
     # TASK-22504: the 2,260-LOC voice-input module is first-voice-use work;
     # the three Console_Modules seams and the composer's STATE_* constants
     # lazy-load it, and the app's speech-stack diagnostic waits for ready.

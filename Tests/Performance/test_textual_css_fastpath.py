@@ -323,7 +323,8 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
 #: vocabulary pinning reorganised ten of these rules away: measured 264,
 #: re-pinned at 264 + 10 so the freed headroom is banked, per the same
 #: convention.
-MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 274
+# PR3162: dedicated recovery subjects bank the two rules below the old limit.
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 272
 
 #: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
 #: missing, parse failure swallowed) must fail loudly, not pass at zero.

@@ -1,0 +1,40 @@
+{
+  "unchanged": [
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+      "byte_identical_to_dev": true,
+      "sha256": "4cfcb7c35041945bf1cd17ce94968eb281e616e93181d4e2579a817ed087a388"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/change_review_screen.py",
+      "byte_identical_to_dev": true,
+      "sha256": "101c5568a72acb37757ee7b25d235c3fc3abe0ec7dc7f0921c21ba34db88c250"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/llm_screen.py",
+      "byte_identical_to_dev": true,
+      "sha256": "829e05025531b896fb00230cb665b48f274257c8b7fc970147258a54e48e7063"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "byte_identical_to_dev": true,
+      "sha256": "2a8d484f29ec170e7bf0c923744170f0cd16cb9955abc58d30323c3338b8becc"
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "byte_identical_to_dev": true,
+      "sha256": "1a3aceedcee93426bccd5eb41312a3f264422d7f5505cf1513b3306ed94aa3fd"
+    },
+    {
+      "path": "tldw_chatbook/tldw_api/client.py",
+      "byte_identical_to_dev": true,
+      "sha256": "6baed5e1a167771d65fc559148421693c96c7666b95dc23652bfec01f2b4f54d"
+    }
+  ],
+  "transcript": {
+    "dev_lines": 8649,
+    "current_lines": 8641,
+    "unchanged_ceiling": 8353,
+    "shrunk_from_dev": true
+  }
+}

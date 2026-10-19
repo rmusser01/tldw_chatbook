@@ -106,17 +106,19 @@ _V81_SCRIPT = (
         "else:\n"
         " migrated=CharactersRAGDB(path,'hybrid-upgrade');migrated.close()\n"
         "with sqlite3.connect(path) as connection:\n"
-        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(82,)\n"
+        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(83,)\n"
         "case=sys.argv[2]",
     )
 )
 
 
 @pytest.mark.parametrize("kind", ["core", "hybrid"])
-def test_genuine_v81_recovery_preserves_payload_and_restricted_authority(
-    tmp_path, kind
+@pytest.mark.parametrize("predecessor", [81, 82])
+def test_genuine_predecessor_recovery_preserves_payload_and_restricted_authority(
+    tmp_path, kind, predecessor
 ):
-    _run(tmp_path, kind, "valid", script=_V81_SCRIPT)
+    script = _V81_SCRIPT.replace("chachanotes_db_at_version(path,81)", f"chachanotes_db_at_version(path,{predecessor})")
+    _run(tmp_path, kind, "valid", script=script)
 
 
 _LINEAGE_SCRIPT = r"""
@@ -141,11 +143,13 @@ for index,schema in enumerate(CHACHANOTES_V81_SCHEMAS):
  assert owner.validate(path)==(),(index,owner.validate(path))
  assert validate_candidate(owner,path,Event(),migrate=True)==()
  with sqlite3.connect(path) as connection:
-  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(82,)
+  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(83,)
   assert connection.execute("SELECT [unique] FROM pragma_index_list('canvas_revisions') WHERE name='idx_canvas_revisions_canvas_sequence'").fetchone()==(0,)
 print('retired and reopened')
 """
 
 
-def test_all_four_frozen_v81_lineages_remain_accepted_and_migrate(tmp_path):
-    _run(tmp_path, "core", "lineages", script=_LINEAGE_SCRIPT)
+@pytest.mark.parametrize("predecessor", [81, 82])
+def test_all_four_frozen_lineages_remain_accepted_and_migrate(tmp_path, predecessor):
+    script = _LINEAGE_SCRIPT.replace("CHACHANOTES_V81_SCHEMAS", f"CHACHANOTES_V{predecessor}_SCHEMAS").replace("',81)", f"',{predecessor})")
+    _run(tmp_path, "core", "lineages", script=script)

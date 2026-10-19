@@ -1,0 +1,58 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_library_runtime_policy.py:3:1
+   |
+ 1 |   """ADR-079 runtime provider selection and immutable authority tests."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | from functools import partial
+ 6 | | from types import SimpleNamespace
+ 7 | |
+ 8 | | import pytest
+ 9 | |
+10 | | from tldw_chatbook.Agents.library_rag_tool_provider import (
+11 | |     LibraryRagToolProvider,
+12 | |     RAG_TOOL_NAME,
+13 | | )
+14 | | from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+15 | | from tldw_chatbook.Chat.console_agent_bridge import (
+16 | |     _compose_run_registry_and_allowed,
+17 | | )
+18 | | from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+19 | | from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+20 | | from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+21 | | from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+22 | |     ConsoleEgressClass,
+23 | |     ConsoleLibraryItemScopeSnapshot,
+24 | |     ConsoleProviderIntent,
+25 | |     ConsoleResolvedDestination,
+26 | |     ConsoleTurnLibraryAuthority,
+27 | | )
+28 | | from tldw_chatbook.Chat.console_library_policy import (
+29 | |     AUTOMATIC_LIBRARY_SOURCE_TYPES,
+30 | |     ConsoleAssistantLibraryAccess,
+31 | |     ConsoleAutoRetrieve,
+32 | |     ConsoleLibraryPolicySnapshot,
+33 | | )
+34 | | from tldw_chatbook.Chat.console_runtime import _library_provider_for_app
+35 | | from tldw_chatbook.Chat.console_turn_context import (
+36 | |     ConsoleTurnConfigurationSnapshot,
+37 | |     ConsoleTurnExecutionContext,
+38 | | )
+39 | | from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+40 | | from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+41 | | from tldw_chatbook.Library.local_media_chunk_tool_service import (
+42 | |     LocalMediaChunkToolService,
+43 | | )
+   | |_^
+help: Organize imports
+   |
+10 | from tldw_chatbook.Agents.library_rag_tool_provider import (
+11 +     RAG_TOOL_NAME,
+12 |     LibraryRagToolProvider,
+   -     RAG_TOOL_NAME,
+13 | )
+   |
+
+Found 1 error.
+[*] 1 fixable with the `--fix` option.

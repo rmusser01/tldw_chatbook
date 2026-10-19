@@ -57,6 +57,8 @@ def _call(
     repository: ConsoleTraceRepository,
     *,
     sequence: int = 0,
+    provider: str = "openai",
+    model: str = "gpt-test",
     state: TraceCallState = TraceCallState.DISPATCH_STARTED,
     conversation_id: str | None = None,
     response_projection: dict[str, object] | None = None,
@@ -98,8 +100,8 @@ def _call(
         )
         header = repository.create_or_reuse_request_header(
             cursor,
-            provider_name="openai",
-            model_name="gpt-test",
+            provider_name=provider,
+            model_name=model,
             route_identity="fresh",
             endpoint_identity="public-api",
             generation_parameters={},
@@ -127,8 +129,8 @@ def _call(
             call_id=call.call_id,
             surface_node_id=node.node_id,
             request_header_id=header.header_id,
-            provider_name="openai",
-            model_name="gpt-test",
+            provider_name=provider,
+            model_name=model,
             route_identity="fresh",
         )
         if state is TraceCallState.DISPATCH_STARTED:
@@ -1120,7 +1122,8 @@ def test_oversized_response_is_replaced_by_one_bounded_labeled_artifact(
 
     settled = coordinator.settle(
         db,
-        _request(call_id, response={"content": "x" * MAX_TRACE_RESPONSE_BYTES}),
+        # Cross the byte limit within the sanitizer's per-string codepoint budget.
+        _request(call_id, response={"content": "é" * (MAX_TRACE_RESPONSE_BYTES // 2)}),
     )
 
     assert settled.integrity_state == "incomplete"
@@ -1130,6 +1133,10 @@ def test_oversized_response_is_replaced_by_one_bounded_labeled_artifact(
     assert link is not None and link.link_kind == "artifact"
     artifact = repository.get_artifact(cursor, str(link.artifact_id))
     assert artifact is not None
+    assert (
+        cursor.execute("SELECT COUNT(*) FROM console_trace_artifacts").fetchone()[0]
+        == 1
+    )
     assert len(artifact.sanitized_bytes) <= MAX_TRACE_RESPONSE_BYTES
     assert json.loads(artifact.sanitized_bytes) == {
         "byte_length": MAX_TRACE_RESPONSE_BYTES + len('{"content":""}'),
@@ -1153,7 +1160,7 @@ def test_queued_settlement_drops_oversized_response_and_usage_values(
     request = _request(
         call_id,
         response={
-            "content": "x" * MAX_TRACE_RESPONSE_BYTES + response_canary,
+            "content": "é" * (MAX_TRACE_RESPONSE_BYTES // 2) + response_canary,
         },
         usage={
             "provider_detail": "y" * settlement_module.MAX_TRACE_USAGE_BYTES
@@ -1432,13 +1439,21 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
         first, repository, sequence=3, state=TraceCallState.RESPONSE_STARTED
     )
     ConsoleTraceSettlementCoordinator(repository).settle(first, _request(terminal_id))
+    # Let the persisted reservation age past recovery's inactivity grace period.
+    with first.transaction() as cursor:
+        recovery_at, retry_at = cursor.execute(
+            """SELECT strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day'),
+                      strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day', '+1 second')
+                 FROM console_trace_calls WHERE call_id = ?""",
+            (reserved_id,),
+        ).fetchone()
     first.close_connection()
 
     reopened = CharactersRAGDB(str(path), "trace-restart-second")
     coordinator = ConsoleTraceSettlementCoordinator(repository)
     recovered = recover_console_trace_calls(
         reopened,
-        occurred_at="2026-08-31T02:00:00Z",
+        occurred_at=recovery_at,
         repository=repository,
     )
     assert {record.call_id: record.state for record in recovered} == {
@@ -1446,10 +1461,8 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
         dispatched_id: TraceCallState.DISPATCH_UNKNOWN,
         response_id: TraceCallState.INTERRUPTED,
     }
-    assert (
-        coordinator.recover_open_calls(reopened, occurred_at="2026-08-31T02:00:01Z")
-        == ()
-    )
+    assert {record.settled_at for record in recovered} == {recovery_at}
+    assert coordinator.recover_open_calls(reopened, occurred_at=retry_at) == ()
     assert (
         repository.get_call(reopened.get_connection().cursor(), terminal_id).state
         is TraceCallState.COMPLETE

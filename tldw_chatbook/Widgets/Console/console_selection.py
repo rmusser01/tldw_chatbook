@@ -261,3 +261,20 @@ def prev_line_offset(text: str, offset: int) -> int:
     column = i - start
     pstart = line_start_offset(text, start - 1)
     return min(pstart + column, line_end_offset(text, pstart))
+
+
+def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Snap ``[start, end)`` outward to whole ``'\\n'``-delimited lines.
+
+    Console selection phase 1 (task G): markdown-row granularity is the whole
+    source line, so a character range grows to cover every line it touches.
+    The trailing newline of the last touched line is excluded, so the quoted
+    text is exactly the selected lines.
+    """
+    start, end = sorted((start, end))
+    start = max(0, min(start, len(text)))
+    end = max(0, min(end, len(text)))
+    line_start = text.rfind("\n", 0, start) + 1
+    newline = text.find("\n", end)
+    line_end = len(text) if newline == -1 else newline
+    return line_start, line_end

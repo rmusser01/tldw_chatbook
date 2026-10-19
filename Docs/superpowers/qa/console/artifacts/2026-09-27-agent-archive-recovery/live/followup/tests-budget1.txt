@@ -1,0 +1,15 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+2.84s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[ask]
+2.24s call     Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[persona]
+2.16s call     Tests/Chat/test_console_archive_recovery_followup.py::test_retained_metadata_enters_real_first_request_fit_and_no_fit
+2.14s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_retained_metadata_enters_real_first_request_fit_and_no_fit
+1.89s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[persona]
+1.36s call     Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[ask]
+1.16s call     Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[frozen_blocked]
+1.15s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[unsupported]
+1.12s call     Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[unsupported]
+1.11s call     Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[foreign_source]
+
+(14 durations < 1s hidden.)
+8 passed in 24.60s

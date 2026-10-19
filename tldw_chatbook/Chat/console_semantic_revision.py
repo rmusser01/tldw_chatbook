@@ -107,6 +107,24 @@ def project_semantic_revision_provider_message(
     )
 
 
+def local_thinking_response_source_formats(
+    provider: object, model: object
+) -> list[str] | None:
+    """Return the closed parser formats for a supported local response profile."""
+    if (
+        not isinstance(provider, str)
+        or provider not in {"llama_cpp", "local_llamacpp", "vllm", "local_vllm"}
+        or not isinstance(model, str)
+        or not model.strip()
+    ):
+        return None
+    return (
+        ["start_anchored_think"]
+        if "kimi" in model.lower()
+        else ["start_anchored_think", "reasoning_content"]
+    )
+
+
 def _project_revision_response_envelope(
     cursor: sqlite3.Cursor,
     revision: SemanticRevisionRecord,
@@ -125,6 +143,8 @@ def _project_revision_response_envelope(
         return projected
     if (
         not isinstance(profile, Mapping)
+        or type(profile.get("version")) is not int
+        or profile["version"] not in {1, 2}
         or set(profile)
         != {
             "version",
@@ -133,25 +153,37 @@ def _project_revision_response_envelope(
             "provider",
             "model",
             "protocol",
-            "source_format",
+            "source_format" if profile["version"] == 1 else "source_formats",
         }
-        or type(profile["version"]) is not int
-        or profile["version"] != 1
         or type(profile["thinking_round_trip_version"]) is not int
         or profile["thinking_round_trip_version"] != 1
         or profile["thinking_stream_disposition"] not in {"displayable", "proprietary"}
-        or profile["source_format"]
-        != (
-            "start_anchored_think"
-            if profile["thinking_stream_disposition"] == "displayable"
-            else "reasoning_content"
-        )
         or profile["provider"] != call.provider_name
         or profile["model"] != call.model_name
         or profile["protocol"] not in {"chat_completions", "responses"}
         or revision.normalized_role != "assistant"
     ):
         raise ValueError("response_projection_unavailable")
+    if profile["version"] == 1:
+        expected_format = (
+            "start_anchored_think"
+            if profile["thinking_stream_disposition"] == "displayable"
+            else "reasoning_content"
+        )
+        if profile["source_format"] != expected_format:
+            raise ValueError("response_projection_unavailable")
+        source_formats = [expected_format]
+    else:
+        source_formats = local_thinking_response_source_formats(
+            profile["provider"], profile["model"]
+        )
+        if (
+            profile["thinking_stream_disposition"] != "displayable"
+            or source_formats is None
+            or type(profile["source_formats"]) is not tuple
+            or profile["source_formats"] != tuple(source_formats)
+        ):
+            raise ValueError("response_projection_unavailable")
     raw_thinking = envelope.get("thinking_blocks")
     if raw_thinking is None:
         return projected
@@ -188,8 +220,9 @@ def _project_revision_response_envelope(
         or block.status != expected_status
         or any(
             getattr(block, key) != profile[key]
-            for key in ("provider", "model", "protocol", "source_format")
+            for key in ("provider", "model", "protocol")
         )
+        or block.source_format not in source_formats
     ):
         raise ValueError("response_thinking_source_mismatch")
     evidence = {

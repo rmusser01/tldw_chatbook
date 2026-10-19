@@ -4914,6 +4914,7 @@ class ConsoleWorkspaceController:
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
             return
+        selected_record: WorkspaceRecord | None = None
         request = object()
         self._console_workspace_restore_request = request
 
@@ -4935,13 +4936,18 @@ class ConsoleWorkspaceController:
             self._open_console_workspace_switcher(show_archived=True)
 
         async def _restore(name: str | None = None) -> None:
-            if not _current():
+            if not _current() or selected_record is None:
                 return
 
             async def _complete_restore() -> None:
                 try:
                     restored = await storage_call(
-                        registry, "unarchive_workspace", workspace_id, name=name
+                        registry,
+                        "unarchive_workspace",
+                        workspace_id,
+                        name=name,
+                        expected_archive_revision=selected_record.archive_revision,
+                        expected_name=selected_record.name,
                     )
                 except WorkspaceRegistryServiceError as exc:
                     _failed(exc)
@@ -4982,6 +4988,7 @@ class ConsoleWorkspaceController:
                 )
 
         async def _prepare() -> None:
+            nonlocal selected_record
             try:
                 record = await storage_call(registry, "get_workspace", workspace_id)
             except WorkspaceRegistryServiceError as exc:
@@ -5001,6 +5008,7 @@ class ConsoleWorkspaceController:
                     "Workspace is no longer archived.", severity="warning"
                 )
                 return
+            selected_record = record
             if rename:
                 self.push_screen(
                     ConsoleWorkspaceRenameModal(
@@ -5135,7 +5143,10 @@ class ConsoleWorkspaceController:
                 nonlocal archived_record
                 try:
                     archived_record = await storage_call(
-                        registry_service, "archive_workspace", workspace_id
+                        registry_service,
+                        "archive_workspace",
+                        workspace_id,
+                        expected_archive_revision=record.archive_revision,
                     )
                 except WorkspaceRegistryServiceError as exc:
                     _failed(str(exc))

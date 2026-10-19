@@ -1,0 +1,919 @@
+{
+  "task": "TASK35584",
+  "starting_head": "ccab42365855c5a37c17a2c6bed5c4bb6f2ee96f",
+  "dev_base": "9af0c59263dce00fa44be4a74d5d7e78712346bf",
+  "source_sha256": {
+    "Tests/Chat/test_archive_recovery_search.py": "86d9596f694fbc2ed2ce8ef98fcab89ddb3b7f57128785b1f727a9792bd4db39",
+    "Tests/Chat/test_console_trace_service.py": "4eb07afa43f334b20d6f29c3d68cc6aad10591201fac174c0fbe00634cd68f3f",
+    "Tests/Chat/test_console_trace_settlement.py": "7e094e9510d1b5a1bc05f5a36b61f2171e45ccf9f3ba187184ccff8d36cbdf8f",
+    "Tests/Chat/test_console_trace_sidecar_replay.py": "6d0c3da1516bce238be47fe68f74707d1d2e7e2d327b8a694321bb799d94c391",
+    "Tests/DB/test_conversation_archive.py": "2e23bcbd71664d3be7fe3293c700e6b7773a1bda6ac334d0069e22a1f51c1369",
+    "Tests/DB/test_migration_version_short_circuit_guard.py": "910b8b36b70d0c98bf99e7c6a49c6b013f8ef50c39cdd18e1f6d6e6f9a30381c",
+    "Tests/DB/test_operation_owned_connection_retirement.py": "f40009a157bce0cc1f1a958a2a2b9ede14d4476a52695134f38428eb4f3bc13e",
+    "Tests/DB/test_workspace_db.py": "16eabd30f0d9b8ad51b9d86e4b26fc06f0a3db9780838436c244666fe4f92559",
+    "Tests/Evals/test_evals_db_v5_to_v6_migration.py": "f8d1aed3cfef2b1e8c9daa09023069faec58768fd930ac8d71bb1b7ded19e6b5",
+    "Tests/UI/test_console_archive_recovery_flow.py": "5120f26ed2d6d6c031f93d28e8caddc99c10cf98df71ad922176f2d650267336",
+    "Tests/Workspaces/test_workspace_registry_service.py": "3690762c532aa7d0ecbd4ab50924466ca83433d7b4f2e045f4150a441bfa2d41",
+    "tldw_chatbook/Chat/archive_recovery/search_service.py": "031ae909cf8a5b19d4c2e45182113280db4699b474176fc51d22279219d4a75c",
+    "tldw_chatbook/DB/Workspace_DB.py": "8a9555401682db7d009750f7be19b0e022301faae7653b36985337b5b0236b38",
+    "tldw_chatbook/DB/base_db.py": "56a8477ca207c3a160c5a4c7a74e1cbecd0af27cc91dab9cf4429b02ebffe687",
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": "8578fad87af86771cb94effbfab95d43c8c409de3ecd823104cf2256b1e63964",
+    "tldw_chatbook/Widgets/Library/library_skill_work_pane.py": "bcc330811eb8c3d61d02f5d943d0f42e857039672649747227ef801137190fdc",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "7baa877b43fe990a411e77cbc5405870be45ed3408e3ae11fb3b2c1335df885d",
+    "tldw_chatbook/css/components/_settings_splash_theme.tcss": "7dfa65e15c32b1063b2da981a8e8c35308c63d2a5f5356964b32f7943cf68d7e",
+    "tldw_chatbook/css/core/_variables.tcss": "1d0435fbace848dfbefa100a6ec8bee688cbdafabdd9ed6e541e5401d9ca1241",
+    "tldw_chatbook/css/features/_library_panels.tcss": "31460fd26c71918e0435fdca72102c894a479b17aa288539e2032fc35fe106cc",
+    "tldw_chatbook/css/features/_wizards.tcss": "f28fee473354ea9b4fbf8f8444cfb16fd0fe7479a1de70fdd3e894abecd2a9a9",
+    "tldw_chatbook/css/features/_workflows.tcss": "d71d706b5f367efa6988a1003bb096f3b4312996a8aa087129968d97ebb1cde9",
+    "tldw_chatbook/css/screen_agentic_library.tcss": "04aab2b0045143dfadbc9135a7f5aab19d0348755b5baacb104abbe5273f8eef",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "d8f42d3b5c3957de1e872bb3c5030df2b1a52f1cad8462c5450b2279b6e87186",
+    "tldw_chatbook/css/screen_feature_evals.tcss": "cd87b165ebb0b3643f957f1d57f2cd538c4c1e8d6e4652d9c732eb44437f0262",
+    "tldw_chatbook/css/screen_feature_roleplay.tcss": "690615bb5504d4a4f49f274cabb2a4e1bfe8b7c7db20929f9ddf16c2cf6d7330",
+    "tldw_chatbook/css/screen_feature_scheduling.tcss": "ade32b87196281de2a169147d0c88782bd9ed96dbe6a4f38b27a0bc31aab43ee",
+    "tldw_chatbook/css/screen_feature_watchlists.tcss": "c2e0496af89926474f625ce9cb86366121e41729f46eaece9088e72eabb62867",
+    "tldw_chatbook/css/screen_feature_workflows.tcss": "39a31777b5b470bba1048fe73dd413b8e8770c12fb30cf30ae72bd48581e8311",
+    "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": "419ae1c9b39714c3e975479e02806836097db8e3b3fc60fb744faed8f059b88c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a289b9e01a0f7003de136fe7a54d4a3e52a04b7bb993a7a93badcfdada3f8078"
+  },
+  "static": {
+    "paths": [
+      "Tests/Chat/test_archive_recovery_search.py",
+      "Tests/Chat/test_console_trace_service.py",
+      "Tests/Chat/test_console_trace_settlement.py",
+      "Tests/Chat/test_console_trace_sidecar_replay.py",
+      "Tests/DB/test_conversation_archive.py",
+      "Tests/DB/test_migration_version_short_circuit_guard.py",
+      "Tests/DB/test_operation_owned_connection_retirement.py",
+      "Tests/DB/test_workspace_db.py",
+      "Tests/Evals/test_evals_db_v5_to_v6_migration.py",
+      "Tests/UI/test_console_archive_recovery_flow.py",
+      "Tests/Workspaces/test_workspace_registry_service.py",
+      "tldw_chatbook/Chat/archive_recovery/search_service.py",
+      "tldw_chatbook/DB/Workspace_DB.py",
+      "tldw_chatbook/DB/base_db.py",
+      "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+      "tldw_chatbook/Widgets/Library/library_skill_work_pane.py"
+    ],
+    "introduced": {
+      "Tests/Chat/test_archive_recovery_search.py": [],
+      "Tests/Chat/test_console_trace_service.py": [],
+      "Tests/Chat/test_console_trace_settlement.py": [],
+      "Tests/Chat/test_console_trace_sidecar_replay.py": [],
+      "Tests/DB/test_conversation_archive.py": [],
+      "Tests/DB/test_migration_version_short_circuit_guard.py": [],
+      "Tests/DB/test_operation_owned_connection_retirement.py": [],
+      "Tests/DB/test_workspace_db.py": [],
+      "Tests/Evals/test_evals_db_v5_to_v6_migration.py": [],
+      "Tests/UI/test_console_archive_recovery_flow.py": [],
+      "Tests/Workspaces/test_workspace_registry_service.py": [],
+      "tldw_chatbook/Chat/archive_recovery/search_service.py": [],
+      "tldw_chatbook/DB/Workspace_DB.py": [],
+      "tldw_chatbook/DB/base_db.py": [],
+      "tldw_chatbook/Widgets/Console/console_composer_bar.py": [],
+      "tldw_chatbook/Widgets/Library/library_skill_work_pane.py": []
+    },
+    "critical": {
+      "Tests/Chat/test_archive_recovery_search.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/Chat/test_console_trace_service.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/Chat/test_console_trace_settlement.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/Chat/test_console_trace_sidecar_replay.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/DB/test_conversation_archive.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/DB/test_migration_version_short_circuit_guard.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/DB/test_operation_owned_connection_retirement.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/DB/test_workspace_db.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/Evals/test_evals_db_v5_to_v6_migration.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/UI/test_console_archive_recovery_flow.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "Tests/Workspaces/test_workspace_registry_service.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "tldw_chatbook/Chat/archive_recovery/search_service.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "tldw_chatbook/DB/Workspace_DB.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "tldw_chatbook/DB/base_db.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      "tldw_chatbook/Widgets/Library/library_skill_work_pane.py": {
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      }
+    },
+    "duplicates": {
+      "Tests/Chat/test_archive_recovery_search.py": [],
+      "Tests/Chat/test_console_trace_service.py": [],
+      "Tests/Chat/test_console_trace_settlement.py": [],
+      "Tests/Chat/test_console_trace_sidecar_replay.py": [],
+      "Tests/DB/test_conversation_archive.py": [],
+      "Tests/DB/test_migration_version_short_circuit_guard.py": [],
+      "Tests/DB/test_operation_owned_connection_retirement.py": [],
+      "Tests/DB/test_workspace_db.py": [],
+      "Tests/Evals/test_evals_db_v5_to_v6_migration.py": [],
+      "Tests/UI/test_console_archive_recovery_flow.py": [],
+      "Tests/Workspaces/test_workspace_registry_service.py": [],
+      "tldw_chatbook/Chat/archive_recovery/search_service.py": [],
+      "tldw_chatbook/DB/Workspace_DB.py": [],
+      "tldw_chatbook/DB/base_db.py": [],
+      "tldw_chatbook/Widgets/Console/console_composer_bar.py": [],
+      "tldw_chatbook/Widgets/Library/library_skill_work_pane.py": []
+    },
+    "hashes": {
+      "Tests/Chat/test_archive_recovery_search.py": "86d9596f694fbc2ed2ce8ef98fcab89ddb3b7f57128785b1f727a9792bd4db39",
+      "Tests/Chat/test_console_trace_service.py": "4eb07afa43f334b20d6f29c3d68cc6aad10591201fac174c0fbe00634cd68f3f",
+      "Tests/Chat/test_console_trace_settlement.py": "7e094e9510d1b5a1bc05f5a36b61f2171e45ccf9f3ba187184ccff8d36cbdf8f",
+      "Tests/Chat/test_console_trace_sidecar_replay.py": "6d0c3da1516bce238be47fe68f74707d1d2e7e2d327b8a694321bb799d94c391",
+      "Tests/DB/test_conversation_archive.py": "2e23bcbd71664d3be7fe3293c700e6b7773a1bda6ac334d0069e22a1f51c1369",
+      "Tests/DB/test_migration_version_short_circuit_guard.py": "910b8b36b70d0c98bf99e7c6a49c6b013f8ef50c39cdd18e1f6d6e6f9a30381c",
+      "Tests/DB/test_operation_owned_connection_retirement.py": "f40009a157bce0cc1f1a958a2a2b9ede14d4476a52695134f38428eb4f3bc13e",
+      "Tests/DB/test_workspace_db.py": "16eabd30f0d9b8ad51b9d86e4b26fc06f0a3db9780838436c244666fe4f92559",
+      "Tests/Evals/test_evals_db_v5_to_v6_migration.py": "f8d1aed3cfef2b1e8c9daa09023069faec58768fd930ac8d71bb1b7ded19e6b5",
+      "Tests/UI/test_console_archive_recovery_flow.py": "5120f26ed2d6d6c031f93d28e8caddc99c10cf98df71ad922176f2d650267336",
+      "Tests/Workspaces/test_workspace_registry_service.py": "3690762c532aa7d0ecbd4ab50924466ca83433d7b4f2e045f4150a441bfa2d41",
+      "tldw_chatbook/Chat/archive_recovery/search_service.py": "031ae909cf8a5b19d4c2e45182113280db4699b474176fc51d22279219d4a75c",
+      "tldw_chatbook/DB/Workspace_DB.py": "8a9555401682db7d009750f7be19b0e022301faae7653b36985337b5b0236b38",
+      "tldw_chatbook/DB/base_db.py": "56a8477ca207c3a160c5a4c7a74e1cbecd0af27cc91dab9cf4429b02ebffe687",
+      "tldw_chatbook/Widgets/Console/console_composer_bar.py": "8578fad87af86771cb94effbfab95d43c8c409de3ecd823104cf2256b1e63964",
+      "tldw_chatbook/Widgets/Library/library_skill_work_pane.py": "bcc330811eb8c3d61d02f5d943d0f42e857039672649747227ef801137190fdc"
+    },
+    "lint_counts": {
+      "Tests/Chat/test_archive_recovery_search.py": [
+        0,
+        0
+      ],
+      "Tests/Chat/test_console_trace_service.py": [
+        15,
+        15
+      ],
+      "Tests/Chat/test_console_trace_settlement.py": [
+        2,
+        2
+      ],
+      "Tests/Chat/test_console_trace_sidecar_replay.py": [
+        0,
+        0
+      ],
+      "Tests/DB/test_conversation_archive.py": [
+        0,
+        0
+      ],
+      "Tests/DB/test_migration_version_short_circuit_guard.py": [
+        5,
+        5
+      ],
+      "Tests/DB/test_operation_owned_connection_retirement.py": [
+        0,
+        0
+      ],
+      "Tests/DB/test_workspace_db.py": [
+        2,
+        2
+      ],
+      "Tests/Evals/test_evals_db_v5_to_v6_migration.py": [
+        0,
+        0
+      ],
+      "Tests/UI/test_console_archive_recovery_flow.py": [
+        0,
+        0
+      ],
+      "Tests/Workspaces/test_workspace_registry_service.py": [
+        2,
+        0
+      ],
+      "tldw_chatbook/Chat/archive_recovery/search_service.py": [
+        0,
+        0
+      ],
+      "tldw_chatbook/DB/Workspace_DB.py": [
+        3,
+        3
+      ],
+      "tldw_chatbook/DB/base_db.py": [
+        7,
+        7
+      ],
+      "tldw_chatbook/Widgets/Console/console_composer_bar.py": [
+        10,
+        10
+      ],
+      "tldw_chatbook/Widgets/Library/library_skill_work_pane.py": [
+        0,
+        0
+      ]
+    }
+  },
+  "cohorts": {
+    "storage-red": {
+      "result": "262 passed,2 expected new regression failures,1 FDwarning",
+      "cases": 264,
+      "command": {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "fd_probe",
+          "-q",
+          "--basetemp=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp",
+          "-o",
+          "cache_dir=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-cache",
+          "Tests/DB/test_archive_chronology.py",
+          "Tests/DB/test_archive_recovery_query.py",
+          "Tests/DB/test_conversation_archive.py",
+          "Tests/DB/test_workspace_db.py",
+          "Tests/DB/test_store_kernel.py",
+          "Tests/Workspaces/test_workspace_registry_service.py",
+          "Tests/Chat/test_conversation_archive_actions.py",
+          "Tests/Chat/test_archive_recovery_search.py",
+          "Tests/Chat/test_archive_recovery_operations.py"
+        ],
+        "started": 1792356973.4609568,
+        "exit_code": 1,
+        "finished": 1792357096.451206
+      },
+      "first_before": 14,
+      "last_teardown": 309,
+      "session_before_gc": 309,
+      "session_after_gc": 309,
+      "owned_sqlite_file_paths_after_gc": [
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archive_workspace_hides_f0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archive_workspace_hides_f0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archive_workspace_hides_f0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archive_workspace_protect0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archive_workspace_protect0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archive_workspace_protect0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archived_names_do_not_blo0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archived_names_do_not_blo0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archived_names_do_not_blo0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archiving_active_workspac0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archiving_active_workspac0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_archiving_active_workspac0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_compare_and0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_compare_and0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_compare_and0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_missing_row0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_missing_row0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_missing_row0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_storage_fai0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_storage_fai0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_storage_fai0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_successful_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_successful_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_change_review_successful_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_concurrent_restore_reject0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_concurrent_restore_reject0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_concurrent_restore_reject0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_duplicate_names_rejected_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_duplicate_names_rejected_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_duplicate_names_rejected_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_folder_binding_notifies_a0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_folder_binding_notifies_a0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_folder_binding_notifies_a0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_folder_binding_without_ap0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_folder_binding_without_ap0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_folder_binding_without_ap0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_bumps0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_bumps0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_bumps0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_bumps1/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_bumps1/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_bumps1/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_is_st0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_is_st0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_mutation_generation_is_st0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden1/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden1/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden1/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden2/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden2/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_next_local_workspace_iden2/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_does_not_replace0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_does_not_replace0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_does_not_replace0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_ensures_default_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_ensures_default_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_ensures_default_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_links_note_witho0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_links_note_witho0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_links_note_witho0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_lists_workspace_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_lists_workspace_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_lists_workspace_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_lists_workspaces0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_lists_workspaces0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_lists_workspaces0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_never_exposes_ru0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_never_exposes_ru0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_never_exposes_ru0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_normalizes_works0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_normalizes_works0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_normalizes_works0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_persists_active_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_persists_active_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_persists_active_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_persists_runtime0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_persists_runtime0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_persists_runtime0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_rejects_archived0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_rejects_archived0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_rejects_archived0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_rejects_runtime_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_rejects_runtime_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_rejects_runtime_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_sanitizes_malfor0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_sanitizes_malfor0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_sanitizes_malfor0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_skips_default_ru0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_skips_default_ru0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_skips_default_ru0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_tolerates_corrup0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_tolerates_corrup0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_tolerates_corrup0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_wraps_non_json_r0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_wraps_non_json_r0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_registry_wraps_non_json_r0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_default_reports_de0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_default_reports_de0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_default_reports_de0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_unknown_id_reports0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_unknown_id_reports0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_unknown_id_reports0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_protects0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_protects0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_protects0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_rejects_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_rejects_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_rejects_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_updates_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_updates_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_rename_workspace_updates_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis1/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis1/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis1/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis2/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis2/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_preserves_exis2/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali1/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali1/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali1/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali2/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali2/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali2/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali3/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali3/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_rejects_invali3/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_resolves_colli0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_resolves_colli0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_restore_as_resolves_colli0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_switching_to_default_stri0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_switching_to_default_stri0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_switching_to_default_stri0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_collision_with_0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_collision_with_0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_collision_with_0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_workspace_rejec0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_workspace_rejec0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_workspace_rejec0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_workspace_resto0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_workspace_resto0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unarchive_workspace_resto0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_membership_removes0/media.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_membership_removes0/media.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_membership_removes0/media.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_membership_removes0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_membership_removes0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_membership_removes0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_reference_membersh0/workspaces.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_reference_membersh0/workspaces.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_unlink_reference_membersh0/workspaces.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_acro0/mig-cross-group.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_acro0/mig-cross-group.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_acro0/mig-cross-group.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_agai0/mig-preexisting-suffix.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_agai0/mig-preexisting-suffix.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_agai0/mig-preexisting-suffix.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_and_0/mig.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_and_0/mig.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v2_migration_dedupes_and_0/mig.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v8_explicit_none_migratio0/v7.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v8_explicit_none_migratio0/v7.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v8_explicit_none_migratio0/v7.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v9_archive_chronology_mig0/v8-archive.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v9_archive_chronology_mig0/v8-archive.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-red-tmp/test_v9_archive_chronology_mig0/v8-archive.sqlite-wal"
+      ]
+    },
+    "storage-green": {
+      "result": "282 passed,no warnings",
+      "cases": 282,
+      "command": {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "fd_probe",
+          "-q",
+          "--basetemp=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-green-tmp",
+          "-o",
+          "cache_dir=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/storage-green-cache",
+          "Tests/DB/test_archive_chronology.py",
+          "Tests/DB/test_archive_recovery_query.py",
+          "Tests/DB/test_conversation_archive.py",
+          "Tests/DB/test_workspace_db.py",
+          "Tests/DB/test_store_kernel.py",
+          "Tests/Workspaces/test_workspace_registry_service.py",
+          "Tests/Chat/test_conversation_archive_actions.py",
+          "Tests/Chat/test_archive_recovery_search.py",
+          "Tests/Chat/test_archive_recovery_operations.py",
+          "Tests/DB/test_operation_owned_connection_retirement.py"
+        ],
+        "started": 1792357540.463979,
+        "exit_code": 0,
+        "finished": 1792357637.496686
+      },
+      "first_before": 14,
+      "last_teardown": 17,
+      "session_before_gc": 17,
+      "session_after_gc": 17,
+      "owned_sqlite_file_paths_after_gc": []
+    },
+    "captured-green": {
+      "result": "50 passed; thinking fixture still retained20 descriptors",
+      "cases": 50,
+      "command": {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "fd_probe",
+          "-q",
+          "--basetemp=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp",
+          "-o",
+          "cache_dir=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-cache",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[thinking-False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[structured-True]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[structured-False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-True]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[continuation]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[matching]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[conflicting]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[history]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unowned]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unknown]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[foreign]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[history]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[role]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[attachment]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[sidecar]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[missing_current]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[True]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[blocked]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[frozen_blocked]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[legacy]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[persona]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[ask]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[kill]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[kill_error]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[non_native]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[unsupported]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[temporary]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[remote]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[model]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[provider]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[endpoint]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[egress]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[unknown]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[manual]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[missing_origin]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[expired]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[evicted]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[closed]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[foreign_source]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[imported]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_retained_metadata_enters_real_first_request_fit_and_no_fit",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_multiple_native_cards_preserve_pages_and_bound_complete_evidence[False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_multiple_native_cards_preserve_pages_and_bound_complete_evidence[True]",
+          "Tests/Chat/test_console_trace_thinking_settlement.py::test_thinking_response_pii_masks_preserve_successor_message_projection"
+        ],
+        "started": 1792357037.4697442,
+        "exit_code": 0,
+        "finished": 1792357172.6326668
+      },
+      "first_before": 14,
+      "last_teardown": 37,
+      "session_before_gc": 37,
+      "session_after_gc": 37,
+      "owned_sqlite_file_paths_after_gc": [
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas0/controller.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas0/controller.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas0/controller.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas1/controller.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas1/controller.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas1/controller.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas2/controller.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas2/controller.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas2/controller.sqlite-wal",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas3/controller.sqlite",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas3/controller.sqlite-shm",
+        "/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-green-tmp/test_thinking_response_pii_mas3/controller.sqlite-wal"
+      ]
+    },
+    "captured-final": {
+      "result": "50 passed,no warnings",
+      "cases": 50,
+      "command": {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "fd_probe",
+          "-q",
+          "--basetemp=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-final-tmp",
+          "-o",
+          "cache_dir=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/captured-final-cache",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[thinking-False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[structured-True]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[structured-False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-True]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[continuation]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[matching]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[conflicting]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners[history]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unowned]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unknown]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[foreign]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[history]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[role]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[attachment]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[sidecar]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[missing_current]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[True]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[blocked]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[frozen_blocked]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[legacy]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[persona]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[ask]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[kill]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[kill_error]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[non_native]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[unsupported]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[temporary]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[remote]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[model]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[provider]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[endpoint]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[egress]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_destination_cannot_reuse_another_destinations_rows[unknown]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[manual]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[missing_origin]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[expired]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[evicted]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[closed]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[foreign_source]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_live_registry_loss_never_recovers_selection_from_transcript[imported]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_retained_metadata_enters_real_first_request_fit_and_no_fit",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_multiple_native_cards_preserve_pages_and_bound_complete_evidence[False]",
+          "Tests/Chat/test_console_archive_recovery_followup.py::test_multiple_native_cards_preserve_pages_and_bound_complete_evidence[True]",
+          "Tests/Chat/test_console_trace_thinking_settlement.py::test_thinking_response_pii_masks_preserve_successor_message_projection"
+        ],
+        "started": 1792357787.6549718,
+        "exit_code": 0,
+        "finished": 1792357904.457113
+      },
+      "first_before": 14,
+      "last_teardown": 17,
+      "session_before_gc": 17,
+      "session_after_gc": 17,
+      "owned_sqlite_file_paths_after_gc": []
+    },
+    "mounted-cohort": {
+      "result": "39 passed,3 notification setup races,1 longtest deselected; see exact follow-up qualification",
+      "cases": 42,
+      "command": {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "fd_probe",
+          "-q",
+          "Tests/UI/test_console_archive_recovery_flow.py",
+          "-k",
+          "not retained_native_recovery_resource_owners_plateau_and_close",
+          "--basetemp=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/mounted-cohort-tmp",
+          "-o",
+          "cache_dir=/private/tmp/archive-recovery-pr3162-baseline-20261018/resources/mounted-cohort-cache"
+        ],
+        "started": 1792357267.433109,
+        "exit_code": 1,
+        "finished": 1792357572.744004
+      },
+      "first_before": 14,
+      "last_teardown": 17,
+      "session_before_gc": 17,
+      "session_after_gc": 17,
+      "owned_sqlite_file_paths_after_gc": []
+    },
+    "mounted-final": {
+      "result": "9 passed in51.97s,no warnings",
+      "command": {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "fd_probe",
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--basetemp=/private/tmp/archive-recovery-pr3162-baseline-20261018/mounted-resources/notifications/final-ordinary-basetemp",
+          "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[button-size0]",
+          "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[agent-size0]",
+          "Tests/UI/test_console_archive_recovery_flow.py::test_mounted_runtime_cleanup_does_not_reopen_retired_chat_database",
+          "Tests/UI/test_console_archive_recovery_flow.py::test_receipt_refresh_refusal_keeps_native_source_safe",
+          "Tests/UI/test_console_archive_recovery_flow.py::test_admitted_restore_delivers_app_completion_when_source_cannot_receive"
+        ],
+        "sha256": {
+          "Tests/UI/test_console_archive_recovery_flow.py": "5120f26ed2d6d6c031f93d28e8caddc99c10cf98df71ad922176f2d650267336",
+          "tldw_chatbook/Chat/console_runtime.py": "760c50d9ce93504581d44747b76e1ed17a318d303fda9cee1b6d17326a03683c",
+          "tldw_chatbook/Chat/archive_recovery/search_service.py": "031ae909cf8a5b19d4c2e45182113280db4699b474176fc51d22279219d4a75c",
+          "tldw_chatbook/DB/base_db.py": "56a8477ca207c3a160c5a4c7a74e1cbecd0af27cc91dab9cf4429b02ebffe687",
+          "Tests/conftest.py": "9f7d881c86a89d08bfbc126b4825aeb08eb3e1eaea690808ed57ccc094e1454d",
+          "Tests/UI/app_factory.py": "93be69467a5e59abfe4a5f3c55d03273479924dc9a1331ba44da363120e70a51",
+          "Tests/Chat/test_archive_recovery_operations.py": "f728f79bb00d6d47eac43c0094d554c3a6223e1d38bfe5430b65e54be4480e06"
+        },
+        "fd_probe_sha256": "2e98682e5670a5a2439009590e82d50619630a58a28f5a11bb55893de6da83ce",
+        "returncode": 0,
+        "seconds": 54.78547554195393,
+        "post_sha256": {
+          "Tests/UI/test_console_archive_recovery_flow.py": "5120f26ed2d6d6c031f93d28e8caddc99c10cf98df71ad922176f2d650267336",
+          "tldw_chatbook/Chat/console_runtime.py": "760c50d9ce93504581d44747b76e1ed17a318d303fda9cee1b6d17326a03683c",
+          "tldw_chatbook/Chat/archive_recovery/search_service.py": "031ae909cf8a5b19d4c2e45182113280db4699b474176fc51d22279219d4a75c",
+          "tldw_chatbook/DB/base_db.py": "56a8477ca207c3a160c5a4c7a74e1cbecd0af27cc91dab9cf4429b02ebffe687",
+          "Tests/conftest.py": "9f7d881c86a89d08bfbc126b4825aeb08eb3e1eaea690808ed57ccc094e1454d",
+          "Tests/UI/app_factory.py": "93be69467a5e59abfe4a5f3c55d03273479924dc9a1331ba44da363120e70a51",
+          "Tests/Chat/test_archive_recovery_operations.py": "f728f79bb00d6d47eac43c0094d554c3a6223e1d38bfe5430b65e54be4480e06"
+        }
+      },
+      "cases": 9,
+      "each_post_teardown_fd": [
+        17,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17,
+        17
+      ],
+      "session_before_gc": 17,
+      "session_after_gc": 17,
+      "owned_sqlite_paths_after_gc": []
+    },
+    "mounted-forced-final": {
+      "result": "3 passed in26.85s",
+      "plugin_sha256": "689abf33954c2e72ac89b9704b1eb166aa72e9e94e9399f3bc5602c8f76b5574",
+      "scope": "Same delayed real-acknowledgement plugin as3failed RED; no manual acknowledgement or assertion changes."
+    }
+  },
+  "evidence": {
+    "trace/red.log": {
+      "sha256": "331e8840a3010792dc56c282bbf3e21970417ed998cee42dc48ba3a02a9fdbd1",
+      "bytes": 134765
+    },
+    "trace/verified.log": {
+      "sha256": "e7a869359760924c174d1026ca336404efb0e479305139cfbd5e822dbd47ea56",
+      "bytes": 471
+    },
+    "trace/verified.json": {
+      "sha256": "dba88e2cc25fbdfda87e6c0bfa8bdfc49d1973413bb7ede8e58db115d1d9116a",
+      "bytes": 3606
+    },
+    "resources/search-red2.log": {
+      "sha256": "0604be8e1646bc4ac793967512a7bbd4919a0fc73d20ece83ffa3467cc24bdd2",
+      "bytes": 79962
+    },
+    "resources/search-green.log": {
+      "sha256": "08d1798a34f0d8001ca0ab78fd71bad2386cc8334035a700b19b032b4300fa2c",
+      "bytes": 392
+    },
+    "resources/deadline-red.log": {
+      "sha256": "ea637f5993835d2c9c0d44189f8daaf9c91e8af689415b032a9a30dc1bca8026",
+      "bytes": 73462
+    },
+    "resources/deadline-green.log": {
+      "sha256": "b3d60942b2256bcb5012bca94c58af8723427265204d614c379cc51ca880e954",
+      "bytes": 290
+    },
+    "resources/retired-red.log": {
+      "sha256": "34d36969f1e03065d1e92ad8592ef8a2791bf23f76838c86aa525c7b37597120",
+      "bytes": 75393
+    },
+    "resources/retired-green.log": {
+      "sha256": "49aa86f6d3f6a6c83d8e80143b5c1c355659d1e9e23f358ee3ae37f1b338b5e4",
+      "bytes": 71405
+    },
+    "resources/retired-quiescent-green.log": {
+      "sha256": "4be4ea25051b76865b1e146a183e48fbd4d5b40ab4c4d63b10ad3f1a622cda5d",
+      "bytes": 209
+    },
+    "resources/storage-red.log": {
+      "sha256": "98f6841985c2f669d34df84489ef30c26d78e9edcf0b4229905a57f43e597617",
+      "bytes": 80896
+    },
+    "resources/storage-green.log": {
+      "sha256": "655c66249497b690e21d8d8a87872ce32283c883683db521ddbae2a62ce588e1",
+      "bytes": 704
+    },
+    "resources/captured-green.log": {
+      "sha256": "adcaf5d0ff3093de14e9eb4cdb74cea9f60bac6395500ae8287d16791f7a9344",
+      "bytes": 3761
+    },
+    "resources/captured-final.log": {
+      "sha256": "de3a117ecfe4b761d5a35dc137e30bccf077d8f0dec4c285262c78af3055eff1",
+      "bytes": 3760
+    },
+    "resources/mounted-cohort.log": {
+      "sha256": "4f383dd8137def7fba1021871573b8ad8c52dd0ba04ce988af0eec5f3b20b2eb",
+      "bytes": 378114
+    },
+    "integration/static.log": {
+      "sha256": "eee153a870d0497edc4ac468451b129a363f76f3abee9f36fe4ffddc723e6197",
+      "bytes": 84
+    },
+    "integration/check_static.py": {
+      "sha256": "b27df64b17dffd7f8151aaf1e93850407ec1ac9ecd1add56549d058c7b50364d",
+      "bytes": 2464
+    },
+    "integration/root-format.log": {
+      "sha256": "177f260a5645724013185e4b140c7045cc39e56c0c97b120f5cb23599f85f0de",
+      "bytes": 26
+    },
+    "checkpoint-review-probe.py": {
+      "sha256": "3a7de52275e85af4cb38c20ea81396eec36be5e9a7c7c4a34cbab9324a7e165c",
+      "bytes": 3703
+    },
+    "checkpoint-review-observation.log": {
+      "sha256": "c6ddeab3450250e13618c42488aa269fb7994cd241ffa8c37b36c059e19f392a",
+      "bytes": 1536
+    },
+    "storage-cleanup/green-final.log": {
+      "sha256": "980a3ff8bf5c329a06e5043d13d123d3db0bdeb924421056b3dfefaa301b621d",
+      "bytes": 290
+    },
+    "storage-cleanup/green-final-summary.json": {
+      "sha256": "b2ffae2fc535df03309317d236421c532739bc085710eef6082179973394fc10",
+      "bytes": 1524
+    },
+    "mounted-resources/green.log": {
+      "sha256": "1769223416f1f0471ecba6c29898b8d3d5f7fa613e15c2fce17bd5cdb5b78208",
+      "bytes": 615
+    },
+    "thinking-resources/green.log": {
+      "sha256": "c62f285f6d636c8234be5ef3fbfbbd1d26e07699d24e01093c09ca1e3f6d5574",
+      "bytes": 208
+    },
+    "governance/green-guards.log": {
+      "sha256": "96e4d4ea7453043fe474b9c25fdc2e52efdbfb671ced1908d5d9b8361e9580c3",
+      "bytes": 2965
+    },
+    "governance/equivalence.log": {
+      "sha256": "5a50297bb6bbbc20f4984b01e524661f2731f1ac68c873b5b8b301e78b74789d",
+      "bytes": 883
+    },
+    "governance/check_equivalence.py": {
+      "sha256": "32284c5b79e171f2f40946d1bca8e72c49fc86ba16d5753041725eb5ded14ff5",
+      "bytes": 2764
+    },
+    "governance/baseline-provenance.json": {
+      "sha256": "b9a9109f6e691ec5535659ccd93671c0c3eddf24de3fde7b3e64910b84baaf48",
+      "bytes": 4087
+    },
+    "governance/current-hashes.json": {
+      "sha256": "330cc59956a68b03d95786a3c28021453c11872c1f0336bc41824675a31122ed",
+      "bytes": 2313
+    },
+    "trace/red.json": {
+      "sha256": "ea3ebf11101f1f0f142921ffed60a95f1d293d093c43bd167c19cd4342773796",
+      "bytes": 1680
+    },
+    "storage-cleanup/constructor-red.log": {
+      "sha256": "53e3e70b2b9f14bcf03e058c5022d3c1b876b214cee3d52e372e7d59ae5e0b24",
+      "bytes": 5409
+    },
+    "storage-cleanup/green-final-command.json": {
+      "sha256": "538ee787e8b0b634423bcefe198896d1e59ed79b1842969605e8c884e5ca5c7e",
+      "bytes": 1152
+    },
+    "mounted-resources/green-command.json": {
+      "sha256": "fe867a2144331ff640f483b62c68e259eb4755ee48977ea14952a5ed07c7d912",
+      "bytes": 2527
+    },
+    "thinking-resources/green-command.json": {
+      "sha256": "f95ab0dcefaf57840e6629225ab5506d3d05e7e1f58771438911d083356df61e",
+      "bytes": 2013
+    },
+    "mounted-resources/notifications/final-ordinary.log": {
+      "sha256": "8a029e1cf65655bdc78a1ed6b73ddfd7197ca66ce1bb8763c8f8b87845bdbd14",
+      "bytes": 1445
+    },
+    "mounted-resources/notifications/final-forced.log": {
+      "sha256": "014cb68a5e85996b0a3097ca2595da1a37337feadacad990d765190de5416242",
+      "bytes": 630
+    },
+    "mounted-resources/notifications/forced-red.log": {
+      "sha256": "c9601e29056addb2354cdaafae19302f269a42e9f85e9e573d95f9b4fcd24287",
+      "bytes": 412132
+    },
+    "mounted-resources/notifications/ordinary-green.log": {
+      "sha256": "0875b9985a5db2f7be5ecf290fed2429236dbb132b3f17eed27ce88403c47970",
+      "bytes": 156410
+    },
+    "mounted-resources/notifications/final-static.json": {
+      "sha256": "ba5feaf76ba53d4d0b3f84b0652fe3b88eea584397b7bc802a6e2a49e38ecc3b",
+      "bytes": 1451
+    },
+    "mounted-resources/notifications/adapter2.log": {
+      "sha256": "77e398ce7e3138470680c424312d133b2e2b083f5f75d1b6a3ebed5ce68e1068",
+      "bytes": 1038
+    }
+  },
+  "limits": [
+    "No full suite, installed build, full sidecar module, long five-cycle resource repeat or live requests; model budget30/30 consumed.",
+    "Two existing voice controls fail with exact pre-edit helper.",
+    "Whole-file lint/formatter debt remains unchanged."
+  ],
+  "code_diff_sha256": "c65457d90ef0338f9cb041979dc6b10af48f0789d6a14822b2bfdc3910221939",
+  "review": {
+    "path": "Docs/superpowers/qa/console/2026-10-18-archive-recovery-baseline-repair/review.md",
+    "sha256": "95962c112e53aff211806f18239f6c949f70d002fbfadcb6ceef539e244292f9",
+    "verdict": "No open actionable critical or important findings; ready for requested draft PR update."
+  },
+  "publication": {
+    "source_commit": "82de05e88db885bc0710125963f5770163c0dc4e",
+    "verified_source_blobs": 31,
+    "pr": "https://github.com/rmusser01/tldw_chatbook/pull/3162",
+    "draft": true,
+    "auto_merge": false,
+    "mergeable": "MERGEABLE",
+    "original_verified_feature_head": "ea5c335462b33e0b8c3c19011b60feca9360576c"
+  }
+}

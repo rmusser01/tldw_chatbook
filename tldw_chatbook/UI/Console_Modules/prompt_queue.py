@@ -927,6 +927,21 @@ class ConsolePromptQueueUIController:
             expected_revision=expected_revision,
         )
 
+    def _capture_user_configuration(self, session_id: str) -> Any:
+        """Issue actor provenance only from user queue/edit event producers."""
+        from dataclasses import replace
+
+        configuration = self._capture_configuration(session_id)
+        controller = self._chat_controller_accessor()
+        runtime = getattr(controller, "_archive_recovery_runtime", None)
+        if runtime is None:
+            owner = getattr(getattr(controller, "app", None), "console_runtime", None)
+            if owner is not None:
+                runtime = owner.ensure_archive_recovery()
+        if runtime is None or configuration is None:
+            return configuration
+        return replace(configuration, recovery_user_origin=runtime.issue_user_proof(session_id))
+
     def edit_waiting(
         self,
         session_id: str,
@@ -948,7 +963,7 @@ class ConsolePromptQueueUIController:
             entry_id=entry_id,
             text=text,
             expected_revision=expected_revision,
-            configuration=self._capture_configuration(session_id),
+            configuration=self._capture_user_configuration(session_id),
         )
 
     def move_waiting(
@@ -1224,7 +1239,7 @@ class ConsolePromptQueueUIController:
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
             with prepared():
-                configuration = self._capture_configuration(session_id)
+                configuration = self._capture_user_configuration(session_id)
             queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
@@ -1300,7 +1315,7 @@ class ConsolePromptQueueUIController:
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
             with prepared():
-                configuration = self._capture_configuration(session_id)
+                configuration = self._capture_user_configuration(session_id)
             queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
