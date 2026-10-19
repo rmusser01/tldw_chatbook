@@ -141,7 +141,9 @@ def test_tldw_cli_does_not_emit_twice_when_config_already_reported(
 
     startup_errors.emit_private_path_startup_error(_refusal())
     first = capsys.readouterr().err
-    assert "chmod g-w,o-w" in first
+    # TASK-35312: the repair line is platform-branched (chmod on POSIX,
+    # icacls on Windows); either proves the guidance block was emitted.
+    assert "chmod g-w,o-w" in first or "icacls" in first
 
     _stub_startup_preflight(monkeypatch)
     _stub_app_module(monkeypatch, _refusal())
