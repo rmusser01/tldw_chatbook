@@ -7,6 +7,9 @@ from typing import Any
 from textual.worker import Worker
 from textual.worker_manager import WorkerManager
 
+CONSOLE_BROWSER_WORKER_GROUPS = frozenset(
+    {"console-persisted-browser-cache", "console-flat-conversation-search"}
+)
 _GROUPS = frozenset(
     {
         "console-sync",
@@ -29,6 +32,7 @@ _GROUPS = frozenset(
         "console-character-context-refresh",
         "console-annotation-previews",
         "console-persisted-browser-cache",
+        "console-flat-conversation-search",
     }
 )
 _CANCEL, _WAIT = Worker.cancel, Worker.wait
@@ -45,7 +49,7 @@ _CapturedViewWorkers = tuple[
 
 
 def capture_console_view_workers(
-    host: Any, view: Any | None = None
+    host: Any, view: Any | None = None, *, groups: frozenset[str] = _GROUPS
 ) -> _CapturedViewWorkers:
     """Capture issued Tasks and nodes in the original host manager's group scope.
 
@@ -55,6 +59,7 @@ def capture_console_view_workers(
     Args:
         host: Actual manager-owning App or supported host.
         view: Optional exact node filter; None keeps the App's group scope.
+        groups: Narrow the vetted finite groups; never add other groups.
 
     Returns:
         Strong references to the captured manager, nodes, work and Tasks.
@@ -76,6 +81,7 @@ def capture_console_view_workers(
             (view is not None and values.get("_node") is not view)
             or type(group) is not str
             or group not in _GROUPS
+            or group not in groups
         ):
             continue
         task, work = values.get("_task"), values.get("_work")
@@ -85,15 +91,14 @@ def capture_console_view_workers(
     return host, view, manager, loop, threading.current_thread(), tuple(workers)
 
 
-async def drain_console_view_workers(captured: _CapturedViewWorkers) -> None:
-    """Keep captured worker waits alive through repeated caller cancellation.
+def cancel_console_view_workers(captured: _CapturedViewWorkers) -> None:
+    """Cancel exact issued workers synchronously under their manager custody.
 
     Args:
         captured: Exact references selected on the original loop and thread.
 
     Raises:
         RuntimeError: The captured ownership or original wait source changed.
-        asyncio.CancelledError: Caller cancellation, after the waits settle.
     """
     host, _view, manager, loop, thread, workers = captured
     if (
@@ -116,6 +121,20 @@ async def drain_console_view_workers(captured: _CapturedViewWorkers) -> None:
             raise RuntimeError("console_view_worker_owner_changed")
         if not task.done():
             _CANCEL(worker)
+
+
+async def drain_console_view_workers(captured: _CapturedViewWorkers) -> None:
+    """Keep captured worker waits alive through repeated caller cancellation.
+
+    Args:
+        captured: Exact references selected on the original loop and thread.
+
+    Raises:
+        RuntimeError: The captured ownership or original wait source changed.
+        asyncio.CancelledError: Caller cancellation, after the waits settle.
+    """
+    cancel_console_view_workers(captured)
+    _host, _view, _manager, loop, _thread, workers = captured
 
     async def settle():
         if (

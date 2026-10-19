@@ -2684,7 +2684,8 @@ class ConsoleWorkspaceController:
         self._console_conversation_browser_error = ""
         self._sync_console_workspace_context()
         self._flat_conversation_search.worker = self.run_worker(
-            self._refresh_console_conversation_browser_search(query, token),
+            partial(self._refresh_console_conversation_browser_search, query, token),
+            name="_refresh_console_conversation_browser_search",
             group="console-flat-conversation-search",
             exclusive=True,
         )
@@ -3790,6 +3791,9 @@ class ConsoleWorkspaceController:
         offset: int = 0,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
         """Return persisted global/workspace rows for grouped browser search."""
+        runtime = self._workspace_availability_runtime()
+        if runtime is not None and runtime._disposed:
+            raise asyncio.CancelledError
         services: list[tuple[Any, bool]] = []
         scope_service = getattr(
             self.app_instance,
@@ -4044,7 +4048,10 @@ class ConsoleWorkspaceController:
             # database access"), so skip scheduling when the pump is not
             # running; the mounted app always is, and the guard also avoids
             # minting a coroutine that can never be awaited.
-            if self._screen_running_accessor():
+            runtime = self._workspace_availability_runtime()
+            if self._screen_running_accessor() and not (
+                runtime is not None and runtime._disposed
+            ):
                 self._console_persisted_rows_refresh_key = refresh_key
                 self.run_worker(
                     partial(

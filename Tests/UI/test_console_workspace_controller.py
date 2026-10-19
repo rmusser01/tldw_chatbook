@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsReadStatus,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from Tests.private_profile import private_profile_test
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -124,7 +125,7 @@ class _AsyncWorkerScreen(_NoMountScreen):
     """Run controller-owned workers without mounting a Textual app."""
 
     def run_worker(self, coroutine, **kwargs):
-        task = asyncio.create_task(coroutine)
+        task = asyncio.create_task(coroutine() if callable(coroutine) else coroutine)
         self.workers.append((task, kwargs))
         return task
 
@@ -3483,7 +3484,8 @@ def _conversation_tree_payload(
 
 
 @pytest.mark.asyncio
-async def test_search_debounce_mirrors_query_and_bumps_token_and_timer():
+@private_profile_test
+async def test_search_debounce_mirrors_query_and_bumps_token_and_timer(request):
     """Typing into the rail search mirrors into workspace state and arms a timer."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -3511,7 +3513,10 @@ async def test_search_debounce_mirrors_query_and_bumps_token_and_timer():
 
 
 @pytest.mark.asyncio
-async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_search():
+@private_profile_test
+async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_search(
+    request,
+):
     """Emptying the search box clears the query and abandons the old search.
 
     TASK-15454 renamed this from `..._clears_state_synchronously` and dropped
@@ -3564,7 +3569,8 @@ async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_sear
 
 
 @pytest.mark.asyncio
-async def test_search_refresh_populates_rows_from_scope_service():
+@private_profile_test
+async def test_search_refresh_populates_rows_from_scope_service(request):
     """The canonical grouped-browser refresh fills rows from the scope service."""
     app = _build_test_app()
     app.chat_conversation_scope_service = SimpleNamespace(
@@ -3600,7 +3606,8 @@ async def test_search_refresh_populates_rows_from_scope_service():
 
 
 @pytest.mark.asyncio
-async def test_search_refresh_ignores_stale_token():
+@private_profile_test
+async def test_search_refresh_ignores_stale_token(request):
     """A refresh whose token no longer matches current state is a no-op.
 
     Simulates a slow in-flight refresh (token N-1) that lands after a newer
