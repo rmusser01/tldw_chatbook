@@ -74,10 +74,17 @@ that cannot be decided cheaply reports "no requirement" (a leading ``TYPE``
 selector needs MRO matching, which is the cost this avoids). Both the
 per-node fidelity tour and a unit test over the parser shapes pin it, and
 both were mutation-tested: deleting the one-compound guard fails them.
+
+Candidate reuse (TASK-35610): a 1024-entry LRU per parsed stylesheet reuses
+ordered candidates for identical live subject/ancestor names. It retains no
+nodes or computed styles. Class/id/ancestry changes alter the key; stylesheet
+reparsing replaces the cache. Upstream still matches pseudo-classes and order,
+resolves values, and processes recursive component styles on every call.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any
 
 from textual.css.stylesheet import Stylesheet
@@ -88,13 +95,17 @@ __all__ = ["install_stylesheet_fastpath", "is_installed"]
 _MARKER = "_tldw_ordered_candidate_fastpath"
 
 #: Per-stylesheet cache: ``(rules_map, {id(rule): position}, {id(rule):
-#: requirements})``. Keyed on the ``rules_map`` *object*, of which we hold a
+#: requirements}, bounded candidate LRU)``. Keyed on the ``rules_map`` *object*,
+#: of which we hold a
 #: strong reference: Textual sets ``_rules_map = None`` on every path that
 #: changes ``_rules`` (``parse``, ``reparse``, ``add_source``), so a surviving
 #: identity match proves the rule list is unchanged. Holding the reference
 #: also stops ``id()`` reuse from aliasing a freed map onto a new one -- which
 #: matters doubly now that the cache is keyed by ``id(rule)`` for two things.
 _CACHE_ATTR = "_tldw_rule_position_index"
+# The measured Console has 523 subject/ancestor shapes, plus virtual components;
+# 256 churns during a single screen update. Keep room for one full live screen.
+_MAX_CANDIDATE_KEYS = 1024
 
 
 def _ancestor_requirements(rule: Any) -> tuple:
@@ -184,16 +195,28 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
     if cached is not None and cached[0] is rules_map:
         index = cached[1]
         requirements = cached[2]
+        candidate_cache = cached[3]
     else:
         index = {id(rule): position for position, rule in enumerate(rules)}
         requirements = {}
-        setattr(stylesheet, _CACHE_ATTR, (rules_map, index, requirements))
+        candidate_cache = OrderedDict()
+        setattr(
+            stylesheet, _CACHE_ATTR, (rules_map, index, requirements, candidate_cache)
+        )
+
+    # Cache only candidate selection, never resolved styles. Live selector and
+    # ancestor names witness class/id/parent changes; upstream still evaluates
+    # pseudo-classes, order, specificity and theme values on every application.
+    # Keys contain strings, not DOM nodes, and the LRU bounds dynamic IDs.
+    ancestor_names = _ancestor_names(node)
+    key = (frozenset(selector_names), frozenset(ancestor_names))
+    if key in candidate_cache:
+        candidate_cache.move_to_end(key)
+        return candidate_cache[key]
 
     candidates = {
         rule for name in rules_map.keys() & selector_names for rule in rules_map[name]
     }
-    if not candidates:
-        return []
 
     # Reject candidates whose leading compound names an ancestor this node
     # does not have. `rules_map` keys on the RIGHTMOST selector only, so a
@@ -206,7 +229,6 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
     # selector sets states a requirement that is unmet, and any set we cannot
     # decide cheaply reports `None` (= keep). Correctness is pinned by
     # `test_fastpath_computes_identical_styles_for_every_node`.
-    ancestor_names = _ancestor_names(node)
     surviving = []
     for rule in candidates:
         rule_id = id(rule)
@@ -225,11 +247,12 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
             if requirement is None or requirement in ancestor_names:
                 surviving.append(rule)
                 break
-    if not surviving:
-        return []
     # Ascending source order. Upstream reverses it again inside ``apply``,
     # which is what preserves "later rule wins" tie-breaking.
     surviving.sort(key=lambda rule: index[id(rule)])
+    candidate_cache[key] = surviving
+    if len(candidate_cache) > _MAX_CANDIDATE_KEYS:
+        candidate_cache.popitem(last=False)
     return surviving
 
 

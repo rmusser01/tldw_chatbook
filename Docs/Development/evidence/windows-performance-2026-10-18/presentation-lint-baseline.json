@@ -1,0 +1,12 @@
+{
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "baseline_count": 22,
+    "current_count": 22,
+    "same_findings": true
+  },
+  "tldw_chatbook/UI/Console_Modules/workspace.py": {
+    "baseline_count": 3,
+    "current_count": 3,
+    "same_findings": true
+  }
+}

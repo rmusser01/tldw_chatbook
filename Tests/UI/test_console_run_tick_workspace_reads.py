@@ -1,4 +1,4 @@
-"""The Console 5 Hz run tick must not touch the Workspace DB.
+"""The Console 5 Hz run tick must not touch the Workspace DB on the UI thread.
 
 TASK-22201. The holistic perf review (Docs/Design/2026-08-24-holistic-perf-review.md,
 finding 22201) measured that PR #2034 reintroduced the TASK-21118 hot-path shape on
@@ -14,8 +14,8 @@ rows) merge/canonical-owner/overlay pipeline twice per build.
 These tests replicate the review's counter probe as a permanent gate, the same
 shape as ``test_console_keystroke_workspace_reads.py`` (TASK-21118):
 
-* zero registry-service reads AND zero WorkspaceDB round-trips AND zero traced SQL
-  statements across settled run ticks;
+* zero UI-thread registry reads, WorkspaceDB round-trips and traced SQL across
+  settled run ticks; background preparation traffic is recorded separately;
 * a control proving the counters still see real registry traffic;
 * the staleness guard: a registry mutation performed directly on the service (no
   Console seam) must be reflected by the very next tick;
@@ -25,6 +25,8 @@ shape as ``test_console_keystroke_workspace_reads.py`` (TASK-21118):
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 
 import pytest
@@ -32,6 +34,8 @@ import pytest
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+pytestmark = pytest.mark.bootstrap_profile
 
 APP_SIZE = (140, 42)
 
@@ -57,7 +61,7 @@ async def _settled_console(host, pilot):
 
 
 class _WorkspaceReadCounter:
-    """Count registry-service reads, WorkspaceDB round-trips, and statements.
+    """Count UI and background registry reads, DB round-trips and statements.
 
     Patches at the class so every instance-bound call the app makes is
     counted, and counts THREE layers: the display-read service methods, the
@@ -77,10 +81,17 @@ class _WorkspaceReadCounter:
     )
 
     def __init__(self) -> None:
+        self._ui_thread = threading.get_ident()
         self.read_calls: dict[str, int] = {name: 0 for name in self._READ_METHODS}
         self.db_connections = 0
         self.db_transactions = 0
         self.statements: list[str] = []
+        self.background_read_calls: dict[str, int] = {
+            name: 0 for name in self._READ_METHODS
+        }
+        self.background_db_connections = 0
+        self.background_db_transactions = 0
+        self.background_statements: list[str] = []
         self._original_reads = {
             name: getattr(LocalWorkspaceRegistryService, name)
             for name in self._READ_METHODS
@@ -94,7 +105,12 @@ class _WorkspaceReadCounter:
 
         def _counting_read(name, original):
             def wrapper(service, *args, **kwargs):
-                counter.read_calls[name] += 1
+                calls = (
+                    counter.read_calls
+                    if threading.get_ident() == counter._ui_thread
+                    else counter.background_read_calls
+                )
+                calls[name] += 1
                 return original(service, *args, **kwargs)
 
             return wrapper
@@ -106,14 +122,24 @@ class _WorkspaceReadCounter:
         original_transaction = self._original_transaction
 
         def _trace(statement: str) -> None:
-            counter.statements.append(statement)
+            statements = (
+                counter.statements
+                if threading.get_ident() == counter._ui_thread
+                else counter.background_statements
+            )
+            statements.append(statement)
 
         def _tracing_context(original, attr):
             from contextlib import contextmanager
 
             @contextmanager
             def wrapper(db):
-                setattr(counter, attr, getattr(counter, attr) + 1)
+                target = (
+                    attr
+                    if threading.get_ident() == counter._ui_thread
+                    else "background_" + attr
+                )
+                setattr(counter, target, getattr(counter, target) + 1)
                 with original(db) as conn:
                     conn.set_trace_callback(_trace)
                     if conn not in counter._traced_connections:
@@ -182,7 +208,9 @@ async def test_settled_run_ticks_do_zero_workspace_registry_sql():
             f"{elapsed * 1000.0:.1f} ms wall, "
             f"reads={counter.read_calls}, "
             f"round_trips={counter.db_round_trips}, "
-            f"statements={len(counter.statements)}"
+            f"statements={len(counter.statements)}, "
+            f"background_reads={counter.background_read_calls}, "
+            f"background_statements={len(counter.background_statements)}"
         )
         assert counter.read_calls["ensure_default_workspace"] == 0
         assert counter.registry_reads == 0
@@ -211,6 +239,26 @@ async def test_the_counter_still_sees_real_registry_traffic():
         assert counter.read_calls["ensure_default_workspace"] == 1
         assert counter.db_round_trips >= 3
         assert any("workspace_records" in s for s in counter.statements)
+
+        # Real preparation work may overlap a UI tick. It must remain visible
+        # in the background counters without being attributed to the UI thread.
+        def transaction_read():
+            with registry.db.transaction() as connection:
+                return connection.execute("SELECT 1 FROM workspace_records").fetchall()
+
+        with _WorkspaceReadCounter() as background:
+            assert await asyncio.to_thread(registry.list_workspaces)
+            await asyncio.to_thread(registry.ensure_default_workspace)
+            assert await asyncio.to_thread(transaction_read)
+
+        assert background.registry_reads == 0
+        assert background.db_round_trips == 0
+        assert background.statements == []
+        assert background.background_read_calls["list_workspaces"] >= 1
+        assert background.background_read_calls["ensure_default_workspace"] == 1
+        assert background.background_db_connections >= 1
+        assert background.background_db_transactions >= 1
+        assert any("workspace_records" in s for s in background.background_statements)
 
 
 # ---------------------------------------------------------------------------

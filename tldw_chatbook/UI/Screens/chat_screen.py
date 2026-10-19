@@ -20853,9 +20853,8 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
-            rail_state = self._current_console_rail_state()
             self._sync_console_settings_summary()
-            self._sync_console_control_bar_under_config(rail_state)
+            self._sync_console_control_bar_under_config(None)
 
         result = run_console_presentation_sync(self, sync)
         if result is False:

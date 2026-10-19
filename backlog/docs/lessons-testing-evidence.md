@@ -6,6 +6,23 @@
 
 **What to do.** Before investigating a CI flake, read the log to the first exception rather than the summary line, then check whether dev has changed that code since, with `git merge-base --is-ancestor <fix> <failing head>` for each failing run. If the heads predate the fix, the work left is counting the runs since it.
 
+## Separate worker SQL from UI-thread SQL in performance counters (TASK-35610, 2026-10-19)
+
+The Windows CSS/presentation follow-up's settled-tick test counted two registry
+reads on the updated code and zero on an original-code control. Repeating the
+updated test reproduced the assertion. Thread/stack observation located both
+reads in the existing finite workspace-availability worker, outside the UI loop.
+The class-level counter's method wrappers also selected the conservative custom
+reader route, which legitimately calls both folder and runtime-binding readers.
+The counter had been interpreting all-thread traffic as UI blocking work.
+
+Keep UI and background read/connection/SQL counts separately, retain the actual
+native calls, and prove both counters with positive controls. Do not silence a
+worker, freeze its TTL, or weaken admission to make a timing window green. Also
+avoid unconditional `asyncio.current_task()` in a thread observer: the first
+diagnostic raised without an event loop and was discarded; the corrected observer
+preserved the original call and supplied the usable evidence.
+
 ## A render-entry wait must also observe its producer's failure (TASK-35592, 2026-10-19)
 
 The Windows attention regression run reached two stale transcript fixtures,
