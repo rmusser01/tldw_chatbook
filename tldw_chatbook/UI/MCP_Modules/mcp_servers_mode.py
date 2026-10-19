@@ -1365,7 +1365,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             saved: Whether the write landed.
         """
         if not saved:
-            app.notify(f"Failed to save {key}.", severity="error")
+            app.notify(f"Failed to save {key}.", severity="error", markup=False)
             return
         config = getattr(app, "app_config", None)
         if isinstance(config, dict):

@@ -100,7 +100,7 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._open_audit_tool	notify_
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._run_server_mutation	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._save_builtin_flag	notify_interp	2
 tldw_chatbook/UI/MCP_Modules/mcp_profile_actions	_save_local_profile	notify_interp	2
-tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._save_tool_gate	notify_interp	2
+tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._save_tool_gate	notify_interp	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._show_tool_test_result	notify_interp	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench._start_lifecycle	notify_interp	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench	MCPWorkbench.on_mcp_inspector_audit_open_tool_requested	notify_interp	1
