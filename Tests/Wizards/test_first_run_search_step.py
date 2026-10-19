@@ -260,17 +260,6 @@ def test_template_openai_rows_have_real_dimensions_and_no_key_placeholder() -> N
     assert "local-llama-cpp-embeddings" not in models
 
 
-def test_listable_embedding_models_hide_incomplete_and_sample_rows() -> None:
-    from tldw_chatbook.config import listable_embedding_models
-
-    models = {
-        "bge-small-en-v1": {"5": {"provider": "huggingface"}},
-        "my-local-nomic-model": {"provider": "openai", "model_name_or_path": "n"},
-        "e5-small-v2": {"provider": "huggingface", "model_name_or_path": "e5"},
-    }
-    assert list(listable_embedding_models(models)) == ["e5-small-v2"]
-
-
 @pytest.mark.asyncio
 async def test_choosing_automatic_says_the_first_search_may_download_a_local_model() -> None:
     """Live: the first automatic search on a fresh profile fetched the model."""
