@@ -60,7 +60,8 @@ async def _changed_display(tmp_path):
         ("custom_reader", 4, 3, 1),
         ("custom_db", 4, 3, 1),
         ("unchanged", 1, 1, 0),
-        ("invalidated", 2, 3, 1),
+        # TASK-33620.15.6: an invalidated stock display decides in its batch.
+        ("invalidated", 1, 2, 1),
     ],
 )
 async def test_known_conversation_refresh_preserves_native_checks_and_fallbacks(

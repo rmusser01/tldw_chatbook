@@ -201,20 +201,22 @@ async def test_changed_character_display_batches_only_inner_original_reads(
             display_elapsed = time.monotonic() - started
         _retired(database, displayed)
         assert controller.state == expected
-        assert displayed["pairs"] == 3 and displayed["recent"] == 1
+        # TASK-33620.15.6: the display decides inside its one batch (first
+        # pair, groups, final pair) instead of probing first.
+        assert displayed["pairs"] == 2 and displayed["recent"] == 1
         assert before == _source_hashes()
         record_property("direct_original_receipt", _receipt(live, live_elapsed))
         record_property("changed_display_receipt", _receipt(displayed, display_elapsed))
         # Baseline must reach every original read and physical retirement above,
         # then fail this single intended causal callback-count assertion.
-        assert displayed["callbacks"] == 2, (
-            "display still prepares four separate finite native callbacks"
+        assert displayed["callbacks"] == 1, (
+            "display still prepares separate finite native callbacks"
         )
-        assert len(displayed["connections"]) == 2
+        assert len(displayed["connections"]) == 1
         if os.name == "nt":
             assert 0 < displayed["native_opens"] < live["native_opens"]
         else:
-            assert live["helpers"] == 4 and displayed["helpers"] == 2
+            assert live["helpers"] == 4 and displayed["helpers"] == 1
     finally:
         if pending is not None:
             if not pending.done():
@@ -261,7 +263,8 @@ async def test_character_inner_batch_rejects_changed_owner_after_final_original_
         nonlocal pair_count
         if name == "pairs" and event == "call":
             pair_count += 1
-        if name == "pairs" and event == "return" and pair_count == 3:
+        # TASK-33620.15.6: the one display batch's final pair is its second.
+        if name == "pairs" and event == "return" and pair_count == 2:
             entered.set()
             assert release.wait(10), "test-owned final original pair was not released"
 
@@ -409,8 +412,8 @@ async def test_character_inner_batch_preserves_real_same_worker_borrowed_connect
         assert len(held) == 1
         with _original_calls(database) as observed:
             assert await _display(controller, screen)
-        assert observed["callbacks"] == 2
-        assert observed["pairs"] == 3 and observed["recent"] == 1
+        assert observed["callbacks"] == 1  # TASK-33620.15.6: one display batch
+        assert observed["pairs"] == 2 and observed["recent"] == 1
         assert (
             len(observed["connections"]) == 1
             and observed["connections"][0] is connection
@@ -562,8 +565,12 @@ async def test_active_display_keeps_dynamic_custom_no_argument_dispatch(
             assert await task
         _retired(database, observed)
         assert calls == [reader], "custom no-argument callback was bypassed"
-        assert observed["callbacks"] == 4
-        assert observed["pairs"] == 3 and observed["recent"] == 1
+        # TASK-33620.15.6: a dispatch customized during the display's one
+        # decide-and-load batch refuses that batch after its first pair, then
+        # takes the original probe and custom route (one more callback).
+        callbacks, pairs = (5, 4) if boundary == "scope_await" else (4, 3)
+        assert observed["callbacks"] == callbacks
+        assert observed["pairs"] == pairs and observed["recent"] == 1
         assert controller._presentation_scope_key is None
         assert before == _source_hashes()
     finally:

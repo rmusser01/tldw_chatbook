@@ -235,6 +235,9 @@ class _CharacterRefreshReaders:
     batch: MethodType
     presentation_closure: tuple
     presentation_cells: tuple
+    #: TASK-33620.15.6: a display check's settled fingerprint. When the
+    #: batch's first scope read still matches it, the batch ends there.
+    unchanged_from: ConsoleCharacterScopeFingerprint | None = None
 
     def require_current(self) -> None:
         controller = self.controller
@@ -312,8 +315,15 @@ class _CharacterRefreshReaders:
             check.cancel()
 
 
-def _stock_character_refresh_readers(controller, presentation, generation):
-    """Select only the original display closure and concrete file DB route."""
+def _stock_character_refresh_readers(
+    controller, presentation, generation, unchanged_from=None
+):
+    """Select only the original display closure and concrete file DB route.
+
+    ``unchanged_from`` (TASK-33620.15.6) is a display check's settled
+    fingerprint: the batch then ends after its first scope read when that
+    still matches it.
+    """
     if (
         type(controller) is not ConsoleCharacterContextController
         or type(presentation) is not FunctionType
@@ -393,6 +403,7 @@ def _stock_character_refresh_readers(controller, presentation, generation):
             for name, cell in closure.items()
             if name != "cancelled"
         ),
+        unchanged_from,
     )
     try:
         readers.require_current()
@@ -408,6 +419,7 @@ class _CharacterRecentRead:
     details: tuple
     load_failed: bool
     scope_current: bool
+    unchanged: bool = False
 
 
 @dataclass(frozen=True)
@@ -990,26 +1002,41 @@ class ConsoleCharacterContextController:
             self._presentation_scope_key = None
 
             try:
-                try:
-                    snapshot = await self._capture_scope()
-                except (_ConsoleCharacterScopeChanged, _ConsoleCharacterScopeReadError):
-                    if not owner_is_current() or key != self._presentation_owner_key(screen):
-                        return False
-                else:
-                    if not owner_is_current() or key != self._presentation_owner_key(screen):
-                        return False
-                    if snapshot.fingerprint == self.state.scope_fingerprint:
-                        if (
-                            self._successful_refresh_generation == self._generation
-                            and not self.state.loading
-                            and self.state.phase is ConsoleCharacterOperationPhase.IDLE
-                            and not self.state.error
-                        ):
-                            self._presentation_scope_key = key
-                            self._presentation_scope_at = time.monotonic()
-                        return False
+                settled = self.state.scope_fingerprint
                 expected_generation = self._generation + 1
-                await self.refresh(_presentation_is_current=owner_is_current)
+                # TASK-33620.15.6: decide and reload on one handle (one helper);
+                # None takes the original probe-then-refresh route below.
+                checked = await self._check_recent_batch(
+                    owner_is_current,
+                    settled if type(settled) is ConsoleCharacterScopeFingerprint else None,
+                )
+                if checked is False:
+                    if not owner_is_current() or key != self._presentation_owner_key(screen):
+                        return False
+                elif checked is None:
+                    try:
+                        snapshot = await self._capture_scope()
+                    except (_ConsoleCharacterScopeChanged, _ConsoleCharacterScopeReadError):
+                        if not owner_is_current() or key != self._presentation_owner_key(screen):
+                            return False
+                    else:
+                        if not owner_is_current() or key != self._presentation_owner_key(screen):
+                            return False
+                        if snapshot.fingerprint == self.state.scope_fingerprint:
+                            checked = False
+                if checked is False:
+                    if (
+                        self._successful_refresh_generation == self._generation
+                        and not self.state.loading
+                        and self.state.phase is ConsoleCharacterOperationPhase.IDLE
+                        and not self.state.error
+                    ):
+                        self._presentation_scope_key = key
+                        self._presentation_scope_at = time.monotonic()
+                    return False
+                if checked is None:
+                    expected_generation = self._generation + 1
+                    await self.refresh(_presentation_is_current=owner_is_current)
                 if (
                     owner_is_current()
                     and self._successful_refresh_generation == expected_generation
@@ -1067,6 +1094,22 @@ class ConsoleCharacterContextController:
             )
             is not None
         )
+        if (
+            not known_changed
+            and not force
+            and _presentation_is_current is not None
+            and _stock_character_presentation(self)
+        ):
+            # TASK-33620.15.6: decide and reload on one handle (one helper).
+            checked = await self._check_recent_batch(
+                _presentation_is_current,
+                fingerprint
+                if type(fingerprint) is ConsoleCharacterScopeFingerprint
+                else None,
+            )
+            if checked is not None:
+                self._mark_checked(started, invalidations)
+                return checked
         if not known_changed:
             try:
                 snapshot = await self._capture_scope()
@@ -1252,6 +1295,13 @@ class ConsoleCharacterContextController:
         """Only the inner pair/groups/pair share this existing finite interval."""
         readers.require_current()
         snapshot = readers.scope.__func__(readers.controller, readers)
+        if (
+            readers.unchanged_from is not None
+            and snapshot.fingerprint == readers.unchanged_from
+        ):
+            # A settled display check ends after its first scope read.
+            readers.require_current()
+            return _CharacterRecentRead(snapshot, (), (), False, True, unchanged=True)
         groups, details = (), ()
         load_failed = False
         try:
@@ -1284,6 +1334,128 @@ class ConsoleCharacterContextController:
         return _CharacterRecentRead(
             snapshot, groups, details, load_failed, scope_current
         )
+
+    async def _check_recent_batch(
+        self,
+        presentation: Callable[[], bool],
+        settled: ConsoleCharacterScopeFingerprint | None,
+    ) -> bool | None:
+        """Check the stock display's scope and reload it in one finite callback.
+
+        TASK-33620.15.6: a display check that found its scope changed made
+        two finite callbacks, the scope probe and then the reload batch,
+        which reads that scope again. Each callback's fresh worker handle
+        starts an ADR-125 validation helper process. This runs the existing
+        inner batch once instead: it ends after its first scope read when
+        that read still matches ``settled``, and otherwise loads and fences
+        as a refresh does. Every original check stays inside the callback
+        (``_await_database_work`` admission and retirement, the on-loop
+        ambient midpoint and post-pair checks, reader provenance). Nothing is
+        published until the callback has retired; a reload then advances
+        the generation, as ``_begin`` would, and publishes its result.
+
+        Args:
+            presentation: The original display-owner closure.
+            settled: Fingerprint the display shows, or None when it has none.
+
+        Returns:
+            False when the scope is unchanged, or when the display owner
+            moved on before the first scope read settled (as after the
+            original probe, it gets nothing). True when the scope changed:
+            the reload or its load error is published, except that, as in
+            the original batch, an owner that moved on or a reader that
+            changed during the read gets no publication, and a scope that
+            moved again during the load is reloaded by the original
+            ``refresh``. None when the check reached no decision for a
+            current owner (no stock readers, an ambient change before the
+            read, a first scope read that did not settle or failed, a refresh
+            dispatch customized during the read): the caller then takes the
+            original probe-then-refresh route, which owns those outcomes.
+
+        Raises:
+            BaseException: An original ambient accessor failure, unchanged.
+        """
+        readers = _stock_character_refresh_readers(
+            self, presentation, self._generation, settled
+        )
+        if readers is None:
+            return None
+
+        def read_current() -> _CharacterRecentRead:
+            readers.require_current()
+            return readers.batch.__func__(readers.controller, readers)
+
+        try:
+            if not readers.ambient_current():
+                return None
+        except _ConsoleCharacterReaderChanged:
+            return None
+        ambient_error = None
+        try:
+            result = await self._await_database_work(readers.database, read_current)
+        except _ConsoleCharacterReaderChanged:
+            # As in the original batch, a changed qualified reader authorizes
+            # no further read or publication. A no-argument refresh dispatch
+            # customized meanwhile is honored at once, as after the probe.
+            customized = any(
+                inspect.getattr_static(self, name)
+                is not vars(ConsoleCharacterContextController)[name]
+                for name in ("refresh", "refresh_if_scope_changed")
+            )
+            return None if customized else True
+        except _ConsoleCharacterAmbientError as failure:
+            ambient_error = failure.error
+        except Exception:  # noqa: BLE001 - an unsettled or unreadable first scope.
+            # As after the original probe: a display owner that moved on gets
+            # nothing; a current one takes the original route, which decides
+            # and presents the read error.
+            try:
+                current = readers.ambient_current()
+            except _ConsoleCharacterReaderChanged:
+                current = False
+            return None if current else False
+        # Outside the catch, as _capture_scope does: the exact original
+        # accessor exception, cause and traceback, after retirement.
+        if ambient_error is not None:
+            raise ambient_error
+        if result.unchanged:
+            # As after the original probe: a display invalidated meanwhile
+            # no longer shows ``settled`` and reloads by the original route.
+            return False if self.state.scope_fingerprint == settled else None
+        try:
+            if not readers.ambient_current():
+                # As the original batch: an owner that moved on during the
+                # read gets no publication; its next check reloads.
+                return True
+        except _ConsoleCharacterReaderChanged:
+            return True
+        if not result.scope_current:
+            # The first read already differed from ``settled``, so the scope
+            # changed; it moved again during the load. The original refresh
+            # retries it and presents a scope that never settles.
+            if _stock_character_presentation(self):
+                await self.refresh(_presentation_is_current=presentation)
+            else:
+                await self.refresh()
+            return True
+        # Publish as the original batch does after its ``_begin``.
+        self._generation += 1
+        if result.load_failed:
+            self._publish(
+                replace(
+                    self.state,
+                    phase=ConsoleCharacterOperationPhase.IDLE,
+                    loading=False,
+                    operation_row_key="",
+                    error="Could not load local character chats · Retry",
+                )
+            )
+            return True
+        self._publish_recent_groups(
+            result.snapshot.fingerprint, result.groups, result.details
+        )
+        self._successful_refresh_generation = self._generation
+        return True
 
     async def _refresh_recent_batch(
         self, readers: _CharacterRefreshReaders, generation: int
@@ -2263,6 +2435,7 @@ _CHARACTER_REFRESH_READERS = (*_CHARACTER_SCOPE_READERS, *tuple(
         "_begin", "_publish", "_current_character_identity", "_open_conversation_identity",
         "_capture_scope", "_scope_is_current", "_operation_scope_is_current", "_unavailable_rows",
         "_read_refresh_scope_sync", "_read_recent_scope_sync", "_refresh_recent_batch", "_publish_recent_groups",
+        "_check_recent_batch",
     )
     for descriptor in (vars(_CHARACTER_SCOPE_OWNER)[name],)
     for function in (descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,)

@@ -127,10 +127,11 @@ async def test_character_batch_midbody_change_refuses_before_next_stock_reader(
         nonlocal restore, pair_count
         if name == "pairs" and event == "call":
             pair_count += 1
+        # TASK-33620.15.6: the one display batch: its first pair is the boundary.
         if (
             name == "pairs"
             and event == "return"
-            and pair_count == 2
+            and pair_count == 1
             and restore is None
         ):
             restore = _body_fault(function, body_calls)
@@ -141,7 +142,7 @@ async def test_character_batch_midbody_change_refuses_before_next_stock_reader(
         _retired(database, observed)
         assert restore is not None, "original inner pair boundary was not reached"
         assert not body_calls, "a changed original body ran after stock qualification"
-        assert observed["callbacks"] == 2 and observed["pairs"] == 2
+        assert observed["callbacks"] == 1 and observed["pairs"] == 1
         assert observed["recent"] == 0, (
             "groups were read after reader provenance changed"
         )
@@ -214,7 +215,9 @@ async def test_character_batch_real_sql_failure_keeps_final_pair_error_semantics
             and name == "recent"
             or failure == "final_metadata"
             and name == "pairs"
-            and pairs in (3, 5, 7)
+            # TASK-33620.15.6: each attempt's final pair (one decide-and-load
+            # batch, then the original refresh's three attempts).
+            and pairs in (2, 4, 6, 8)
         )
         if install:
             # Open through the unchanged original getter on this exact worker.
@@ -239,15 +242,15 @@ async def test_character_batch_real_sql_failure_keeps_final_pair_error_semantics
         assert denials, "original SQL fault boundary was not exercised"
         assert authorizer_connection is None
         if failure == "groups":
-            assert observed["callbacks"] == 2
-            assert observed["pairs"] == 3 and observed["recent"] == 1
+            assert observed["callbacks"] == 1
+            assert observed["pairs"] == 2 and observed["recent"] == 1
             assert (
                 controller.state.error == "Could not load local character chats · Retry"
             )
         else:
-            assert len(denials) == 3
+            assert len(denials) == 4
             assert observed["callbacks"] == 4
-            assert observed["pairs"] == 7 and observed["recent"] == 3
+            assert observed["pairs"] == 8 and observed["recent"] == 4
             assert controller.state.error == "Local character chats changed · Retry"
         assert controller.state.scope_fingerprint is None
         assert (
@@ -273,7 +276,8 @@ async def test_character_batch_actual_revision_change_retries_both_original_pair
         nonlocal pairs, changed
         if name == "pairs" and event == "call":
             pairs += 1
-        if name == "pairs" and event == "return" and pairs == 2 and not changed:
+        # TASK-33620.15.6: the one display batch: its first pair is the boundary.
+        if name == "pairs" and event == "return" and pairs == 1 and not changed:
             assert frame.f_locals.get("database") is database
             assert (
                 database.increment_character_conversation_search_revision() == old + 1
@@ -284,8 +288,8 @@ async def test_character_batch_actual_revision_change_retries_both_original_pair
         with _original_calls(database, barrier=barrier) as observed:
             assert await _display(controller, screen)
         _retired(database, observed)
-        assert changed and observed["callbacks"] == 3
-        assert observed["pairs"] == 5 and observed["recent"] == 2
+        assert changed and observed["callbacks"] == 2
+        assert observed["pairs"] == 4 and observed["recent"] == 2
         assert controller.state.scope_fingerprint.data_revision == old + 1
         assert controller.state.data_revision == old + 1
         assert not controller.state.loading and not controller.state.error
@@ -317,7 +321,8 @@ async def test_character_batch_original_postpair_owner_error_propagates_after_re
         nonlocal pair_count
         if name == "pairs" and event == "call":
             pair_count += 1
-        if name == "pairs" and event == "return" and pair_count == 2:
+        # TASK-33620.15.6: the one display batch: its first pair is the boundary.
+        if name == "pairs" and event == "return" and pair_count == 1:
             fail[0] = True
 
     try:
@@ -327,7 +332,7 @@ async def test_character_batch_original_postpair_owner_error_propagates_after_re
         ):
             await _display(controller, screen)
         _retired(database, observed)
-        assert pair_count == 2 and observed["callbacks"] == 2
+        assert pair_count == 1 and observed["callbacks"] == 1
         assert observed["recent"] == 0 and not fail[0]
         assert controller._presentation_scope_key is None
         assert controller.state.scope_fingerprint is None
@@ -395,7 +400,8 @@ async def test_character_captured_close_policy_change_refuses_display_publicatio
         nonlocal pairs, restore
         if name == "pairs" and event == "call":
             pairs += 1
-        if name == "pairs" and event == "return" and pairs == 2 and restore is None:
+        # TASK-33620.15.6: the one display batch: its first pair is the boundary.
+        if name == "pairs" and event == "return" and pairs == 1 and restore is None:
             restore = _body_fault(CharactersRAGDB._close_connection_handle, calls)
 
     try:
@@ -406,7 +412,7 @@ async def test_character_captured_close_policy_change_refuses_display_publicatio
         # Existing ordinary close still invokes its declared custom policy to
         # retire the handle. It does not authorize another display read/result.
         assert calls
-        assert observed["callbacks"] == 2 and observed["pairs"] == 2
+        assert observed["callbacks"] == 1 and observed["pairs"] == 1
         assert observed["recent"] == 0
         assert controller._presentation_scope_key is None
         assert controller.state.scope_fingerprint is None

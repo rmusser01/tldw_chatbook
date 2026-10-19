@@ -41,8 +41,9 @@ async def test_completed_changed_character_display_does_not_issue_immediate_veri
             not controller.state.error
             and controller.state.scope_fingerprint is not None
         )
-        assert initial["pairs"] == 3 and initial["recent"] == 1
-        assert initial["callbacks"] == 2 and len(initial["connections"]) == 2
+        # TASK-33620.15.6: the changed display decides inside one batch.
+        assert initial["pairs"] == 2 and initial["recent"] == 1
+        assert initial["callbacks"] == 1 and len(initial["connections"]) == 1
         expected_state = controller.state
         after_first = controller._presentation_scope_key
         with _original_calls(database) as following:
