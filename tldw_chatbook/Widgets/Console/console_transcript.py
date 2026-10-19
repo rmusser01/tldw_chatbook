@@ -8601,7 +8601,7 @@ class ConsoleTranscript(VerticalScroll):
         menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
         opener_id = menus[0].opener_button_id if menus else ""
         for menu in menus:
-            await menu.remove()
+            await finish_removal(menu.remove())
         if restore_focus:
             self._restore_message_action_focus(opener_id)
 

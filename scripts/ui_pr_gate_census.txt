@@ -577,4 +577,5 @@ Tests/UI/test_console_browser_quit_fence.py
 # The flat browser group must retain its issued native callback through drain.
 Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_presentation_worker[console-flat-conversation-search]
 # TASK-34982: stopping the poll's timer mid-removal still removes the transcript row (no Console screen; well under 1 s).
+# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
 Tests/UI/test_console_transcript_poll_stop_removal.py

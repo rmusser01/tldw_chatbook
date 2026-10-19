@@ -70,6 +70,7 @@ from ...Chat.console_settings_defaults import (
     parse_console_endpoint_preview,
 )
 from ...Widgets.glyph_fallback import resolve_glyph
+from ..Navigation.surface_swap_guard import finish_removal
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleBoundedSection,
@@ -1716,7 +1717,8 @@ class ConsoleLeftRail(Vertical):
                 holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
             except (NoMatches, QueryError):
                 return False
-            await holder.remove_children()
+            # TASK-34982: the poll's sync reaches this in its timer's task.
+            await finish_removal(holder.remove_children())
             if not is_current() or not holder.is_mounted:
                 return False
             widget = widget_builder()
@@ -1726,7 +1728,7 @@ class ConsoleLeftRail(Vertical):
             if is_current():
                 return True
             if widget.parent is holder:
-                await widget.remove()
+                await finish_removal(widget.remove())
             return False
 
     def _snapshot_outer_viewport_height(self) -> int:

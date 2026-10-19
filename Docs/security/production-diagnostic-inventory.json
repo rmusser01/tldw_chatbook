@@ -3319,8 +3319,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "05833597d4bcd1f30771",
+      "call_count": 2,
+      "diagnostic_digest": "4efd5908f3aa3c231091",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Navigation/surface_swap_guard.py",
       "reason": "remaining Chatbook production diagnostic owner"

@@ -42,8 +42,8 @@ from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
