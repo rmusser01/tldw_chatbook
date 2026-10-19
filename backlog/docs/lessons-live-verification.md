@@ -1,5 +1,19 @@
 # Lessons: verifying against the real thing
 
+## Private profiles do not isolate a shared source checkout (TASK-35613, 2026-10-19)
+
+**Incident.** While PR #3166's config/CSS follow-up was adding regressions, another
+task rebased the same checkout. HEAD moved to an earlier replayed commit and later
+test/harness files disappeared between reads and edits. Private test-data profiles
+did not protect the source tree. The follow-up moved to a managed worktree at the
+verified head, reconstructed only its own changes, and later rebased onto the
+published result without changing the other checkout's rebase state.
+
+**What to do.** Use an isolated checkout for a long profiling/fix cycle when another
+task may update the branch. Pin original-code controls and record source hashes;
+after a concurrent integration, distinguish earlier A/B measurements from final
+combined-code validation. Never abort someone else's rebase to recover a benchmark.
+
 ## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
 
 **Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.

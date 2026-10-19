@@ -13,13 +13,18 @@ sources = [
     "tldw_chatbook/UI/Screens/chat_screen.py",
     "tldw_chatbook/Utils/textual_css_fastpath.py",
 ]
-for tag, original in (
+runs = (
     ("benchmark", False),
     ("control1", True),
     ("after1", False),
     ("after2", False),
     ("control2", True),
-):
+)
+if "--final" in sys.argv:
+    runs = (("final", False),)
+if "--final-control" in sys.argv:
+    runs = (("final-control", True),)
+for tag, original in runs:
     command = [
         sys.executable,
         str(OUT / "probe.py"),
@@ -37,6 +42,11 @@ for tag, original in (
     receipt = {
         "tag": tag,
         "original": original,
+        "checkout_revision": subprocess.check_output(
+            ["git", "-c", f"safe.directory={ROOT.as_posix()}", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+        ).strip(),
         "source_sha256": {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in sources
