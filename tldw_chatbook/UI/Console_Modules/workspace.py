@@ -5568,20 +5568,26 @@ class ConsoleWorkspaceController:
                 return False
             self._set_conversation_row_loading_fn(row_conversation_id, True)
             try:
-                resumed = await self._resume_console_workspace_conversation(
-                    row_conversation_id,
-                    target_scope_type=(
-                        browser_row.scope_type
-                        if browser_row is not None
-                        else ("workspace" if target_workspace_id else None)
-                    ),
-                    target_workspace_id=(
-                        browser_row.workspace_id
-                        if browser_row is not None
-                        else target_workspace_id
-                    ),
-                    resume_if=resume_if,
-                )
+                # TASK-35310: mark the activation in flight for the whole
+                # hydration -- during it the active session and the composer
+                # binding still name the OLD chat, so without this window a
+                # Send pressed in the window is pinned to the OLD chat and
+                # dies silently (Console UAT 2026-10-17 finding 1).
+                with self._screen._session.conversation_activation_window():
+                    resumed = await self._resume_console_workspace_conversation(
+                        row_conversation_id,
+                        target_scope_type=(
+                            browser_row.scope_type
+                            if browser_row is not None
+                            else ("workspace" if target_workspace_id else None)
+                        ),
+                        target_workspace_id=(
+                            browser_row.workspace_id
+                            if browser_row is not None
+                            else target_workspace_id
+                        ),
+                        resume_if=resume_if,
+                    )
             finally:
                 try:
                     self._set_conversation_row_loading_fn(row_conversation_id, False)

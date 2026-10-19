@@ -18097,12 +18097,27 @@ class ChatScreen(BaseAppScreen):
             Send's hook review (TASK-33621.28).
         """
         received_inputs = None
+        from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
+
         # A scheduled Enter callback may consume only its own capture.
         # Mouse/Workbench sends have no token and always read the live draft.
         stash = None
         if pending_send_token is not None:
             pending_send = self._console_pending_send
             if pending_send is None or pending_send.token is not pending_send_token:
+                # TASK-35310: this used to drop the send with no feedback,
+                # which is how a press racing a conversation resume could
+                # vanish (Console UAT 2026-10-17 finding 1). The capture is
+                # no longer claimable, so tell the user instead.
+                record_send_stage(
+                    "ui_submit",
+                    "not_dispatched",
+                    reason="pending_send_token_mismatch",
+                )
+                self.app_instance.notify(
+                    "Console chat changed before send; the draft was kept in its original chat.",
+                    severity="warning",
+                )
                 return False
             self._console_pending_send = None
             session_id = pending_send.session_id
@@ -18115,6 +18130,18 @@ class ChatScreen(BaseAppScreen):
             and self._console_pending_send is not None
             and self._console_pending_send.session_id == session_id
         ):
+            # TASK-35310: a tokenless send while another send holds the
+            # pending slot used to drop silently; surface it so the user
+            # knows to press Send again once the first settles.
+            record_send_stage(
+                "ui_submit",
+                "not_dispatched",
+                reason="pending_send_slot_busy",
+            )
+            self.app_instance.notify(
+                "A send is still starting up; press Send again in a moment.",
+                severity="warning",
+            )
             return False
         if session_id is None or self._console_visible_draft_session_id != session_id:
             self.app_instance.notify(
