@@ -1721,6 +1721,60 @@ async def test_a_draining_wake_lets_its_conversations_close_fence_release(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session(
+    tmp_path, request
+):
+    """TASK-33666: once a draining wake has left delivery, only its claim keeps a
+    second wake turn in the same session from starting beside the old worker.
+
+    The submitter refuses before acceptance, so the wake's result stays
+    pending and every retry is a second turn for the same session."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    rig = _controller_rig(tmp_path)
+    chacha, _, db, _, session, _, bridge, controller = rig
+    wake = controller.fleet_wake
+    bridge.runtime_capacity = capacity = RuntimeCapacity()
+    workers, calls = [], []
+
+    def turn_ends_before_its_worker(notice, **kwargs):
+        calls.append(notice)
+        if not workers:
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC, conversation_id=session.id
+            )
+            workers.append(owner.reserve_model())
+            owner.finish_root()
+        raise RuntimeError("turn ended")
+
+    wake.bind_runtime_submitter(turn_ends_before_its_worker)
+    try:
+        _, child = _terminal_subagent_run(db, session.id)
+        wake.on_fleet_drained(_drain(session.id, _survivor(child)))
+        assert await _settle(lambda: bool(workers))
+        assert await _settle(
+            lambda: session.id not in wake.delivering_conversation_ids()
+        )
+        first_claim = wake._automatic_primary_claims[session.id]
+        for _ in range(6):  # retries of the pending wake, each a second turn
+            wake._retry_after.clear()
+            wake._coalesce_until.clear()
+            wake.retry_soon()
+            await asyncio.sleep(0.25)
+        assert len(calls) == 1, "a second wake turn started beside the old worker"
+        assert session.id not in wake.delivering_conversation_ids()
+        assert wake._automatic_primary_claims[session.id] is first_claim
+        workers[0].finish()
+        # The worker gone, the claim is released and the next retry is admitted.
+        assert await _settle(lambda: len(calls) >= 2)
+    finally:
+        wake.dispose()
+        db.close()
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(tmp_path, request):
     """A synchronous custody refusal refunds the unaccepted durable attempt."""
     rig = _controller_rig(tmp_path)

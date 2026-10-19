@@ -107,10 +107,10 @@ jobs:
       - name: Install fast-lane dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
 
-      # Phase 9: the last 15 targets are model-config evidence that ran in no PR
-      # lane (13 from the whole-PR review's round 1, 2 from the Stop-claim fix;
-      # Tests/CI's FAST_LANE_TARGETS names each rider); about 1 min serial in
-      # this job's install set.
+      # Phase 9's reviews: the last 17 targets are model-config evidence that
+      # ran in no PR lane (13 from the whole-PR review's round 1, 4 from the
+      # Stop-claim fix and its reviews; Tests/CI's FAST_LANE_TARGETS names each
+      # rider); about 1 min serial in this job's install set.
       - name: Run fast PR contract
         run: |
           pytest \
@@ -236,6 +236,7 @@ jobs:
             Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work \
             Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits \
             Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release \
+            Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session \
             --timeout=180 \
             --tb=short
 

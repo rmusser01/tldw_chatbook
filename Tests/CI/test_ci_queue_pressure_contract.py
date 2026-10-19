@@ -240,6 +240,9 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits",
     # Its review: a draining wake leaves delivery, so a close still unfences.
     "Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release",
+    # Its review in turn: the draining wake's claim keeps a second wake turn out
+    # of its session.
+    "Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
