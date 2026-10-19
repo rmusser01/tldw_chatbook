@@ -245,14 +245,15 @@ jobs:
     #
     # timeout-minutes: the 35 the owner set for exactly these suites
     # (TASK-33910.2). Its 90 measured runs (to 2026-10-14) replay at median
-    # 16.3 / max 20.1 min with setup. Phase 9 added 52 targets (see the step):
-    # serial in this job's install set (2026-10-19, load 23-57) dev's 41
-    # targets alone took 17.6 min and the whole step 29.1 min, and the 52's
-    # own tests 8.0 min of it. Scaled by dev's 17.6 local minutes to its
-    # ~14.8 of pytest on CI (16.3 less ~1.5 of setup), the 52 add 6.7-9.7
-    # min: about median 23-26 / max 27-30 min, so one hung test at
-    # --timeout=300 (about 5.3 min with the private-profile wrapper's report)
-    # ends only 0-3 min under the cap.
+    # 16.3 / max 20.1 min with setup; the step then had 23 targets. Phase 8
+    # added 18 (2026-10-16) and Phase 9 52 (see the step). Serial in this
+    # job's install set (2026-10-19) the 23 took 15.7 min and the whole step
+    # 29.1 min at load 23-57, and 9.6 and 18.7 min at load 10-27. Scaled by
+    # the 23's own local-to-CI ratio, the step comes to about median 25-31 /
+    # max 29-35 min, so one hung test at --timeout=300 (about 5.3 min with
+    # the private-profile wrapper's report) can end past the cap. TASK-35575
+    # holds the decision: a second job (this workflow's rule for a lane near
+    # its cap) or a timeout ruling.
     #
     # One more runner per PR (ADR-103 note, 2026-10-14).
     name: PR Fast Lane (admission-sensitive)
