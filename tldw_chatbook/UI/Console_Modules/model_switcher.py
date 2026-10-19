@@ -456,14 +456,14 @@ def _switcher_sources(
     readiness that read the detected endpoint, and the server's own listing,
     which is that provider's catalog. Nothing here is saved.
 
-    A pick keeps a draft's Endpoint on its provider (TASK-35190), so with
-    ``draft`` the readiness and the local probe read each provider at the
+    A pick keeps a draft's Endpoint on llama.cpp, and a typed one in pick
+    mode on any provider (TASK-35190), so with ``draft`` the readiness and the local probe read each provider at the
     Endpoint a pick on it lands on (``pick_base_url``, the rebaser's own
     rule), in memory only, as R12 does for a detected server. The rebaser
     keeps ``app_config``, so a default it saves names no session Endpoint.
-    Where that moves an endpoint, the probe checks the configured one too
-    (not in pick mode, which has no Ctrl+N): new chats use it, and Ctrl+N's
-    check reads it.
+    Where that moves an endpoint off the saved one, the probe checks the
+    configured one too (not in pick mode, which has no Ctrl+N): new chats
+    use it, and Ctrl+N's check reads it.
 
     Args:
         screen: The Console screen that owns the chat.
@@ -493,9 +493,19 @@ def _switcher_sources(
         drafts = (draft.settings.provider, *(d.provider for d in draft.model_drafts))
         for provider in dict.fromkeys(drafts):
             url = pick_base_url(draft, provider or "", full_surface=full_surface)
-            if url:
-                key = provider_config_key(provider)
-                landing = with_provider_endpoint(landing, key, url)
+            if not url:
+                continue
+            key = provider_config_key(provider)
+            api = landing.get("api_settings")
+            section = api.get(key) if isinstance(api, Mapping) else None
+            saved = (
+                first_configured_endpoint(section)
+                if isinstance(section, Mapping)
+                else None
+            )
+            if saved and not adoption_endpoints_differ(key, saved, url):
+                continue  # Not moved: a copy would read as moved (one prober).
+            landing = with_provider_endpoint(landing, key, url)
     # One gate for both probers, so an open keeps its in-flight cap.
     gate = asyncio.Semaphore(SWITCHER_PROBES_IN_FLIGHT)
     probes = [switcher_connection_prober(screen.app, landing, gate=gate)]

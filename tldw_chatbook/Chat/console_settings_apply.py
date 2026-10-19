@@ -7,7 +7,10 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS
+from tldw_chatbook.Chat.console_provider_support import (
+    GENERATION_FIELD_REQUEST_KEYS,
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityLease,
 )
@@ -16,10 +19,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     normalize_console_model_value,
 )
-from tldw_chatbook.Chat.custom_endpoint_registry import (
-    provider_identity_key,
-    split_custom_endpoint_id,
-)
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
 
@@ -247,11 +247,13 @@ def rebased_endpoint(
     A kept pair (the current one, or a remembered target) keeps its own
     endpoint. An unseen pair takes the endpoint of the latest draft on its
     provider: the current one, else the most recently remembered one. So a
-    pick on the chat's own provider keeps the chat's Endpoint, after a detour
-    through another provider too, and a pick onto another provider never
-    carries it (TASK-35190). An unset URL there means the configured one, not
-    "no endpoint", so the target's default chain applies, as it does for a
-    registry entry, whose own URL is its endpoint. Only the full surface
+    llama.cpp pick keeps the chat's Endpoint, after a detour through another
+    provider too, and a pick onto another provider never carries it
+    (TASK-35190). Only llama.cpp's direct path sends on an Endpoint set only
+    on the chat; any other provider blocks one it has not saved
+    (``endpoint_not_saved``), so there, as for an unset URL (the configured
+    one, not "no endpoint") and a registry entry (whose own URL is its
+    endpoint), the target's default chain applies. Only the full surface
     carries an endpoint edit.
 
     Args:
@@ -296,7 +298,11 @@ def rebased_endpoint(
         and (
             preserve_snapshot
             or (
-                peer.settings.base_url and split_custom_endpoint_id(provider_id) is None
+                peer.settings.base_url
+                # Config-free: no handler keys are read for the direct path.
+                and resolve_console_provider_identity(
+                    provider_id, handler_keys=()
+                ).uses_direct_llama_path
             )
         )
     ):

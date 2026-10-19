@@ -3684,3 +3684,130 @@ async def test_pick_only_never_picks_needs_setup_and_esc_returns_nothing() -> No
 
     assert app.result is None
     assert recorder.submissions == [] and recorder.setup == []
+
+
+def _switcher_sources_over(draft, config, monkeypatch, *, full_surface=False):
+    """``_switcher_sources`` over a stand-in screen, with the real readiness
+    (``ChatScreen._console_default_readiness`` without evidence). Returns the
+    sources and the configuration each prober was built over."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_target_default_console_session_settings,
+    )
+    from tldw_chatbook.UI.Console_Modules import connection_probe
+    from tldw_chatbook.UI.Console_Modules.model_switcher import _switcher_sources
+
+    probed: list[object] = []
+
+    def prober(_app, app_config, gate=None):
+        probed.append(app_config)
+        return lambda *_args: None
+
+    def readiness(provider, model, app_config=None):
+        app_config = app_config or config
+        settings = build_target_default_console_session_settings(
+            app_config, provider, model
+        )
+        return build_console_settings_readiness(settings, app_config=app_config)
+
+    monkeypatch.setattr(connection_probe, "switcher_connection_prober", prober)
+    screen = SimpleNamespace(
+        app=None,
+        _ensure_console_chat_store=lambda: None,
+        _providers_models=dict,
+        _ensure_console_chat_controller=lambda: SimpleNamespace(
+            rebase_console_settings_draft=None
+        ),
+    )
+    sources = _switcher_sources(
+        screen,
+        "session-a",
+        (draft.settings.provider, draft.settings.model),
+        config,
+        readiness,
+        draft=draft,
+        full_surface=full_surface,
+    )
+    return sources, probed
+
+
+@pytest.mark.parametrize("full_surface", [False, True], ids=["alt-m", "pick-mode"])
+async def test_an_unseen_pick_on_a_url_server_lands_on_its_saved_endpoint(
+    full_surface, monkeypatch
+) -> None:
+    """TASK-35190 review round 4: only llama.cpp's direct path sends on an
+    Endpoint set only on the chat; every other URL provider blocks one it has
+    not saved. An Ollama chat holding :11500 while the config says :11434
+    (Settings does not move a chat that holds work, ADR-095) kept :11500 on a
+    pick of another Ollama model and read "endpoint unsaved", while Switch
+    model's row, read over the held URL, said Ready. The pick lands on :11434
+    now, ready to send, and the row reads its word."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    saved = "http://127.0.0.1:11434"
+    config = {"api_settings": {"ollama": {"api_url": saved, "model": "model-a"}}}
+    draft = ConsoleSettingsModal._initial_full_draft(
+        ConsoleSessionSettings(
+            provider="ollama", model="model-a", base_url="http://127.0.0.1:11500"
+        )
+    )
+    picked = ConsoleChatController.rebase_console_settings_draft(
+        object(),
+        draft,
+        provider="ollama",
+        model="model-b",
+        app_config=config,
+        exposed_fields=FULL_MODEL_DEFAULT_FIELDS
+        if full_surface
+        else QUICK_MODEL_DEFAULT_FIELDS,
+    )
+    landed = build_console_settings_readiness(picked.settings, app_config=config)
+    sources, probed = _switcher_sources_over(
+        draft, config, monkeypatch, full_surface=full_surface
+    )
+    row = sources["default_readiness_resolver"]("ollama", "model-b")
+
+    assert picked.settings.base_url == saved
+    assert landed.operability == "ready_to_send", landed.blocker
+    assert readiness_words(row) == readiness_words(landed) == "Ready · not tested"
+    assert probed == [config]
+
+
+@pytest.mark.parametrize(
+    ("held", "probers"),
+    [("http://127.0.0.1:9099", 1), ("http://127.0.0.1:9200", 2)],
+    ids=["saved-url", "moved"],
+)
+async def test_switch_model_checks_the_saved_server_too_only_off_it(
+    held, probers, monkeypatch
+) -> None:
+    """TASK-35190 review round 4: ``with_provider_endpoint`` always returns a
+    copy, so a chat that holds its saved URL explicitly counted as moved, and
+    every such Alt+M open built a second prober over an identical copy. Only
+    an Endpoint off the saved one builds the configured server's prober."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"}
+        }
+    }
+    draft = ConsoleSettingsModal._initial_full_draft(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a", base_url=held)
+    )
+    _sources, probed = _switcher_sources_over(draft, config, monkeypatch)
+
+    assert len(probed) == probers
+    assert (probed[0] is config) == (probers == 1) and probed[-1] is config

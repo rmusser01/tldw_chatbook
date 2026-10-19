@@ -583,11 +583,13 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   the only way to change the model: it opens **Switch model** (below) in pick
   mode over Chat settings, listing the same provider·model pairs, plus the
   models a listing here found that a pick would keep on the **Endpoint** that
-  listed them. A pick of another model on the chat's provider keeps the
-  Endpoint (this chat's own server, also after a pick of another provider in
-  between); a pick of a model already picked in this draft brings back the
-  Endpoint it had, and a pick onto another provider takes that provider's own
-  endpoint. A model whose pick would move the Endpoint is not listed, and
+  listed them. A pick of another model on the chat's provider keeps an
+  Endpoint you typed here, and on llama.cpp it keeps this chat's own server
+  too (also after a pick of another provider in between); any other provider
+  cannot send on an endpoint that is not saved, so there it takes the
+  configured endpoint. A pick of a model already picked in this draft brings
+  back the Endpoint it had, and a pick onto another provider takes that
+  provider's own endpoint. A model whose pick would move the Endpoint is not listed, and
   changing the Endpoint drops the old listing. On the chat's provider, a
   listing here is that provider's rows: neither the configured server's
   listing nor a saved model the listing left out is offered. **Enter**
@@ -877,17 +879,20 @@ status at once, under the open list. Once a server's model listing has
 answered (this check, or **Test connection** of the same connection), that
 server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
-longer offered. A pick on this chat's own provider keeps this chat's
-endpoint, so while the chat runs on a server other than the configured one,
-that provider's readiness words and its rows are this chat's endpoint's,
-not the configured server's: a configured server that is down does not put
-the provider under NEEDS SETUP, and its listing is not that provider's rows.
-They are what this chat's endpoint listed (in Chat settings, a listing
-there), else the saved and cached models. In Chat settings the same holds
-for a provider picked earlier in the draft, whose pick brings back the
-endpoint it had. Switch model's background check then covers both servers:
-this chat's endpoint for the rows, and the configured one, which new chats
-use and **Ctrl+N** checks. A listing is read up to 100 models, and
+longer offered. On llama.cpp, which sends to an endpoint set only on this
+chat, a pick keeps this chat's endpoint, so while a llama.cpp chat runs on a
+server other than the configured one, llama.cpp's readiness words and its
+rows are this chat's endpoint's, not the configured server's: a configured
+server that is down does not put llama.cpp under NEEDS SETUP, and its
+listing is not llama.cpp's rows. They are what this chat's endpoint listed
+(in Chat settings, a listing there), else the saved and cached models. Any
+other provider cannot send on an endpoint that is not saved, so a pick there
+lands on the configured server, and its rows and words are that server's.
+In Chat settings the same holds for an Endpoint you typed, and for a
+provider picked earlier in the draft, whose pick brings back the endpoint it
+had. Where the rows read an endpoint other than the saved one, Switch
+model's background check covers both servers: that endpoint for the rows,
+and the configured one, which new chats use and **Ctrl+N** checks. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
 stay after the listed ones; this chat's own model stays listed first.
 Until then (not checked yet, refused or timed out) the rows are the saved
