@@ -12347,11 +12347,6 @@ class ConsoleChatController:
                 # An explicit Capture-Off action uses this same ownership proof,
                 # but never re-admits or changes the abandoned trace reservation.
             except TraceCallPersistenceError:
-                from .console_trace_retry_refusal import repause_refused_trace_retry
-
-                paused = repause_refused_trace_retry(self, preparation_id, continuation)
-                if paused is not None:  # G3V2-03: nothing was built to dispatch
-                    return paused
                 visible_copy = (
                     "Delivery status is unknown. Use Retry anyway or Discard."
                 )

@@ -1074,8 +1074,8 @@ configured in **F4 ▸ Providers & Models**.
   sends in a saved Kimi chat stop before the provider with **Trace capture
   blocked** (the provider was not contacted). Choose **Send without capture**
   for that turn; it reaches the provider and the reply is saved normally.
-  **Retry capture** meets the same refusal: the card stays, says the retry was
-  refused again and the provider was not contacted, and **Send without
+  **Retry capture** meets the same refusal: the card stays, says trace capture
+  could not start (the provider was still not contacted), and **Send without
   capture** still works.
 - Private continuation data is assistant/variant-owned, bounded, and omitted
   from the visible transcript, logs, summaries, ordinary exports, and usage
