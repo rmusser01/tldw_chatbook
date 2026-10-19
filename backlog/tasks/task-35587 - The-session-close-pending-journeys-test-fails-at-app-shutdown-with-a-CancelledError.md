@@ -23,7 +23,7 @@ Tests/UI/test_console_session_tab_close.py::test_session_close_pending_journeys 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 The task that is cancelled at shutdown, and what cancels it, is identified, in the test or the product
+- [x] #1 The task that is cancelled at shutdown, and what cancels it, is identified, in the test or the product (mechanism reproduced; the CI trigger is inferred, and AC #2 confirms it)
 - [ ] #2 The test passes 20 consecutive pull-request runs in CI
 - [x] #3 If the product was at fault, a test that fails deterministically without the fix pins it
 <!-- AC:END -->
@@ -45,11 +45,11 @@ TASK-34982 describes such a path: the transcript poll paints inside its timer's 
 
 Locally on dev 69771c1811 the test passed 5 of 5 sequential runs (75-107 s each).
 
-2026-10-19 UTC, cause (AC #1, in the product). The cancelled tasks are removed transcript rows' own message-pump tasks. The transcript poll is a set_interval timer and paints inside the timer's own task; App._prune hands AwaitRemove the removed rows' pump tasks and await_prune gathers them. When the screen's message loop ends at shutdown, Textual's Timer._stop_all cancels the poll's timer task before the screen prunes its children, and if a paint is removing rows at that moment the cancel reaches their pumps through the gather: their Unmount is cut short, they stay the transcript's children with cancelled tasks, and the transcript's prune gather then raises a bare CancelledError (the first gather had already consumed each row's saved error). TASK-34982's test reproduces exactly this, with the CI run's signature (CancelledError from _message_loop_exit, no frame below ConsoleTranscript's gather). That a paint was removing rows in 39151121023 at that moment is inferred from the matching mechanism and signature; its log names no timer.
+2026-10-19 UTC, cause (AC #1, in the product): the TASK-34982 path, whose notes have the detail. At app shutdown the Console screen's teardown stops the transcript poll's set_interval timer before the screen's children are gathered; a paint removing rows at that moment has its cancel reach the rows' own pump tasks, they stay attached with cancelled tasks, and ConsoleTranscript's gather raises a bare CancelledError. That a paint was removing rows in 39151121023 is inferred from the matching mechanism and signature; its log names no timer.
 
-Fix and pin (AC #3): PR #3167 (TASK-34982) shields every awaited removal the poll's sync reaches (finish_removal in UI/Navigation/surface_swap_guard.py). Its Tests/UI/test_console_transcript_poll_stop_removal.py::test_stopping_the_paint_timer_mid_removal_still_removes_the_row stops the poll-style timer in the middle of a row removal; on dev it fails, with this task's CancelledError at run_test shutdown.
+Fix and pin (AC #3): PR #3167 (TASK-34982). Its test_stopping_the_paint_timer_mid_removal_still_removes_the_row fails on dev with this task's CancelledError at run_test shutdown.
 
-AC #2 is open: count 20 consecutive pull-request runs of test_session_close_pending_journeys (UI Fast Lane (8) and the Console P0 gate) after #3167 merges.
+AC #2 is open: 20 consecutive pull-request runs of test_session_close_pending_journeys (UI Fast Lane (8), Console P0 gate) after #3167 merges.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
