@@ -11,7 +11,7 @@ from textual.css import stylesheet
 from textual.css.match import _check_selectors as upstream_match
 
 
-def measure(app):
+def measure(app, baseline_revision="f152dfc4a6c4fbf2fcd277543757a46a0d2874e2"):
     from subject_observer import measure as observe
     from tldw_chatbook.Utils import textual_css_fastpath as current
 
@@ -22,7 +22,7 @@ def measure(app):
             "-c",
             f"safe.directory={root.as_posix()}",
             "show",
-            "f152dfc4a6c4fbf2fcd277543757a46a0d2874e2:tldw_chatbook/Utils/textual_css_fastpath.py",
+            f"{baseline_revision}:tldw_chatbook/Utils/textual_css_fastpath.py",
         ],
         cwd=root,
     )
@@ -31,8 +31,10 @@ def measure(app):
     patched = Stylesheet.apply
     patched_match = stylesheet._check_selectors
     Stylesheet.apply = patched.__wrapped__
+    stylesheet._check_selectors = upstream_match
     baseline.install_stylesheet_fastpath()
     original = Stylesheet.apply
+    original_match = stylesheet._check_selectors
     sheet = app.stylesheet
     nodes = list(app.screen.walk_children(with_self=True))
     results = {"before": [], "after": []}
@@ -48,7 +50,7 @@ def measure(app):
             for variant, apply in arms:
                 Stylesheet.apply = apply
                 stylesheet._check_selectors = (
-                    upstream_match if variant == "before" else patched_match
+                    original_match if variant == "before" else patched_match
                 )
                 if hasattr(sheet, current._CACHE_ATTR):
                     delattr(sheet, current._CACHE_ATTR)

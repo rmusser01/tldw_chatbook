@@ -25,6 +25,10 @@ if "--final" in sys.argv:
 if "--final-control" in sys.argv:
     runs = (("final-control", True),)
 confirm = "--confirm" in sys.argv
+matcher = "--return-matcher" in sys.argv
+if matcher and confirm:
+    raise ValueError("Select one comparison")
+prefix = "return-matcher" if matcher else "subject"
 for tag, original in runs:
     if confirm:
         tag = "verify-" + tag
@@ -36,12 +40,20 @@ for tag, original in runs:
         "--attach-poll",
         "--clock-safe",
         "--tag",
-        f"subject-{tag}",
+        f"{prefix}-{tag}",
     ]
     if tag in ("benchmark", "verify-benchmark"):
-        command.append("--subject-benchmark")
+        command.append(
+            "--return-matcher-benchmark" if matcher else "--subject-benchmark"
+        )
     if original:
-        command.append("--subject-scoped-baseline" if confirm else "--subject-baseline")
+        command.append(
+            "--return-matcher-baseline"
+            if matcher
+            else "--subject-scoped-baseline"
+            if confirm
+            else "--subject-baseline"
+        )
     receipt = {
         "tag": tag,
         "original": original,
@@ -56,7 +68,7 @@ for tag, original in runs:
         },
     }
     started = time.monotonic()
-    with (OUT / f"subject-{tag}.log").open("wb") as log:
+    with (OUT / f"{prefix}-{tag}.log").open("wb") as log:
         try:
             result = subprocess.run(
                 command, cwd=ROOT, stdout=log, stderr=log, timeout=300
@@ -65,7 +77,7 @@ for tag, original in runs:
         except subprocess.TimeoutExpired:
             receipt["timeout_seconds"] = 300
     receipt["seconds"] = time.monotonic() - started
-    (OUT / f"subject-{tag}-exit.json").write_text(
+    (OUT / f"{prefix}-{tag}-exit.json").write_text(
         json.dumps(receipt, indent=2), encoding="utf-8"
     )
     print(json.dumps(receipt), flush=True)

@@ -3,14 +3,75 @@
 import inspect
 from unittest.mock import patch
 
+import pytest
+
 from textual.containers import Vertical
 from textual.css import stylesheet
 from textual.css.match import _check_selectors as upstream_match
-from textual.css.model import Selector
+from textual.css.model import CombinatorType, Selector
 from textual.css.stylesheet import Stylesheet
 from textual.widgets import Button
 
 from tldw_chatbook.Utils.textual_css_fastpath import install_stylesheet_fastpath
+
+
+@pytest.mark.parametrize("rule", ["Button", "Button.hot", "Button:enabled.hot"])
+def test_subject_only_rule_checks_each_selector_on_subject_once(rule):
+    """A compound with no ancestry cannot gain a match from scanning parents."""
+    install_stylesheet_fastpath()
+    parent = Vertical()
+    button = Button(classes="hot")
+    button._attach(parent)
+    sheet = Stylesheet()
+    sheet.add_source(f"{rule} {{ color: red; }}")
+    selectors = sheet.rules[0].selector_set[0].selectors
+    checked = []
+    original = Selector.check
+
+    def check(selector, node):
+        checked.append(node)
+        return original(selector, node)
+
+    assert upstream_match(selectors, button.css_path_nodes)
+    with patch.object(Selector, "check", check):
+        assert stylesheet._check_selectors(selectors, button.css_path_nodes)
+    assert checked == [button] * len(selectors)
+
+
+def test_uncertain_advance_and_ancestry_keep_original_matcher():
+    from tldw_chatbook.Utils import textual_css_fastpath as fast
+
+    parent = Vertical(classes="hot")
+    button = Button(classes="hot")
+    button._attach(parent)
+    sheet = Stylesheet()
+    sheet.add_source("Button.hot { color: red; } Vertical > Button { color: blue; }")
+    compound, ancestry = [rule.selector_set[0].selectors for rule in sheet.rules]
+    compound[0].advance = 1  # Unsupported/custom shape must stay upstream.
+    for selectors in (compound, ancestry):
+        with patch.object(
+            fast, "_upstream_check_selectors", wraps=upstream_match
+        ) as original:
+            assert fast._check_subject_pseudo_classes(
+                selectors, button.css_path_nodes
+            ) == upstream_match(selectors, button.css_path_nodes)
+        original.assert_called_once()
+
+
+@pytest.mark.parametrize("start", [CombinatorType.CHILD, CombinatorType.SAME])
+@pytest.mark.parametrize("rule", ["Button", "Button.hot"])
+def test_non_descendant_start_keeps_original_matcher(start, rule):
+    from tldw_chatbook.Utils import textual_css_fastpath as fast
+
+    parent = Vertical()
+    button = Button(classes="hot")
+    button._attach(parent)
+    sheet = Stylesheet()
+    sheet.add_source(f"{rule} {{ color: red; }}")
+    selectors = sheet.rules[0].selector_set[0].selectors
+    selectors[0].combinator = start
+    assert not upstream_match(selectors, button.css_path_nodes)
+    assert not fast._check_subject_pseudo_classes(selectors, button.css_path_nodes)
 
 
 def test_upstream_success_requires_final_selector_on_subject():
@@ -23,6 +84,7 @@ def test_upstream_success_requires_final_selector_on_subject():
     )
     assert source.count(success) == 2
     assert source.count("return True") == 2
+    assert source.count("selector_index + 1, node_index + selector.advance") == 2
 
 
 def test_false_subject_pseudo_does_not_scan_ancestors():
@@ -59,6 +121,8 @@ async def test_live_subject_states_keep_styles_components_and_refresh_flags():
         Vertical *:disabled:can-focus { color: yellow; }
         Vertical:focus-within > Horizontal Button:hover { background: blue; }
         Button.hot:disabled, Button:focus { border: solid green; }
+        Button:disabled.hot { color: magenta; }
+        Button:enabled.hot.-style-default { background: yellow; }
         Horizontal > Button:first-child { background: green; }
         Input > .input--cursor { color: red; }
         """

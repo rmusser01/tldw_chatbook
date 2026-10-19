@@ -239,14 +239,14 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
     Asserts both directions: the scoped rule becomes a candidate when the
     ancestor gains the class, and stops being one when it loses it.
     """
-    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
 
     # Splash disabled (as the sibling fastpath test already does): this test
     # needs the main UI mounted, and the default splash now runs 7s
     # (TASK-30016) -- far past the poll window below.
     _scratch_env(monkeypatch)
-    app = _build_test_app()
+    app = TldwCli()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         for _ in range(60):
@@ -360,10 +360,10 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
     """
     from collections import Counter
 
-    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.app import TldwCli
 
     _scratch_env(monkeypatch)
-    app = _build_test_app()
+    app = TldwCli()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         assert not app.splash_screen_active, "CSS census is still on the splash screen"

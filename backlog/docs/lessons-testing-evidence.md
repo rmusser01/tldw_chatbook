@@ -1,5 +1,24 @@
 # Lessons: what counts as evidence a change works
 
+## A performance warmup pause does not establish quiet background work (TASK-35644, 2026-10-19)
+
+**Incident.** After a focused CSS optimization, a Windows Console return
+comparison became slower overall. The old sampler grouped everything from
+navigation through attachment, so it could not place a stack before the key.
+Separate identity-preserving phase observations then measured 98–135 ms full
+styling spans and 388–1,332 ms configuration preparation waits. A further worker
+trace caught a real config read starting while leaving Console and finishing
+during the next return, after 5.71 seconds. The probe's three-second initial
+pause and half-second away interval had not established a settled workload.
+
+**What to do.** Distinguish input, styling and completed attachment; observe
+original callback entry and retirement before blaming a component optimization
+for overall variance. Keep protocol and guards identical in comparison arms,
+retain every outlier, and label instrumented discovery separately from plain
+timing. Do not treat a fixed pause as proof that background work has retired or
+freeze freshness checks to manufacture a quiet run. The earlier runs' exact
+cause remains unproved by this later observation.
+
 ## An idle event loop can still have blocked keyboard dispatch (TASK-35614, 2026-10-19)
 
 **Incident.** A Windows Console return took 2.29 seconds while 152 of 178

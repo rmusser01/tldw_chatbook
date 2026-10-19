@@ -1,0 +1,49 @@
+{
+  "baseline_revision": "48339e4d6d2fa82b561e6fa1651f8e82928177b2",
+  "initial_subject_regression": {"failed": 3, "expected": true},
+  "initial_css_checks": {"passed": 15, "failed": 0},
+  "review_combinator_regression": {"failed": 4, "expected": true},
+  "review_corrected_css_checks": {"passed": 20, "failed": 0},
+  "initial_broader_checks": {
+    "passed": 45,
+    "failed": 2,
+    "seconds": 218.25,
+    "failures": [
+      "Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+      "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet"
+    ],
+    "failure_phase": "Assertions passed; private-profile child teardown refused config retirement because native app workers remained uncertain."
+  },
+  "unchanged_baseline_controls": {
+    "failed": 2,
+    "same_teardown_errors": true,
+    "seconds": 73.80,
+    "audited_module_loads": "return-matcher-baseline-receipts.jsonl",
+    "earlier_runner_attempt": "The legacy runner defaulted to shared Temp and was refused during collection. The successful baseline comparison uses matching_tests.py with genuine user-owned native fixtures. No guard was bypassed."
+  },
+  "fixture_correction": "The two CSS tests now construct the real TldwCli, matching their passing fidelity-tour sibling, instead of the app factory's mocked services. All assertions and retirement gates are unchanged; the broader factory lifecycle is not redesigned.",
+  "final_targeted_checks": {
+    "passed": 48,
+    "failed": 0,
+    "seconds": 135.07,
+    "files": [
+      "Tests/Performance/test_css_subject_pseudo.py",
+      "Tests/Performance/test_css_static_requirements.py",
+      "Tests/Performance/test_css_candidate_reuse.py",
+      "Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+      "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+      "Tests/UI/test_console_return_responsiveness.py",
+      "Tests/UI/test_console_full_config_preparation.py",
+      "Tests/UI/test_console_workspace_reconciliation_preparation.py"
+    ],
+    "wrapper": "matching_tests.py",
+    "platform": "native Windows Python 3.12.10",
+    "full_suite": false
+  },
+  "independent_review": {
+    "first_combinator_finding": "Reproduced in four controls and corrected; reviewer confirmed resolved.",
+    "remaining_findings": 0,
+    "fixture_and_measurement_controls_reviewed": true,
+    "code_verdict": "Ready to merge; final comparative measurements pending at review time."
+  }
+}
