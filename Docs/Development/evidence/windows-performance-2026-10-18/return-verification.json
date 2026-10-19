@@ -1,0 +1,46 @@
+{
+  "red": {
+    "summary": "2 failed, 2 warnings in 24.17s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-djzlrwd8"
+  },
+  "green1": {
+    "summary": "17 passed, 2 warnings in 21.87s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-_f0p14k2"
+  },
+  "lifecycle": {
+    "summary": "1 failed, 17 passed, 76 deselected, 1 xfailed, 2 warnings in 35.80s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-s_n2zx5b"
+  },
+  "lifecycle-baseline": {
+    "summary": "1 failed, 2 warnings in 6.42s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-5uf6zhgb"
+  },
+  "regressions": {
+    "summary": "5 failed, 42 passed, 2 warnings in 199.40s (0:03:19)",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-5gnborgx"
+  },
+  "regressions-fixed": {
+    "summary": "1 failed, 25 passed, 4 warnings in 129.71s (0:02:09)",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-yq4_1gds"
+  },
+  "inventory-red": {
+    "summary": "1 failed, 1 warning in 1.14s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-fhq5391k"
+  },
+  "inventory-green": {
+    "summary": "4 passed, 3 warnings in 52.83s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-syvez4_t"
+  },
+  "hook-red": {
+    "summary": "1 failed, 2 warnings in 4.98s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-fsvow3w4"
+  },
+  "hook-green": {
+    "summary": "1 failed, 9 passed, 2 warnings in 58.55s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-v6ag3xet"
+  },
+  "hook-acl": {
+    "summary": "1 passed, 2 warnings in 16.63s",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-ns23tbzb"
+  }
+}

@@ -15186,7 +15186,7 @@ class ChatScreen(BaseAppScreen):
         # Claim this visit before Textual posts its mount-time ScreenResume.
         # That handler waits behind the same successful full reconciliation.
         self._console_mount_visit_refreshed = True
-        self.call_after_refresh(self._reconcile_console_after_attach)
+        self.call_after_refresh(self._start_console_attach_reconciliation)
 
     def _current_console_attach_visit(self) -> ConsoleAttachVisit:
         return ConsoleAttachVisit(
@@ -15195,6 +15195,26 @@ class ChatScreen(BaseAppScreen):
             self._console_runtime_attachment_generation,
             self._console_attach_visit_generation,
             not _console_screen_is_torn_down(self) and self._is_active_console_screen(),
+        )
+
+    def _start_console_attach_reconciliation(self) -> None:
+        """Keep native-read awaits outside Textual's screen message pump."""
+        if (
+            self._console_attach_reconciled
+            or self._console_attach_reconcile_running
+            or _console_screen_is_torn_down(self)
+        ):
+            return
+        worker = getattr(self, "_console_attach_reconcile_worker", None)
+        if worker is not None and not worker.is_finished:
+            return
+        # Retain the exact issued worker through the existing view/App drain.
+        # Do not cancel an older visit's physical read to start a replacement:
+        # the reconciler re-arms the current visit after the old one retires.
+        self._console_attach_reconcile_worker = self.run_worker(
+            self._reconcile_console_after_attach,
+            group="console-attach-reconciliation",
+            exclusive=False,
         )
 
     async def _reconcile_console_after_attach(self) -> None:
@@ -15281,7 +15301,7 @@ class ChatScreen(BaseAppScreen):
                     current.can_complete(current)
                     and not self._console_attach_reconciled
                 ):
-                    self.call_after_refresh(self._reconcile_console_after_attach)
+                    self.call_after_refresh(self._start_console_attach_reconciliation)
         if failure is None or _console_screen_is_torn_down(self):
             return
         retry_index = self._console_attach_reconcile_retry_count
@@ -15295,7 +15315,7 @@ class ChatScreen(BaseAppScreen):
         self._console_attach_reconcile_retry_count += 1
         self.set_timer(
             _CONSOLE_ATTACH_RECONCILIATION_RETRY_DELAYS[retry_index],
-            self._reconcile_console_after_attach,
+            self._start_console_attach_reconciliation,
         )
 
     def _start_console_view_after_reconciliation(self) -> None:
@@ -17624,7 +17644,7 @@ class ChatScreen(BaseAppScreen):
                     self._console_attach_reconciled
                     or self._console_attach_reconcile_running
                 ):
-                    self.call_after_refresh(self._reconcile_console_after_attach)
+                    self.call_after_refresh(self._start_console_attach_reconciliation)
             if not poll_is_current():
                 return False
             if poll_record is None and not self._console_sync_requested and full_source is not None and run_controls.poll_source_is_current(self, full_source):
@@ -22674,13 +22694,6 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
-        self.call_after_refresh(
-            lambda: self.run_worker(
-                self._refresh_console_hooks,
-                group="console-hook-refresh",
-                exclusive=True,
-            )
-        )
         if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
             wiring.review_view_resumed(controller)
@@ -22692,11 +22705,21 @@ class ChatScreen(BaseAppScreen):
             and not self._console_attach_resume_in_progress
         ):
             self._console_resume_after_reconcile = True
-            self.call_after_refresh(self._reconcile_console_after_attach)
+            self.call_after_refresh(self._start_console_attach_reconciliation)
             if self._console_attach_reconcile_retry_exhausted:
                 self._console_attach_reconcile_retry_count = 0
                 self._console_attach_reconcile_retry_exhausted = False
             return
+        # Reconciliation invokes this resume body again when ready. Publishing
+        # hooks before that handoff duplicated the read/repaint and could enter
+        # synchronous config admission while FULL's native read was pending.
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                self._refresh_console_hooks,
+                group="console-hook-refresh",
+                exclusive=True,
+            )
+        )
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)

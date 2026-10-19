@@ -1,0 +1,188 @@
+{
+  "control1": {
+    "input_ms": [
+      1354.3389000114985,
+      188.68260001181625,
+      757.1583999961149,
+      558.372600004077,
+      512.8863999852911,
+      545.5315000144765
+    ],
+    "median_input_ms": 551.9520500092767,
+    "worst_input_ms": 1354.3389000114985,
+    "median_attach_ms": 650.1452500087908,
+    "median_max_heartbeat_ms": 89.89519999886397,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_poll": 366,
+      "apply": 27,
+      "_refresh_console_hooks": 3,
+      "_apply_console_hooks_state": 3,
+      "_check_selectors": 3,
+      "_check_subject_pseudo_classes": 8,
+      "_config_file_posture": 8,
+      "_build_console_inspector_state": 7,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 2
+    }
+  },
+  "after1": {
+    "input_ms": [
+      136.09549999819137,
+      156.26019999035634,
+      156.764600018505,
+      172.48989999643527,
+      149.94480001041666,
+      149.51320001273416
+    ],
+    "median_input_ms": 153.1025000003865,
+    "worst_input_ms": 172.48989999643527,
+    "median_attach_ms": 968.3977999957278,
+    "median_max_heartbeat_ms": 91.137700015679,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_poll": 282,
+      "apply": 22,
+      "_refresh_console_hooks": 9,
+      "_apply_console_hooks_state": 9,
+      "_check_selectors": 8,
+      "_check_subject_pseudo_classes": 9,
+      "_config_file_posture": 7,
+      "_build_console_inspector_state": 6,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "after2": {
+    "input_ms": [
+      168.89509998145513,
+      157.26469998480752,
+      154.3445999850519,
+      171.51929999818094,
+      157.2599000064656,
+      126.55839999206364
+    ],
+    "median_input_ms": 157.26229999563657,
+    "worst_input_ms": 171.51929999818094,
+    "median_attach_ms": 967.7939000102924,
+    "median_max_heartbeat_ms": 89.94465001160279,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_poll": 299,
+      "apply": 21,
+      "_refresh_console_hooks": 19,
+      "_apply_console_hooks_state": 19,
+      "_check_selectors": 3,
+      "_check_subject_pseudo_classes": 4,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 5,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "control2": {
+    "input_ms": [
+      1186.8896999803837,
+      454.2578999826219,
+      687.2990000119898,
+      516.9005000207108,
+      619.7588999930304,
+      530.971900006989
+    ],
+    "median_input_ms": 575.3654000000097,
+    "worst_input_ms": 1186.8896999803837,
+    "median_attach_ms": 579.917850001948,
+    "median_max_heartbeat_ms": 102.88915000273846,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_poll": 372,
+      "apply": 19,
+      "_refresh_console_hooks": 0,
+      "_apply_console_hooks_state": 0,
+      "_check_selectors": 3,
+      "_check_subject_pseudo_classes": 5,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 4,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "final": {
+    "input_ms": [
+      174.4767999916803,
+      181.11199999111705,
+      186.7148999881465,
+      168.05140001815744,
+      200.63750000554137,
+      156.29499999340624
+    ],
+    "median_input_ms": 177.79439999139868,
+    "worst_input_ms": 200.63750000554137,
+    "median_attach_ms": 976.4234500034945,
+    "median_max_heartbeat_ms": 105.35805000108667,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_poll": 296,
+      "apply": 21,
+      "_refresh_console_hooks": 0,
+      "_apply_console_hooks_state": 0,
+      "_check_selectors": 3,
+      "_check_subject_pseudo_classes": 5,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 5,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "final-control": {
+    "input_ms": [
+      1532.8448000072967,
+      933.1985000171699,
+      672.3309000080917,
+      586.9772000005469,
+      771.3490999885835,
+      528.378499991959
+    ],
+    "median_input_ms": 721.8399999983376,
+    "worst_input_ms": 1532.8448000072967,
+    "median_attach_ms": 727.3257999913767,
+    "median_max_heartbeat_ms": 115.1049000036437,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_poll": 411,
+      "apply": 27,
+      "_refresh_console_hooks": 3,
+      "_apply_console_hooks_state": 3,
+      "_check_selectors": 6,
+      "_check_subject_pseudo_classes": 12,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 6,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  }
+}

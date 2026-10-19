@@ -956,6 +956,21 @@ the operation can.
 The 57 tests from the first round passed throughout. No test interrupted a changed check.
 
 **What to do.** When you fold step B into step A, list everything B did on entry, such as clearing a marker, advancing a generation or publishing a loading state. Then check every exit of the merged path against that list: each return, each exception, and cancellation. Write one test per exit class, not per return statement. A barrier that cancels the task, or makes a loop accessor raise, while the worker is held, will cover the raising exits.
+## An idle event loop can still have blocked keyboard dispatch (TASK-35614, 2026-10-19)
+
+**Incident.** A Windows Console return took 2.29 seconds while 152 of 178
+main-thread samples were in the event-loop poll. Textual 8.2 awaited the async
+attach callback in `Screen._invoke_and_clear_callbacks`, so the screen message
+pump could not process a typed key during the native-read await. A mounted test
+holding reconciliation reproduced the missing key despite continuing loop
+progress; dispatching through a retained finite view worker let the key through
+without acknowledging runtime attachment early.
+
+**What to do.** Measure a real posted key separately from loop heartbeat and
+attachment completion. Inspect the callback's awaiting message pump when CPU
+samples are mostly idle. Moving work off the UI thread alone does not establish
+input responsiveness; retain native retirement and visit fences when changing
+the async caller.
 
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
