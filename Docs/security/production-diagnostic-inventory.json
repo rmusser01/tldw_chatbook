@@ -1401,13 +1401,6 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 229,
-      "diagnostic_digest": "366720bb59fb2b2de66c",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
       "call_count": 73,
       "diagnostic_digest": "a70412440e1c69c47aaa",
       "owner": "TASK-492",

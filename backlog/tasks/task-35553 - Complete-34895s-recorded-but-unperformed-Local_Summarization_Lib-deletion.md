@@ -1,7 +1,7 @@
 ---
 id: TASK-35553
 title: Complete 34895's recorded-but-unperformed Local_Summarization_Lib deletion
-status: In Progress
+status: Done
 assignee:
   - '@robert'
 created_date: '2026-10-19 09:15'
@@ -28,6 +28,6 @@ Found verifying TASK-34991's close (review round 1): TASK-34895's tranche 4 (com
 
 **Deletion completed** (PR on chore/task-35553-lsl-deletion): Local_Summarization_Lib.py (2,321 lines) removed — the ledger's outcome=deleted records are now truthful; no fixture change needed (LIVE_SCAN_MODULES already excluded the module, MODULE_COUNTS stays the historical snapshot). The four dead kobold sampling keys removed from config.py's legacy section (kobold_temperature/top_p/top_k/max_tokens — zero consumers verified: the live chat handler reads api_settings.koboldcpp's different keys, and the summarizer spec lacks config_temp=True). The llama/ooba/vllm/ollama temperature keys KEPT — live via config_temp=True specs, verified against _resolve_summarizer_temp.
 
-Test-file audit: six files mention the module in docstrings only (historical anecdotes, left intact); test_kobold_parameter_wiring.py was already updated by 34895's rounds to exercise the live path. Battery: privacy (ledger reconciliation green), kobold wiring, migration/parity/timeout, analyze, config suites — 146+228 passed; every failure (manifest-boundary ×3, migration ×6 RecoveryRequired flake, packaging wheel-snapshot ×1) reproduces identically on pristine origin/dev.
+Test-file audit: six files mention the module in docstrings only (historical anecdotes, left intact); test_kobold_parameter_wiring.py was already updated by 34895's rounds to exercise the live path. Battery: privacy (ledger reconciliation green), kobold wiring, migration/parity/timeout, analyze, config suites — 146+228 passed; the PYTEST failures (manifest-boundary ×3, migration ×6 RecoveryRequired flake, packaging wheel-snapshot ×1) reproduce identically on pristine origin/dev. Review round 1 correction: the diagnostic-INVENTORY gate (Derived Artifacts required check) was initially left stale on this branch — the deletion removes an owner row (229 TASK-492 calls) and the inventory was resynced via the sanctioned --write with this review recorded; the first draft's 'every failure' claim covered pytest only, not the gate script, which had not been run. The manifest-boundary pytest trio was already red on dev (stale sha pin); after the resync its failure shape changes (KeyError on the dropped owner row) — pre-existing staleness, recorded here rather than rewritten, out of this task's AC.
 
 ADR: not required (completing a recorded deletion; no new decision).
