@@ -47,17 +47,20 @@ def _default_path_inputs() -> tuple:
 def default_prompt_history_path() -> Path:
     """Return the default per-user prompt history file path.
 
-    TASK-33620.15.5: every prompt-history file job resolves this twice on the
-    UI loop, and each resolution was a guarded config operation (about 6 ms
-    live). The result is kept while its inputs hold: the installed config
-    module, its identity (generation and effective path) and ``HOME``, which
-    the default data root follows. Inputs are read before and after the
-    resolution, and the result is kept only if they did not move.
+    TASK-33620.15.5: every prompt-history file job resolves this on the UI
+    loop (its source selection, twice per append), and each resolution ran
+    guarded config operations (storage admission, companion guard, pause
+    probe): about 10 ms each. The result is kept while its inputs hold: the
+    installed config module, its identity (generation and effective path) and
+    ``HOME``, which the default data root follows. Inputs are read before and
+    after the resolution, and the result is kept only if they did not move.
 
     The identity does not see an external edit (a reload installs a new
-    config without a new generation). That is safe here: the file job's
-    worker scope re-derives the selection from the live config before any
-    IO and refuses a mismatch, so a kept path is refused, never written to.
+    config without a new generation). That is safe here: a bound history's
+    state check (``raw_participants._participant_state``) compares its path
+    with the live config's mapping when the file job is created and during
+    its IO, and refuses a mismatch, so a kept path is refused, never written
+    to, as origin/dev refuses it.
     """
     global _DEFAULT_PATH_MEMO
     from ..config import get_user_data_dir

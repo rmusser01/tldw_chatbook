@@ -1,15 +1,15 @@
 """A Console send's prompt-history append reuses its resolved path (TASK-33620.15.5).
 
-Measured live on origin/dev (Anthropic haiku, 160x45, 30 sampled sends): each
+Measured live on origin/dev (Anthropic haiku, 160x45, sampled sends): each
 send's ``PromptHistory.append`` built a file job whose source selection called
-``default_prompt_history_path()`` twice, and each call ran a guarded config
-operation (storage admission, companion guard, pause probe) on the UI loop,
-about 12 ms per send. The path is now kept while the resolution's inputs hold:
-the installed config module, its identity (``current_config_identity()``:
-generation and effective path) and ``HOME``, which the default data root
-follows. The file job's worker scope still re-derives the selection from the
-live config before any IO, so a stale path can only be refused there, never
-written to.
+``default_prompt_history_path()``, and each call ran guarded config operations
+(storage admission, companion guard, pause probe) on the UI loop, inside run
+start's longest callback; in this test profile one resolution costs about
+10 ms. The path is now kept while the resolution's inputs hold: the installed
+config module, its identity (``current_config_identity()``: generation and
+effective path) and ``HOME``, which the default data root follows. A bound
+history's state check still compares its path with the live config's mapping
+before any IO, so a stale path can only be refused there, never written to.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _inputs(history: PromptHistory) -> list[str]:
 async def test_a_warm_append_runs_no_config_operation_for_its_path(
     local_root, monkeypatch
 ):
-    """Red on origin/dev: the second append resolved the path twice more."""
+    """Red on origin/dev: the second append ran four guarded operations for its path."""
     install_config_source(monkeypatch)
     history = PromptHistory(prompt_history.default_prompt_history_path())
     assert await history.append("first prompt")

@@ -1,12 +1,12 @@
 """The built-in MCP manifest reuses its parse of ``server.py`` (TASK-33620.15.5).
 
-Measured live on origin/dev: a Console's first send composes the MCP catalog on
-the UI loop, and its built-in inventory read ran
-``describe_local_mcp_capabilities()``, which parsed this 1,100-line module
-three times (tools, resources, prompts), several milliseconds each, inside the
-first send's longest loop callback. The parsed tree is now kept while the
-file's identity (path, device, inode, size, change times) is unchanged; the
-manifest is still built fresh from it on every call.
+Measured live on origin/dev: every Console send's configuration capture reads
+the built-in manifest on the UI loop (``capture_console_definition_maximum`` >
+``get_inventory`` > ``describe_local_mcp_capabilities()``), and each read
+parsed this 1,100-line module again (about 3 ms in a test run; more on a loaded
+machine). The parsed tree is now kept while the file's identity (path, device,
+inode, size, change times) is unchanged; the manifest is still built fresh
+from it on every call.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def parses(monkeypatch):
 
 
 def test_an_unchanged_server_module_is_parsed_once(parses):
-    """Red on origin/dev: two manifests parsed the file six times."""
+    """Red on origin/dev: two manifests parsed the file twice."""
     first = server.describe_local_mcp_capabilities()
     second = server.describe_local_mcp_capabilities()
 

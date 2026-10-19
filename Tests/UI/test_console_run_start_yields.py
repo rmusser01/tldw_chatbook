@@ -1,14 +1,19 @@
 """Run start hands the UI loop back between the MCP stores' reads (TASK-33620.15.5).
 
-Measured live on origin/dev (Anthropic haiku, 160x45, run-start callbacks
-timed on the UI loop): a first send's MCP composition ran its admission-checked
-store reads (the catalog fingerprint's two stores, the kill switch, the
-external catalog, the built-in inventory, the tool states) in one callback of
-96-101 ms, and every later send ran the fingerprint's two store reads in one
-callback, the longest run-start block (21-49 ms). Each read is its own storage
-admission scope. The composition stays on the loop (TASK-33620.15.1 measured a
-worker hop making first sends reach the provider 97-249 ms later), but it
-yields between reads, so a key press waits for one read, not all of them.
+Measured live on origin/dev 4de437a5c5 (Anthropic haiku, 160x45, run-start
+callbacks timed on the UI loop): every later send checks its kept catalog with
+the fingerprint's two admission-checked store reads (the permission store, then
+the local store) in one callback, the longest run-start block of those sends.
+Each read is its own storage-admission scope. Run start stays on the loop
+(TASK-33620.15.1 measured a worker hop making first sends reach the provider
+97-249 ms later), but it yields between the reads, so a key press waits for
+one read, not both.
+
+The stock Console composition reads its stores through worker hops on dev
+(``prepare_console_tools``). A composition from any other sources (a plugin
+provider, the mounted harness here) still reads the kill switch, the external
+catalog, the built-in inventory and the tool states on the loop; it now yields
+between those too.
 """
 
 from __future__ import annotations
@@ -96,7 +101,7 @@ class LoopTurns:
 
 @pytest.mark.asyncio
 async def test_a_full_composition_reads_each_store_in_its_own_loop_turn():
-    """Red on origin/dev: all six reads ran in one callback."""
+    """Red on origin/dev: all six reads ran in one callback (the harness composes on the loop)."""
 
     async def check(c: _Console) -> None:
         turns = LoopTurns(c)
