@@ -297,3 +297,26 @@ def test_expired_acquisition_keeps_borrowed_transaction_and_handle(tmp_path):
             )
     finally:
         store.close()
+
+
+def test_on_connection_opened_hook_fires_per_fresh_connection(tmp_path) -> None:
+    """The hook fires exactly once per fresh connection, including the
+    liveness-replacement path, after the connection enters the cache
+    (the seam Dreams_DB's close_all registry will build on)."""
+    opened: list = []
+
+    class _HookedStore(_KernelStore):
+        _kernel_sqlite_owner = "tests.store_kernel"
+
+        def _on_connection_opened(self, conn):
+            opened.append(conn)
+            assert getattr(self._thread_local, "conn", None) is conn
+
+    store = _HookedStore(str(tmp_path / "hook.sqlite"))
+    first = store._held_connection()
+    assert opened == [first]
+    first.close()
+    store._thread_local.conn_last_used = 0.0
+    revived = store._held_connection()
+    assert opened == [first, revived]
+    store.close()
