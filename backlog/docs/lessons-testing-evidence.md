@@ -23135,3 +23135,21 @@ unresolved assertion baseline-only merely because the host was slow. Ordinary
 Windows TEMP also failed admission before pytest collection; these runs needed
 native 0700 config/temp directories rather than relaxed permission validation.
 Evidence: `Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md`.
+
+## Sub-resolution async polling can manufacture Windows stalls (TASK-35595, 2026-10-19)
+
+**Incident.** The Console profiling probe added a second 5 ms observer alongside
+a 5 ms input poll and 10 ms heartbeat. Python 3.12 Windows used GetTickCount64
+with 15.625 ms event-loop clock resolution. A standalone reproduction, importing
+no application code, made 261,448 loop iterations in two seconds, every selector
+call with zero timeout, consuming nearly one CPU core and starving ctypes work.
+Stacks looked like native-storage initialization stalls while the main loop was
+inside its I/O poll. Both original and updated app code timed out; both completed
+all six returns when diagnostic polling was raised above the clock resolution.
+
+**What to do.** Measure the event loop's clock resolution, not only the stopwatch
+resolution. Keep diagnostic polling above it, or observe existing events. Record
+poll/heartbeat intervals with results and rerun both versions after correcting
+the probe. Do not credit removal of an observer-induced timeout as a product fix.
+Evidence: `Docs/Development/evidence/windows-performance-2026-10-18/STORAGE_RESULTS.md`
+and `asyncio_polling_probe.py` in the same directory.
