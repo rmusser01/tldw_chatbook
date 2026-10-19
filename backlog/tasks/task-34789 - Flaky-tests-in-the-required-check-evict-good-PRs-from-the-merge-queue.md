@@ -1,7 +1,7 @@
 ---
 id: TASK-34789
 title: Flaky tests in the required check evict good PRs from the merge queue
-status: In Progress
+status: Done
 created_date: 2026-10-11 01:44
 labels:
 - ci
@@ -10,7 +10,7 @@ labels:
 priority: high
 assignee:
 - '@claude'
-updated_date: 2026-10-18 22:09
+updated_date: '2026-10-19 04:40'
 ---
 
 ## Description
@@ -21,7 +21,7 @@ On 2026-10-10 the merge queue served real PRs for a day. 7 of about 11 heads it 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each listed test either passes 20 consecutive CI runs or is fixed, quarantined or removed from the required lanes with a recorded reason
+- [x] #1 Each listed test either passes 20 consecutive CI runs or is fixed, quarantined or removed from the required lanes with a recorded reason
 - [x] #2 The required check's first-attempt failure rate on unchanged code is measured over at least 20 runs and recorded
 - [x] #3 The owner decides whether the queue's fail-twice eviction stays as it is at the measured rate
 <!-- AC:END -->
@@ -82,11 +82,17 @@ Re-measured after #3152, 2026-10-18. Data: every completed attempt of the pull_r
 - test_applying_on_anthropic_submits_none_of_the_hidden_fields: one failure, 39149827283/1 on feat/18925-os-notifications (#3155, which changes tldw_chatbook/UI/Screens/settings_screen.py and failed its own module-size ratchet in the same run), a timeout past 180 s; not shown to be a flake on unchanged code.
 - The rules-phase test failed 5 times; the cause is found and fixed under TASK-35444.
 - mapped-learning and resend: no failure.
+AC 1, 2026-10-19 UTC. Data: every completed attempt of the pull_request runs of derived-artifacts.yml created from 2026-10-17 18:00Z to 2026-10-19 01:00Z (65 runs, 78 attempts), each test counted on the attempts whose job for it finished (success or failure):
+- test_applying_on_anthropic_submits_none_of_the_hidden_fields (UI Fast Lane (3)): one failure, the #3155 timeout above (2026-10-18 17:29Z), then 25 attempts, 24 distinct runs on 12 branches, with no failure. Still not root-caused; it meets the AC by passing.
+- test_opening_console_during_a_headless_delivery_arms_the_poll (PR Fast Lane (admission-sensitive)): 55 attempts, 52 runs, no failure.
+- test_session_owned_pending_projection_journeys (UI Fast Lane (10)): 51 attempts, 50 runs, no failure.
+- The six fixed tests failed in none of these attempts.
+The other flakes found on the way are tracked on their own: the rules-phase test under TASK-35444 (fix merged in #3163, its 20-run count pending), and the session-close tests under TASK-35443 (a test fault, fixed by 623df0136e).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Of the nine tests that evicted good PRs on 2026-10-10, six were fixed (notes sync product race, flashcards wait, resend, Library delete refresh, rail round trip, sync delete/restore) and three now pass more than 20 consecutive PR runs (hidden fields, headless delivery, pending projection), the hidden-fields one without a found cause. The first-attempt failure rate was measured, and the owner kept the fail-twice eviction (2026-10-13).
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
