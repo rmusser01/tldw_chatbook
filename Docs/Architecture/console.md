@@ -106,6 +106,7 @@ ADR-052 (memory and compaction policy), ADR-067 (indefinite approval waits), ADR
 3. Session-only TOOL-marker fields (`tool_output_full`, `tool_diff`, `raw_cli_presentation`, …) are never persisted or sent to providers.
 4. `request_mcp_approvals` is owner-agnostic — builtin tools ride the same approval card path as MCP tools.
 5. The review hook clears per-run decision stamps at entry so a raising approval round can never leak a prior turn's approval.
+6. Approved Quit cancels the exact cache/flat browser workers before cleanup yields; the existing manager still drains their finite native reads. New read admission checks the same App's permanent shutdown flag as well as runtime disposal, because runtime detachment can precede the end of screen cleanup. Ordinary no-runtime/custom routes remain available before that terminal flag.
 
 
 ### Learned response rules (ADR232)
