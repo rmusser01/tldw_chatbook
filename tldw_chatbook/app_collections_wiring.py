@@ -184,9 +184,12 @@ def _capture_deferred_collections_setup(app):
     )
 
     app_module = sys.modules["tldw_chatbook.app"]
-    app_type, defining, factory, factory_code, _runtime_type = (
-        app_module._CONSOLE_SKILL_APP_SOURCE
-    )
+    # Read like the two skill readers: no stock record means the stock path does
+    # not apply (TASK-35302: an attribute read here crashed every app start).
+    app_record = vars(app_module).get("_CONSOLE_SKILL_APP_SOURCE")
+    if type(app_record) is not tuple or len(app_record) != 5:
+        return None
+    app_type, defining, factory, factory_code, _runtime_type = app_record
     fields = vars(app)
     database = fields.get("local_library_collections_db")
     scope = fields.get("collections_capture_scope_service")
