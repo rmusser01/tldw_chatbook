@@ -419,13 +419,18 @@ async def test_two_overlapping_opens_of_a_chat_make_one_session(
     async with _mounted_console(db) as screen:
         # The real read runs on a thread, so the two loads would return ticks
         # apart. Hand both back on one tick: each open is then past its last
-        # await before either reaches the reuse check.
+        # await before either reaches the reuse check. The tree is read once,
+        # here, so the hand-back waits on no executor thread, and no load can
+        # fail inside it and leave the other open waiting (a CI run timed out
+        # that way).
         service = screen.app.chat_conversation_scope_service
-        load, loaded, both_loaded = service.get_conversation_tree, [], asyncio.Event()
+        tree = ChatConversationService(db).get_conversation_tree(
+            conversation_id, root_limit=10_000, depth_cap=10_000
+        )
+        loaded, both_loaded = [], asyncio.Event()
 
         async def load_together(*args, **kwargs):
-            tree = await load(*args, **kwargs)
-            loaded.append(tree)
+            loaded.append(args)
             if len(loaded) == 2:
                 both_loaded.set()
             await both_loaded.wait()
@@ -434,8 +439,11 @@ async def test_two_overlapping_opens_of_a_chat_make_one_session(
         monkeypatch.setattr(service, "get_conversation_tree", load_together)
         open_chat = screen._workspace._resume_console_workspace_conversation
 
+        # The budget covers the product's own hydrate and present work, which
+        # took about 100 s for two opens on one slow CI runner.
         results = await asyncio.wait_for(
-            asyncio.gather(open_chat(conversation_id), open_chat(conversation_id)), 30
+            asyncio.gather(open_chat(conversation_id), open_chat(conversation_id)),
+            120,
         )
 
         assert results == [True, True]
