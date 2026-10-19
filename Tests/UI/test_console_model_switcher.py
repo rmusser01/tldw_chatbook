@@ -1117,6 +1117,48 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed(
     assert (settings.provider, settings.model) == ("openai", kept)
 
 
+async def test_a_reopened_providers_first_row_survives_a_namesakes_30_rows() -> None:
+    """TASK-33641.9 review: a reopen's Find is the provider's name, so its rows
+    rank first, unless another provider has that name too. A named endpoint
+    called "OpenAI", this chat's provider, lists 30 models ahead of OpenAI's;
+    a return to OpenAI that names no model still lists and highlights
+    OpenAI's first row, in the last place of the 30."""
+    recorder = Recorder(ready=READY_PROVIDERS | {"openai", "custom-ep:box"})
+    box_models = [f"box-{number}" for number in range(30)]
+    app_config = {
+        "custom_endpoints": {
+            "box": {
+                "display_name": "OpenAI",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "family": "openai_compatible",
+                "models": box_models,
+            }
+        }
+    }
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                draft=_draft("custom-ep:box", "box-0"),
+                providers_models={"OpenAI": ["gpt-5.1", "gpt-b"]},
+                app_config=app_config,
+                query="OpenAI ",
+                reopened_provider="openai",
+            ),
+        )
+        listed = [(row.provider, row.model) for row in switcher._rows if row.model]
+        row = switcher.highlighted_row()
+
+    assert listed == [
+        *(("custom-ep:box", m) for m in box_models[:29]),
+        ("openai", "gpt-5.1"),
+    ]
+    assert row is not None and (row.provider, row.model) == ("openai", "gpt-5.1")
+
+
 #: Three keyless providers listed ahead of OpenAI, three rows each for
 #: "OpenAI" in Find: they fill NEEDS SETUP's eight rows before its turn.
 _EIGHT_ROWS_AHEAD = {

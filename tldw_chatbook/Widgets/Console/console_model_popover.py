@@ -1250,8 +1250,9 @@ class ConsoleModelPopover(
         no model, or the catalog dropped it) keeps that provider's first row
         the same way when the cut leaves none of its rows: the highlight is
         that row or nothing, and the list said nothing about the provider.
-        Since TASK-33641.9 a query that is exactly the provider's name lists
-        its rows first, so this keep acts only under a query that is not.
+        A reopen's Find is the provider's name, which lists its rows first
+        (TASK-33641.9), so the cut leaves them all out only behind another
+        provider of that name, such as a named endpoint called "OpenAI".
         """
         late = next((row for row in rows[cap:] if self._leads(row)), None)
         if late is None and self._returned_to(self._reopened):
