@@ -48,6 +48,11 @@ CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
 theme changes and virtual component styles still pass through upstream matching.
+The static filter (TASK-35611) requires all known type/class/id names in each
+selector alternative, separating its final subject compound from ancestor names.
+Types follow Textual's CSS inheritance, including its opt-out. A rule is rejected
+only if every comma alternative is impossible. Presence alone never establishes
+a match: upstream still checks compound co-location and child/descendant order.
 
 ## Screen layout
 
