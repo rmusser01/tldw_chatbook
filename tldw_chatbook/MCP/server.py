@@ -143,11 +143,11 @@ def _server_source_identity(path: Path) -> tuple:
 def _load_server_module_ast() -> ast.Module:
     """Parse this module's source, reusing the tree while the file is unchanged.
 
-    TASK-33620.15.5: the built-in manifest walks the tree three times per
-    inventory read, and a Console's first send reads the inventory on the UI
-    loop; each walk used to parse the file again. The tree is kept only when
-    the file's identity is the same before and after the read. Callers only
-    read the tree.
+    TASK-33620.15.5: every Console send's configuration capture reads the
+    built-in manifest on the UI loop, and each read parsed this file again
+    (about 3 ms; more on a loaded machine). The tree is kept only when the
+    file's identity is the same before and after the read. Callers only read
+    the tree; the manifest is still built fresh from it on every call.
     """
     global _SERVER_MODULE_AST
     path = Path(__file__)
@@ -159,6 +159,15 @@ def _load_server_module_ast() -> ast.Module:
     if _server_source_identity(path) == identity:
         _SERVER_MODULE_AST = (identity, tree)
     return tree
+
+
+def prime_local_manifest_source() -> None:
+    """Parse and keep this module's source ahead of the first manifest read.
+
+    Called from the app's idle pre-import pass (TASK-33620.15.5), so a
+    Console's first send does not parse it on the UI loop.
+    """
+    _load_server_module_ast()
 
 
 _AST_SIMPLE_TYPES = {

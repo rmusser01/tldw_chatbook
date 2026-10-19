@@ -1,12 +1,13 @@
 """A Console's first send no longer pays its lazy imports on the UI loop (TASK-33620.15.5).
 
-Measured live on origin/dev (Anthropic haiku, 160x45, a probe recording every
-module imported on the UI thread): the first send after launch imported 35
-modules on the UI loop between Enter and the provider call (the hooks v2
-package, the visual transcript with PIL, the agent's tool providers, the
-run-start catalog), inside run-start callbacks of 96-101 ms. The app's
-post-UI-ready pre-import pass now imports them first, at idle, on its daemon
-thread.
+Measured live on origin/dev 4de437a5c5 (Anthropic haiku, 160x45, a probe
+recording every module imported on the UI thread): the first send after launch
+imported 54 modules on the UI loop between Enter and the provider call (hook
+preparation and the hooks v2 package, the response-rules package, the visual
+transcript with PIL, the agent's tool providers, the run-start catalog),
+inside run-start callbacks of 40-118 ms. Its configuration capture also parsed
+``MCP/server.py`` for the built-in manifest. The app's post-UI-ready
+pre-import pass now does both first, at idle, on its daemon thread.
 """
 
 from __future__ import annotations
@@ -27,43 +28,71 @@ pytestmark = pytest.mark.bootstrap_profile
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = REPO_ROOT / "Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt"
 
-#: The live first-send record (origin/dev, 2026-10-10): the modules the send
-#: imported on the UI loop between Enter and the provider call.
+#: The live first-send record (origin/dev 4de437a5c5, 2026-10-19): the modules
+#: the send imported on the UI loop between Enter and the provider call.
 LIVE_FIRST_SEND_IMPORTS = (
     "UI.Console_Modules.send_acknowledgement",
     "UI.Console_Modules.sent_draft",
-    "Chat.console_send_diagnostics",
-    "Agents.ask_user_questions",
+    "Chat.console_configuration_preparation",
     "UI.Console_Modules.turn_admission",
+    "MCP.console_snapshot",
+    "Chat.console_received_dispatch",
+    "Chat.console_send_diagnostics",
+    "Chat.console_hook_preparation",
     "Agents.automatic_work_runtime",
     "Chat.console_references",
     "Agents.hooks_v2.lifecycle",
+    "Agents.hooks_v2.matching",
+    "Agents.hooks_v2.models",
+    "Agents.hooks_v2.validation",
+    "Agents.hooks_v2.checkpoints",
     "Agents.hooks_v2.engine",
+    "Agents.hooks_v2.budgets",
+    "Agents.hooks_v2.command_executor",
+    "Agents.hooks_v2.ownership",
+    "Agents.hooks_v2.context",
     "Chat.console_legacy_flat_roots",
     "Chat.console_context_window",
     "Chat.console_visual_transcript",
     "Chat.console_predispatch_block",
+    "Chat.console_native_commit",
     "Chat.console_trace_row_sources",
+    "Chat.response_rules.generation",
+    "Chat.response_rules.builder",
+    "Chat.response_rules.evaluator",
+    "Chat.response_rules.models",
+    "Chat.response_rules.repository",
+    "Chat.response_rules.resources",
+    "Chat.response_rules.runtime",
+    "Chat.response_rules.corrections",
+    "Chat.response_rules.evidence",
+    "Chat.response_rules.store",
+    "Chat.response_rules.resolution",
+    "Chat.response_rules.chat_state",
     "Agents.local_tool_provider",
     "Chat.console_run_start_tools",
+    "MCP.console_tool_preparation",
+    "Character_Chat.world_info_resolver",
     "Agents.persona_policy",
     "Tools.character_tool_service",
     "Tools.git_tool_impls",
     "Tools.web_tool_impls",
     "Web_Scraping.deep_search_citations",
+    "Agents.ask_user_questions",
     "Agents.fs_read_ledger",
+    "Chat.conversation_archive_actions",
     "Agents.canvas_tool_provider",
     "Canvas.guide",
-    "Chat.conversation_archive_actions",
-    "Character_Chat.world_info_resolver",
 )
 
 _PASS_SCRIPT = """
+import ast
 import json
 import sys
 
 import tldw_chatbook.app as app_module
 import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (the initial route)
+from tldw_chatbook.MCP import server
 
 expected = json.loads(sys.argv[1])
 cls = app_module.TldwCli
@@ -79,12 +108,32 @@ def routes_start(self, routes):
 
 cls._preimport_screens = routes_start
 cls._preimport_heavy_screens(app)
-print("PASS_JSON:" + json.dumps({"before": loaded_before, "at_routes": at_routes}))
+
+# The first send's configuration capture reads the built-in manifest.
+parses = []
+real_parse = ast.parse
+
+
+def counted(*args, **kwargs):
+    parses.append(1)
+    return real_parse(*args, **kwargs)
+
+
+ast.parse = counted
+server.describe_local_mcp_capabilities()
+print(
+    "PASS_JSON:"
+    + json.dumps(
+        {"before": loaded_before, "at_routes": at_routes, "manifest_parses": len(parses)}
+    )
+)
 """
 
 
-def _run_pass(tmp_path: Path) -> dict:
+@pytest.fixture(scope="module")
+def pass_outcome(tmp_path_factory) -> dict:
     """Run the app's pre-import pass in a fresh interpreter (sys.modules is global)."""
+    tmp_path = tmp_path_factory.mktemp("first_send_pass")
     home, data, config_dir = (tmp_path / n for n in ("home", "data", "config"))
     for directory in (home, data, config_dir):
         directory.mkdir(mode=0o700)
@@ -115,15 +164,23 @@ def _run_pass(tmp_path: Path) -> dict:
 
 
 @pytest.mark.integration
-def test_the_idle_pass_imports_the_first_send_modules_before_any_screen(tmp_path):
+def test_the_idle_pass_imports_the_first_send_modules_before_any_screen(pass_outcome):
     """Red on origin/dev: the pass warmed none of them."""
-    outcome = _run_pass(tmp_path)
-
-    assert outcome["before"] == [], (
-        "no longer lazy at UI-ready, drop from the list: " + ", ".join(outcome["before"])
+    assert pass_outcome["before"] == [], (
+        "no longer lazy at UI-ready, drop from the list: "
+        + ", ".join(pass_outcome["before"])
     )
-    cold = sorted(m for m, loaded in outcome["at_routes"].items() if not loaded)
+    cold = sorted(m for m, loaded in pass_outcome["at_routes"].items() if not loaded)
     assert not cold, "the first send would import these on the UI loop: " + ", ".join(cold)
+
+
+@pytest.mark.integration
+def test_the_idle_pass_parses_the_manifest_source_for_the_first_send(pass_outcome):
+    """Red on origin/dev: the first manifest read after the pass parsed server.py."""
+    assert pass_outcome["manifest_parses"] == 0, (
+        f"the first send's manifest read parsed server.py "
+        f"{pass_outcome['manifest_parses']} time(s) on the UI loop"
+    )
 
 
 def test_every_live_first_send_import_is_listed():
