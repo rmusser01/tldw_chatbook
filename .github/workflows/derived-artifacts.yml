@@ -245,15 +245,16 @@ jobs:
     #
     # timeout-minutes: the 35 the owner set for exactly these suites
     # (TASK-33910.2). Its 90 measured runs (to 2026-10-14) replay at median
-    # 16.3 / max 20.1 min with setup (~1.5 of it setup); the step then had 23
-    # targets. Dev then added 18 (17 from Phase 8, 2026-10-16/17; 1 from the
-    # canvas fix, 10-18) and Phase 9 52 (see the step). Serial in this job's
-    # install set (2026-10-19) the 23 took 15.7 min and the whole step 29.1
-    # min at load 23-57, and 9.6 and 18.7 min at load 10-27. Scaling the whole
-    # step by the 23's own local-to-CI ratio (CI pytest 14.8 median / 18.6
-    # max), plus setup: about median 29-30 / max 33-38 min, the upper end if
-    # a slow run is slow throughout. So a slow run can reach the cap with no
-    # hung test, and one hung test at --timeout=300 (about 5.3 min with the
+    # 16.3 / max 20.1 min with setup (~0.8 of it setup; the pytest step itself
+    # median 15.4 / max 18.7, TASK-34916); the step then had 23 targets. Dev
+    # then added 18 (17 from Phase 8, 2026-10-17/18 UTC; 1 from the canvas
+    # fix, 10-18) and Phase 9 52 (see the step). Serial in this job's install
+    # set (2026-10-19 UTC) the 23 took 15.7 min and the whole step 29.1 min at
+    # load 23-57, and 9.6 and 18.7 min at load 10-27. Scaling the whole step
+    # by the 23's own local-to-CI ratio, plus setup: about median 29-31 / max
+    # 33-37 min (33-34 if a slow run's extra minutes are a fixed delay, 35-37
+    # if it is slow throughout). So a slow run can reach the cap with no hung
+    # test, and one hung test at --timeout=300 (about 5.3 min with the
     # private-profile wrapper's report) passes it. TASK-35575 holds the
     # decision: a second job (this workflow's rule for a lane near its cap)
     # or a timeout ruling.
