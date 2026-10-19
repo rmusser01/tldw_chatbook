@@ -2,6 +2,8 @@
 
 from textual.containers import Horizontal, Vertical
 from textual.css.stylesheet import Stylesheet
+from textual.css import stylesheet
+from textual.css.match import _check_selectors as upstream_match
 from textual.widgets import Button
 
 from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
@@ -105,6 +107,7 @@ async def test_static_rejection_preserves_dynamic_matching_and_components():
     install_stylesheet_fastpath()
     async with Demo().run_test() as pilot:
         sheet = pilot.app.stylesheet
+        patched_match = stylesheet._check_selectors
         patched = Stylesheet.apply
         upstream = patched.__wrapped__
         vertical = pilot.app.query_one(Vertical)
@@ -126,10 +129,12 @@ async def test_static_rejection_preserves_dynamic_matching_and_components():
         def check():
             try:
                 Stylesheet.apply = upstream
+                stylesheet._check_selectors = upstream_match
                 sheet.update(pilot.app.screen)
                 expected = snapshot()
             finally:
                 Stylesheet.apply = patched
+                stylesheet._check_selectors = patched_match
             sheet.update(pilot.app.screen)
             assert snapshot() == expected
 

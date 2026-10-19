@@ -30,9 +30,11 @@ import asyncio
 import inspect
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from textual.css.stylesheet import Stylesheet
+from textual.css.match import _check_selectors as upstream_match
 
 from Tests.private_profile import private_profile_test
 
@@ -133,7 +135,8 @@ async def test_fastpath_computes_identical_styles_for_every_node(
 
             stylesheet = pilot.app.stylesheet
             for node in list(pilot.app.screen.query("*")):
-                upstream_apply(stylesheet, node, animate=False)
+                with patch("textual.css.stylesheet._check_selectors", upstream_match):
+                    upstream_apply(stylesheet, node, animate=False)
                 expected_rules = dict(node.styles.base.get_rules())
                 patched_apply(stylesheet, node, animate=False)
                 actual_rules = dict(node.styles.base.get_rules())

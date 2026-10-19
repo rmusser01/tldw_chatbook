@@ -189,6 +189,10 @@ async def main():
         probe_poll_seconds=poll_seconds,
         probe_heartbeat_seconds=heartbeat_seconds,
     )
+    if "--subject-baseline" in sys.argv:
+        import subject_baseline
+
+        report["baseline_revision"] = subject_baseline.BASE_REVISION
     if "--stalls-baseline" in sys.argv:
         import stalls_baseline
 
@@ -264,6 +268,13 @@ async def main():
                 app.post_message(NavigateToScreen("chat"))
                 await until(lambda: type(app.screen).__name__ == "ChatScreen")
                 await pilot.pause(3)
+                if "--subject-benchmark" in sys.argv:
+                    from subject_benchmark import measure
+
+                    report["subject_benchmark"] = measure(app)
+                    save()
+                    stage = "shutdown"
+                    return
                 if "--matching-benchmark" in sys.argv:
                     from matching_benchmark import measure
 
