@@ -8,8 +8,8 @@
     "main_thread_tokenizer_loading_samples_all_stages": 7,
     "top_overlapping_console_functions": [
       [
-        "participants.py",
-        "_core_operation",
+        "storage_admission.py",
+        "_acquire_storage",
         98
       ],
       [
@@ -18,8 +18,8 @@
         98
       ],
       [
-        "storage_admission.py",
-        "_acquire_storage",
+        "participants.py",
+        "_core_operation",
         98
       ],
       [
@@ -38,8 +38,8 @@
         69
       ],
       [
-        "ChaChaNotes_DB.py",
-        "__enter__",
+        "console_chat_controller.py",
+        "remount_pending_approval_for_active_session",
         62
       ],
       [
@@ -48,18 +48,18 @@
         62
       ],
       [
-        "console_interrupt_rounds.py",
-        "remount_pending_approval_for_active_session",
+        "console_runtime.py",
+        "recompute_console_attention",
+        62
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "__enter__",
         62
       ],
       [
         "conversation_local_marks_service.py",
         "list_console_unseen_marks",
-        62
-      ],
-      [
-        "console_interrupt_rounds.py",
-        "on_console_view_visibility_changed",
         62
       ],
       [
@@ -69,22 +69,22 @@
       ],
       [
         "console_chat_controller.py",
-        "on_console_view_visibility_changed",
+        "project_pending_decision_for_active_session",
         62
       ],
       [
-        "console_chat_controller.py",
+        "console_interrupt_rounds.py",
         "remount_pending_approval_for_active_session",
         62
       ],
       [
         "console_chat_controller.py",
-        "project_pending_decision_for_active_session",
+        "on_console_view_visibility_changed",
         62
       ],
       [
-        "console_runtime.py",
-        "recompute_console_attention",
+        "console_interrupt_rounds.py",
+        "on_console_view_visibility_changed",
         62
       ],
       [
@@ -99,17 +99,17 @@
       ],
       [
         "library_screen.py",
-        "_resolve_library_onboarding_admission_key",
-        31
-      ],
-      [
-        "library_screen.py",
         "_library_onboarding_admission_key",
         31
       ],
       [
         "library_screen.py",
         "_gather_library_onboarding_evidence",
+        31
+      ],
+      [
+        "library_screen.py",
+        "_resolve_library_onboarding_admission_key",
         31
       ],
       [
@@ -156,13 +156,13 @@
         38
       ],
       [
-        "participants.py",
-        "_core_operation",
+        "chat_screen.py",
+        "on_screen_resume",
         37
       ],
       [
-        "chat_screen.py",
-        "on_screen_resume",
+        "participants.py",
+        "_core_operation",
         37
       ],
       [
@@ -171,13 +171,13 @@
         36
       ],
       [
-        "ChaChaNotes_DB.py",
-        "__enter__",
+        "console_runtime.py",
+        "_project_pending_decision_to_attached_view",
         28
       ],
       [
-        "console_runtime.py",
-        "_project_pending_decision_to_attached_view",
+        "console_chat_controller.py",
+        "remount_pending_approval_for_active_session",
         28
       ],
       [
@@ -186,8 +186,13 @@
         28
       ],
       [
-        "console_interrupt_rounds.py",
-        "remount_pending_approval_for_active_session",
+        "console_runtime.py",
+        "recompute_console_attention",
+        28
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "__enter__",
         28
       ],
       [
@@ -196,28 +201,23 @@
         28
       ],
       [
-        "console_interrupt_rounds.py",
-        "on_console_view_visibility_changed",
-        28
-      ],
-      [
-        "console_chat_controller.py",
-        "on_console_view_visibility_changed",
-        28
-      ],
-      [
-        "console_chat_controller.py",
-        "remount_pending_approval_for_active_session",
-        28
-      ],
-      [
         "console_chat_controller.py",
         "project_pending_decision_for_active_session",
         28
       ],
       [
-        "console_runtime.py",
-        "recompute_console_attention",
+        "console_interrupt_rounds.py",
+        "remount_pending_approval_for_active_session",
+        28
+      ],
+      [
+        "console_chat_controller.py",
+        "on_console_view_visibility_changed",
+        28
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "on_console_view_visibility_changed",
         28
       ],
       [
@@ -241,13 +241,13 @@
         10
       ],
       [
-        "registry_service.py",
-        "get_active_workspace",
+        "workspace.py",
+        "_reconcile_console_session_with_registry",
         9
       ],
       [
-        "workspace.py",
-        "_reconcile_console_session_with_registry",
+        "registry_service.py",
+        "get_active_workspace",
         9
       ],
       [
@@ -266,13 +266,155 @@
         7
       ],
       [
-        "config_sync.py",
-        "<lambda>",
+        "console_spend_projection.py",
+        "run",
         7
       ]
     ],
     "blocked_network_attempts": 0,
     "real_profile_refusals": 0,
     "tokenizer_display": null
+  },
+  "post-pr": {
+    "typing_median_ms": 3.8330500028678216,
+    "typing_worst_ms": 33.50089999730699,
+    "idle_worst_loop_overshoot_ms": 19.55349999887403,
+    "idle_cpu_seconds": 0.21875,
+    "idle_elapsed_seconds": 3.0118156999960775,
+    "main_thread_tokenizer_loading_samples_all_stages": 0,
+    "top_overlapping_console_functions": [
+      [
+        "storage_admission.py",
+        "_acquire_storage",
+        49
+      ],
+      [
+        "storage_admission.py",
+        "acquire_storage",
+        49
+      ],
+      [
+        "storage_admission.py",
+        "_repository_operation",
+        36
+      ],
+      [
+        "participants.py",
+        "_core_operation",
+        36
+      ],
+      [
+        "chat_screen.py",
+        "on_screen_resume",
+        31
+      ],
+      [
+        "storage_admission.py",
+        "initializing",
+        30
+      ],
+      [
+        "wiring.py",
+        "<lambda>",
+        21
+      ],
+      [
+        "chat_screen.py",
+        "_reconcile_console_after_attach",
+        20
+      ],
+      [
+        "registry_service.py",
+        "get_active_workspace",
+        19
+      ],
+      [
+        "console_chat_controller.py",
+        "remount_pending_approval_for_active_session",
+        18
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "project_pending_decision_for_active_session",
+        18
+      ],
+      [
+        "console_runtime.py",
+        "recompute_console_attention",
+        18
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "__enter__",
+        18
+      ],
+      [
+        "conversation_local_marks_service.py",
+        "list_console_unseen_marks",
+        18
+      ],
+      [
+        "console_runtime.py",
+        "_project_pending_decision_to_attached_view",
+        18
+      ],
+      [
+        "console_chat_controller.py",
+        "project_pending_decision_for_active_session",
+        18
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "remount_pending_approval_for_active_session",
+        18
+      ],
+      [
+        "console_chat_controller.py",
+        "on_console_view_visibility_changed",
+        18
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "on_console_view_visibility_changed",
+        18
+      ],
+      [
+        "participants.py",
+        "counted",
+        18
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        18
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        18
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        18
+      ],
+      [
+        "config_sync.py",
+        "render",
+        18
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        18
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "tokenizer_display": {
+      "prepared": true,
+      "used_tokens": 11,
+      "label": "11 / 32,000 tokens (assumed; window unknown); 4,096 response tokens reserved"
+    }
   }
 }
