@@ -235,6 +235,7 @@ jobs:
             Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api \
             Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work \
             Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits \
+            Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release \
             --timeout=180 \
             --tb=short
 

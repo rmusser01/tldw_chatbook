@@ -1677,6 +1677,50 @@ async def test_wake_keeps_its_claim_until_the_conversations_worker_exits(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_draining_wake_lets_its_conversations_close_fence_release(
+    tmp_path, request
+):
+    """TASK-33666: only the claim outlasts the turn, so a close still unfences."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    rig = _controller_rig(tmp_path)
+    chacha, _, db, _, session, _, bridge, controller = rig
+    wake = controller.fleet_wake
+    bridge.runtime_capacity = capacity = RuntimeCapacity()
+    workers = []
+
+    def turn_ends_before_its_worker(notice, **kwargs):
+        if not workers:
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC, conversation_id=session.id
+            )
+            workers.append(owner.reserve_model())
+            owner.finish_root()
+        raise RuntimeError("turn ended")
+
+    wake.bind_runtime_submitter(turn_ends_before_its_worker)
+    try:
+        _, child = _terminal_subagent_run(db, session.id)
+        wake.on_fleet_drained(_drain(session.id, _survivor(child)))
+        assert await _settle(lambda: bool(workers))
+        assert await _settle(
+            lambda: session.id not in wake.delivering_conversation_ids()
+        ), "a delivery whose turn ended still counts as delivering"
+        assert session.id in wake._automatic_primary_claims
+        wake.fence_conversation(session.id, generation=1)
+        assert wake.release_conversation_fence(session.id, generation=1)
+        await asyncio.sleep(0.2)
+        assert session.id in wake._automatic_primary_claims
+        workers[0].finish()
+        assert await _settle(lambda: session.id not in wake._automatic_primary_claims)
+    finally:
+        wake.dispose()
+        db.close()
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(tmp_path, request):
     """A synchronous custody refusal refunds the unaccepted durable attempt."""
     rig = _controller_rig(tmp_path)

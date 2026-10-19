@@ -238,6 +238,8 @@ FAST_LANE_TARGETS = (
     # automatic slot until the conversation's physical work exits.
     "Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work",
     "Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits",
+    # Its review: a draining wake leaves delivery, so a close still unfences.
+    "Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

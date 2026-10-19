@@ -1148,12 +1148,17 @@ class ConsoleFleetWakeCoordinator:
                 if authorization is not None:
                     await self._finish_attempt(authorization, returned)
             finally:
-                await self.drain_automatic_primary(conversation_id)
+                # The turn has ended: leave delivery now, so a close can release
+                # its fence; the claim alone holds the slot through the drain.
                 delivery = self._active.get(conversation_id)
                 if delivery is not None and (
                     slot_token is None or delivery.slot_token is slot_token
                 ):
                     self._active.pop(conversation_id, None)
+                else:
+                    delivery = None
+                await self.drain_automatic_primary(conversation_id)
+                if delivery is not None:
                     self.release_automatic_primary(session_id, delivery.slot_token)
                 self.retry_soon()
 
