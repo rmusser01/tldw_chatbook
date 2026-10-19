@@ -89,6 +89,7 @@ AC 1, 2026-10-19 UTC. Data: every completed attempt of the pull_request runs of 
 - test_session_owned_pending_projection_journeys (UI Fast Lane (10)): 51 attempts, 50 runs, no failure. Its call took 90.6 to 124.4 s in the five shard-10 logs read after #3152, against the lane's 180 s, so a timeout there may be that margin rather than a new flake.
 - The six fixed tests, each on its own job (the notes-sync test in PR Fast Lane (admission-sensitive), the others in UI Fast Lane (1), (2), (3), (4) and (6)): 55 attempts and 52 runs each, no failure.
 - The two flakes the description names outside the required check: the Perf Guard module census is tracked by TASK-34915; test_supervisor_terminates_a_descendant_in_a_new_session now runs in the required PR Fast Lane (Tests/CI whole): 54 attempts, 51 runs, no failure.
+- Counts are per job, not per test, but none of these tests skips on the Linux runners: the parakeet test skips only off POSIX, and the notes-sync file's two skips are in its real-inode tests, not the counted one.
 The other flakes found on the way are tracked on their own: the rules-phase test under TASK-35444 (fix merged in #3163, its 20-run count pending), and the session-close tests under TASK-35443 (a test fault, fixed by 623df0136e).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
