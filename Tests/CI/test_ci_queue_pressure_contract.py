@@ -273,6 +273,16 @@ DREAMS_ADMISSION_TARGETS = (
 #: ``bootstrap_profile`` suites (TASK-32873); they run in their own job,
 #: ``pr-fast-lane-admission`` (TASK-34916).
 ADMISSION_TARGETS = (
+    # Phase 9's whole-PR review, round 2 (TASK-33641.1, TASK-33003.15): the
+    # step's three many-case pure rule tests lead it, ahead of every mounted
+    # target. Tests/conftest.py collects garbage after every Tests/UI test, and
+    # that pass slows as mounted targets grow the heap: the 623-case chrome rule
+    # test took 710 s of a 956 s run behind them and 74-80 s here (42 s alone;
+    # the step's collection is the rest). Their own pytest step would save
+    # about 45 s, which is not worth a second step in this job.
+    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
     # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
     # setup-blocker reason strings (the capture phase's F2 copy and round 1's
     # endpoint reason). A pure function test, but its file's module pytestmark
@@ -391,14 +401,12 @@ ADMISSION_TARGETS = (
     # RecoveryRequired in a process that has not imported the app; marked
     # bootstrap_profile, it left the UI census for this step (ledger R11).
     "Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label",
-    # TASK-33003.15: Library and Workflows pane frames at 3:1; TASK-33003.16: a
-    # surface set to auto stays measurable; TASK-33641.1: the app chrome lines
-    # paint at 3:1, by rule (623 cases, about 40 s serial) and as painted.
-    "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
-    "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    # TASK-33003.15: the Workflows panes paint readable edges and text (their
+    # two rule tests lead this tuple); TASK-33003.16: a surface set to auto
+    # stays measurable; TASK-33641.1: the app chrome lines paint at 3:1 as
+    # painted (their rule test leads this tuple too).
     "Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text",
     "Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable",
-    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
     "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast",
     # TASK-33003.19 and TASK-33006.17: the Console modal inventory, launch
     # declarations and contract tables (they drift with every new Console modal
@@ -841,6 +849,13 @@ def test_admission_target_set_is_exact() -> None:
     """Review of #3106, W1: the admission-sensitive step is pinned like the
     sandboxed one -- every target, their order, and the 300 s test limit."""
     _assert_admission_invocation(_workflow("derived-artifacts.yml"))
+    # Phase 9's whole-PR review, round 2: the many-case pure rule tests lead
+    # the step, ahead of every mounted target (see ADMISSION_TARGETS' note).
+    assert ADMISSION_TARGETS[:3] == (
+        "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
+        "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
+        "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    )
     assert len(set(ADMISSION_TARGETS)) == len(ADMISSION_TARGETS)
     assert set(NOTES_SYNC_REAL_STACK_TARGETS) <= set(ADMISSION_TARGETS)
 

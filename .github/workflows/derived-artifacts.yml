@@ -244,9 +244,15 @@ jobs:
     # invocation to this one and a fresh runner changes nothing it relies on.
     #
     # timeout-minutes: the 35 the owner set for exactly these suites
-    # (TASK-33910.2). Its 90 measured runs replay at median 16.3 / max 20.1
-    # min with setup, so one hung test at --timeout=300 (about 5.3 min with
-    # the private-profile wrapper's report) still ends ~10 min under the cap.
+    # (TASK-33910.2). Its 90 measured runs (to 2026-10-14) replay at median
+    # 16.3 / max 20.1 min with setup. Phase 9 added 52 targets (see the step):
+    # serial in this job's install set (2026-10-19, load 23-57) dev's 41
+    # targets alone took 17.6 min and the whole step 29.1 min, and the 52's
+    # own tests 8.0 min of it. Scaled by dev's 17.6 local minutes to its
+    # ~14.8 of pytest on CI (16.3 less ~1.5 of setup), the 52 add 6.7-9.7
+    # min: about median 23-26 / max 27-30 min, so one hung test at
+    # --timeout=300 (about 5.3 min with the private-profile wrapper's report)
+    # ends only 0-3 min under the cap.
     #
     # One more runner per PR (ADR-103 note, 2026-10-14).
     name: PR Fast Lane (admission-sensitive)
@@ -274,13 +280,22 @@ jobs:
       # invocation keeps both green.
       # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites (both
       # styled tiers, hostile names, the journeys) are bootstrap_profile files too.
-      # Phase 9's whole-PR review, round 1: the last 37 targets are model-config
-      # evidence that ran in no PR lane, bootstrap_profile by marker or by
+      # Phase 9: the first 4 and the last 48 targets are model-config evidence
+      # that ran in no PR lane, bootstrap_profile by marker or by
       # Tests/conftest.py's file list (Tests/CI's ADMISSION_TARGETS names each
-      # rider). Measured serial in this job's install set: about 5 min more.
+      # rider). The three many-case pure rule tests come first: Tests/conftest.py
+      # collects garbage after every Tests/UI test, and that pass slows as the
+      # mounted targets grow the heap. The 623-case chrome rule test took 710 s
+      # of a 956 s run behind them, 74-80 s first, and 42 s alone. In its own
+      # pytest step the three would save about 45 s, not worth a second step.
+      # The whole step, serial in this job's install set: 1503 passed,
+      # 2 skipped, 1 xfailed in 29.1 min (2026-10-19, load 23-57).
       - name: Run admission-sensitive suites
         run: |
           pytest \
+            Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast \
+            Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast \
+            Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast \
             Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers \
             Tests/Chat/test_console_run_log_connection_ownership.py \
             Tests/Chat/test_console_chat_create_connection_ownership.py \
@@ -359,11 +374,8 @@ jobs:
             Tests/UI/test_schedules_next_run_relative.py::test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail \
             Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form \
             Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label \
-            Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast \
-            Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast \
             Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text \
             Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable \
-            Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast \
             Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast \
             Tests/UI/test_console_modal_dismissal.py::test_console_modal_launch_declarations_match_runtime_construction \
             Tests/UI/test_console_modal_dismissal.py::test_console_modal_inventory_matches_runtime_ast_and_transitive_launches \
