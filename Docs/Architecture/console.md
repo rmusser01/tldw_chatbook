@@ -69,6 +69,11 @@ fallback. If expiry already selected a native presentation operation, a subseque
 display refusal requests retry only after physical retirement; cleanup errors still
 propagate. No source, pause, ownership, lifetime or action fence is relaxed.
 
+Independent provider-label and readiness builds also open that existing synchronous
+scope (TASK-35613). Each loads current config once, reuses an enclosing scope when
+present, and drops the memo on return or failure. The next independent call reads
+again; config path posture checks and native action admission remain unchanged.
+
 CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
@@ -78,6 +83,11 @@ selector alternative, separating its final subject compound from ancestor names.
 Types follow Textual's CSS inheritance, including its opt-out. A rule is rejected
 only if every comma alternative is impossible. Presence alone never establishes
 a match: upstream still checks compound co-location and child/descendant order.
+At the stylesheet matcher seam, a false final pseudo-state is rejected using
+Textual's live `Selector.check(subject)` before its ancestor scan (TASK-35613).
+Candidates remain present for refresh-flag computation; successful prechecks still
+delegate the full match. No pseudo-state result is cached, and DOM query matching
+is unchanged. Upstream-comparison tests restore both application and matcher seams.
 
 ## Screen layout
 

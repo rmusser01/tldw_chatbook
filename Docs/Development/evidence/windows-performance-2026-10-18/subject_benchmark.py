@@ -22,7 +22,7 @@ def measure(app):
             "-c",
             f"safe.directory={root.as_posix()}",
             "show",
-            "aeaac674e3b19e2af5989be2a145a0316856248a:tldw_chatbook/Utils/textual_css_fastpath.py",
+            "f152dfc4a6c4fbf2fcd277543757a46a0d2874e2:tldw_chatbook/Utils/textual_css_fastpath.py",
         ],
         cwd=root,
     )
