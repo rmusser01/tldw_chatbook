@@ -1382,11 +1382,11 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         ),
         (
             "Provider setup needed: configure endpoint",
-            "Send blocked — set the endpoint to continue",
+            "Send blocked — save the endpoint to continue",
         ),
         (
             "Provider setup needed: llama.cpp endpoint unavailable",
-            "Send blocked — set the endpoint to continue",
+            "Send blocked — save the endpoint to continue",
         ),
         (
             "Provider setup needed: verify local runtime",
@@ -1402,7 +1402,13 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         ),
         (
             "Save provider endpoint in Settings > Providers & Models before sending.",
-            "Send blocked — set the endpoint to continue",
+            "Send blocked — save the endpoint to continue",
+        ),
+        # TASK-33005.7 (whole-PR review): the one endpoint copy the Console's
+        # setup gate sends (save_endpoint); the endpoint is set, not saved.
+        (
+            "Save provider endpoint in Chat settings before sending.",
+            "Send blocked — save the endpoint to continue",
         ),
         # TASK-33005.7: a rejected key is never "add an API key".
         (

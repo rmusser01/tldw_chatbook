@@ -339,7 +339,7 @@ def build_console_disabled_reason(
         if "api key" in setup_reason_lower:
             return "Send blocked — add an API key to continue"
         if "endpoint" in setup_reason_lower:
-            return "Send blocked — set the endpoint to continue"
+            return "Send blocked — save the endpoint to continue"
         if "model" in setup_reason_lower:
             return "Send blocked — choose a model to continue"
         if (
