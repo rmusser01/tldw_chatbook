@@ -23,6 +23,20 @@ This document describes the Library destination: the rail/canvas navigation mode
 4. Leaving side-effects: media browse invalidates unless the target is media; collections capture unmounts unless the target is collections. When mounted, context application runs as a worker that first flushes pending editor saves — a save-guard refusal aborts the switch and keeps the current route.
 5. Row selection → `build_library_shell_state` → one canvas child (conversations / media / notes / prompts / skills / export / search / ingest / landing). **Collections is the exception** — it changes whole-route topology (rail scopes + Items + Work panes) and goes through the central recompose path instead of the one-child seam.
 
+## Notes-sync preparation
+
+Library construction reuses an already-built Notes-sync owner without invoking
+the app's lazy property. When needed, the first mounted refresh prepares the
+original safe reader through the finite Library service worker, then attaches
+the same app-owned runtime to the sync controller on the UI loop. Until then the
+sync view is preparing; construction failures retain their distinct failed
+status. Unmounting discards late presentation, while runtime lifecycle remains
+owned by the app. Direct Notes attention/location reads also prepare the owner
+through that finite-worker boundary. Synchronous listener access reads only an
+already-built owner; a failed preparation preserves known attention. The app's
+safe reader serializes failure publication as well as construction so concurrent
+initial readers share one outcome.
+
 ## Adaptive reader
 
 `LibraryBrowseReaderShell` is **one resident shell** shared by the Media and Notes routes (route-neutral id, marker classes, single writer `apply_route`) — the decomposition spec records that per-route shells previously caused 177 mounts per media switch, 55 of them pure rebuild waste. Reader modes: read / analysis / highlights / info. Pane visibility and widths persist to `[library.reader]` and per-destination `[library.<dest>_reader]` sections.

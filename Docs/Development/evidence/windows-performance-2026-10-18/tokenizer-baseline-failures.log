@@ -1,0 +1,156 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFFF                                                                     [100%]
+================================== FAILURES ===================================
+_____ test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000019756FE3DD0>
+
+    @pytest.mark.asyncio
+    async def test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation(
+        monkeypatch,
+    ):
+        from tldw_chatbook.UI.Screens import chat_screen as module
+
+        screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+        reads, updates = [], []
+
+        def load():
+            reads.append(threading.get_ident())
+            return {"current": True}
+
+        monkeypatch.setattr(module, "load_settings", load)
+        screen._provider_readiness_app_config = (
+            lambda: module.ChatScreen._provider_readiness_app_config(screen)
+        )
+        mode_bar = SimpleNamespace(update=updates.append)
+        chips = SimpleNamespace(sync_run_chip=lambda *_args: None)
+        screen.query_one = (
+            lambda selector, *_args: mode_bar if selector == "#console-mode-bar" else chips
+        )
+        screen._pending_console_launch_context = None
+        screen._build_console_control_state = (
+            lambda *_args: screen._provider_readiness_app_config()
+        )
+        screen._console_mode_summary = lambda state: str(state["current"])
+        screen._native_run_status_copy = lambda: "Streaming"
+        screen._console_active_run_copy = lambda: "Streaming"
+        # The same real body without its projection is the positive UI-IO control.
+>       module.ChatScreen._sync_console_mode_bar.__wrapped__(screen)
+
+Tests\UI\test_console_readiness_config_projection.py:305:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = namespace(app_instance=namespace(app_config={'original': True}, chachanotes_db=<object object at 0x000001975A75CC60>),...<function test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation.<locals>.<lambda> at 0x000001975C00A5C0>)
+
+    @spend.console_readiness_presentation
+    def _sync_console_mode_bar(self) -> None:
+        try:
+            mode_bar = self.query_one("#console-mode-bar", Static)
+        except QueryError:
+            return
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
+        mode_copy = self._console_mode_summary(control_state)
+        if run_status := self._native_run_status_copy():
+            mode_copy = f"{mode_copy} | Run: {run_status}"
+        mode_bar.update(mode_copy)
+        # TASK-2154.18 (FB-08): the mode bar itself is a hidden compat
+        # static -- the run chip in the status strip is run copy's
+        # persistent VISIBLE home. This sync runs on send/stop
+        # transitions and on every 0.2s transcript-poll tick while a run
+        # is active, so the chip tracks VALIDATING -> STREAMING ->
+        # terminal within a tick; the widget's own equality guard keeps
+        # unchanged ticks free. Active statuses only: terminal outcomes
+        # already toast (task-2154.16/.17) and mark the tab.
+        try:
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
+        except QueryError:
+            return
+        active_run_copy = self._console_active_run_copy()
+        # TASK-35100 redesign: the live rate rides the run chip's own copy
+        # ("Run: streaming � 42.3 tok/s") -- the strip never gains a slot
+        # while streaming. Compact form on purpose: a live rate exists only
+        # mid-stream, and the full "Streaming response." sentence plus the
+        # rate would cross the chip's 34-cell cap and ellipsize the rate
+        # into unreadability ("� 30..."). The reading is the previous tick's
+        # (the transcript sync stashes it and runs later in the same tick).
+        if active_run_copy:
+            # TASK-35160 review round 2: the merge decision is a pure
+            # function (unit-pinned). Agent runs stay STREAMING through
+            # tool rounds and approval parking, so the status alone does
+            # not prove tokens are flowing -- the approval gate and the
+            # tracker's freshness flag are what keep "Waiting for
+            # approval..." visible.
+>           reading = self._console_rate_reading
+E           AttributeError: 'types.SimpleNamespace' object has no attribute '_console_rate_reading'
+
+tldw_chatbook\UI\Screens\chat_screen.py:17418: AttributeError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-18 21:42:07.396 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-18 21:42:07.480 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-18 21:42:07.480 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-18 21:42:07.481 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad\n2026-10-18 21:42:08.146 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+__________ TestTokenCounter.test_get_model_token_limit_unknown_model __________
+
+self = <Tests.Chat.test_token_counter.TestTokenCounter object at 0x0000019758C5A450>
+
+    def test_get_model_token_limit_unknown_model(self):
+        """Test getting token limit for unknown model"""
+>       assert get_model_token_limit("unknown-model") == 4096  # Default
+E       AssertionError: assert 32000 == 4096
+E        +  where 32000 = get_model_token_limit('unknown-model')
+
+Tests\Chat\test_token_counter.py:63: AssertionError
+____________ TestTokenCounter.test_get_model_token_limit_by_prefix ____________
+
+self = <Tests.Chat.test_token_counter.TestTokenCounter object at 0x0000019758C5A9F0>
+
+    def test_get_model_token_limit_by_prefix(self):
+        """Test getting token limit by model prefix"""
+        assert get_model_token_limit("gpt-4-some-variant") == 8192
+        # Claude-3 models need exact match or will fall back to default
+        assert get_model_token_limit("claude-3-opus-20240229") == 200000
+        # Unknown claude variant falls back to default
+>       assert get_model_token_limit("claude-3-opus-custom") == 4096
+E       AssertionError: assert 32000 == 4096
+E        +  where 32000 = get_model_token_limit('claude-3-opus-custom')
+
+Tests\Chat\test_token_counter.py:71: AssertionError
+___ TestTokenCounter.test_get_model_token_limit_provider_casing_insensitive ___
+
+self = <Tests.Chat.test_token_counter.TestTokenCounter object at 0x0000019758C750D0>
+
+    def test_get_model_token_limit_provider_casing_insensitive(self):
+        # TitleCase provider must resolve the same conservative default as lowercase.
+        # (Qodo review #6 � provider_defaults lookup was case-sensitive.)
+        assert (
+            get_model_token_limit("unknown-model", "Anthropic")
+            == get_model_token_limit("unknown-model", "anthropic")
+            == 200000
+        )
+>       assert (
+            get_model_token_limit("unknown-model", "OpenAI")
+            == get_model_token_limit("unknown-model", "openai")
+            == 4096
+        )
+E       AssertionError: assert 32000 == 4096
+E        +  where 32000 = get_model_token_limit('unknown-model', 'openai')
+
+Tests\Chat\test_token_counter.py:137: AssertionError
+============================== warnings summary ===============================
+Tests/UI/test_console_readiness_config_projection.py::test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+1.03s setup    Tests/UI/test_console_readiness_config_projection.py::test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation
+
+(11 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_readiness_config_projection.py::test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation
+FAILED Tests/Chat/test_token_counter.py::TestTokenCounter::test_get_model_token_limit_unknown_model
+FAILED Tests/Chat/test_token_counter.py::TestTokenCounter::test_get_model_token_limit_by_prefix
+FAILED Tests/Chat/test_token_counter.py::TestTokenCounter::test_get_model_token_limit_provider_casing_insensitive
+4 failed, 1 warning in 3.97s

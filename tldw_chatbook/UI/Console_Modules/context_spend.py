@@ -347,6 +347,10 @@ class ConsoleContextSpendController:
         session_id = store.active_session_id
         if session_id is None:
             settings = self._active_session_settings()
+            if not spend.console_tokenizer_display_ready(
+                self._screen, settings.model, settings.provider
+            ):
+                return ConsoleSettingsContextEstimate(None, None, "Context unavailable")
             return self._build_context_estimate(
                 [],
                 settings.provider,
@@ -410,6 +414,10 @@ class ConsoleContextSpendController:
         settings = settings or store.session_settings(session_id)
         if settings is None:
             raise KeyError(session_id)
+        if not spend.console_tokenizer_display_ready(
+            self._screen, settings.model, settings.provider
+        ):
+            return ConsoleSettingsContextEstimate(None, None, "Context unavailable")
         include_active_staging = store.active_session_id == session_id
         controller = self._ensure_console_chat_controller()
         run_status = controller.run_state_for(session_id).status
@@ -773,11 +781,13 @@ class ConsoleContextSpendController:
     ) -> ConsoleCostState | None:
         """Derive one synchronous display using the already selected owner pair."""
         session_id = session.id
+        provider, model, _settings = self._active_console_provider_model_display()
+        if not spend.console_tokenizer_display_ready(self._screen, model, provider):
+            return None
         controller = self._ensure_console_chat_controller()
         history_key, messages, history = self._console_display_history(
             store, session_id, controller
         )
-        provider, model, _settings = self._active_console_provider_model_display()
         catalog = self._display_pricing_catalog()
         helper_usage = self._response_rule_usage(session_id)
         projection_key = (
