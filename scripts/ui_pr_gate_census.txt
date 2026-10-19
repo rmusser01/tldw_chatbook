@@ -576,14 +576,3 @@ Tests/UI/test_console_response_rules.py::test_recovery_sync_never_waits_for_a_co
 Tests/UI/test_console_browser_quit_fence.py
 # The flat browser group must retain its issued native callback through drain.
 Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_presentation_worker[console-flat-conversation-search]
-
-# PR #3140 / task-35150 (pre-merge review, finding 4): the Tools & MCP hub's
-# ported suites ran in no PR lane. The pane suite is the required one; the
-# footer-hint files hold the advertised-capabilities drift guards (the
-# TOOLS `t` carve-out the review's verb-branch fix restores), and screen
-# navigation covers the retired destination's route aliases and deep links.
-Tests/UI/test_settings_tools_hub.py
-Tests/UI/test_mcp_permissions_handoff.py
-Tests/UI/test_settings_footer_hints.py
-Tests/UI/test_screen_footer_hints.py
-Tests/UI/test_screen_navigation.py
