@@ -13098,6 +13098,15 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
+        # Share derivation only within this synchronous build. In particular,
+        # FULL's post-await inspector still starts from fresh config/session data.
+        with self._console_derivation_scope():
+            return self._derive_console_inspector_state(pending_launch)
+
+    def _derive_console_inspector_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleInspectorState:
         _provider_display, model, _settings = (
             self._active_console_provider_model_display()
         )

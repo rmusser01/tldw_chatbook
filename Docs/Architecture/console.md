@@ -44,6 +44,14 @@ and service identity. New IDs, expiry and writes require another original read;
 failed reads do not renew the cache. Deleted appearances are removed on successful
 refresh. These are disposable icon/color values, never storage or action authority.
 
+An inspector build shares provider/config derivation through the existing synchronous
+memo, discarded when that build ends (TASK-35612). A subsequent build, including
+FULL's post-await projection, starts fresh. Checked-display coordinator contention
+requests the existing repaint retry without entering its body or a nested metadata
+fallback. If expiry already selected a native presentation operation, a subsequent
+display refusal requests retry only after physical retirement; cleanup errors still
+propagate. No source, pause, ownership, lifetime or action fence is relaxed.
+
 CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,

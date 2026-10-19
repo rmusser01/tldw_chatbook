@@ -6,6 +6,21 @@
 
 **What to do.** Test the owner-removal transition as well as disposal. Keep terminal admission closed with an existing longer-lived fence, while preserving ordinary missing-owner dispatch before shutdown and the issued callback's original source/refusal/physical-retirement checks. Do not silence refusal logs to qualify the packet.
 
+## A truncated diagnostic dump does not identify the crashing routine (TASK-35612, 2026-10-19)
+
+**Incident.** A Windows performance run ended halfway through its first timed
+`faulthandler` dump, while printing a storage worker's frame. The shell wrapper
+discarded the native exit code; six later storage-free timer/synchronous stress
+runs all exited zero. A CPython timer race was plausible, but neither the last
+printed frame nor those successful repeats established the original cause.
+
+**What to do.** Retain partial evidence and exact subprocess exit receipts before
+throwing from a runner. Separate diagnostic machinery from application behavior;
+never bypass storage checks based on the last sampled frame. This probe moved
+periodic dumping to a Python thread while retaining synchronous timeout dumps;
+an indefinite GIL-held hang now needs an external debugger. Record that tradeoff
+and keep unreproduced causes explicitly unresolved.
+
 ## `tmux send-keys M-1` types a character into the composer (TASK-33620.15.2, 2026-10-09)
 
 **Incident.** To switch Console tabs live (Alt+1, Alt+2), `tmux -L <name>
