@@ -18,10 +18,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
-
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
@@ -243,6 +243,11 @@ class GuardianDB(SQLiteStoreKernel, BaseDB):
                 time.sleep(0.01)
 
 
+
+    # Schema + seeding
+
+    @classmethod
+    @lru_cache(maxsize=2)
     def _expected_schema(cls, version: int) -> tuple[str, ...]:
         """Native catalog for the retained v1 DDL and additive v2 migration."""
         from tldw_chatbook.DB.guardian_schema import GUARDIAN_SCHEMAS
