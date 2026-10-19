@@ -56,7 +56,8 @@
     "first_combinator_finding": "Reproduced in four controls and corrected; reviewer confirmed resolved.",
     "remaining_findings": 0,
     "fixture_and_measurement_controls_reviewed": true,
-    "code_verdict": "Ready to merge; final comparative measurements pending at review time."
+    "code_verdict": "No remaining correctness findings.",
+    "final_measurement_verdict": "Keep auto-merge off. Overall performance objective remains unqualified: pooled input is flat, attachment median is 22.3% worse, and worst attachment increased from 2.24 to 3.58 seconds. These results do not establish causation. Retain the reviewed experiment and candid evidence for further investigation."
   },
   "integrated_recheck": {
     "passed": 26,
