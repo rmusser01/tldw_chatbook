@@ -169,8 +169,10 @@ async def test_existing_activation_stops_after_losing_authority(boundary):
         _read_claimed_visit=AsyncMock(return_value=None),
         _bind_composer_to_active_session=Mock(),
         complete_manual_read_visit=Mock(),
-        _screen=SimpleNamespace(_console_sync_requested=False),
-        _console_tab_click_snapshot=None,
+        # A pass is running, so a stopped activation asks it to re-arm.
+        _screen=SimpleNamespace(
+            _console_sync_requested=False, _console_sync_in_progress=True
+        ),
         _ensure_console_chat_controller=lambda: controller,
         _hide_console_activity_notice=Mock(),
         _capture_console_draft_switch_snapshot=Mock(),

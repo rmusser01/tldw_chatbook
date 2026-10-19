@@ -272,6 +272,7 @@ from ...Widgets.Console import (
     ProjectInstructionSetupResult,
 )
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
+from ...Widgets.Console.console_session_surface import session_tab_click_record
 from ...Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
     ConsoleActivityOutcomePresentation,
@@ -844,6 +845,27 @@ class ConsoleManualReadVisit:
     navigation_generation: int
 
 
+def _request_console_repaint(screen: Any) -> None:
+    """Repaint the Console from the store: re-arm the running sync pass or start one.
+
+    TASK-35640: the shape of ``send_acknowledgement._resync``. Setting the
+    re-arm flag alone waits for a pass that may never come when none runs.
+
+    Args:
+        screen: The Console ``ChatScreen``.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import _console_screen_is_torn_down
+
+    if _console_screen_is_torn_down(screen):
+        return
+    if screen._console_sync_in_progress:
+        screen._console_sync_requested = True
+        return
+    screen.run_worker(
+        screen._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+    )
+
+
 class ConsoleSessionController:
     """Owns the Console shell's native session lifecycle: start/activate/
     swap/promote/rename, per-session settings, the Ctrl+K switcher's choice
@@ -1186,11 +1208,6 @@ class ConsoleSessionController:
         ) = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
-        #: TASK-33622.7: the composer as a session-tab click found it, keyed
-        #: by the clicked session (see ``note_session_tab_click``).
-        self._console_tab_click_snapshot: (
-            tuple[str, tuple[str | None, str, int]] | None
-        ) = None
         self._closing_session_requests: set[str] = set()
         self._manual_reaction_overrides: dict[tuple[str, str, str], str] = {}
         self._reaction_preview_generation = 0
@@ -3202,7 +3219,11 @@ class ConsoleSessionController:
             self.complete_manual_read_visit(visit)
 
     async def _activate_native_console_session(
-        self, session_id: str, *, activate_if: Callable[[], bool] | None = None
+        self,
+        session_id: str,
+        *,
+        activate_if: Callable[[], bool] | None = None,
+        click_record: tuple[str | None, str, int] | None = None,
     ) -> None:
         """Activate a native Console session through the shared activation sequence.
 
@@ -3217,9 +3238,10 @@ class ConsoleSessionController:
             session_id: Native Console session id to activate.
             activate_if: Optional current-claim/screen guard checked before
                 activation and after each awaited refresh; absent for tab clicks.
+            click_record: The composer as this tab's own click found it
+                (``capture_session_tab_click``), passed only with the press
+                that click produced; every other route passes nothing.
         """
-        clicked = self._console_tab_click_snapshot
-        self._console_tab_click_snapshot = None
         if activate_if is not None and not activate_if():
             return
         claim = self._claim_manual_read_visit(session_id)
@@ -3228,13 +3250,12 @@ class ConsoleSessionController:
         if switching:
             self._hide_console_activity_notice()
             if (
-                clicked is not None
-                and clicked[0] == session_id
-                and clicked[1][0] == self._console_visible_draft_session_id
+                click_record is not None
+                and click_record[0] == self._console_visible_draft_session_id
             ):
                 # TASK-33622.7: keys typed after the click on this tab, while
                 # an earlier activation held the screen, belong to this chat.
-                self._console_draft_switch_snapshot = clicked[1]
+                self._console_draft_switch_snapshot = click_record
             else:
                 self._capture_console_draft_switch_snapshot()
             self._note_console_follow_intent()
@@ -3255,8 +3276,8 @@ class ConsoleSessionController:
         if activate_if is not None and not activate_if():
             if switching:
                 # TASK-33622.7: the switch is already shown in the composer
-                # and tab strip; let the next sync pass repaint the rest.
-                self._screen._console_sync_requested = True
+                # and tab strip; a sync pass repaints the rest (TASK-35640).
+                _request_console_repaint(self._screen)
             return
         if switching:
             # Task-13 review finding 2: this path activates an ALREADY-
@@ -3287,7 +3308,7 @@ class ConsoleSessionController:
                         session_id,
                     )
             if activate_if is not None and not activate_if():
-                self._screen._console_sync_requested = True  # TASK-33622.7
+                _request_console_repaint(self._screen)  # TASK-35640
                 return
             await self._sync_native_console_chat_ui()
         if activate_if is not None and not activate_if():
@@ -3675,7 +3696,7 @@ class ConsoleSessionController:
 
         return await self._confirm_fleet_loss(controller, quitting=True)
 
-    async def _handle_console_session_tab_press(self, session_id: str) -> None:
+    async def _handle_console_session_tab_press(self, pressed: Any) -> None:
         """Activate a tab, or rename it when it is already the active one.
 
         Moved verbatim out of `ChatScreen.on_button_pressed`'s
@@ -3685,14 +3706,18 @@ class ConsoleSessionController:
         path.
 
         Args:
-            session_id: The session behind the pressed tab, parsed by the
-                screen from the button id.
+            pressed: The session tab's ``Button.Pressed``. Its session is
+                the button id's suffix; the record its own click took, if any
+                (TASK-35640), goes to this activation and no other.
         """
+        session_id = str(pressed.button.id).removeprefix("console-session-tab-")
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id == session_id:
             self._open_console_session_rename_modal(session_id)
             return
-        await self._activate_native_console_session(session_id)
+        await self._activate_native_console_session(
+            session_id, click_record=session_tab_click_record(pressed)
+        )
 
     async def _apply_console_switcher_choice(
         self, choice: ConsoleSwitcherChoice | None
@@ -5813,31 +5838,34 @@ class ConsoleSessionController:
         self._bind_composer_to_active_session(focus=False)
         return session
 
-    def note_session_tab_click(self, session_id: str) -> None:
+    def capture_session_tab_click(
+        self, session_id: str
+    ) -> tuple[str | None, str, int] | None:
         """Record the composer as a session-tab click finds it.
 
-        TASK-33622.7: the click's Pressed message reaches the activation only
-        after earlier screen work (another tab's activation) has finished,
-        while keys typed straight after the click can already reach the
-        composer. The activation for this tab uses the record, so those keys
-        move to the clicked chat (TASK-339) instead of staying with the chat
-        the composer showed.
+        TASK-33622.7 / TASK-35640: the click's Pressed message reaches the
+        activation only after earlier screen work (another tab's activation)
+        has finished, and keys typed straight after the click can reach the
+        screen ahead of it and land in the composer first. The tab button
+        attaches this record to the press the click posts, and only that
+        press's activation uses it, so those keys move to the clicked chat
+        (TASK-339) and a click whose press never arrives carries nothing.
 
         Args:
             session_id: The session whose tab was clicked.
+
+        Returns:
+            ``(visible draft session, draft text, edit serial)``, or None when
+            there is no composer or the tab is already the active one.
         """
         composer = self._console_composer_or_none()
         store = self._ensure_console_chat_store()
         if composer is None or store.active_session_id == session_id:
-            self._console_tab_click_snapshot = None
-            return
-        self._console_tab_click_snapshot = (
-            session_id,
-            (
-                self._console_visible_draft_session_id,
-                composer.draft_text(),
-                composer.edit_serial,
-            ),
+            return None
+        return (
+            self._console_visible_draft_session_id,
+            composer.draft_text(),
+            composer.edit_serial,
         )
 
     def refuse_send_from_unbound_composer(
