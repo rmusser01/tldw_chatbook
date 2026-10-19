@@ -82,6 +82,9 @@ median typing **3.83 ms**, worst typing **33.50 ms**, and idle process CPU
 so the improvement did not come from permanently withholding the estimate.
 No network attempts or real-profile refusals occurred. See
 `plain-ready-tokenizer-post-pr.json` and the updated comparison.
+The four disposable profiling homes created for this follow-up were removed
+after their processes exited. Baseline scripts pin original revision
+`69771c1811e734421f0bdf31ed90969f8c1f0c63` so later commits cannot change the control.
 
 `warm_token_math.py` then isolated original counting with a prepared backend
 using generated ASCII code-like text (seven repetitions per size):

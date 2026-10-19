@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[4]
+BASE_REVISION = "69771c1811e734421f0bdf31ed90969f8c1f0c63"
 sys.path.insert(0, str(ROOT))
 from Tests.windows_private_fixture_runner import user_fixture_default_owner  # noqa: E402
 
@@ -23,7 +24,7 @@ class OriginalSources:
                     "-c",
                     f"safe.directory={ROOT.as_posix()}",
                     "show",
-                    f"HEAD:{relative}",
+                    f"{BASE_REVISION}:{relative}",
                 ],
                 cwd=ROOT,
             )
