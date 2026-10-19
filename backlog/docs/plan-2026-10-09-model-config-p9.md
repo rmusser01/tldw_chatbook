@@ -877,6 +877,7 @@ Depends on: Task 6 (TASK-33006.19, integrated in Wave 4)
   - Pins rewritten on purpose, which the PR must call out: Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers (the endpoint reason's 3 strings, TASK-33005.7).
   - Records (13b8dee5f6): this plan's corrections; the 04m capture row; TASK-35570 rescoped to decide the rule first; TASK-33005.11's AC#3 rewording noted.
   - Follow-up: TASK-35571 (reopening Chat settings marks a passed generation test stale; pre-existing).
+- Rebased onto dev at 69771c1811 (2026-10-19, 87 commits past 111f8e48fc). Only append-only lists conflicted: the lane lists in derived-artifacts.yml, Tests/CI and the census (both sides kept, dev's first), the census floor, and one import line in settings_screen.py. Dev added 4 census entries, so the census holds 359 (floor 359); the Phase 9 counts in the lines above were taken over the base's 320. Commit hashes cited above are this branch's commits before the rebase.
 
 ## Closed without code
 

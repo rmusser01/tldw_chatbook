@@ -355,14 +355,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33005.15's three Overview tests, its rewritten no-model pin and the
 # NOT RUNNING filter: 330.
 # Its review round 1: the identity row follows the Key check row on a poll
-# tick (TASK-33005.7): 331.
 # tick (TASK-33005.7): 331; a Test that probes nothing toasts its summary
 # literally (TASK-33002.9): 332.
 # Phase 9 Task 6 (2026-10-17) appends its Tests/UI node ids that no lane ran,
 # each 3 of 3 serial alone: pick mode offers a listing only for the endpoint
-# that listed it (TASK-33006.19): 333.
 # that listed it (TASK-33006.19): 333; a new entry listed under the close
-# guard says how to pick its model (TASK-33006.25): 334.
 # guard says how to pick its model (TASK-33006.25): 334. Its review round 1:
 # pick mode offers a listing only where a pick of it lands (TASK-33006.19): 336.
 # Phase 9 Task 7 (2026-10-17) appends three entries no lane ran, each 3 of 3
@@ -423,7 +420,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Tests/UI evidence nodes take their slots in place (TASK-33003.22's two
 # governance ratchets, TASK-33641.4's definition row, TASK-33003.16's theme
 # import), so no other entry changes shard. Each still runs in one PR lane: 355.
-MINIMUM_FILES = 355
+# Phase 9 was rebased onto dev at 69771c1811 (2026-10-19), whose floor was
+# 324: the Phase 9 counts above were taken over its base's 320, so its 35
+# entries end at 359 here.
+MINIMUM_FILES = 359
 
 
 def read_census(path: Path) -> list[str]:
