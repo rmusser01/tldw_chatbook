@@ -12,11 +12,11 @@ run-start callbacks of 40-118 ms.
 
 The app's post-UI-ready pre-import pass (``TldwCli._preimport_heavy_screens``,
 a daemon thread behind the same on/off switch, off in the census) imports them
-first, before the speculative screen routes, then parses the built-in MCP
-manifest's source once (every send's configuration capture reads that
-manifest). Nothing moves before UI-ready, and a send racing the warm-up blocks
-on Python's per-module import lock no longer than its own import would have
-taken.
+first, before the speculative screen routes and paced like them, then parses
+the built-in MCP manifest's source once (every send's configuration capture
+reads that manifest). Nothing moves before UI-ready, and a send racing the
+warm-up blocks on Python's per-module import lock no longer than its own
+import would have taken.
 
 Keep the list to modules the send path really imports, in the order it does;
 ``Tests/UI/test_console_first_send_preimport.py`` checks that each is still
@@ -26,7 +26,8 @@ lazy at UI-ready and that the harness's send imports nothing lazy beyond it.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable
+import time
+from typing import Any
 
 from loguru import logger
 
@@ -39,6 +40,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.UI.Console_Modules.sent_draft",
     "tldw_chatbook.Chat.console_received_intent",
     "tldw_chatbook.Chat.console_configuration_preparation",
+    "tldw_chatbook.Chat.console_preparation_reads",
     "tldw_chatbook.Chat.console_configuration_capture",
     "tldw_chatbook.UI.Console_Modules.turn_admission",
     "tldw_chatbook.MCP.console_snapshot",
@@ -104,20 +106,27 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
 )
 
 
-def preimport_first_send_modules(should_stop: Callable[[], bool]) -> None:
+def preimport_first_send_modules(app: Any) -> None:
     """Import ``FIRST_SEND_MODULES`` in order, then parse the MCP manifest source.
 
-    Runs on the pre-import daemon thread and never raises. A module that
-    fails to import is left to fail again, identically, where the send
-    imports it (a failed import is never cached).
+    Runs on the pre-import daemon thread and never raises. Paced like the
+    screen routes that follow it: after each import the thread gives the UI
+    loop a pause as long as that import took (the app's pre-import pacing),
+    and parks while a navigation or accepted Console work owns the loop, so a
+    send that starts mid-warm-up imports what it still needs itself, as
+    before. A module that fails to import is left to fail again, identically,
+    where the send imports it (a failed import is never cached).
 
     Args:
-        should_stop: Polled before each step; True stops the warm-up
-            (the app is quitting).
+        app: The running ``TldwCli``. Its ``_shutting_down`` stops the
+            warm-up; ``_screen_preimport_pacing()`` and
+            ``_pause_between_preimports()`` pace it.
     """
+    ratio, cap = app._screen_preimport_pacing()
     for name in FIRST_SEND_MODULES:
-        if should_stop():
+        if getattr(app, "_shutting_down", False):
             return
+        started = time.monotonic()
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 -- a speculative warm-up
@@ -126,7 +135,8 @@ def preimport_first_send_modules(should_stop: Callable[[], bool]) -> None:
                 name,
                 type(exc).__name__,
             )
-    if should_stop():
+        app._pause_between_preimports(min((time.monotonic() - started) * ratio, cap))
+    if getattr(app, "_shutting_down", False):
         return
     try:
         from tldw_chatbook.MCP.server import prime_local_manifest_source

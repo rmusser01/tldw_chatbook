@@ -5352,7 +5352,7 @@ class TldwCli(
         """
         from .Chat.console_first_send_modules import preimport_first_send_modules
 
-        preimport_first_send_modules(lambda: self._shutting_down)
+        preimport_first_send_modules(self)
         self._preimport_screens(self._screen_preimport_route_order())
 
     def _initial_screen_preimport_route(self) -> ScreenRoute | None:

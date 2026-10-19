@@ -107,6 +107,7 @@ def routes_start(self, routes):
 
 
 cls._preimport_screens = routes_start
+cls._pause_between_preimports = lambda self, gap: None  # pacing: unit-tested below
 cls._preimport_heavy_screens(app)
 
 # The first send's configuration capture reads the built-in manifest.
@@ -194,6 +195,23 @@ def test_every_live_first_send_import_is_listed():
     assert not missing, missing
 
 
+class _PassApp:
+    """The three things the warm-up reads from the app's pre-import pass."""
+
+    def __init__(self, stop_after: int | None = None) -> None:
+        self._shutting_down = False
+        self.pauses: list[float] = []
+        self._stop_after = stop_after
+
+    def _screen_preimport_pacing(self) -> tuple[float, float]:
+        return (2.0, 0.5)
+
+    def _pause_between_preimports(self, gap_seconds: float) -> None:
+        self.pauses.append(gap_seconds)
+        if self._stop_after is not None and len(self.pauses) >= self._stop_after:
+            self._shutting_down = True
+
+
 def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
     from tldw_chatbook.Chat import console_first_send_modules as warm
 
@@ -205,9 +223,34 @@ def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
             raise ImportError("broken optional dependency")
 
     monkeypatch.setattr(warm.importlib, "import_module", fake_import)
-    warm.preimport_first_send_modules(lambda: len(imported) >= 3)
+    warm.preimport_first_send_modules(_PassApp(stop_after=3))
 
     assert imported == list(warm.FIRST_SEND_MODULES[:3])
+
+
+def test_the_warm_up_hands_the_loop_a_paced_gap_after_every_import(monkeypatch):
+    """Like the screen routes after it: a gap of cost x ratio, capped, per import.
+
+    The pass's pause also parks while a navigation or accepted Console work
+    owns the loop, so a send that starts mid-warm-up is not raced.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+
+    clock = iter(float(n) * 0.1 for n in range(10_000))
+    monkeypatch.setattr(warm.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(warm.importlib, "import_module", lambda name: None)
+    primed: list[bool] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.MCP.server.prime_local_manifest_source",
+        lambda: primed.append(True),
+    )
+    app = _PassApp()
+
+    warm.preimport_first_send_modules(app)
+
+    # Each import "took" 0.1 s on the fake clock: gap 0.1 x 2.0 = 0.2 s.
+    assert app.pauses == [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
+    assert primed == [True]
 
 
 #: Frames that mark the send's own work (the acknowledgement, admission and run
