@@ -248,7 +248,8 @@ _BUDGETS: dict[str, int] = {
     # Phase 9 Task 12, TASK-33005.10: the Test rows' model facet is the
     # snapshot's own model_facet, not a second copy (-5): 35,772.
     # TASK-33005.15's PR review: one write covers every Overview row (-1): 35,771.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
+    # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint is -1: 35,770.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35770,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -330,7 +331,8 @@ _BUDGETS: dict[str, int] = {
     # Phase 9 Task 6 lowers it to 6,159: a listing is kept, with the endpoint
     # it listed, through the field rows' helper (TASK-33006.19).
     # TASK-33002.7 shrank it to 6,153 (2629dafe36, then 4f1110488e).
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6153,
+    # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint added 13: 6,166.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6166,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
