@@ -1,6 +1,6 @@
 # Lessons: what counts as evidence a change works
 
-## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-19)
+## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
 
