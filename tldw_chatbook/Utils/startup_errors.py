@@ -16,12 +16,45 @@ from __future__ import annotations
 
 import shlex
 import sys
+import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .private_paths import PrivatePathError, PrivatePathResult
 
 _WIDTH = 72
+
+
+def _is_windows() -> bool:
+    """Whether the guidance must speak Windows (TASK-35312).
+
+    The refusal itself is platform-neutral and stays fail-closed; only the
+    repair language branches. Reads the ``platform_files`` facade (the same
+    view the guard uses) rather than ``sys.platform`` so tests can force
+    either branch.
+    """
+    from .platform_files import os as _platform_os
+
+    return _platform_os.name == "nt"
+
+
+def _windows_temp_dir() -> str:
+    """The per-user TEMP directory, for the TEMP-specific explanation."""
+    return tempfile.gettempdir()
+
+
+def _windows_quoted(path: Path | str) -> str:
+    """Quote a path for copy-paste into cmd/PowerShell."""
+    text = str(path).replace('"', "")
+    return f'"{text}"'
+
+
+def _path_under_windows_temp(path: Path | str) -> bool:
+    candidate = str(path).replace("/", "\\").rstrip("\\").lower()
+    root = _windows_temp_dir().replace("/", "\\").rstrip("\\").lower()
+    return bool(root) and (
+        candidate == root or candidate.startswith(root + "\\")
+    )
 
 #: Refusals caused by HOME living in a shared sticky directory (/tmp & co):
 #: relocating the config under that same HOME cannot help, so the alternative
@@ -78,6 +111,13 @@ def private_path_repair_hint(exc: PrivatePathError) -> str | None:
     result = exc.result
     if result.offender_path is None:
         return None
+    if _is_windows():
+        # TASK-35312: there is no safe single command that repairs an
+        # unknown Windows ACL grant -- `chmod`/`chown` cannot change ACLs,
+        # and blind `icacls /remove` entries could break inheritance. The
+        # guidance block below carries the `icacls` inspection detail
+        # instead of pretending a one-liner exists.
+        return None
     if result.reason in _CHMOD_REPAIR_REASONS:
         return shlex.join(["chmod", "g-w,o-w", "--", str(result.offender_path)])
     if result.reason in _OWNERSHIP_REPAIR_REASONS:
@@ -97,7 +137,34 @@ def _shell_path(path: Path | str) -> str:
     return shlex.quote(str(path))
 
 
+def _windows_shared_writable_guidance(result: PrivatePathResult) -> list[str]:
+    offender = result.offender_path
+    lines = [
+        "On Windows the check reads the directory's real access rules",
+        "(ACLs): another user group has write access to the blocked",
+        "directory shown above. Inspect the entries, then remove the extra",
+        "write grants:",
+    ]
+    if offender is not None:
+        lines += ["", f"    icacls {_windows_quoted(offender)}"]
+    lines += [
+        "",
+        "Or keep Chatbook's config and data under your own user profile",
+        r"(C:\Users\<you>\...), whose access rules normally allow only you.",
+    ]
+    if offender is not None and _path_under_windows_temp(offender):
+        lines += [
+            "",
+            "The blocked directory is your Windows TEMP directory -- on",
+            "this machine it is shared with other users, so Chatbook will",
+            "always refuse to store its config or data there.",
+        ]
+    return lines
+
+
 def _shared_writable_guidance(result: PrivatePathResult) -> list[str]:
+    if _is_windows():
+        return _windows_shared_writable_guidance(result)
     offender = result.offender_path
     lines = [
         "Remove group/world write permission from the blocked directory",
@@ -120,6 +187,16 @@ def _shared_writable_guidance(result: PrivatePathResult) -> list[str]:
 
 
 def _sticky_shared_guidance(result: PrivatePathResult) -> list[str]:
+    if _is_windows():
+        return [
+            "The blocked directory lives in a shared directory that other",
+            "local users can read and fill. HOME (or the parent shown",
+            "above) must be an ordinary private directory:",
+            "",
+            "    * log in as a regular user with its own home directory, or",
+            r"    * point HOME at a private path (e.g. C:\Users\<you>\home)"
+            " before starting.",
+        ]
     return [
         "The blocked directory lives in a shared, sticky directory such as",
         "/tmp, which any local user can read and fill. HOME (or the parent",
@@ -132,6 +209,18 @@ def _sticky_shared_guidance(result: PrivatePathResult) -> list[str]:
 
 def _ownership_guidance(result: PrivatePathResult) -> list[str]:
     offender = result.offender_path
+    if _is_windows():
+        lines = [
+            "The blocked directory belongs to a different user. This",
+            "usually means Chatbook is running elevated (as an",
+            "administrator) while the directory belongs to your normal",
+            "account, or the other way around. Run Chatbook as the user",
+            "who owns that directory, or correct the owner in the",
+            "directory's Properties > Security sheet as an administrator:",
+        ]
+        if offender is not None:
+            lines += ["", f"    icacls {_windows_quoted(offender)}"]
+        return lines
     lines = [
         "The blocked directory belongs to a different user. This usually",
         "means Chatbook is running under sudo/su while HOME points at",
@@ -165,6 +254,16 @@ def _ambiguous_roots_guidance(result: PrivatePathResult) -> list[str]:
 
 
 def _generic_guidance(result: PrivatePathResult) -> list[str]:
+    if _is_windows():
+        return [
+            "Check the owner and the access rules (ACLs) of every directory",
+            "on the path shown above:",
+            "",
+            "    icacls <location-above>",
+            "",
+            "Every directory must belong to you (or SYSTEM/Administrators)",
+            "and must not grant other users write access.",
+        ]
     return [
         "Check the ownership and permissions of every directory on the path",
         "shown above. On Linux, `namei -l <path>` lists them one line each;",
@@ -195,6 +294,16 @@ def _alternative_lines(result: PrivatePathResult) -> list[str]:
 
     reason = result.reason or ""
     if reason in _STICKY_HOME_REASONS:
+        if _is_windows():
+            return [
+                "ALTERNATIVE",
+                "Start Chatbook with HOME pointing at a private directory",
+                "you own (replace the example with your own path), in",
+                "PowerShell:",
+                "",
+                '    $env:HOME = "C:\\Users\\you\\home"',
+                "    tldw-cli",
+            ]
         return [
             "ALTERNATIVE",
             "Start Chatbook with HOME pointing at a private directory you",
@@ -207,6 +316,20 @@ def _alternative_lines(result: PrivatePathResult) -> list[str]:
         # choice; a config-path alternative cannot resolve a data-root
         # refusal, so do not offer one.
         return []
+    if _is_windows():
+        return [
+            "ALTERNATIVE",
+            "Keep the directory as it is and point the config elsewhere",
+            "instead (a file inside a directory only you can write), in",
+            "PowerShell:",
+            "",
+            '    $env:TLDW_CONFIG_PATH = "$HOME\\tldw-config.toml"',
+            "    tldw-cli",
+            "",
+            "If the blocked path above belongs to Chatbook's data storage",
+            "rather than its config, set [paths] data_dir in the config",
+            "file to a private directory instead.",
+        ]
     return [
         "ALTERNATIVE",
         "Keep the directory as it is and point the config elsewhere instead",
