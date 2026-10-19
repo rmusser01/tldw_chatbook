@@ -1,11 +1,11 @@
 ---
 id: TASK-35613
 title: Reduce Console config derivation and dynamic CSS matching work
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-19 19:37'
-updated_date: '2026-10-19 20:03'
+updated_date: '2026-10-19 20:04'
 labels: []
 dependencies: []
 ---
@@ -22,7 +22,7 @@ Reduce measured redundant work during Windows Console interactions without chang
 - [x] #2 Impossible final pseudo-state selectors avoid ancestor matching while full style and invalidation behavior remains equivalent to upstream.
 - [x] #3 Serial before/after Windows profiles and focused benchmarks record results and limitations against a pinned baseline.
 - [x] #4 Targeted regression, compatibility, static checks and review complete with storage safety checks intact.
-- [ ] #5 PR 3166 updated with code and reproducible evidence.
+- [x] #5 PR 3166 updated with code and reproducible evidence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,4 +42,6 @@ Reduced independent readiness and provider-label settings loads from 3 to 1 usin
 23 distinct targeted checks passed, including real screen fidelity and the concurrently integrated measured-spend fix. New/modified helper and test lint/format checks pass; ChatScreen retains exactly its baseline 22 lint findings and formatting debt. Independent review found no blockers. One 45-second cold fixture timeout was retained and resolved with a bounded 90-second allowance; no full sweep ran.
 Warm full-screen CSS improved 165.34 to 129.41 ms (21.7%), 526 widgets and zero style mismatches. Serial ABBA medians were mixed, and the final integration pair retained a worse updated first-return outlier: no overall latency gain is claimed. All 36 return journeys retained drafts and attached, with zero guard failures and successful exits.
 A concurrent shared-checkout rebase required an isolated managed worktree. Controls pin f152dfc4; final compatibility/profile evidence includes 1bebf20b. See Docs/Development/evidence/windows-performance-2026-10-18/SUBJECT_RESULTS.md and updated Console architecture/verification lessons. PR update pending.
+
+Published fixes and evidence to PR #3166, updated its description with mixed end-to-end results and retained outliers, and removed all 12 exact owned private fixture directories. Auto-merge remains disabled for the new head pending fresh review. Final combined-code profile/control both completed all six returns with no guard violations.
 <!-- SECTION:NOTES:END -->
