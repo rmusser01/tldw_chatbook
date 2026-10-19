@@ -131,3 +131,53 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
             .fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_cancel_send_settles_the_trace_pause(tmp_path, monkeypatch) -> None:
+    """TASK-34100.3.1 AC#3: Cancel send settles the saved-Kimi third-turn pause.
+
+    It used to refuse with "Trace reservation status is unavailable", because
+    the pause recorded an "unknown" reservation. Dev's tasks-32951/32953
+    (d591a4c101) record a surface refusal before any boundary as
+    "not_established", which the cancel path accepts; this pins that.
+    """
+    async with _mounted_console(
+        tmp_path, monkeypatch, provider="moonshot", model="kimi-k3"
+    ) as h:
+        saved = h.store.ensure_session()
+        for turn, text in enumerate(("Say hello", "And again"), 1):
+            await _send(h, text)
+            await _until(
+                h.pilot,
+                lambda turn=turn: _replies(h, saved.id) == [REPLY] * turn,
+                timeout=30.0,
+                what=f"turn {turn} did not reply",
+            )
+        await _send(h, "Once more")
+        await _until(
+            h.pilot,
+            lambda: TRACE_BLOCKED in _screen(h),
+            timeout=30.0,
+            what="turn 3 did not stop at the trace pause (TASK-34100.3.1 landed?)",
+        )
+
+        await _wait_for_selector(h.console, h.pilot, "#console-trace-cancel")
+        await h.pilot.click("#console-trace-cancel")
+        await _until(
+            h.pilot,
+            lambda: h.controller.trace_call_recovery_preparation() is None,
+            timeout=30.0,
+            what="Cancel send did not settle the trace pause",
+        )
+
+        screen = _screen(h)
+        assert "Trace reservation status is unavailable" not in screen
+        assert TRACE_BLOCKED not in screen
+        assert [copy for copy in DELIVERY_UNKNOWN if copy in screen] == [], screen
+        assert h.controller.run_state_for(saved.id).visible_copy == (
+            "Trace-captured send canceled."
+        )
+        assert h.store.dispatch_recovery_for_session(saved.id) is None
+        assert _checkpoints(h) == []
+        assert len(h.calls) == 2, "a canceled send must not reach the provider"
