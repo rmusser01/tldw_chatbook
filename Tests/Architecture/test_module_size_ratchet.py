@@ -329,7 +329,8 @@ _BUDGETS: dict[str, int] = {
     # as the markup-interpolation guard requires (escape_markup import).
     # Phase 9 Task 6 lowers it to 6,159: a listing is kept, with the endpoint
     # it listed, through the field rows' helper (TASK-33006.19).
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6159,
+    # TASK-33002.7 shrank it to 6,153 (2629dafe36, then 4f1110488e).
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6153,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
