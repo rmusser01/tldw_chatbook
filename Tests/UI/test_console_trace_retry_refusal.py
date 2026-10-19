@@ -9,8 +9,15 @@ card had just said the provider was not contacted.
 
 The pause records that no call boundary was ever built (the planner refused
 before reservation), so nothing of this send can have reached the provider.
-A retry of that shape cannot be verified and is refused again; it must leave
-the send paused at the same card, with Send without capture still working.
+A retry of that shape is refused again; it must leave the send paused at the
+same card, with Send without capture still working.
+
+Rebased onto dev (2026-10-19): dev's tasks-32951/32953 (d591a4c101) classify
+a surface refusal before any boundary as ``not_established``, so the gateway
+consumes that first-call proof, the retry re-enters the send, meets the same
+refusal and re-pauses with dev's "Trace capture could not start" copy. That
+made this branch's own re-pause helper unreachable, so it was removed; this
+pilot now pins dev's behaviour for the saved-Kimi third turn.
 """
 
 from __future__ import annotations
@@ -30,6 +37,8 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 pytestmark = pytest.mark.bootstrap_profile
 
 DELIVERY_UNKNOWN = ("delivery status is unknown", "Send blocked", "Retry anyway")
+#: The trace card's status line after a refused retry (dev's re-pause copy).
+REFUSED_RETRY = "Trace capture could not start"
 
 
 def _screen(h) -> str:
@@ -85,7 +94,7 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
         await _until(
             h.pilot,
             lambda: (
-                "refused again" in _screen(h)
+                REFUSED_RETRY in _screen(h)
                 or any(copy in _screen(h) for copy in DELIVERY_UNKNOWN)
             ),
             timeout=30.0,
