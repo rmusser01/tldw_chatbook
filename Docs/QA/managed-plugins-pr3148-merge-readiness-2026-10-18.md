@@ -59,3 +59,45 @@ No full suite, new platform support, real keychain/reboot or vendor-host parity
 is claimed. Existing platform skips and previously documented qualification
 limits remain. No new ADR is required for this routine test correction and
 reconciliation of the existing plugin/Console contracts (ADR162/163).
+
+## Final dev reconciliation and hosted renewal
+
+The user approved the completed independent reviews in place of Qodo for this
+PR, then authorized merging into dev once the requirements pass. Automatic
+approval review rejected enabling conditional auto-merge while the required
+artifact check was queued and the branch was behind. That command did not run.
+Auto-merge remains off during the following reconciliation.
+
+Published source `5a24569b4e` passed all 15 required test lanes and all three
+native plugin jobs: Linux 461 passed/313 skipped, Windows 308 passed/466 skipped,
+and macOS 771 passed/3 skipped. GGUF passed 38 checks on each platform. The
+native plugin checkout `b690cdd20e` has the same complete Git tree as `5a24569b4e`.
+The final required artifact job was still queued at this receipt; test-lane
+success does not establish that final required check is green.
+
+The unarmed branch was subsequently rebased onto dev
+`768d58b7564bb2ea6e55a7e0e1f40dbc4016d8fa`, producing qualified source
+`5dbd38e85018776df6ba5c70b968a2c69c211225`. All 65 replayed patches are identical.
+The three upstream paths are retained byte-for-byte: the notification store,
+ADR228 and its task notes. Apart from qualification metadata, no other tracked
+source changed. The prior published head remains protected by a backup ref.
+
+Frozen phase `freeze18-dev768-20261019/ci22-notifications-plugin-integration`
+passed all 189 selected notification, notification-DB, SQLite kernel/inventory,
+Console plugin and cold-start/deferred-import checks in 134.93s. Input manifests
+were unchanged, with zero unexpected outputs; 95 bytecode caches were recorded
+separately. The existing runner retains all private-profile, null-keyring,
+network and native guards. Its historical ancestry pin remains labelled as
+historical; current dev ancestry was proved separately.
+
+All 11 offline artifact checks passed on the combined source. A fresh scoped
+independent reconciliation review found 0 Critical / 0 Important / 0 Minor
+issues and authenticated the replay and notification/kernel/participant/startup
+boundaries. This is not a new exhaustive review of the entire feature.
+
+The final report/task publication changes documentation only. Current-head
+hosted CI and branch freshness remain merge requirements; previous-head native
+results are not represented as new-head passes. Existing ADR162/163/228 apply;
+no new ADR, runtime support, full-suite claim or guard relaxation is introduced.
+Raw logs, exact replay/source checks and the new review are retained under
+`.superpowers/pr3148-publication-retry/` and the frozen phase above.
