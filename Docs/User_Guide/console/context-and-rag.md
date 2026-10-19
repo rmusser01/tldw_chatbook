@@ -1003,8 +1003,13 @@ Its **Restore** and **Discard** release the paused send too, so the next
 message you send in that conversation goes through. Once you act on the card,
 the message leaves that list while the card handles it, so the same message is
 never offered in two places. If Cancel finds text already in the composer, the
-message goes back on the list for **Restore** later. Nothing is silently
-downgraded to an ungrounded send.
+message goes back on the list for **Restore** later. If you switch to another
+conversation while Cancel runs, the message goes back to its own
+conversation's draft, not to the one on screen. If the card is closed while
+it acts — for example you open the Console terminal during a Retry — the
+search stops, the send pauses as **Library search stopped**, and the message
+is listed again with Restore and Discard; the card shows it again when you
+return. Nothing is silently downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
