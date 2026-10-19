@@ -23,13 +23,13 @@ references:
 Phase 9's ledger ruling R11 (TASK-33002.17) says a bootstrap_profile test goes to the PR Fast Lane's admission step (ADMISSION_TARGETS), never to the UI PR gate census. The reason is TASK-32873: enrolling keep_bootstrap_profile in a shared pytest run can poison sandboxed suites' config access, which shows up as RecoveryRequired.
 
 The repo does not follow that rule as a whole, and nothing decides it.
-- At Phase 9's head the census holds 73 bootstrap_profile entries, all from dev, some of them whole files. Some are there on purpose: the TASK-34785 block says "Three node entries cover 13 bootstrap-profile cases".
+- At Phase 9's head (the whole-PR review's round 2, rebased onto dev 69771c1811) the census holds 74 bootstrap_profile entries of its 358, 46 of them whole files, counted with Tests/CI's `_uses_bootstrap_profile`. 72 come from dev: dev's census at 69771c1811 holds 72 such entries of its 324, and all 72 are still listed. Two are Phase 9's: `Tests/UI/test_settings_discovered_model_toggle.py`, a dev entry that became bootstrap_profile when TASK-33003.17 added a marked node to it, and `Tests/UI/test_console_switch_model_entry_points.py::test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer` (TASK-33006.20), a private-profile node in a file dev marks bootstrap_profile at module level. Some are there on purpose: the TASK-34785 block says "Three node entries cover 13 bootstrap-profile cases".
 - The Console P0 gate's `_BOOTSTRAP_OK` (Tests/CI/test_console_p0_regression_gate.py) lists the UI Fast Lane census as an allowed lane for bootstrap tests.
 - So the census shards already mix both kinds and pass. Whether the TASK-32873 hazard applies to census shards at all is unproved.
 
-During Phase 9, this phase's own new census entries were made to follow R11: eleven nodes were moved in b4a4c8db7c, and the whole-PR review moved a few more. One more stays: test_settings_discovered_model_toggle.py is listed whole, with one bootstrap node inside.
+During Phase 9, this phase's own new census entries were made to follow R11: eleven nodes were moved in c8a55a772c, the whole-PR review's round 1 moved the four Chat settings geometry nodes, and its round 2 moved TASK-33641.4's definition-row node. Two stay: test_settings_discovered_model_toggle.py is listed whole, with one bootstrap node inside, and TASK-33006.20's footer node, which the round-2 count found (no round moved it; this task decides).
 
-Moving all 73 would push them into the single 35-minute admission job, while the census is sharded for time. This task first decides the rule, then enforces whichever rule is chosen.
+Moving all 74 would push them into the single 35-minute admission job, while the census is sharded for time. This task first decides the rule, then enforces whichever rule is chosen.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
