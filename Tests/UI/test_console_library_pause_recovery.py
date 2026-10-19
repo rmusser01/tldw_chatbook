@@ -286,3 +286,124 @@ async def test_a_card_retry_cancelled_by_a_center_swap_leaves_a_recoverable_paus
             screen = _screen_text(host)
             assert "Another send is still preparing" not in screen
             assert "Last send is blocked" not in screen
+
+
+@pytest.mark.asyncio
+async def test_a_card_action_whose_first_repaint_fails_gives_the_turn_back():
+    """Re-review MINOR 6: the shelf hold is released however the action ends.
+
+    The card takes the turn off the shelf and repaints before its action.
+    That hold and repaint ran outside the action's error handling, so a
+    repaint that failed left the turn held for good: off the shelf, with
+    Restore and Discard refused, and the action never run.
+    """
+    gateway = _Gateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            runtime = console._console_runtime()
+            session_id = controller.store.active_session_id
+            (entry,) = runtime.recoveries_for_session(session_id)
+            real_sync = console._sync_native_console_chat_ui
+            failed: list[str] = []
+
+            async def first_held_repaint_fails():
+                if not failed and runtime.recoveries_for_session(session_id) == ():
+                    failed.append(entry.preparation_id)
+                    raise RuntimeError("repaint failed")
+                await real_sync()
+
+            console._sync_native_console_chat_ui = first_held_repaint_fails
+            console.query_one(_CARD_ACTIONS["Retry Library search"], Button).press()
+            await until(lambda: failed == [entry.preparation_id])
+            # The runtime, not the painted shelf (still painted from before).
+            await until(lambda: runtime.recoveries_for_session(session_id) == (entry,))
+            await until(lambda: "Recovery did not complete" in _screen_text(host))
+            assert _shelf_offers_unsent_turn(console)
+            assert _paused_retrieval(controller)
+            assert library.calls == 1  # the retry itself never ran
+
+            console.query_one("#console-prompt-queue-pause", Button).press()
+            await until(lambda: not _shelf_offers_unsent_turn(console))
+            assert not _paused_retrieval(controller)
+
+
+@pytest.mark.asyncio
+async def test_card_cancel_after_a_tab_switch_returns_the_text_to_its_own_chat():
+    """Re-review MINOR 7: Cancel never fills another conversation's composer.
+
+    The user switches tab while the card's Cancel runs. The cancelled
+    message goes back to its own conversation's draft; the composer, which
+    now shows the other conversation, is left as it was.
+    """
+    gateway = _Gateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            store = controller.store
+            first_id = store.active_session_id
+            runtime = console._console_runtime()
+            real_cancel = controller.cancel_library_preparation
+            other_ids: list[str] = []
+
+            def cancel_after_a_tab_switch(preparation_id):
+                other = store.create_session(title="Other")
+                other_ids.append(other.id)
+                store.switch_session(other.id)
+                console._console_visible_draft_session_id = other.id
+                composer.load_draft("")
+                return real_cancel(preparation_id)
+
+            controller.cancel_library_preparation = cancel_after_a_tab_switch
+            console.query_one(_CARD_ACTIONS["Cancel send"], Button).press()
+            await until(lambda: other_ids != [])
+            await until(lambda: runtime.recoveries_for_session(first_id) == ())
+            await pilot.pause()
+
+            assert composer.draft_text() == ""
+            assert store.session_draft(other_ids[0]) == ""
+            assert store.session_draft(first_id) == FIRST
+            assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_card_retry_whose_durable_commit_fails_keeps_the_turn_on_the_shelf():
+    """Re-review MINOR 8: the shelf trusts the store, which says "not sent".
+
+    A Retry whose durable commit then fails returns ``accepted=False`` and
+    leaves its preparation COMMITTING, so the turn stays restorable on the
+    shelf rather than being forgotten as sent.
+    """
+    gateway = _Gateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            store = controller.store
+            session_id = store.active_session_id
+            runtime = console._console_runtime()
+
+            def refuse_commit(*_args, **_kwargs):
+                raise RuntimeError("durable commit refused for this test")
+
+            store.commit_durable_turn = refuse_commit
+            library.release.set()
+            console.query_one(_CARD_ACTIONS["Retry Library search"], Button).press()
+            await until(
+                lambda: (
+                    getattr(store.preparation_for_session(session_id), "state", None)
+                    is ConsoleTurnPreparationState.COMMITTING
+                )
+            )
+            # The card's action has settled (no longer held off the shelf).
+            await until(lambda: len(runtime.recoveries_for_session(session_id)) == 1)
+            await until(lambda: _shelf_offers_unsent_turn(console))
+            assert gateway.stream_calls == 0

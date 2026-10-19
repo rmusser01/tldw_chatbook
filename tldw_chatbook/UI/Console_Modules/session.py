@@ -6864,10 +6864,11 @@ class ConsoleSessionController:
             else ""
         )
         sync_ui = self._read_trace_recovery_finished()
-        if releasable:
-            card_action_started(runtime, preparation_id)
-            await sync_ui()  # the shelf stops offering the send right away
         try:
+            if releasable:
+                # Inside the try: a failed or cancelled repaint still unholds.
+                card_action_started(runtime, preparation_id)
+                await sync_ui()  # the shelf stops offering the send right away
             result = await self._read_trace_recovery_dispatch()(
                 controller,
                 action,
@@ -6891,25 +6892,30 @@ class ConsoleSessionController:
                 self.run_worker(sync_ui(), exclusive=False, group="console-sync")
             raise
         composer = self._console_composer_or_none()
-        now_held = controller.trace_call_recovery_preparation()
+        # By id: after a tab switch the active session's pause is another's.
+        now_held = controller.store.preparation_by_id(preparation_id)
         settled = bool(held_text) and (
             not shelf_releasable(now_held, preparation_id)
             if releasable
             else controller.context_compaction_hold(preparation_id) is None
         )
-        refill = (
-            action == "cancel"
-            and settled
+        # TASK-33621.20: a tab switch during the action leaves the composer on
+        # another conversation; the turn goes back to its own draft instead.
+        shown = (
+            held is not None
             and composer is not None
-            and not composer.draft_text().strip()
+            and controller.store.active_session_id == held.session_id
+            and self._console_visible_draft_session_id == held.session_id
         )
+        cancelled = action == "cancel" and settled
+        refill = cancelled and shown and not composer.draft_text().strip()
         if releasable:
             returned = card_action_finished(
                 runtime,
                 controller,
                 preparation_id,
                 accepted=bool(getattr(result, "accepted", False)),
-                return_to_composer=refill,
+                return_to_composer=refill or (cancelled and not shown),
             )
             if returned is not None:
                 held_text = returned.draft  # with its attachments restaged
