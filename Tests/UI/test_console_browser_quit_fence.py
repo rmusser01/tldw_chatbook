@@ -12,7 +12,7 @@ from Tests.private_profile import private_profile_test
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phase", ["queued", "native", "late", "stay"])
+@pytest.mark.parametrize("phase", ["queued", "native", "late", "detached", "stay"])
 @pytest.mark.parametrize("route", ["cache", "flat"])
 @private_profile_test
 async def test_approved_quit_cancels_browser_at_terminal_fence(
@@ -39,10 +39,13 @@ async def test_approved_quit_cancels_browser_at_terminal_fence(
 
         async def _run_approved_quit_cleanup(self):
             assert self.console_runtime._disposed and self._shutting_down
-            if phase == "late":
-                # A live UI callback can still run during audio/config cleanup.
+            if phase == "detached":
+                await LifecycleMixin._shutdown_console_runtime(self)
+                assert self.console_runtime is None
+            if phase in {"late", "detached"}:
+                # The screen can remain live after runtime disposal/detachment.
                 issue()
-            if phase != "late":
+            if phase not in {"late", "detached"}:
                 facts["cancelled_at_fence"] = worker._task.cancelling() > 0
             if other is not None:
                 assert other._task.cancelling() == 0, (
@@ -186,7 +189,7 @@ async def test_approved_quit_cancels_browser_at_terminal_fence(
         async with host.run_test():
             if phase == "stay":
                 host.screen.confirm_quit = lambda: False
-            if phase != "late":
+            if phase not in {"late", "detached"}:
                 issue()
                 (worker,) = tuple(host.workers)
                 assert type(worker) is Worker and worker._node is host
@@ -201,7 +204,7 @@ async def test_approved_quit_cancels_browser_at_terminal_fence(
                 assert not runtime._disposed and not host._shutting_down
                 await worker.wait()
                 assert not worker.is_cancelled and len(starts) == 2
-            elif phase != "late":
+            elif phase not in {"late", "detached"}:
                 assert facts["cancelled_at_fence"], (
                     "Quit yielded with an uncancelled browser"
                 )
