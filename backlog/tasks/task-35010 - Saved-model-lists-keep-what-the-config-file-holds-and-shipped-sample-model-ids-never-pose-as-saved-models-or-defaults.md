@@ -41,4 +41,5 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 - [ ] #9 A provider whose settings table is still exactly the shipped one is still treated as never set up, so an untouched local default that refuses stays under NOT RUNNING in Switch model and one that is running is still probed and listed. This includes an untouched local server with no model (vLLM, llama.cpp, koboldcpp, Oobabooga, llamafile): it is probed, listed when running and under NOT RUNNING when refused
 - [ ] #10 Dreams stories, briefings and Console sends use the same model for every provider as before
 - [ ] #11 The Settings User Guide says the vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and fill through Discover models, that old sample ids are ignored and dropped the next time Settings saves that list, and that Save selected adds to the list as the config file holds it
+- [ ] #12 The Console User Guide says Switch model checks an untouched local server with no model chosen: it is listed when it is running, and under NOT RUNNING when it refuses
 <!-- AC:END -->

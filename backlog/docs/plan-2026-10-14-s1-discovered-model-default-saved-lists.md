@@ -468,8 +468,17 @@ NO-1's wider probe rule. A search of `Tests/UI/test_console_model_switcher.py` a
 - **No pin found.** No pin expects one of them untouched and model-less under NEEDS SETUP. Each place the five appear carries a saved or table model, or an endpoint that is not the template's (test_console_switcher_local_probe.py:57, :61, :66, :68, :69). `_with_shipped` copies only tabbyapi, aphrodite, local_mlx_lm and `_UNTOUCHED`, whose vllm keeps `vendor/model:b`.
 - **No rewritten pin is planned.** If the implementer finds one red because of the wider rule, it is **rewritten on purpose** and named in the PR.
 - **Run these too.** The full-app tests that open Switch model on the shipped profile:
-  - the Tests/ProductionApp palette;
-  - Alt+M in Tests/UI.
+  - Tests/ProductionApp/test_provider_selection_ownership.py (the palette);
+  - in Tests/UI:
+    - test_console_inspector_keyboard_route.py;
+    - test_console_internals_decomposition.py;
+    - test_console_provider_return.py;
+    - test_console_settings_geometry.py;
+    - test_console_settings_model_change.py;
+    - test_console_settings_saved_defaults.py;
+    - test_console_switch_model_entry_points.py;
+    - test_console_switch_model_fold_hint.py;
+    - test_console_switch_model_keys.py.
 
   They run with the autouse no-op prober (Tests/conftest.py:942-946), whose probes never settle. A newly offered probe can change how their rows read while pending.
 
@@ -585,7 +594,7 @@ Commands:
 
 ## Docs
 
-Each task's User Guide edit below is one of its ACs (TASK-35010 AC#11, TASK-35011 AC#15, TASK-35012 AC#5).
+Each task's User Guide edit below is one of its ACs (TASK-35010 AC#11 and AC#12, TASK-35011 AC#15, TASK-35012 AC#5).
 
 `Docs/User_Guide/settings.md`, content only. The targets are :257 ("only **Save selected** does that"), the Advanced row at :259 (its title wording and "Save selected keeps the ones you select") and :284-301. Re-read all of them on the final base.
 - **(T1)** The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 lists start empty and fill through **Discover models**. Old sample ids are ignored, and removed the next time Settings saves that list. **Save selected** / **Add to model list** adds to the list as the file holds it, so a model added or removed elsewhere is respected.
@@ -597,7 +606,7 @@ Each task's User Guide edit below is one of its ACs (TASK-35010 AC#11, TASK-3501
   - the new receipts;
   - the empty-default fill.
 
-`Docs/User_Guide/console.md` (T1, NO-1): beside :851-856, which already says shipped-default servers "are checked like any other local server", add one line. An untouched local server with no model chosen (vLLM, llama.cpp, koboldcpp, Oobabooga, llamafile) is checked too: it lists its models when it is running, and reads under NOT RUNNING when it refuses.
+`Docs/User_Guide/console.md` (T1, NO-1; TASK-35010 AC#12): beside :851-856, which already says shipped-default servers "are checked like any other local server", add one line. An untouched local server with no model chosen (vLLM, llama.cpp, koboldcpp, Oobabooga, llamafile) is checked too: it lists its models when it is running, and reads under NOT RUNNING when it refuses.
 
 `Docs/User_Guide/console.md` (T3): READY PROVIDERS lists each provider's saved default first, after the open chat's current model, when it is one of that provider's rows (for an answered local server, when the server listed it). The same order holds in Chat settings' model picker (NO-3). Place it next to console.md:878-891, so the two passages agree. Switch model lives in Console, so this is the matching guide page.
 
@@ -622,17 +631,25 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
 - **Stub B** (step 2): the same program on 127.0.0.1:8000, vLLM's template port, listing `fake-alpha` and `fake-beta`. Also bind ::1:8000 if `localhost` resolves to it first.
 - **Stub C** (step 6): the same program with chat on, listing `stub-chat`. It also answers POST `/v1/chat/completions` with a fixed reply, both streaming (SSE) and non-streaming.
 - **The probe's timing,** which every frame below has to fit:
-  - Each probe request times out after 2.5 s (`DISCOVERY_PROBE_TIMEOUT_SECONDS`, Chat/local_server_discovery.py:39), and a probe makes at most two requests (UI/Console_Modules/connection_probe.py:52-55).
-  - A probe result younger than 10 s is reused (`SWITCHER_PROBE_CACHE_SECONDS`, connection_probe.py:56).
-  - At most 3 probes run at once (`SWITCHER_PROBES_IN_FLIGHT`, :58).
-  - `_not_running` needs `connection_refused`. A server that accepts and never answers reads as timed out after about 5 s, not as refused.
+  - **The request.** The switcher's probe goes through `probe_settings_endpoint` (UI/Console_Modules/connection_probe.py:121). Each request times out after 2.5 s (`SETTINGS_ENDPOINT_PROBE_TIMEOUT_SECONDS`, UI/Screens/settings_endpoint_probe.py:49).
+  - **A stalled probe reads as timed out about 2.5 s after it starts.**
+    - A second request only follows Ollama's non-timeout listing failure (settings_endpoint_probe.py:715-721).
+    - A timeout returns `unreachable`. `_not_running` needs `connection_refused`, so a stall never reads as refused.
+  - **The cap.** At most 3 probes run at once (`SWITCHER_PROBES_IN_FLIGHT`, connection_probe.py:58). With up to ten stalled targets, the last results arrive several seconds after the open.
+  - **The 10 s reuse window.** A probe is not sent again within 10 s (`SWITCHER_PROBE_CACHE_SECONDS`, connection_probe.py:56). The window counts from each probe's queue time and from its result's `observed_at` (connection_probe.py:345-349; `_recently_tested`, :296).
+  - **Nothing is skipped.** `_UNPROBED_SERVERS` (console_model_popover.py:220) contains none of the five servers that hold sample ids, nor any of NO-1's five, so all of them are probed.
 - **`--hold N`:** any stub delays each `/v1/models` answer by N seconds, so a frame "before the probe settles" can be captured. A loopback stub answers, and a closed port refuses, within milliseconds, so without a hold there is no such frame.
   - Keep N under 2.5 s (e.g. 2), or the hold reads as a timeout.
-  - If 2 s is too short to capture, hold longer for the before frame only. Then restart the stub without the hold for the after frame. `_UNPROBED_SERVERS` (console_model_popover.py:220) contains none of the five servers that hold sample ids, nor any of NO-1's five, so all of them are probed.
+  - If 2 s is too short to capture, hold longer for the before frame only. Then restart the stub without the hold for the after frame.
 - **Stall listener:** for a template port nothing listens on, a temporary TCP listener that accepts and never answers, so the probe stays pending.
-  - Capture a stall frame within about 5 s of the open; after that the probe reads it as timed out.
+  - Capture a stall frame within about 2 s of the open; after that the first probes read as timed out.
+  - Or stall only the ports the frame needs, so fewer targets queue behind the cap.
   - Close the listener, then reopen Alt+M, to get the refused frame.
-- **Wait 10 s before a reopen that must see a new server state:** after closing a stall listener, after starting stub B, and after removing a hold. Otherwise the open reuses the cached result.
+- **Wait for the rows to settle, then 10 s more.** Do this before every reopen that must see a new server state: after closing a stall listener, after starting stub B, and after removing a hold.
+  - First wait until every probed row has settled.
+  - Then wait 10 s more.
+  - Otherwise the open reuses a result.
+  - Waiting 10 s after the action alone is not enough. A probe queued late, or a result observed late, starts its own 10 s window then.
 - **The template ports.** These are every loopback `api_url` in the template whose provider is in `URL_BASED_PROVIDER_KEYS` (config.py:5234-5427):
 
   | Port | Providers |
@@ -662,7 +679,7 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
 - At each step, take `capture-pane -p` and `-e` captures and a semantic TOML diff of the config.
 
 0. **Baseline, dev after #3169** (the run the critic found missing). Seed the shipped samples and `Llama_cpp = ["None","m-one","m-two","m-three"]`.
-   - Capture Alt+M before the probe settles, with stall listeners on the template ports (see Stubs and listeners), within about 5 s of the open.
+   - Capture Alt+M before the probe settles, with stall listeners on the template ports (see Stubs and listeners), within about 2 s of the open. Or stall only the ports this frame needs.
    - Re-derive the expected strings, because the readiness copy changed in TASK-33005.7.
    - Capture:
      - Settings ▸ provider vLLM: Model shows `vllm-model-z`;
@@ -675,15 +692,15 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
      - Save selected `fake-alpha`: `m-two` does not come back in the file.
 2. **T1 / M2, on the old-sample profile.** Nothing below edits vLLM's table: it stays at the shipped default throughout this step.
    - Provider vLLM: Model reads "not set".
-   - Alt+M, before the probe settles (stall listeners on the template ports; captured within about 5 s), shows no `vllm-model-*`, `tabby-model*` or `aphrodite-engine*`.
+   - Alt+M, before the probe settles (stall listeners on the template ports; captured within about 2 s of the open), shows no `vllm-model-*`, `tabby-model*` or `aphrodite-engine*`.
      - On base the same frame shows the samples.
      - Once the probes refuse, base hides them too (NOT RUNNING), so only the pre-settle frames compare.
    - **NO-1, refused half.** Before any vLLM edit:
-     - `lsof -nP -iTCP:8000 -sTCP:LISTEN` prints nothing, with the stall listeners closed.
-     - Wait 10 s, then reopen Alt+M. vLLM (an empty list after the filter, table untouched), TabbyAPI and Aphrodite are quietly under NOT RUNNING.
+     - With the stall listeners closed, `lsof -nP -iTCP:<port> -sTCP:LISTEN` prints nothing for every port in the table. Those servers read as refused only if their ports are free.
+     - Wait until every probed row has settled, then 10 s more, and reopen Alt+M. vLLM (an empty list after the filter, table untouched), TabbyAPI and Aphrodite are quietly under NOT RUNNING.
      - Oobabooga, koboldcpp and llamafile, untouched, are under NOT RUNNING too. On base they are under NEEDS SETUP, unprobed.
      - llama.cpp is not in this check, since step 1 repointed it.
-   - **NO-1, running half.** Start stub B on 127.0.0.1:8000. Wait 10 s, then reopen Alt+M: stub B logs a GET `/v1/models`, and vLLM is probed and listed with `fake-alpha` and `fake-beta`.
+   - **NO-1, running half.** Start stub B on 127.0.0.1:8000. Wait until every probed row has settled, then 10 s more, and reopen Alt+M: stub B logs a GET `/v1/models`, and vLLM is probed and listed with `fake-alpha` and `fake-beta`.
    - **Save selected, against stub B.**
      - vLLM's endpoint is still the template's localhost:8000, so Discover reaches stub B. No repointing is needed.
      - Tick `fake-alpha`, Save selected. The file's `vLLM` becomes `["fake-alpha"]`, and Model is filled as a draft.
@@ -710,7 +727,7 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
      - The chat now holds a message on Custom, so it keeps that pair. Its current model is not on llama.cpp.
    - Open Alt+M from that chat. The llama.cpp group leads with `fake-beta`. Capture it twice:
      - before the probe answers (stub A on `--hold 2`, or a longer hold for this frame only; saved and cached rows);
-     - after it answers (listing rows). If the before frame used a longer hold, restart stub A without it and wait 10 s before the reopen.
+     - after it answers (listing rows). If the before frame used a longer hold, restart stub A without it. Wait until every probed row has settled, then 10 s more, before the reopen.
 
 **Cleanup and checks.**
 - Kill every stub and stall listener by its pid, check that `lsof -nP -iTCP:<port> -sTCP:LISTEN` is empty again for every template port in the table, and run `tmux -L s1live kill-server`. Remove only `$V`.
