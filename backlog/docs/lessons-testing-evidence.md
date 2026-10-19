@@ -571,6 +571,32 @@ the lane was 125 min, not 108, and needed nine shards. With entries CI has not
 timed, run the lane once before choosing the count, or charge them at least
 twice their local seconds.
 
+## A test's solo time is not its cost inside a lane step (TASK-33641.1, 2026-10-19)
+
+**Phase 9's whole-PR review, rounds 1 and 2.** The 623-case rule test
+`Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast`
+first measured 780 s serial; that was put down to a load average near 100. At
+about 16 it ran alone in 34-37 s, so it went to the end of the PR Fast Lane's
+admission-sensitive step on that number. There the reviewer measured it at 67 s
+alone, 139 s behind five mounted nodes, and 710 s of a 956 s run in its place,
+behind the step's mounted targets. The test was not slow. Tests/conftest.py's
+`cleanup_file_descriptors` runs `gc.collect()` after every test in an
+app-mounting directory (Tests/UI, Tests/Chat and others), and a full collection
+costs more as the heap grows. The mounted targets ahead of it leave a large
+heap, so each of the 623 cases paid a slow pass. Moved to the front of the step
+it took 74-80 s. Run alone, back to back at the same load, it took 42 s; the
+gap is the step's own collection, which imports every target module before the
+first test runs. One of the step's two 89-case rule tests paid 0.38 s a case
+behind the mounted targets and 0.14 s at the front. The riders'
+evidence line "the whole step in order passed (929 passed ...)" did not help:
+it came from a different step, with the modal-dismissal file whole and no rule test.
+
+**What to do.** Time a new lane target where it will run: in its step, in the
+step's order, in the lane's install set, and never from a solo run. Put a
+many-case pure test in an app-mounting directory ahead of the mounted targets,
+because its per-case teardown is most of its cost. A "whole step passed" line
+must name the targets and order of the step it ran.
+
 ## A lane test's child process imports with the lane's install set, not your venv's
 
 **#3057, 2026-10-13.** `test_settings_openai_reconnect.py::...[approve]` ran a
