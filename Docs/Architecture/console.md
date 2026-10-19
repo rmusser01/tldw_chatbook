@@ -38,6 +38,11 @@ ordinary source requests, preserving each explicit beat. Cheap actor/session/man
 motion facts are checked before painting without copying the transcript. See
 [portrait ownership and preparation](./character-chat.md#local-portrait-performance-attachments).
 
+Console skill discovery (`UI/Console_Modules/skill.py`) prepares cold trust with its existing App worker, then recaptures the current stock source before reading context. The original decorated `SkillsScopeService.get_context(mode="local")` runs through `run_preparation_read`, including local-content admission, policy enforcement and catalog/trust checks. Runtime preparation-read tracking retains the physical call through cancellation and shutdown; source and view attachment checks gate publication afterward. Custom context, catalog, policy, disabled-builtins and trust-status callbacks retain the direct path. This changes scheduling only: no catalog cache, permission verdict reuse, or display proof is used as execution authority (ADR-126/230/231; TASK-35590).
+
+Cold context and cost estimates share tokenizer preparation with `ConsoleReadinessConfigProjection` (TASK-35591). The selected stock model/provider's original custom-tokenizer manager admission and encoding load run as finite, runtime-observed preparation reads, outside the config operation. Display estimates remain unavailable until their own request completes; model, manager, mapping, source and view changes invalidate readiness. The original token arithmetic and live action counters are unchanged. Custom callbacks and heuristic custom-tokenizer directory selection retain their direct path; this optimization covers cold stock backends and exact custom mappings, not long-text counting CPU or arbitrary extension callbacks. Backend loading errors remain unavailable and retry on the existing bounded display cadence.
+
+
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
 
 ## Screen layout

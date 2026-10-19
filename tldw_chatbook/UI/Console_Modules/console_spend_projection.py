@@ -38,6 +38,11 @@ from ...Chat.console_cost_tracker import (
     ConsoleCostSnapshot,
     ConsoleCostState,
     build_cost_state,
+    build_cost_snapshot as _stock_cost_snapshot,
+)
+from ...Chat.console_session_settings import (
+    _estimate_tokens_locally as _stock_token_estimator,
+    build_console_context_estimate as _stock_context_estimate,
 )
 from ...Chat.console_turn_preparation import (
     ConsoleTurnPreparation,
@@ -53,6 +58,7 @@ from ...Widgets.Console.console_context_controls import (
     build_console_next_send_spend_state,
 )
 from . import pricing_display as _pricing_display
+from . import tokenizer_display as _tokenizer_display
 
 _PRICING_DISPLAY_SOURCE = _pricing_display._SOURCE_CAPSULE
 _DISPLAY_PRICING_CLASS = _pricing_display.DisplayPricingCatalog
@@ -195,6 +201,9 @@ class ConsoleReadinessConfigProjection:
         self._read_request = None
         self._reads = set()
         self._runtime_owner = None
+        self._tokenizer_request = None
+        self._tokenizer_prepared = None
+        self._tokenizer_retry_at = 0.0
         self._settled = asyncio.Event()
         self._settled.set()
 
@@ -328,12 +337,22 @@ class ConsoleReadinessConfigProjection:
             return False
         pending_at_entry = self.pending
         key = self._key()
-        current = (_same_readiness_key(key, self.key) and self.value is not None
-                   and self._runtime_owner is runtime)
+        current = (
+            _same_readiness_key(key, self.key)
+            and self.value is not None
+            and self._runtime_owner is runtime
+        )
         life = self.max_age
         if getattr(screen, "_console_transcript_sync_timer", None) is not None:
             life *= REFRESH_AHEAD_SHARE
-        if (not current or time.monotonic() - self.at >= life) and not self.pending:
+        tokenizer_due = (
+            self._tokenizer_request is not None
+            and self._tokenizer_prepared is not self._tokenizer_request
+            and time.monotonic() >= self._tokenizer_retry_at
+        )
+        if (
+            not current or time.monotonic() - self.at >= life or tokenizer_due
+        ) and not self.pending:
             self.pending = True
             self._settled.clear()
             refresh = self._refresh(key)
@@ -366,6 +385,32 @@ class ConsoleReadinessConfigProjection:
             screen._console_readiness_projection_active = previous
             self._display_refresh_pending_at_entry = previous_pending
 
+    def tokenizer_ready(self, model: str, provider: str) -> bool:
+        """Prepare cold stock tokenizers under this display's finite read owner."""
+        runtime = _readiness_runtime(self.screen)
+        if getattr(self.screen, "_closing", False) or getattr(runtime, "_disposed", False):
+            return False
+        request = self._tokenizer_request
+        if (
+            request is None
+            or (request.model, request.provider) != (model, provider)
+            or not _tokenizer_display.preparation_current(request)
+        ):
+            request = _tokenizer_display.capture_tokenizer_preparation(model, provider)
+            self._tokenizer_request = request
+            self._tokenizer_prepared = None
+            self._tokenizer_retry_at = 0.0
+        # Unqualified/custom backends retain their original synchronous route.
+        if request is None:
+            return True
+        self.run(lambda: None)
+        return (
+            self._tokenizer_prepared is request
+            and self._runtime_owner is runtime
+            and _same_readiness_key(self._key(), self.key)
+            and _tokenizer_display.preparation_current(request)
+        )
+
     async def warm(self) -> bool:
         """Wait for the same checked owner when a modal needs cold display data."""
         if getattr(self.screen, "_closing", False) or getattr(
@@ -385,6 +430,8 @@ class ConsoleReadinessConfigProjection:
 
     async def _refresh(self, key: tuple) -> None:
         reader = self.read_current
+        tokenizer_request = self._tokenizer_request
+        tokenizer_prepared = False
         self._read_request = asyncio.get_running_loop(), threading.current_thread(), key
         from ...Chat.console_preparation_reads import run_preparation_read
         from ...Chat.console_runtime import ConsoleRuntime
@@ -398,6 +445,24 @@ class ConsoleReadinessConfigProjection:
                 reader, creator=self, session_id=key[5], reads=self._reads,
                 observers=observers, require_current=lambda: None,
             )
+            if (
+                tokenizer_request is not None
+                and tokenizer_request is self._tokenizer_request
+                and _same_readiness_key(key, self._key())
+                and not getattr(self.screen, "_closing", False)
+                and not getattr(runtime, "_disposed", False)
+            ):
+                tokenizer_prepared = (
+                    tokenizer_request is self._tokenizer_prepared
+                    and _tokenizer_display.preparation_current(tokenizer_request)
+                ) or await run_preparation_read(
+                    tokenizer_request,
+                    creator=self,
+                    session_id=key[5],
+                    reads=self._reads,
+                    observers=observers,
+                    require_current=lambda: None,
+                )
             if (
                 getattr(self.screen, "_closing", False)
                 or getattr(runtime, "_disposed", False)
@@ -437,6 +502,20 @@ class ConsoleReadinessConfigProjection:
                 or self.context_policy != result.context_policy
                 or self.pricing != result.pricing
             )
+            if (
+                tokenizer_request is self._tokenizer_request
+                and tokenizer_request is not None
+            ):
+                if tokenizer_prepared and _tokenizer_display.preparation_current(
+                    tokenizer_request
+                ):
+                    changed = (
+                        changed or self._tokenizer_prepared is not tokenizer_request
+                    )
+                    self._tokenizer_prepared = tokenizer_request
+                else:
+                    self._tokenizer_prepared = None
+                self._tokenizer_retry_at = time.monotonic() + self.max_age
             self._runtime_owner = runtime
             self.key, self.value, self.at = current_key, value, time.monotonic()
             self.context_policy = result.context_policy
@@ -496,6 +575,27 @@ def _same_readiness_key(
     if ignore_settings:
         return (*left[:7], *left[8:]) == (*right[:7], *right[8:])
     return left == right
+
+
+def console_tokenizer_display_ready(screen: Any, model: str, provider: str) -> bool:
+    """Gate only the disk-backed Console display; live/action counters stay live."""
+    if not model:
+        return True
+    value = _screen_readiness_config(screen)
+    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+        return True
+    from ..Screens import chat_screen
+
+    if (
+        chat_screen.build_console_context_estimate is not _stock_context_estimate
+        or chat_screen._estimate_tokens_locally is not _stock_token_estimator
+        or chat_screen.build_cost_snapshot is not _stock_cost_snapshot
+    ):
+        return True
+    projection = ConsoleReadinessConfigProjection.for_screen(screen)
+    if type(projection) is not ConsoleReadinessConfigProjection:
+        return True
+    return projection.tokenizer_ready(model, provider)
 
 
 _standard_readiness_key = ConsoleReadinessConfigProjection._key

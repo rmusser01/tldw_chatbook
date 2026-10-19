@@ -128,9 +128,35 @@ def note_file_written_label(path: str) -> str:
 
 
 def _runtime(host: Any) -> Any:
-    return getattr(
-        getattr(host, "app_instance", None), "notes_sync_runtime_owner", None
+    app = getattr(host, "app_instance", None)
+    # Listener registration/removal must not invoke the app's lazy property
+    # (or wait on its construction lock). Async readers prepare it below.
+    state = getattr(app, "__dict__", {})
+    if "_notes_sync_runtime_owner" in state:
+        return state["_notes_sync_runtime_owner"]
+    return getattr(app, "notes_sync_runtime_owner", None)
+
+
+async def _prepare_runtime(host: Any) -> Any:
+    runtime = _runtime(host)
+    if runtime is not None:
+        return runtime
+    reader = getattr(
+        getattr(host, "app_instance", None), "_read_notes_sync_runtime_owner_safe", None
     )
+    run_service = getattr(host, "_run_library_service_call", None)
+    if callable(reader) and callable(run_service):
+        # The original app property coalesces construction under its lock;
+        # this waiter and its checked config reads stay off the UI loop.
+        runtime = await run_service(reader)
+        if (
+            runtime is None
+            and getattr(host.app_instance, "_notes_sync_runtime_build_failure", None)
+            is not None
+        ):
+            return _COULD_NOT_SAY
+        return runtime
+    return None
 
 
 async def _ask(runtime: Any, name: str, *args: Any, default: Any) -> Any:
@@ -201,7 +227,9 @@ async def load_library_note_location(
 
     if not note_id:
         return
-    runtime = _runtime(host)
+    runtime = await _prepare_runtime(host)
+    if runtime is _COULD_NOT_SAY:
+        return
     if after_save and runtime is not None:
         await await_sync_pass(runtime)
     located = await _ask(runtime, "note_file_location", note_id, default="")
@@ -239,7 +267,9 @@ async def refresh_library_notes_sync_attention(
         runtime: The sync runtime, when the caller already has it.
     """
 
-    runtime = runtime if runtime is not None else _runtime(host)
+    runtime = runtime if runtime is not None else await _prepare_runtime(host)
+    if runtime is _COULD_NOT_SAY:
+        return
     ensure_library_notes_sync_attention_listener(host, runtime=runtime)
     refresh_manage_sync_folders_rows(host)
     held = await _ask(runtime, "attention_folder_ids", default=frozenset())
@@ -348,7 +378,7 @@ async def signal_library_note_lasting_sync(host: Any, note_id: str) -> tuple[str
         The root ids the runtime hinted, for callers that report or test it.
     """
 
-    runtime = _runtime(host)
+    runtime = await _prepare_runtime(host)
     note_changed = getattr(runtime, "note_changed", None)
     if not note_id or not callable(note_changed):
         return ()
