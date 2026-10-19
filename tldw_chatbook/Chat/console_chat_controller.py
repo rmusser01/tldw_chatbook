@@ -7725,12 +7725,16 @@ class ConsoleChatController:
         if preparation is None or continuation is None:
             return self._prepared_action_refusal(preparation)
         selection = preparation.execution_context.configuration.provider_selection
+        # TASK-33621.20: a durably committed send keeps its own pause; a pre-commit
+        # Cancel would orphan its rows (DESTINATION_CHANGED re-pause, below).
+        committed = preparation_id in self._durable_postcommit_continuations
         try:
             resolution = await self._resolve_for_send_bounded(selection)
         except BaseException:
-            self._pause_prepared_commit(
-                preparation_id, ConsolePreparationPauseKind.DESTINATION_CHANGED
-            )
+            if not committed:
+                self._pause_prepared_commit(
+                    preparation_id, ConsolePreparationPauseKind.DESTINATION_CHANGED
+                )
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id),
                 "Prepared destination could not be verified.",
@@ -7739,9 +7743,10 @@ class ConsoleChatController:
             resolution, preparation.execution_context.resolved_destination
         )
         if block_copy:
-            self._pause_prepared_commit(
-                preparation_id, ConsolePreparationPauseKind.DESTINATION_CHANGED
-            )
+            if not committed:
+                self._pause_prepared_commit(
+                    preparation_id, ConsolePreparationPauseKind.DESTINATION_CHANGED
+                )
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id), block_copy
             )
