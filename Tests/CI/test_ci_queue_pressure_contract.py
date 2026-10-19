@@ -273,6 +273,11 @@ DREAMS_ADMISSION_TARGETS = (
 #: ``bootstrap_profile`` suites (TASK-32873); they run in their own job,
 #: ``pr-fast-lane-admission`` (TASK-34916).
 ADMISSION_TARGETS = (
+    # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
+    # setup-blocker reason strings (the capture phase's F2 copy and round 1's
+    # endpoint reason). A pure function test, but its file's module pytestmark
+    # is bootstrap_profile, so it runs here (ledger R11), not in the census.
+    "Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers",
     "Tests/Chat/test_console_run_log_connection_ownership.py",
     "Tests/Chat/test_console_chat_create_connection_ownership.py",
     "Tests/DB/test_chachanotes_connection_quiescence.py",
@@ -380,6 +385,12 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_schedules_disabled_state.py::test_disabled_row_and_badge_read_disabled_and_survive_refresh",
     "Tests/UI/test_schedules_next_run_relative.py::test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail",
     "Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form",
+    # TASK-33641.4 (whole-PR review, round 2): the third rewritten pin, a
+    # definition row's subtitle. Pure, but Tests/UI/conftest.py imports the app
+    # under the per-test redirect at setup, so unmarked it errors with
+    # RecoveryRequired in a process that has not imported the app; marked
+    # bootstrap_profile, it left the UI census for this step (ledger R11).
+    "Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label",
     # TASK-33003.15: Library and Workflows pane frames at 3:1; TASK-33003.16: a
     # surface set to auto stays measurable; TASK-33641.1: the app chrome lines
     # paint at 3:1, by rule (623 cases, about 40 s serial) and as painted.

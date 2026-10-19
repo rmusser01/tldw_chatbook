@@ -422,8 +422,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # import), so no other entry changes shard. Each still runs in one PR lane: 355.
 # Phase 9 was rebased onto dev at 69771c1811 (2026-10-19), whose floor was
 # 324: the Phase 9 counts above were taken over its base's 320, so its 35
-# entries end at 359 here.
-MINIMUM_FILES = 359
+# entries end at 359 here. The whole-PR review's round 2 marks TASK-33641.4's
+# definition-row node bootstrap_profile (its setup imports the app under the
+# per-test redirect; it passed in shard 7 only beside files that import the
+# app at collection) and moves it to the admission-sensitive step, ledger R11.
+# The census's last entry, TASK-33005.7's reason-width node, takes its slot,
+# so no other entry changes shard. Each still runs in one PR lane: 358.
+MINIMUM_FILES = 358
 
 
 def read_census(path: Path) -> list[str]:

@@ -410,8 +410,9 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snaps
 # TASK-33007.3 AC#9: Save selected fills an empty default model with the first
 # saved id (17-27 s).
 Tests/UI/test_settings_provider_test_draft.py::test_model_to_activate_after_save_prefers_first_saved_when_field_empty
-# Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33641.4, a definition row's subtitle leads with its next run and carries a timezone label (pure, under a second).
-Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label
+# Phase 9 capture fix wave (2026-10-18), F2, 3 of 3 serial; moved from the end of this file into a geometry node's slot by the whole-PR review's round 2, when that slot's definition-row node became bootstrap_profile and went to the admission-sensitive step (ledger R11), so no other entry changes shard.
+# TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
+Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole
 # A custom endpoint as the default: Settings opens on a dangling registry
 # default honestly, the row that was red in no lane (11-19 s; the file is 3.4 min).
 Tests/UI/test_settings_custom_endpoint_default.py::test_settings_opens_on_a_dangling_registry_default_honestly
@@ -667,6 +668,3 @@ Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_rea
 # Phase 9 Task 18 review round 3 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
 # TASK-35190: an open on a moved endpoint runs two probers under one in-flight cap, four local servers at most SWITCHER_PROBES_IN_FLIGHT at a time (~2 s).
 Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap
-# Phase 9 capture fix wave (2026-10-18) appends entries no lane ran, each 3 of 3 serial; its two bootstrap_profile nodes run in the admission-sensitive step (ledger R11).
-# TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
-Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole
