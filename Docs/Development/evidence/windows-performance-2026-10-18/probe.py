@@ -214,6 +214,7 @@ async def main():
         import return_matcher_baseline
 
         report["baseline_revision"] = return_matcher_baseline.BASE_REVISION
+        report["baseline_scope"] = sorted(return_matcher_baseline.original.MODULES)
     if "--subject-baseline" in sys.argv:
         import subject_baseline
 

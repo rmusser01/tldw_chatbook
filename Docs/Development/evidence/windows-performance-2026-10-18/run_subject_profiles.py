@@ -12,6 +12,7 @@ ROOT = OUT.parents[3]
 sources = [
     "tldw_chatbook/UI/Screens/chat_screen.py",
     "tldw_chatbook/Utils/textual_css_fastpath.py",
+    "tldw_chatbook/UI/Console_Modules/session.py",
 ]
 runs = (
     ("benchmark", False),
@@ -26,6 +27,13 @@ if "--final-control" in sys.argv:
     runs = (("final-control", True),)
 confirm = "--confirm" in sys.argv
 matcher = "--return-matcher" in sys.argv
+integrated = "--integrated" in sys.argv
+if integrated:
+    if not matcher or any(
+        arg in sys.argv for arg in ("--confirm", "--final", "--final-control")
+    ):
+        raise ValueError("Integrated comparison requires the full return-matcher run")
+    runs = tuple((f"integrated-{tag}", original) for tag, original in runs[1:])
 if matcher and confirm:
     raise ValueError("Select one comparison")
 prefix = "return-matcher" if matcher else "subject"
@@ -54,6 +62,8 @@ for tag, original in runs:
             if confirm
             else "--subject-baseline"
         )
+        if integrated:
+            command.append("--with-attachment-baseline")
     receipt = {
         "tag": tag,
         "original": original,

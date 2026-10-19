@@ -10,14 +10,19 @@ OUT = Path(__file__).parent
 result = {}
 confirm = "--confirm" in sys.argv
 matcher = "--return-matcher" in sys.argv
+integrated = "--integrated" in sys.argv
+if integrated and not matcher:
+    raise ValueError("Integrated comparison requires return-matcher mode")
 if matcher and confirm:
     raise ValueError("Select one comparison")
 prefix = "return-matcher" if matcher else "subject"
 tags = ("control1", "after1", "after2", "control2", "final", "final-control")
-if matcher:
+if matcher and "--include-final" not in sys.argv:
     tags = tags[:4]
 if confirm:
     tags = tuple("verify-" + tag for tag in tags[:4])
+if integrated:
+    tags = tuple("integrated-" + tag for tag in tags[:4])
 for tag in tags:
     data = json.loads((OUT / f"plain-ready-{prefix}-{tag}.json").read_text())
     receipt = json.loads((OUT / f"{prefix}-{tag}-exit.json").read_text())
@@ -57,7 +62,7 @@ for tag in tags:
             )
         },
     }
-if confirm or matcher:
+if confirm or (matcher and not integrated):
     benchmark_tag = "verify-benchmark" if confirm else "benchmark"
     receipt = json.loads((OUT / f"{prefix}-{benchmark_tag}-exit.json").read_text())
     if receipt.get("exit_code") != 0:
@@ -83,6 +88,13 @@ if confirm or matcher:
     result["benchmark"]["profile_refusals"] = benchmark["real_profile_refusals"]
     result["benchmark"]["exit_code"] = receipt["exit_code"]
 (
-    OUT / ("subject-confirmation.json" if confirm else f"{prefix}-comparison.json")
+    OUT
+    / (
+        "subject-confirmation.json"
+        if confirm
+        else f"{prefix}-integrated-comparison.json"
+        if integrated
+        else f"{prefix}-comparison.json"
+    )
 ).write_text(json.dumps(result, indent=2), encoding="utf-8")
 print(json.dumps(result, indent=2))

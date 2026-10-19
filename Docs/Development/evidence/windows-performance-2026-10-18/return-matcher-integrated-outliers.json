@@ -1,0 +1,102 @@
+{
+  "1": {
+    "journey": {
+      "iteration": 1,
+      "resume_to_input_ms": 491.4907999918796,
+      "resume_to_attach_ms": 3579.774899990298,
+      "input_ms": 29.70189999905415,
+      "max_loop_overshoot_ms": 430.31840000185184,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 3579.9003999854904
+    },
+    "samples": 208,
+    "event_loop_poll": 171,
+    "inclusive_css_apply": 16,
+    "config_posture": 1,
+    "leaf_stacks": [
+      [
+        "windows_events.py:_poll:774 / windows_events.py:select:445 / base_events.py:_run_once:1961 / base_events.py:run_forever:645 / windows_events.py:run_forever:322 / base_events.py:run_until_complete:678",
+        171
+      ],
+      [
+        "_win_sleep.py:sleep:64 / _time.py:sleep:28 / timer.py:_run:167 / timer.py:_run_timer:146 / events.py:_run:88 / base_events.py:_run_once:1999",
+        4
+      ],
+      [
+        "styles.py:extract_rules:1000 / stylesheet.py:apply:549 / textual_css_fastpath.py:apply:301 / stylesheet.py:update_nodes:724 / app.py:update_styles:2523 / dom.py:update_node_styles:1813",
+        2
+      ],
+      [
+        "stylesheet.py:replace_rules:700 / stylesheet.py:apply:606 / textual_css_fastpath.py:apply:301 / stylesheet.py:update_nodes:724 / app.py:update_styles:2523 / dom.py:update_node_styles:1813",
+        2
+      ],
+      [
+        "widget.py:is_scrollable:2582 / stylesheet.py:update_nodes:725 / app.py:update_styles:2523 / dom.py:update_node_styles:1813 / screen.py:_on_screen_resume:1480 / _callback.py:_invoke:56",
+        2
+      ],
+      [
+        "_win_sleep.py:sleep:73 / _time.py:sleep:28 / timer.py:_run:167 / timer.py:_run_timer:146 / events.py:_run:88 / base_events.py:_run_once:1999",
+        2
+      ],
+      [
+        "participants.py:_repository_participant:377 / participants.py:_core_access:408 / ChaChaNotes_DB.py:_get_thread_connection:3028 / participants.py:accessed:596 / ChaChaNotes_DB.py:get_connection:3174 / ChaChaNotes_DB.py:execute_query:3637",
+        2
+      ],
+      [
+        "windows_events.py:recv:487 / proactor_events.py:_loop_self_reading:804 / events.py:_run:88 / base_events.py:_run_once:1999 / base_events.py:run_forever:645 / windows_events.py:run_forever:322",
+        2
+      ]
+    ]
+  },
+  "4": {
+    "journey": {
+      "iteration": 4,
+      "resume_to_input_ms": 517.0026999840047,
+      "resume_to_attach_ms": 2016.691999975592,
+      "input_ms": 95.45800002524629,
+      "max_loop_overshoot_ms": 390.18480002414435,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 2051.7204999923706
+    },
+    "samples": 110,
+    "event_loop_poll": 93,
+    "inclusive_css_apply": 10,
+    "config_posture": 1,
+    "leaf_stacks": [
+      [
+        "windows_events.py:_poll:774 / windows_events.py:select:445 / base_events.py:_run_once:1961 / base_events.py:run_forever:645 / windows_events.py:run_forever:322 / base_events.py:run_until_complete:678",
+        93
+      ],
+      [
+        "stylesheet.py:apply:565 / textual_css_fastpath.py:apply:301 / stylesheet.py:update_nodes:724 / app.py:update_styles:2523 / dom.py:update_node_styles:1813 / screen.py:_on_screen_resume:1480",
+        2
+      ],
+      [
+        "_win_sleep.py:wait:118 / events.py:_run:88 / base_events.py:_run_once:1999 / base_events.py:run_forever:645 / windows_events.py:run_forever:322 / base_events.py:run_until_complete:678",
+        2
+      ],
+      [
+        "_win_sleep.py:sleep:64 / _time.py:sleep:28 / timer.py:_run:167 / timer.py:_run_timer:146 / events.py:_run:88 / base_events.py:_run_once:1999",
+        2
+      ],
+      [
+        "reactive.py:__get__:306 / app.py:native_ansi_color:1557 / widget.py:<lambda>:403 / dom.py:<genexpr>:1895 / dom.py:has_pseudo_classes:1895 / model.py:check:164",
+        1
+      ],
+      [
+        "typing.py:inner:392 / geometry.py:unpack:1240 / _style_properties.py:__set__:579 / stylesheet.py:replace_rules:700 / stylesheet.py:apply:606 / textual_css_fastpath.py:apply:301",
+        1
+      ],
+      [
+        "<string>:<lambda>:1 / geometry.py:unpack:1241 / _style_properties.py:__set__:579 / stylesheet.py:replace_rules:700 / stylesheet.py:apply:606 / textual_css_fastpath.py:apply:301",
+        1
+      ],
+      [
+        "model.py:__hash__:248 / stylesheet.py:apply:500 / textual_css_fastpath.py:apply:301 / stylesheet.py:update_nodes:724 / app.py:update_styles:2523 / dom.py:update_node_styles:1813",
+        1
+      ]
+    ]
+  }
+}
