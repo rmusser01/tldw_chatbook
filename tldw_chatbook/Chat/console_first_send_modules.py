@@ -8,7 +8,8 @@ package, the response-rules package, the visual transcript with PIL, the
 agent's tool providers (one defines pydantic models at import) and the
 run-start catalog. They are lazy on purpose (each is kept off the ADR-097
 UI-ready census), so the first send paid them while the user waited, in
-run-start callbacks of 40-118 ms.
+run-start callbacks of 40-118 ms. After the provider call it imported nine
+more, the canvas settlement's in one callback of 157 ms CPU.
 
 The app's post-UI-ready pre-import pass (``TldwCli._preimport_heavy_screens``,
 a daemon thread behind the same on/off switch, off in the census) imports them
@@ -34,7 +35,7 @@ from loguru import logger
 #: In first-send order. Before acceptance: the acknowledgement, the received
 #: intent and admission. After it, run start: hook preparation, compaction
 #: preflight, the durable commit, response rules, the agent's tool providers
-#: and the run-start catalog; then the stream.
+#: and the run-start catalog; then the stream and the run's end.
 FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
@@ -99,6 +100,17 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Agents.canvas_tool_provider",
     "tldw_chatbook.Canvas.guide",
     "tldw_chatbook.Chat.console_stream_persistence",
+    "tldw_chatbook.Chat.provider_rate_limits",
+    # The run's end: canvas settlement (one UI-loop callback of 157 ms CPU on
+    # a loaded host), remote sessions and citation counts.
+    "tldw_chatbook.Canvas.native_authority",
+    "tldw_chatbook.Canvas.compiler",
+    "tldw_chatbook.Canvas.gateway",
+    "tldw_chatbook.Canvas.capabilities",
+    "tldw_chatbook.Canvas.control_protocol",
+    "tldw_chatbook.Tools.remote_session_registry",
+    "tldw_chatbook.Tools.remote_session_worker",
+    "tldw_chatbook.UI.Console_Modules.citation_counts",
     # Reached by the send too; a live app has usually imported them already
     # (the sync tick and the scheduler), so here they are dictionary hits.
     "tldw_chatbook.UI.Console_Modules.config_sync",

@@ -5,9 +5,11 @@ recording every module imported on the UI thread): the first send after launch
 imported 54 modules on the UI loop between Enter and the provider call (hook
 preparation and the hooks v2 package, the response-rules package, the visual
 transcript with PIL, the agent's tool providers, the run-start catalog),
-inside run-start callbacks of 40-118 ms. Its configuration capture also parsed
-``MCP/server.py`` for the built-in manifest. The app's post-UI-ready
-pre-import pass now does both first, at idle, on its daemon thread.
+inside run-start callbacks of 40-118 ms, and nine more after the provider
+call (the canvas settlement's in one 157 ms-CPU callback). Its configuration
+capture also parsed ``MCP/server.py`` for the built-in manifest. The app's
+post-UI-ready pre-import pass now does both first, at idle, on its daemon
+thread.
 """
 
 from __future__ import annotations
@@ -83,6 +85,16 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.conversation_archive_actions",
     "Agents.canvas_tool_provider",
     "Canvas.guide",
+    # After the provider call (the stream and the run's end), same record.
+    "Chat.provider_rate_limits",
+    "Canvas.native_authority",
+    "Canvas.compiler",
+    "Canvas.gateway",
+    "Canvas.capabilities",
+    "Canvas.control_protocol",
+    "Tools.remote_session_registry",
+    "Tools.remote_session_worker",
+    "UI.Console_Modules.citation_counts",
 )
 
 _PASS_SCRIPT = """
