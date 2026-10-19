@@ -284,3 +284,74 @@ async def test_a_retry_that_pauses_again_says_why_it_paused_this_time(monkeypatc
         store.preparation_for_session("session-1").pause_kind
         is ConsolePreparationPauseKind.RETRIEVAL
     )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_build_is_not_rejoined_by_the_next_warm_up(monkeypatch):
+    """Re-review MINOR 5: a build that raised is finished, not a build to join.
+
+    The first warm-up's build raises; nobody else is waiting on it. The next
+    warm-up must start a build of its own rather than re-await the failed one
+    and report the Library unavailable for the rest of the session.
+    """
+    outcomes: list[object] = [RuntimeError("model download failed"), _Runtime()]
+    calls: list[int] = []
+
+    def build_shared_runtime():
+        calls.append(1)
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
+    service = LibraryLocalRagSearchService(SimpleNamespace())
+
+    assert await asyncio.wait_for(service.warm_up(), timeout=10) is False
+    assert await asyncio.wait_for(service.warm_up(), timeout=10) is True
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_warm_up_after_a_profile_switch_does_not_join_the_old_build(
+    monkeypatch,
+):
+    """Re-review MINOR 4: a superseded build is not the one to wait for.
+
+    The shared-service generation moves when the RAG profile is switched. A
+    build that started under the old generation is discarded when it lands
+    (``get_shared_rag_service`` returns None for it), so a caller that
+    arrives after the switch must start a build for the new generation
+    rather than join the old one and report the Library unavailable.
+    """
+    calls: list[int] = []
+    release = threading.Event()
+    generation = [7]
+
+    def build_shared_runtime():
+        calls.append(generation[0])
+        release.wait(30)
+        return _Runtime()
+
+    monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
+    monkeypatch.setattr(
+        service_module, "shared_rag_service_generation", lambda: generation[0]
+    )
+    service = LibraryLocalRagSearchService(SimpleNamespace())
+    try:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await service.warm_up()
+        generation[0] = 8  # a profile switch lands while that build runs
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await service.warm_up()
+        # A third caller under the same new generation joins the second build.
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await service.warm_up()
+        assert calls == [7, 8]
+    finally:
+        release.set()

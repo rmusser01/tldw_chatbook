@@ -260,8 +260,9 @@ class LibraryLocalRagSearchService:
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
         #: TASK-33621.20 review: the one shared-runtime build in flight, which
-        #: every caller joins (see `_shared_runtime_build`).
-        self._runtime_build: asyncio.Future[tuple[Any, Any]] | None = None
+        #: every caller joins (see `_shared_runtime_build`), with the shared
+        #: service generation it was started under.
+        self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
 
     async def prewarm(self) -> bool:
         """Build the shared RAG runtime now, ahead of a time-boxed search.
@@ -1136,29 +1137,32 @@ class LibraryLocalRagSearchService:
         thread blocked on the factory's build lock behind a hung build, so
         repeated retries could exhaust the shared executor. Callers now
         await this one build through ``asyncio.shield``: a caller that gives
-        up leaves it running, and the next caller joins it.
+        up leaves it running, and the next caller joins it -- unless the
+        shared service generation has moved since it started (a RAG profile
+        switch): that build is discarded when it lands, so a new one starts.
 
         Returns:
             A future resolving to ``(service, generation)``; the generation is
             captured when the build starts (see `cache_app_rag_service`).
         """
-        build = getattr(self, "_runtime_build", None)
+        # Captured BEFORE the build -- see `cache_app_rag_service`.
+        generation = shared_rag_service_generation()
+        started, build = getattr(self, "_runtime_build", None) or (None, None)
         if (
             build is None
+            or started != generation
             or build.done()
             or build.get_loop() is not (asyncio.get_running_loop())
         ):
-            build = asyncio.ensure_future(self._build_shared_runtime())
+            build = asyncio.ensure_future(self._build_shared_runtime(generation))
             # Nobody may be waiting when it fails: retrieve the error here so
             # it is not reported as "never retrieved".
             build.add_done_callback(lambda done: done.cancelled() or done.exception())
-            self._runtime_build = build
+            self._runtime_build = (generation, build)
         return build
 
     @staticmethod
-    async def _build_shared_runtime() -> tuple[Any, Any]:
-        # Captured BEFORE the build -- see `cache_app_rag_service`.
-        generation = shared_rag_service_generation()
+    async def _build_shared_runtime(generation: int) -> tuple[Any, Any]:
         return await asyncio.to_thread(get_shared_rag_service), generation
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
