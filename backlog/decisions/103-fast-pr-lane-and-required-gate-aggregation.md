@@ -258,7 +258,8 @@ owner decision; the owner chose to land the ten shards without `max-parallel`
 
 2026-10-19 (TASK-35575, owner decision): the PR Fast Lane's admission-sensitive
 suites run in two jobs. `pr-fast-lane-admission` keeps the 41 targets `dev` had;
-Phase 9 of the model-configuration redesign put its 52 in a second job,
+Phase 9 of the model-configuration redesign put its 54 (the 52 moved, plus
+TASK-33666's two Stop-claim nodes) in a second job,
 `pr-fast-lane-admission-2` ("PR Fast Lane (admission-sensitive 2)"), with the same
 install line, 35-min cap and `--timeout=300`; the required check `needs` it and
 fails when it is not `success`. With all 93 in one job, PR #3169's two runs took

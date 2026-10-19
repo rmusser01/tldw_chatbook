@@ -334,15 +334,16 @@ jobs:
     # TASK-35575 (owner decision, 2026-10-19): the admission-sensitive suites
     # run in two jobs side by side. pr-fast-lane-admission keeps dev's 41
     # targets; this job holds Phase 9's 54 model-config targets: the 52 in the
-    # order they had there, then the Stop-claim fix's two (TASK-33666). Together in one job, PR #3169's two runs took 29.8 and
-    # 27.4 min of its 35 (the pytest step 1737 s and 1590 s), so one hung
-    # test at --timeout=300 (about 5.3 min with the private-profile wrapper's
-    # report) would have passed the cap. Serial in this job's install set the
-    # 52 alone took 266.9 s (959 passed, 2026-10-19, load 7-9; the two added
-    # after are about 10-14 s each), where all 93
-    # took 1744.6 s and then 1737 s and 1590 s on CI, so expect about 5 min
-    # of pytest and 6-7 min with setup: a hung test's report ends well over
-    # 20 min under the cap.
+    # order they had there, then the Stop-claim fix's two (TASK-33666).
+    # Together in one job, PR #3169's two runs took 29.8 and 27.4 min of its
+    # 35 (the pytest step 1737 s and 1590 s), so one hung test at
+    # --timeout=300 (about 5.3 min with the private-profile wrapper's report)
+    # would have passed the cap. Serial in this job's install set the 52 alone
+    # took 266.9 s (959 passed, 2026-10-19, load 7-9; the two added after take
+    # about 1-3 s each, the pair 3.3-5.3 s serial), where all 93 took 1744.6 s
+    # and then 1737 s and 1590 s on CI, so expect about 5 min of pytest and
+    # 6-7 min with setup: a hung test's report ends well over 20 min under the
+    # cap.
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap

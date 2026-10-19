@@ -32,12 +32,21 @@ The PR's own CI runs give the real number; record them here.
 - [x] #3 Tests/CI's lane contracts and ADR-103's runner note match the jobs as changed
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Keep `pr-fast-lane-admission` as dev's 41 targets, unchanged, and move Phase 9's into `pr-fast-lane-admission-2`, with the same runner, install line, cap and `--timeout=300`.
+2. Add the new job to the required aggregate's `needs` and give it its own 'Require successful' step.
+3. Mirror it in every Tests/CI contract that enumerates the admission lanes, with negative controls, and add a dated ADR-103 note.
+4. Measure five PR runs of each job (AC#2) before closing.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 **AC#1, the decision (owner, asked directly, 2026-10-19):** a second admission-sensitive job. With Phase 9's 52 targets the one job took 29.8 and 27.4 min on PR #3169's two CI runs (the pytest step 1737 s and 1590 s) against its 35-min cap, so one hung test's ~5.3-minute report would have passed the cap.
 
-**The change (Phase 9 round-2 review, W1).** `pr-fast-lane-admission` ("PR Fast Lane (admission-sensitive)") keeps `dev`'s 41 targets in `dev`'s order, unchanged, and its job id and name stay. A new job, `pr-fast-lane-admission-2` ("PR Fast Lane (admission-sensitive 2)"), has the same `runs-on`, `if:`, `timeout-minutes: 35`, checkout, setup-python and install steps, and one pytest step, "Run admission-sensitive suites 2", with Phase 9's 52 targets in their order there (the three many-case rule tests first) and `--timeout=300`. The required aggregate `needs` it, and a "Require successful PR fast lane (admission-sensitive 2)" step fails it as the other lanes do. Both jobs' header comments give the figures below.
+**The change (Phase 9 round-2 review, W1).** `pr-fast-lane-admission` ("PR Fast Lane (admission-sensitive)") keeps `dev`'s 41 targets in `dev`'s order, unchanged, and its job id and name stay. A new job, `pr-fast-lane-admission-2` ("PR Fast Lane (admission-sensitive 2)"), has the same `runs-on`, `if:`, `timeout-minutes: 35`, checkout, setup-python and install steps, and one pytest step, "Run admission-sensitive suites 2", with Phase 9's 54 targets: the 52 in their order there (the three many-case rule tests first), then TASK-33666's two Stop-claim nodes and `--timeout=300`. The required aggregate `needs` it, and a "Require successful PR fast lane (admission-sensitive 2)" step fails it as the other lanes do. Both jobs' header comments give the figures below.
 
 **Measured.** `dev`'s 41 alone over 20 PR runs on CI (2026-10-18 21:36 to 10-19 11:11 UTC; each head's workflow checked to hold the 41): job median 17.5 / max 20.0 min, the pytest step median 996 s / max 1147 s, so a hung test's report still ends about 10 min under the cap. Phase 9's 52 alone, serial in the job's install set (`--timeout=300`, load 7-9): 959 passed in 266.9 s, where all 93 took 1744.6 s locally and 1737 s and 1590 s on CI. So expect about 5 min of pytest and 6-7 min with setup.
 
@@ -45,5 +54,5 @@ The PR's own CI runs give the real number; record them here.
 
 **AC#2 stays open** until five PR runs of each job are measured.
 
-Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
+Files: .github/workflows/derived-artifacts.yml, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, Tests/CI/test_ui_lane_shard_count_statements.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
 <!-- SECTION:NOTES:END -->

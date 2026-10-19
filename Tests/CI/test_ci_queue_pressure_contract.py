@@ -905,15 +905,20 @@ def test_second_admission_target_set_is_exact() -> None:
         "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
     )
     assert len(set(ADMISSION_2_TARGETS)) == len(ADMISSION_2_TARGETS)
-    shared = [
-        (first, second)
-        for first in ADMISSION_TARGETS
-        for second in ADMISSION_2_TARGETS
-        if first == second
-        or first.startswith(second + "::")
-        or second.startswith(first + "::")
-    ]
-    assert shared == []
+    for other in (ADMISSION_TARGETS, FAST_LANE_TARGETS):
+        # FAST_LANE_TARGETS too: a bootstrap_profile enrollment poisons the
+        # sandboxed suites sharing its process (TASK-32873), the guard
+        # test_admission_sensitive_step_gates_the_notes_sync_real_stack_files
+        # keeps for the first job.
+        shared = [
+            (first, second)
+            for first in other
+            for second in ADMISSION_2_TARGETS
+            if first == second
+            or first.startswith(second + "::")
+            or second.startswith(first + "::")
+        ]
+        assert shared == []
 
 
 def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
