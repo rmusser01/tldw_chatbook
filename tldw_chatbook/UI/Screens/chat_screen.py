@@ -191,20 +191,15 @@ from ...Chat.console_switcher_state import (
     ConsoleSwitcherCharacterResult,
     SwitcherMode,
 )
-from ...Chat.console_context_policy import (
-    ConsoleContextPolicyOverrides,
-)
 from ...Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
-    ConsoleSettingsDraftState,
-    ConsoleSettingsFieldDraft,
-    ConsoleSettingsFieldProvenance,
     ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
-    remember_model_draft,
+    initial_settings_draft,
+    remember_session_pair,
 )
 from ...Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
@@ -2703,31 +2698,7 @@ class ChatScreen(BaseAppScreen):
         self._console_worldbook_dialog_active = True
         self.run_worker(self._console_worldbook_detach_worker(), group="console-io")
 
-    @staticmethod
-    def _console_settings_initial_draft(
-        settings: ConsoleSessionSettings,
-        context_policy: ConsoleContextPolicyOverrides,
-        *,
-        exposed_fields: frozenset[str],
-    ) -> ConsoleSettingsDraftState:
-        """Build one process-local transaction from an exact live snapshot."""
-
-        return ConsoleSettingsDraftState(
-            settings=settings,
-            context_policy_overrides=context_policy,
-            field_drafts=tuple(
-                ConsoleSettingsFieldDraft(
-                    name=name,
-                    effective_value=getattr(settings, name),
-                    profile_override=getattr(settings, name),
-                    provenance=ConsoleSettingsFieldProvenance.INHERITED,
-                    dirty=False,
-                )
-                for name in sorted(exposed_fields)
-            ),
-            model_drafts=(),
-            endpoint_draft=None,
-        )
+    _console_settings_initial_draft = staticmethod(initial_settings_draft)
 
     def _console_default_durability_state(self) -> ConsoleDefaultDurabilityState:
         """Return the single app-lifetime default recovery holder."""
@@ -3179,18 +3150,9 @@ class ChatScreen(BaseAppScreen):
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
-            live = store.session_settings(session_id)
-            if suspended_draft is not None and live is not None:
-                # TASK-35190: the chat's own pair stays remembered across a
-                # Settings round trip, so a pick back on its provider keeps
-                # the chat's Endpoint.
-                own = self._console_settings_initial_draft(
-                    live,
-                    initial_draft.context_policy_overrides,
-                    exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
-                )
-                initial_draft = replace(
-                    initial_draft, model_drafts=remember_model_draft(own).model_drafts
+            if suspended_draft is not None:  # TASK-35190: and the chat's own pair
+                initial_draft = remember_session_pair(
+                    initial_draft, store.session_settings(session_id)
                 )
         else:
             origin = transfer.origin

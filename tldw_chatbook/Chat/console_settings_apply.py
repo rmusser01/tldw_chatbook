@@ -196,6 +196,36 @@ def validate_console_settings_origin(
     return live_persisted_conversation_id == origin.persisted_conversation_id
 
 
+def initial_settings_draft(
+    settings: ConsoleSessionSettings,
+    context_policy: ConsoleContextPolicyOverrides,
+    *,
+    exposed_fields: frozenset[str],
+) -> ConsoleSettingsDraftState:
+    """Build one process-local transaction from an exact live snapshot.
+
+    ``ChatScreen._console_settings_initial_draft`` is this function (moved out
+    of the screen with TASK-35190's `remember_session_pair`).
+    """
+
+    return ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=context_policy,
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in sorted(exposed_fields)
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+
 def remember_model_draft(
     state: ConsoleSettingsDraftState,
 ) -> ConsoleSettingsDraftState:
@@ -230,6 +260,33 @@ def remember_model_draft(
     key = (provider, model)
     drafts = [d for d in state.model_drafts if (d.provider, d.model) != key]
     return replace(state, model_drafts=(*drafts, remembered))
+
+
+def remember_session_pair(
+    draft: ConsoleSettingsDraftState,
+    live: ConsoleSessionSettings | None,
+) -> ConsoleSettingsDraftState:
+    """Return a reopened Chat settings draft remembering the chat's own pair.
+
+    TASK-35190: the chat's own pair stays remembered across a Settings round
+    trip, so a pick back on its provider keeps the chat's Endpoint.
+
+    Args:
+        draft: The draft Chat settings reopens on (a suspended one, whose
+            pair may be another provider's); never mutated.
+        live: The chat's committed settings, or None when it has none.
+
+    Returns:
+        ``draft`` itself when ``live`` is None; otherwise a copy whose
+        ``model_drafts`` are exactly the live pair's remembered draft, its
+        fields the full surface's (`FULL_MODEL_DEFAULT_FIELDS`).
+    """
+    if live is None:
+        return draft
+    own = initial_settings_draft(
+        live, draft.context_policy_overrides, exposed_fields=FULL_MODEL_DEFAULT_FIELDS
+    )
+    return replace(draft, model_drafts=remember_model_draft(own).model_drafts)
 
 
 def rebased_endpoint(
