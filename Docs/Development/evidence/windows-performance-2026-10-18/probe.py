@@ -189,6 +189,23 @@ async def main():
         probe_poll_seconds=poll_seconds,
         probe_heartbeat_seconds=heartbeat_seconds,
     )
+    if "--cooperative-timers" in sys.argv:
+        from textual import timer
+
+        original_sleep = timer.sleep
+
+        async def coarse_sleep(seconds):
+            if seconds >= 0.05:
+                await asyncio.sleep(seconds)
+            else:
+                await original_sleep(seconds)
+
+        timer.sleep = coarse_sleep
+        report["cooperative_timers_experiment"] = True
+    if "--attachment-baseline" in sys.argv:
+        import attachment_baseline
+
+        report["baseline_revision"] = attachment_baseline.BASE_REVISION
     if "--return-baseline" in sys.argv:
         import return_baseline
 
@@ -234,6 +251,18 @@ async def main():
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from textual import events
+
+    if "--read-handoff" in sys.argv:
+        from tldw_chatbook.Chat import console_preparation_reads
+
+        interval = float(sys.argv[sys.argv.index("--read-handoff") + 1])
+        console_preparation_reads._READ_HANDOFF_LIMIT = interval
+        report["read_handoff_experiment"] = interval
+
+    if "--attachment-observe" in sys.argv:
+        from attachment_observer import install
+
+        install(report, lambda: stage)
 
     finish_config_observation = None
     finish_storage_observation = None

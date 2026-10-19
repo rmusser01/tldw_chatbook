@@ -90,6 +90,13 @@ refreshes remain independent. A failed attach can retain the previous indicator
 count until reconciliation or explicit Hooks/Send refresh; permission checks still
 read fresh state on the action path.
 
+Explicit return acknowledgement (TASK-35615) captures its original current
+unread token before deciding whether it needs an acknowledgement-only FULL pass.
+An absent visit, refused read or absent token needs no acknowledgement; ordinary
+attachment reconciliation still owns FULL. A real unread token retains the
+existing FULL, after-paint scheduling, current-owner checks and compare-and-clear.
+This avoids queuing a second FULL behind attachment for unsaved/already-read chats.
+
 CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
