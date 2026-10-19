@@ -12,6 +12,7 @@ labels:
 dependencies:
 - TASK-33007
 - TASK-35010
+- TASK-33641
 priority: high
 ---
 
@@ -46,7 +47,7 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 - [ ] #10 When Add to model list fills an empty Default model, its receipt says that s still has to save that default
 - [ ] #11 From Discover models, Tab reaches the discovered list before Add to model list and Clear
 - [ ] #12 With Discover models, the discovered list, Add to model list or Clear focused, the Inspector names the control, says what it does and says whether it writes anything
-- [ ] #13 The capability line no longer ties capabilities to saving, on every surface that shows it
-- [ ] #14 ADR-002 (backlog/decisions/002-openai-compatible-model-discovery.md) records the 2026-10-14 'Pick = use as default' ruling and states that it supersedes TASK-33007.3 AC#4
+- [ ] #13 The capability line no longer ties capabilities to saving, on the Settings discovery card and in Console's Chat settings readiness detail
+- [ ] #14 ADR-002 (backlog/decisions/002-openai-compatible-model-discovery.md) records the 2026-10-14 'Pick = use as default' ruling and states that it supersedes TASK-33007.3 AC#4 and the '[providers] list did not change' clause of TASK-33007.3 AC#10
 - [ ] #15 The Settings User Guide says that choosing a discovered model in Default model and pressing s saves it as the default and adds it to the provider's saved list, and describes Add to model list (applies immediately, adds several at once), the Discover models, list, Add to model list, Clear order, the 'joins on save' title and the new receipts
 <!-- AC:END -->

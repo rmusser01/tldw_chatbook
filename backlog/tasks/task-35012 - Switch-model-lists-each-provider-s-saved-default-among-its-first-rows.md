@@ -12,6 +12,7 @@ labels:
 dependencies:
 - TASK-35010
 - TASK-33008
+- TASK-33641
 priority: medium
 ---
 
@@ -29,9 +30,9 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With no Find text, each ready provider's group in Switch model shows that provider's saved default for new chats first, or second after the open chat's current model when both belong to that provider, even when the provider has more than three models
+- [ ] #1 With no Find text, each ready provider's group in Switch model and in Chat settings' model picker shows that provider's saved default for new chats first, or second when the surface's current model of that provider leads the group (the open chat's model in Switch model, Chat settings' draft pair in its picker), when the default is one of that group's rows, even when the provider has more than three models
 - [ ] #2 Each group lists the same models as before, only reordered, and the '… N more' row counts the remaining ones
 - [ ] #3 A shipped sample model id is never moved forward as a provider's default
 - [ ] #4 Find results and their ranking are unchanged
-- [ ] #5 The Console User Guide's Switch model description says each ready provider's saved default shows first, after the open chat's current model
+- [ ] #5 The Console User Guide says each ready provider's saved default shows first, after the open chat's current model, when it is one of that provider's rows, in both Switch model and Chat settings' model picker
 <!-- AC:END -->

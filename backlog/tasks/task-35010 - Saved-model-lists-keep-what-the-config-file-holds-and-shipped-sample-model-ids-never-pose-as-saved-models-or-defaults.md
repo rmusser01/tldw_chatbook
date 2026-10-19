@@ -12,6 +12,7 @@ labels:
 - ux-review-2026-10-14
 dependencies:
 - TASK-33007
+- TASK-33641
 priority: high
 ---
 
@@ -32,12 +33,12 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 - [ ] #1 Save selected keeps every model the config file holds for that provider at the moment it writes: a model added after the app started, through Advanced Config, by another program replacing the file, or by an in-place edit of the same file, is kept, and a model removed that way does not come back
 - [ ] #2 Save selected's receipt counts only the models it actually added to the file, and says the selected models are already saved when the file already lists all of them
 - [ ] #3 The startup catalog refresh with save to config keeps such external changes the same way and still adds newly listed models
-- [ ] #4 After Save selected, an Advanced Config save or a Config reload, Switch model (Alt+M), the Default model picker and the Saved model list rows and counts show the file's saved lists without a restart
+- [ ] #4 After Save selected, an Advanced Config save or a Config reload, the Switch model (Alt+M) groups whose rows come from the saved list, the Default model picker and the Saved model list rows and counts show the file's saved lists without a restart
 - [ ] #5 A new profile's saved model lists for vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 are empty
 - [ ] #6 On a profile whose config file still holds the old sample lists, Switch model, the Default model picker, the Saved model list counts and the first-run wizard's model list show none of the sample ids, and real ids saved beside them still show
 - [ ] #7 Switching Settings to one of those providers on such a profile leaves Default model not set, also when the provider's settings table still holds the shipped sample model, and Save selected then fills it as an unsaved draft
 - [ ] #8 The next Settings write to such a provider's list removes the sample ids from the file and keeps the real ids, and the app does not rewrite the config file at startup for this
-- [ ] #9 A provider whose settings table is still exactly the shipped one is still treated as never set up, so an untouched local default that refuses stays under NOT RUNNING in Switch model
+- [ ] #9 A provider whose settings table is still exactly the shipped one is still treated as never set up, so an untouched local default that refuses stays under NOT RUNNING in Switch model, and an untouched local default that is running is still probed and listed, including vLLM with an empty saved list
 - [ ] #10 Dreams stories, briefings and Console sends use the same model for every provider as before
 - [ ] #11 The Settings User Guide says the vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and fill through Discover models, that old sample ids are ignored and dropped the next time Settings saves that list, and that Save selected adds to the list as the config file holds it
 <!-- AC:END -->
