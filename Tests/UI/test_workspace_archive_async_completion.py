@@ -128,6 +128,11 @@ async def test_late_existing_resume_keeps_authority_through_token_preparation(
         _screen=object(),
         _ensure_console_chat_store=lambda: store,
         _capture_console_draft_switch_snapshot=Mock(),
+        _bind_composer_after_switch=Mock(),
+        # The read-visit seams are absent here (None), as in production
+        # owners built without them.
+        _begin_manual_read_visit=None,
+        _complete_manual_read_visit=None,
         _console_session_id_for_workspace_conversation=lambda _: "existing",
         _ensure_chat_controller_fn=lambda: chat,
         _set_active_workspace_for_console_session=Mock(),
@@ -148,11 +153,13 @@ async def test_late_existing_resume_keeps_authority_through_token_preparation(
     if superseded:
         assert result is None
         chat.switch_session.assert_not_called()
+        host._bind_composer_after_switch.assert_not_called()
         host._set_active_workspace_for_console_session.assert_not_called()
         host._sync_native_console_chat_ui_fn.assert_not_called()
     else:
         assert result is True
         chat.switch_session.assert_called_once_with("existing")
+        host._bind_composer_after_switch.assert_called_once_with()  # TASK-35640
         host._sync_native_console_chat_ui_fn.assert_awaited_once()
 
 

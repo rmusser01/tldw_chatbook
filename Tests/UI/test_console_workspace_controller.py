@@ -152,6 +152,7 @@ def _workspace_controller(
         current_conversation_id_accessor=_noop,
         native_session_rows_accessor=_noop,
         capture_draft_switch_snapshot=_noop,
+        bind_composer_after_switch=_noop,
         sync_chat_core_state=_noop,
         sync_native_console_chat_ui=_noop,
         sync_temporary_chip=_noop,
