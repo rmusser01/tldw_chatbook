@@ -113,3 +113,6 @@ or weakening acknowledgement/authority boundaries. Workspace reconciliation is
 also authoritative; a display memo cannot replace its live checks. Separately,
 the marks query fetches every matching row before applying its valid-receipt
 limit in Python; large-history profiling is needed before changing that path.
+
+Follow-up: [attention/workspace resume profiling](RESUME_RESULTS.md) records the
+subsequent fixes, preserved storage boundaries and mixed end-to-end results.

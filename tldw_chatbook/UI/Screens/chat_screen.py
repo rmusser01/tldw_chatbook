@@ -141,6 +141,7 @@ from ..Console_Modules.left_rail import (
 )
 from ..Console_Modules.workspace import (
     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+    _WorkspaceAvailabilityObsolete,
 )
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -15388,23 +15389,48 @@ class ChatScreen(BaseAppScreen):
                 self._console_attach_sync_complete = True
             if not visit.can_complete(self._current_console_attach_visit()):
                 return
-            if not self._console_attach_runtime_reconciled:
-                if not visit.runtime.finish_view_reconciliation(self, visit.generation):
+            ordered_resume = self._resume_navigation_startup_in_progress or (
+                not self._console_mount_visit_refreshed
+                and (
+                    self._pending_resume_local_conversation_id is not None
+                    or self._pending_character_conversation_target is not None
+                )
+            )
+            preparation = (
+                self._workspace.prepare_console_workspace_reconciliation()
+                if (
+                    self._console_resume_after_reconcile
+                    and not ordered_resume
+                    and not self._console_attach_runtime_reconciled
+                )
+                else contextlib.nullcontext()
+            )
+            # Keep the runtime unanswerable during the new native-read await.
+            # The synchronous resume flag must never span that await either.
+            # A retry whose runtime phase already succeeded stays synchronous:
+            # that existing phase deliberately retains its answerability.
+            async with preparation:
+                if not visit.can_complete(self._current_console_attach_visit()):
                     return
-                self._console_attach_runtime_reconciled = True
-            if not self._console_attach_view_started:
-                self._start_console_view_after_reconciliation()
-                self._console_attach_view_started = True
-            if self._console_resume_after_reconcile:
-                self._console_attach_resume_in_progress = True
-                try:
-                    self.on_screen_resume()
-                finally:
-                    self._console_attach_resume_in_progress = False
-                self._console_resume_after_reconcile = False
-            self._console_attach_reconciled = True
-            self._console_attach_reconcile_retry_count = 0
-            self._console_attach_reconcile_retry_exhausted = False
+                if not self._console_attach_runtime_reconciled:
+                    if not visit.runtime.finish_view_reconciliation(
+                        self, visit.generation
+                    ):
+                        return
+                    self._console_attach_runtime_reconciled = True
+                if not self._console_attach_view_started:
+                    self._start_console_view_after_reconciliation()
+                    self._console_attach_view_started = True
+                if self._console_resume_after_reconcile:
+                    self._console_attach_resume_in_progress = True
+                    try:
+                        self.on_screen_resume()
+                    finally:
+                        self._console_attach_resume_in_progress = False
+                    self._console_resume_after_reconcile = False
+                self._console_attach_reconciled = True
+                self._console_attach_reconcile_retry_count = 0
+                self._console_attach_reconcile_retry_exhausted = False
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
             if not _console_screen_is_torn_down(self):
                 failure = exc
@@ -15417,7 +15443,10 @@ class ChatScreen(BaseAppScreen):
             current = self._current_console_attach_visit()
             if not visit.same_visit(current):
                 failure = None
-                if current.can_complete(current) and not self._console_attach_reconciled:
+                if (
+                    current.can_complete(current)
+                    and not self._console_attach_reconciled
+                ):
                     self.call_after_refresh(self._reconcile_console_after_attach)
         if failure is None or _console_screen_is_torn_down(self):
             return
@@ -22857,6 +22886,8 @@ class ChatScreen(BaseAppScreen):
         if not ordered_resume_active:
             try:
                 self._workspace._reconcile_console_session_with_registry()
+            except _WorkspaceAvailabilityObsolete:
+                raise
             except Exception:
                 logger.opt(exception=True).debug(
                     "Unable to reconcile Console session with registry-active workspace"

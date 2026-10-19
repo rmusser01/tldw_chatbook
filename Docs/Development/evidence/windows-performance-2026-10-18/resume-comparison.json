@@ -1,0 +1,570 @@
+{
+  "before": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 589.1838999959873,
+    "resume_to_input_worst_ms": 984.0247999964049,
+    "worst_loop_overshoot_median_ms": 346.0628499981249,
+    "worst_loop_overshoot_ms": 520.4585999983829,
+    "draft_retained_all": null,
+    "attach_reconciled_all": null,
+    "main_thread_read_samples": {
+      "list_console_unseen_marks": 51,
+      "get_active_workspace": 29
+    },
+    "top_overlapping_resume_functions": [
+      [
+        "storage_admission.py",
+        "acquire_storage",
+        123
+      ],
+      [
+        "storage_admission.py",
+        "_acquire_storage",
+        122
+      ],
+      [
+        "chat_screen.py",
+        "_reconcile_console_after_attach",
+        102
+      ],
+      [
+        "participants.py",
+        "_core_operation",
+        92
+      ],
+      [
+        "storage_admission.py",
+        "_repository_operation",
+        91
+      ],
+      [
+        "chat_screen.py",
+        "on_screen_resume",
+        82
+      ],
+      [
+        "storage_admission.py",
+        "initializing",
+        53
+      ],
+      [
+        "console_chat_controller.py",
+        "remount_pending_approval_for_active_session",
+        51
+      ],
+      [
+        "console_runtime.py",
+        "_project_pending_decision_to_attached_view",
+        51
+      ],
+      [
+        "console_runtime.py",
+        "recompute_console_attention",
+        51
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "project_pending_decision_for_active_session",
+        51
+      ],
+      [
+        "console_chat_controller.py",
+        "project_pending_decision_for_active_session",
+        51
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "remount_pending_approval_for_active_session",
+        51
+      ],
+      [
+        "conversation_local_marks_service.py",
+        "list_console_unseen_marks",
+        51
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "on_console_view_visibility_changed",
+        51
+      ],
+      [
+        "console_chat_controller.py",
+        "on_console_view_visibility_changed",
+        51
+      ],
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        50
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "__enter__",
+        49
+      ],
+      [
+        "participants.py",
+        "counted",
+        45
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        44
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        41
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        40
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        40
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        40
+      ],
+      [
+        "config_sync.py",
+        "render",
+        40
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "after": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 769.9868999989121,
+    "resume_to_input_worst_ms": 1091.8413999897894,
+    "worst_loop_overshoot_median_ms": 406.76510000252165,
+    "worst_loop_overshoot_ms": 598.6451999872224,
+    "draft_retained_all": true,
+    "attach_reconciled_all": true,
+    "main_thread_read_samples": {
+      "list_console_unseen_marks": 0,
+      "get_active_workspace": 0
+    },
+    "top_overlapping_resume_functions": [
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        81
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        77
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        77
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        77
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        77
+      ],
+      [
+        "config_sync.py",
+        "render",
+        77
+      ],
+      [
+        "chat_screen.py",
+        "_reconcile_console_after_attach",
+        73
+      ],
+      [
+        "chat_screen.py",
+        "_sync_console_rail_and_controls",
+        72
+      ],
+      [
+        "storage_admission.py",
+        "_acquire_storage",
+        70
+      ],
+      [
+        "storage_admission.py",
+        "acquire_storage",
+        70
+      ],
+      [
+        "raw_participants.py",
+        "_scope",
+        66
+      ],
+      [
+        "config_participants.py",
+        "operation",
+        66
+      ],
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        65
+      ],
+      [
+        "storage_admission.py",
+        "initializing",
+        38
+      ],
+      [
+        "windows_files.py",
+        "open_handle",
+        18
+      ],
+      [
+        "bootstrap.py",
+        "_registry",
+        17
+      ],
+      [
+        "bootstrap.py",
+        "startup_permission",
+        14
+      ],
+      [
+        "chat_screen.py",
+        "_provider_readiness_app_config",
+        12
+      ],
+      [
+        "config.py",
+        "load_settings",
+        12
+      ],
+      [
+        "windows_files.py",
+        "open",
+        12
+      ],
+      [
+        "config.py",
+        "_settings_cache_hit",
+        11
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection",
+        11
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection_uncached",
+        11
+      ],
+      [
+        "config.py",
+        "_posture_unchanged",
+        11
+      ],
+      [
+        "config.py",
+        "_config_file_posture",
+        11
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "control": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 793.2123500067974,
+    "resume_to_input_worst_ms": 989.9128999968525,
+    "worst_loop_overshoot_median_ms": 459.85669999412494,
+    "worst_loop_overshoot_ms": 564.805699987337,
+    "draft_retained_all": true,
+    "attach_reconciled_all": true,
+    "main_thread_read_samples": {
+      "list_console_unseen_marks": 79,
+      "get_active_workspace": 36
+    },
+    "top_overlapping_resume_functions": [
+      [
+        "storage_admission.py",
+        "_acquire_storage",
+        147
+      ],
+      [
+        "storage_admission.py",
+        "acquire_storage",
+        147
+      ],
+      [
+        "participants.py",
+        "_core_operation",
+        118
+      ],
+      [
+        "storage_admission.py",
+        "_repository_operation",
+        118
+      ],
+      [
+        "chat_screen.py",
+        "_reconcile_console_after_attach",
+        117
+      ],
+      [
+        "chat_screen.py",
+        "on_screen_resume",
+        115
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "__enter__",
+        79
+      ],
+      [
+        "console_chat_controller.py",
+        "remount_pending_approval_for_active_session",
+        79
+      ],
+      [
+        "console_runtime.py",
+        "_project_pending_decision_to_attached_view",
+        79
+      ],
+      [
+        "console_runtime.py",
+        "recompute_console_attention",
+        79
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "project_pending_decision_for_active_session",
+        79
+      ],
+      [
+        "console_chat_controller.py",
+        "project_pending_decision_for_active_session",
+        79
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "remount_pending_approval_for_active_session",
+        79
+      ],
+      [
+        "conversation_local_marks_service.py",
+        "list_console_unseen_marks",
+        79
+      ],
+      [
+        "console_interrupt_rounds.py",
+        "on_console_view_visibility_changed",
+        79
+      ],
+      [
+        "console_chat_controller.py",
+        "on_console_view_visibility_changed",
+        79
+      ],
+      [
+        "storage_admission.py",
+        "initializing",
+        70
+      ],
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        54
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        46
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        46
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        46
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        46
+      ],
+      [
+        "config_sync.py",
+        "render",
+        46
+      ],
+      [
+        "windows_files.py",
+        "open_handle",
+        44
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        43
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "verified": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 743.4797499954584,
+    "resume_to_input_worst_ms": 1060.7367000047816,
+    "worst_loop_overshoot_median_ms": 441.14275000378257,
+    "worst_loop_overshoot_ms": 600.197199988761,
+    "draft_retained_all": true,
+    "attach_reconciled_all": true,
+    "main_thread_read_samples": {
+      "list_console_unseen_marks": 0,
+      "get_active_workspace": 0
+    },
+    "top_overlapping_resume_functions": [
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        81
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        73
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        73
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        73
+      ],
+      [
+        "chat_screen.py",
+        "_reconcile_console_after_attach",
+        73
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        73
+      ],
+      [
+        "config_sync.py",
+        "render",
+        73
+      ],
+      [
+        "storage_admission.py",
+        "acquire_storage",
+        72
+      ],
+      [
+        "storage_admission.py",
+        "_acquire_storage",
+        71
+      ],
+      [
+        "chat_screen.py",
+        "_sync_console_rail_and_controls",
+        70
+      ],
+      [
+        "raw_participants.py",
+        "_scope",
+        65
+      ],
+      [
+        "config_participants.py",
+        "operation",
+        65
+      ],
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        54
+      ],
+      [
+        "storage_admission.py",
+        "initializing",
+        41
+      ],
+      [
+        "windows_files.py",
+        "open_handle",
+        20
+      ],
+      [
+        "config.py",
+        "_settings_cache_hit",
+        14
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection",
+        14
+      ],
+      [
+        "chat_screen.py",
+        "_provider_readiness_app_config",
+        14
+      ],
+      [
+        "config.py",
+        "load_settings",
+        14
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection_uncached",
+        14
+      ],
+      [
+        "config.py",
+        "_posture_unchanged",
+        14
+      ],
+      [
+        "config.py",
+        "_config_file_posture",
+        14
+      ],
+      [
+        "participants.py",
+        "run_finite_local_worker",
+        13
+      ],
+      [
+        "home_screen.py",
+        "_refresh_after_chatbook_artifact_snapshot",
+        13
+      ],
+      [
+        "participants.py",
+        "_core_operation",
+        13
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  }
+}

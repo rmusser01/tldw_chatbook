@@ -6,6 +6,18 @@
 
 **What to do.** Before investigating a CI flake, read the log to the first exception rather than the summary line, then check whether dev has changed that code since, with `git merge-base --is-ancestor <fix> <failing head>` for each failing run. If the heads predate the fix, the work left is counting the runs since it.
 
+## A render-entry wait must also observe its producer's failure (TASK-35592, 2026-10-19)
+
+The Windows attention regression run reached two stale transcript fixtures,
+then timed out after 180 seconds in a third test. Its refresh task had already
+raised because the harness lacked `_console_chat_store`, but the test waited
+only for an event the failed task would never set. Both assertion failures
+reproduced on pre-change `efb71994`. Supplying the existing store/rate-chip seams
+and racing the entry event against producer completion made all three tests
+pass. Observe early producer errors, bound the entry wait, and retire both tasks
+in `finally`; an event-only wait hides the useful failure until Windows kills
+the entire pytest process.
+
 ## A held-lock test's blocked stack names the product read to fix (TASK-35444, 2026-10-18)
 
 **Incident.** The response-rules phase test holds config's rebuild lock and fails

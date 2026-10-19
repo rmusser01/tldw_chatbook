@@ -2,6 +2,8 @@
 
 Run from repository root with .venv/Scripts/python.exe <this file> --ready.
 Add --settings-ab for an alternating, diagnostic-only prepared-summary test.
+Add --resume-only for six Home/Console returns; --resume-baseline restores the
+pre-attention/workspace modules in memory for a paired original-code control.
 Add --profile for cProfile discovery (this Python 3.12 build captures workers
 too; its cumulative timings/callers are not trustworthy main-thread evidence).
 The separate sampler explicitly selects the main thread. Fresh temporary app
@@ -122,6 +124,10 @@ async def until(predicate, seconds=60):
 
 async def main():
     global stage
+    if "--resume-baseline" in sys.argv:
+        import attention_baseline_tests
+
+        report["baseline_revision"] = attention_baseline_tests.BASE_REVISION
     profiler = cProfile.Profile()
     if PROFILE:
         profiler.enable()
@@ -155,6 +161,58 @@ async def main():
             report["mount_ready_ms"] = (time.perf_counter() - start) * 1000
             await pilot.pause(1)
             report["startup_phases"] = app._startup_phases
+            if "--resume-only" in sys.argv:
+                app.post_message(NavigateToScreen("chat"))
+                await until(lambda: type(app.screen).__name__ == "ChatScreen")
+                await pilot.pause(3)
+                report["console_resume"] = []
+                for iteration in range(6):
+                    stage = "leave-console"
+                    app.post_message(NavigateToScreen("home"))
+                    await until(lambda: type(app.screen).__name__ == "HomeScreen")
+                    await pilot.pause(.5)
+                    stage = f"console-resume-{iteration}"
+                    running = True
+                    lags = []
+
+                    async def heartbeat():
+                        while running:
+                            tick = time.perf_counter()
+                            await asyncio.sleep(0.01)
+                            lags.append(
+                                max(0, time.perf_counter() - tick - 0.01) * 1000
+                            )
+
+                    beat = asyncio.create_task(heartbeat())
+                    await asyncio.sleep(0)
+                    started = time.perf_counter()
+                    app.post_message(NavigateToScreen("chat"))
+                    await until(lambda: type(app.screen).__name__ == "ChatScreen")
+                    composer = app.screen.query_one("#console-native-composer")
+                    composer.focus_draft_from(None)
+                    before = composer.draft_text()
+                    input_started = time.perf_counter()
+                    app._driver.send_message(events.Key("z", "z"))
+                    await until(lambda: composer.draft_text() != before, 10)
+                    input_ms = (time.perf_counter() - input_started) * 1000
+                    arrival_input_ms = (time.perf_counter() - started) * 1000
+                    await pilot.pause(0.5)
+                    await until(lambda: app.screen._console_attach_reconciled, 10)
+                    running = False
+                    await beat
+                    report["console_resume"].append(
+                        {
+                            "iteration": iteration,
+                            "resume_to_input_ms": arrival_input_ms,
+                            "input_ms": input_ms,
+                            "max_loop_overshoot_ms": max(lags, default=0),
+                            "draft_retained": composer.draft_text() == before + "z",
+                            "attach_reconciled": app.screen._console_attach_reconciled,
+                            "elapsed_ms": (time.perf_counter() - started) * 1000,
+                        }
+                    )
+                stage = "shutdown"
+                return
             if "--skills-only" in sys.argv:
                 app.post_message(NavigateToScreen("chat"))
                 await until(lambda: type(app.screen).__name__ == "ChatScreen")
