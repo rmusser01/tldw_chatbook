@@ -1,11 +1,11 @@
 ---
 id: TASK-35614
 title: Keep Console return input responsive during reconciliation
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-19 20:10'
-updated_date: '2026-10-19 20:36'
+updated_date: '2026-10-19 20:38'
 labels: []
 dependencies: []
 ---
@@ -21,7 +21,7 @@ Investigate the saved Windows return outlier and remove verified input queueing 
 - [x] #1 Keyboard input remains responsive during held reconciliation while runtime attachment stays gated; retries, stale visits and retirement remain correct.
 - [x] #2 Send and Stop state transitions preserve final styles and behavior with batched class updates.
 - [x] #3 Targeted tests and serial native Windows before/after profiles record raw latency, exits and guard outcomes.
-- [ ] #4 Review, documentation and PR 3166 update complete.
+- [x] #4 Review, documentation and PR 3166 update complete.
 - [x] #5 Hook display refresh runs once after completed resume instead of competing twice with attachment; Send hook checks remain unchanged.
 <!-- AC:END -->
 
@@ -38,7 +38,7 @@ ADR required: no. ADR path: N/A. Reason: routine scheduling correction within ex
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Confirmed Textual after-refresh reconciliation awaited inside the screen message pump. Dispatch now uses a deduplicated finite view worker under existing exact-worker retirement; all reconciliation/storage/Send gates remain intact. Batched Send/Stop classes reduce nine synchronous style refreshes to two. Deferred the duplicate resume-triggered hook display refresh until reconciliation completes; independent session/Send refreshes and fresh authorization stay unchanged.
-Native serial ABBA followed by a final combined-code pair: final input median 721.84 to 177.79 ms (75.4% faster), worst 1532.84 to 200.64 ms. Attachment remains slower, 727.33 to 976.42 ms; no completed-reconciliation speedup is claimed. All 36 return journeys retained drafts/attached, six zero exits, zero network attempts/profile refusals. See RETURN_RESULTS.md and raw receipts.
-Targeted input, lifecycle/retry/visit, original config/workspace/hook native-read retirement, Send/Stop, and native unsafe-ACL checks passed after fixture corrections. Timer inventory retains the same worker-backed retry root and portable paths; four checks passed. Initial failures and rechecks retained in return-verification.json. New code lint/format passes; pre-existing product lint/format debt unchanged. Independent review found no blockers. No full sweep. ADR required: no; existing ADR-126/230 custody and freshness boundaries preserved. Updated Console architecture and testing-evidence lesson. PR publication and exact fixture cleanup pending.
+Published the reviewed fixes and complete evidence to PR #3166 (implementation commit 5f9e513de6). Reconciliation launches through a deduplicated finite view worker instead of blocking the screen message pump; exact native retirement and all visit/storage/Send checks remain. Batched Send/Stop classes reduce nine style updates to two. Removed the duplicate early resume-triggered hook display refresh; fresh Send authorization and independent refresh paths remain.
+Final native pair: input median 721.84 to 177.79 ms (75.4% faster), worst 1532.84 to 200.64 ms. Attachment remains slower, 727.33 to 976.42 ms; reported explicitly as remaining work. All 36 return journeys retained drafts and attached, six exits zero, zero network attempts/profile refusals. Earlier ABBA results and failures remain in RETURN_RESULTS.md and return-verification.json.
+Targeted keyboard/lifecycle, original config/workspace/hook native-read retirement, composer, unsafe native Windows ACL and timer-inventory checks passed after documented fixture corrections. Timer pins retained through the exact worker retry edge. New diagnostic/regression lint/format checks pass; pre-existing product findings unchanged. Independent reviews found no blockers; no full suite. Updated Console architecture and testing-evidence lesson. ADR required: no; ADR-126/230 boundaries preserved. Removed all 17 exact owned temporary fixture roots. Auto-merge remains disabled for fresh review.
 <!-- SECTION:NOTES:END -->
