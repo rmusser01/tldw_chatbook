@@ -1,13 +1,13 @@
 ---
 id: TASK-35026
 title: The Console session-close journeys test runs past its CI time limit
-status: In Progress
+status: Done
 created_date: 2026-10-15 15:48
 labels:
 - tests
 - ci
 - console
-updated_date: 2026-10-18 09:40
+updated_date: 2026-10-18 22:09
 assignee:
 - '@claude'
 priority: medium
@@ -21,7 +21,7 @@ Tests/UI/test_console_session_tab_close.py::test_session_close_pending_race_and_
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test's runs in CI stay well inside its lane's limit over 20 pull-request runs
+- [x] #1 The test's runs in CI stay well inside its lane's limit over 20 pull-request runs
 - [x] #2 What it proves is unchanged (the journeys it covers still run)
 - [x] #3 If the test is split, every part runs in a required lane
 <!-- AC:END -->
@@ -48,12 +48,13 @@ Verifying the split turned up a product race in one scenario: 1 failure in 6 loa
 AC#1 stays open: it needs 20 pull-request runs after merge. Verify with the CI jobs' logs: both new tests' durations well under 180 s.
 
 Files: Tests/UI/test_console_session_tab_close.py.
+AC#1 measured 2026-10-18. Data: every completed attempt of the pull_request runs of derived-artifacts.yml created from #3152's merge (2026-10-18 08:50Z) to 21:36Z: 36 runs, 35 completed attempts, every head containing the merge; 25 of them finished all ten UI shards, on 11 branches. Parent-side call durations in the 25 UI Fast Lane (8) jobs: test_session_close_pending_journeys median 57.0 / p90 69.0 / max 70.8 s, test_session_close_race_geometry_and_fleet_journeys median 45.1 / p90 54.9 / max 58.5 s, against the lane's --timeout=180 (the unsplit test took 81 to 127 s when it passed, and once about 183 s). One run failed on the split, not on time: 39151121023/1 (chore/task-33132-libcollections-migration), test_session_close_pending_journeys, an asyncio CancelledError during app shutdown; recorded under TASK-35443.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Split the Console session-close journeys test in two, scenarios unchanged. Over 25 pull-request runs after merge the halves took at most 70.8 s and 58.5 s of their lane's 180 s.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

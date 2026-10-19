@@ -551,3 +551,50 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
         assert case.console._console_credential_snapshot == snapshot
         case.rules._project(case.session_id, phase="checking")
         assert strip._run_chip_state == run_state_before
+
+
+@pytest.mark.asyncio
+async def test_recovery_sync_never_waits_for_a_config_rebuild(tmp_path):
+    """TASK-35444: the transcript's recovery placeholder never reloads config.
+
+    The phase test above failed in CI when Stop's transcript sync rebuilt the
+    controller's provider selection with ``load_settings()`` on the UI loop
+    while a config rebuild held its lock.
+    """
+    import threading
+    import time
+
+    from tldw_chatbook import config
+
+    async with mounted_rules_console(tmp_path) as case:
+        case.host.app_config = config.load_settings()
+        assert case.console._console_config_snapshot_is_disk_loaded(
+            case.host.app_config
+        )
+        region = case.console._console_transcript_region_or_none()
+        assert region is not None and region.is_mounted
+        held, release = threading.Event(), threading.Event()
+
+        def hold_rebuild():
+            with config._settings_rebuild_lock():
+                config._invalidate_config_caches()
+                held.set()
+                release.wait(5)
+
+        holder = threading.Thread(target=hold_rebuild)
+        watchdog = threading.Timer(2, release.set)
+        holder.start()
+        try:
+            assert held.wait(3)
+            watchdog.start()
+            started = time.monotonic()
+            region.sync_recovery()
+            elapsed = time.monotonic() - started
+            assert not release.is_set(), (
+                f"recovery sync waited {elapsed:.3f}s for the config rebuild"
+            )
+        finally:
+            watchdog.cancel()
+            release.set()
+            holder.join(3)
+        assert not holder.is_alive()

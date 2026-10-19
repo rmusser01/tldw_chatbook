@@ -10,7 +10,7 @@ labels:
 priority: high
 assignee:
 - '@claude'
-updated_date: 2026-10-18 07:30
+updated_date: 2026-10-18 22:09
 ---
 
 ## Description
@@ -76,6 +76,12 @@ Other flakes in the same window, split at #3137 (merged 2026-10-16 22:16Z; it ch
 - Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session: [rebuild] 3 and [maintenance] 1 before; after, [maintenance] once more (39050477414/1, TimeoutError) on fix/queue-fresh-second-failure (#3113, which changed no Console or UI file), so the [maintenance] case still flakes after TASK-34950's fix. Filed as TASK-35444.
 - Tests/UI/test_console_session_tab_close.py::test_session_close_failure_and_retry_journeys: none before; after, twice with the same child failure, 'RuntimeError: worker manager is closed' (39050477414/1 on #3113, no Console change, and 39049115705/1 on codex/console-permission-filesystem-waits). Filed as TASK-35443.
 Not seen again is not proof of a fix: 24 attempts is a small sample, and the mapped-learning and resend tests are not shown to be fixed by #3137, only quiet since.
+Re-measured after #3152, 2026-10-18. Data: every completed attempt of the pull_request runs of derived-artifacts.yml created from #3152's merge (2026-10-18 08:50Z) to 21:36Z: 36 runs, 35 completed attempts, every head containing the merge; 25 of them finished all ten UI shards, on 11 branches.
+- test_opening_console_during_a_headless_delivery_arms_the_poll: no failure.
+- test_session_owned_pending_projection_journeys: no failure. Its call took 90.6 to 124.4 s in the five shard-10 logs read, against the lane's 180 s.
+- test_applying_on_anthropic_submits_none_of_the_hidden_fields: one failure, 39149827283/1 on feat/18925-os-notifications (#3155, which changes tldw_chatbook/UI/Screens/settings_screen.py and failed its own module-size ratchet in the same run), a timeout past 180 s; not shown to be a flake on unchanged code.
+- The rules-phase test failed 5 times; the cause is found and fixed under TASK-35444.
+- mapped-learning and resend: no failure.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

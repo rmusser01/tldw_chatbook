@@ -103,4 +103,34 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         return state
 
     monkeypatch.setattr(chat_screen, "trace_call_recovery_state", project)
+    # TASK-35444: the state read takes the live controller; it ensures one
+    # only when there is none yet, as the first open always did.
+    live = [controller]
+    monkeypatch.setattr(
+        chat_screen.ChatScreen,
+        "_console_chat_controller",
+        property(lambda _screen: live[0]),
+    )
+    screen._ensure_console_chat_controller = lambda: pytest.fail(
+        "the recovery state read ensured a live controller"
+    )
     assert state_callback() is state
+    live[0] = None
+    screen._ensure_console_chat_controller = lambda: controller
+    assert state_callback() is state
+    # The continuation reads follow the same rule.
+    message = object()
+    controller.provider_continuation_recovery_message = lambda: message
+    controller.provider_continuation_replay_available = lambda: True
+    for builder, expected in (
+        (region._recovery_message_builder, message),
+        (region._recovery_replay_available_builder, True),
+    ):
+        live[0] = controller
+        screen._ensure_console_chat_controller = lambda: pytest.fail(
+            "a continuation read ensured a live controller"
+        )
+        assert builder() is expected
+        live[0] = None
+        screen._ensure_console_chat_controller = lambda: controller
+        assert builder() is expected
