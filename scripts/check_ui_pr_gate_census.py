@@ -204,8 +204,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library still framed, keeps the typed text, and the retry click opens
 # Console once the title is fixed (one Pilot arm, one app boot); the flush
 # timeout, flush failure, bare veto, admission veto and confirm veto all
-# roll the bar back (unit arms); 7 tests, about 25 s locally (review 1
-# re-measure). The 80x24 and CONFLICTED arms are in
+# roll the bar back (unit arms); 7 tests, measured 30.3 s and 31.7 s in
+# pytest under heavy machine load (review 1 re-measure, load avg 25-30). The 80x24 and CONFLICTED arms are in
 # test_nav_veto_keeps_highlight_extended.py, outside the lane.
 MINIMUM_FILES = 162
 
