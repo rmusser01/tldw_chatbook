@@ -26,6 +26,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 
 _GPU_BOX = {
     "family": "llama_cpp",
@@ -39,13 +40,15 @@ def _plain(console: ChatScreen, selector: str) -> str:
 
 
 async def _until_shown(pilot, console: ChatScreen, shown: str) -> None:
-    """Wait for the mode strip's provider chip, then check the visible chip."""
+    """Wait for the mode strip's provider chip, then check the status strip's."""
     for _ in range(100):
         if _plain(console, "#workbench-mode-provider") == shown:
             break
         await pilot.pause(0.05)
     assert _plain(console, "#workbench-mode-provider") == shown
-    assert _plain(console, "#console-provider-chip") == shown
+    # The status strip's provider segment (one text line since TASK-35160).
+    strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+    assert strip.segment_text("provider").strip() == shown
 
 
 async def _bump_mcp_tools(pilot, console: ChatScreen) -> None:
