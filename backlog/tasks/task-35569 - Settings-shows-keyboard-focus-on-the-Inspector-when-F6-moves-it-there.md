@@ -2,7 +2,7 @@
 id: TASK-35569
 title: Settings shows keyboard focus on the Inspector when F6 moves it there
 status: To Do
-created_date: 2026-10-18 23:00
+created_date: 2026-10-18 22:50
 dependencies: []
 labels:
 - model-config-redesign

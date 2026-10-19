@@ -2,7 +2,7 @@
 id: TASK-35369
 title: Moonshot and Z.ai readiness returns a leftover table key under an environment source
 status: To Do
-created_date: 2026-10-17 19:05
+created_date: 2026-10-17 19:00
 dependencies:
 - TASK-33001.14
 labels:

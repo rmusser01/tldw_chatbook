@@ -2,7 +2,7 @@
 id: TASK-35575
 title: The admission-sensitive PR job keeps room for a hung test's report under its cap
 status: To Do
-created_date: 2026-10-19 06:00
+created_date: 2026-10-19 05:40
 dependencies: []
 labels:
 - model-config-redesign
