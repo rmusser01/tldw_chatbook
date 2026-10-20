@@ -253,3 +253,100 @@ def test_character_writes_are_absent_while_character_tools_are_off(monkeypatch) 
     assert "mcp__tldw_chatbook__create_character" not in names
     assert "mcp__tldw_chatbook__update_character" not in names
     assert "mcp__tldw_chatbook__list_characters" in names
+
+
+# -- AC#3 on dev's stock run start (TASK-34100.13 rebase) -----------------------
+# TASK-33620.15.1 / TASK-34561 moved the Console's stock run start off
+# ``compose_catalog``: it adopts one shared ``prepare_console_tools`` result,
+# and a later run reuses a kept composition while ``composition_key()`` is
+# unchanged. The twin rule has to hold on that path, and a gate change has to
+# change the key, or a reused catalog keeps a twin the user just turned off.
+
+from Tests.Chat import test_console_async_mcp_snapshot as _snapshot_controls  # noqa: E402
+
+mcp_sources = _snapshot_controls.mcp_sources
+local_root = _snapshot_controls.local_root
+catalog_store = _snapshot_controls.catalog_store
+snapshot_case = _snapshot_controls.snapshot_case
+
+
+def _twin_inventory_projection(case):
+    _snapshot_controls._loop_projection(case)
+    case.local.manifest_provider = lambda: {
+        "tools": [
+            {"name": name, "description": f"{name}.", "inputSchema": {"type": "object"}}
+            for name in ("create_note", "list_characters")
+        ]
+    }
+
+
+async def _adopted_catalog_names(case, monkeypatch, tools_cfg):
+    from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+    from tldw_chatbook.Chat.console_chat_controller import (
+        CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+    )
+    from tldw_chatbook.MCP.console_tool_preparation import prepare_console_tools
+
+    monkeypatch.setattr(
+        builtin_tool_gate, "_gate_config_snapshot", lambda: (dict(tools_cfg), {})
+    )
+    provider = provider_source.MCPToolProvider(
+        service=case.service,
+        main_loop=asyncio.get_running_loop(),
+        builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+    )
+    preparation = await prepare_console_tools(
+        case.service,
+        include_mcp_catalog=True,
+        need_local_switch=True,
+        builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+        owned_profile_ids=frozenset(),
+    )
+    assert preparation is not None
+    composition = provider_source.capture_standard_controller_composition(
+        provider_source.MCPToolProvider, case.service
+    )
+    provider.adopt_console_preparation(preparation, _controller_composition=composition)
+    return provider, {entry.name for entry in provider.list_catalog()}
+
+
+@pytest.mark.asyncio
+async def test_create_note_is_absent_from_the_adopted_console_preparation(
+    snapshot_case, monkeypatch
+) -> None:
+    _twin_inventory_projection(snapshot_case)
+    _provider, names = await _adopted_catalog_names(snapshot_case, monkeypatch, {})
+    assert "mcp__tldw_chatbook__create_note" not in names
+    assert "mcp__tldw_chatbook__list_characters" in names
+
+
+@pytest.mark.asyncio
+async def test_create_note_returns_to_the_adopted_preparation_when_its_gate_is_on(
+    snapshot_case, monkeypatch
+) -> None:
+    _twin_inventory_projection(snapshot_case)
+    _provider, names = await _adopted_catalog_names(
+        snapshot_case, monkeypatch, {"create_note_enabled": True}
+    )
+    assert "mcp__tldw_chatbook__create_note" in names
+
+
+@pytest.mark.asyncio
+async def test_a_twin_gate_change_changes_the_run_reuse_key(monkeypatch) -> None:
+    from Tests.Agents.test_mcp_tool_provider import FakeMCPService
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+
+    def key_for(tools_cfg):
+        monkeypatch.setattr(
+            builtin_tool_gate, "_gate_config_snapshot", lambda: (dict(tools_cfg), {})
+        )
+        provider = MCPToolProvider(
+            service=FakeMCPService(inventory={"tools": []}),
+            main_loop=asyncio.get_running_loop(),
+        )
+        return provider.composition_key()
+
+    off = key_for({})
+    assert key_for({}) == off
+    assert key_for({"create_note_enabled": True}) != off
+    assert key_for({"character_tools_enabled": False}) != off
