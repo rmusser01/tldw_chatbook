@@ -1167,17 +1167,17 @@ SmartContentTree Tree > .selected-node {
  * radio glyph), so every label fits whenever the row has room for all five
  * and they shrink together when it has not. */
 #setup-voice-preset-none {
-    width: 21fr;
+    width: $ds-wizards-voice-long-share;
 }
 
 #setup-voice-preset-pocket,
 #setup-voice-preset-omnivoice {
-    width: 14fr;
+    width: $ds-wizards-voice-mid-share;
 }
 
 #setup-voice-preset-official,
 #setup-voice-preset-custom {
-    width: 11fr;
+    width: $ds-wizards-voice-short-share;
 }
 
 /* TASK-34100.8 review round 2 (R2-F3 / G8-R2-F4): the five labels need 71
@@ -1196,7 +1196,7 @@ SmartContentTree Tree > .selected-node {
 }
 
 #setup-voice-preset.-stacked SetupRadioButton {
-    width: 1fr;
+    width: $ds-width-fill;
     height: $ds-size-1;
 }
 

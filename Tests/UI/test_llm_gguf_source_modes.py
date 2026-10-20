@@ -1393,6 +1393,46 @@ async def test_disabled_gguf_controls_keep_live_compositor_contrast(
         await _close_context(context)
 
 
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+@private_profile_test
+async def test_model_source_label_and_value_paint_on_one_row(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    size: tuple[int, int],
+) -> None:
+    """TASK-33641.2: the label sat one row below the compact Select's value."""
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch, size=size, mount_llamafile=False
+    )
+    try:
+        mode = window.query_one("#llamacpp-gguf-source-mode", Select)
+        label = mode.parent.query_one(".gguf-source-label")
+        mode.scroll_visible(animate=False)
+        await pilot.pause()
+        value = next(
+            str(text) for text, option in mode._options if option == mode.value
+        )
+        strips = app.screen._compositor.render_strips()
+
+        def painted_rows(widget: Any, text: str) -> list[int]:
+            region = widget.region
+            return [
+                y
+                for y in range(region.y, region.bottom)
+                if text in strips[y].crop(region.x, region.right).text
+            ]
+
+        label_rows = painted_rows(label, "Model source:")
+        value_rows = painted_rows(mode, value)
+        assert len(label_rows) == 1 and label_rows == value_rows, (
+            f"@ {size}: 'Model source:' on rows {label_rows}, "
+            f"{value!r} on rows {value_rows}"
+        )
+    finally:
+        await _close_context(context)
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(

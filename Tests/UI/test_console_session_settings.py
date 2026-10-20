@@ -6196,7 +6196,7 @@ async def test_console_settings_delayed_initial_focus_is_safe_after_unmount() ->
         await app.pop_screen()
         await pilot.pause()
 
-        modal._focus_highest_priority_connection()
+        modal._focus_view_open_target()
 
 
 def _unmounted_settings_modal(
@@ -12229,9 +12229,11 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
         )
         await pilot.pause()
         # llama.cpp is a local thinking provider: only the reasoning-effort
-        # level is consumed; the other choice rows are hidden.
+        # level is consumed; the other choice rows are hidden. Rewritten on
+        # purpose by TASK-33002.7: its strict template drops "minimal", so
+        # the list and the tooltip leave it out.
         placeholders = {
-            "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
+            "console-settings-reasoning-effort": "none, low, medium, high, xhigh",
             "console-settings-reasoning-summary": "auto, concise, detailed, none",
             "console-settings-verbosity": "low, medium, high",
             "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
@@ -14479,6 +14481,97 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
         assert endpoint.checked is True
 
 
+UNSAVED_ENDPOINT_CONTEXT_REASON = (
+    "Save the Ollama endpoint in Model and generation to continue."
+)
+
+
+def _unsaved_endpoint_modal(app: "ModalHarness", **kwargs) -> ConsoleSettingsModal:
+    """A draft whose Ollama endpoint differs from the saved one.
+
+    Args:
+        app: The harness whose configuration is replaced with the saved endpoint.
+        **kwargs: Further ``ConsoleSettingsModal`` arguments.
+    """
+    app.app_config = {
+        "api_settings": {
+            "ollama": {"api_url": "http://127.0.0.1:11434", "model": "qwen-old"}
+        }
+    }
+    return _basic_modal(
+        ConsoleSessionSettings(
+            provider="ollama", model="qwen-new", base_url="http://127.0.0.1:22434"
+        ),
+        app,
+        providers_models={"ollama": ["qwen-old", "qwen-new"]},
+        **kwargs,
+    )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint() -> None:
+    """TASK-33006.22: with an unsaved endpoint the Context view hid Apply and
+    gave no reason; Save endpoint, the way on, is the Model view's."""
+    app = StyledModalHarness()
+    modal = _unsaved_endpoint_modal(app)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        reason = modal.query_one("#console-settings-primary-disabled-reason", Static)
+        save_endpoint = modal.query_one("#console-settings-save-default", Button)
+        assert save_endpoint.display is True
+        assert reason.display is False
+
+        await pilot.click("#console-settings-view-context")
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-save", Button).display is False
+        assert save_endpoint.display is False
+        assert str(reason.renderable) == UNSAVED_ENDPOINT_CONTEXT_REASON
+        assert any(
+            UNSAVED_ENDPOINT_CONTEXT_REASON in row for row in _painted_rows(app.screen)
+        )
+
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause()
+
+        assert save_endpoint.display is True
+        assert reason.display is False
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("focus_context", [False, True], ids=["model", "context"])
+@pytest.mark.asyncio
+async def test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason(
+    focus_context: bool,
+) -> None:
+    """TASK-33006.22: a default-save recovery hides both views and their tabs,
+    so the line that sends the user to Model and generation stays away.
+
+    Args:
+        focus_context: Whether the modal was opened on the Context view.
+    """
+    from Tests.UI.test_console_resize_reflow import _failed_default_state
+    from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultSavePhase
+
+    app = StyledModalHarness()
+    modal = _unsaved_endpoint_modal(app, focus_context=focus_context)
+    modal._default_durability_state = _failed_default_state(
+        ConsoleDefaultSavePhase.BEFORE_REPLACE
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-default-recovery").display is True
+        reason = modal.query_one("#console-settings-primary-disabled-reason", Static)
+        assert reason.display is False
+        assert str(reason.renderable) == ""
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_active_run_reason_precedes_endpoint_recovery() -> None:
     """An active run remains the immediate blocker when endpoint recovery also exists."""
@@ -14512,6 +14605,101 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
                 "#console-settings-primary-disabled-reason", Static
             ).renderable
         ) == "Available when the current run finishes."
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("opened", ["model", "context", "suspended"])
+@pytest.mark.asyncio
+async def test_console_settings_mount_builds_default_readiness_once(
+    opened: str,
+) -> None:
+    """TASK-33006.21: on_mount builds default readiness once.
+
+    It built it four times: twice through the view switch (its own call and
+    the recovery-region sync's), once directly and once through the completion
+    sync. Restoring a suspended draft added a fifth.
+
+    The open as a whole builds more, after on_mount and outside this count:
+    two for each number field whose compose-time Input.Changed arrives (four
+    in all, six with a restored draft) and one on the first subscription poll.
+
+    Args:
+        opened: How the modal opens: on a view, or with a suspended draft.
+    """
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    built_while_mounting: list[bool] = []
+
+    def resolver(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        built_while_mounting.append(not modal.is_mounted)
+        return build_console_settings_readiness(
+            ConsoleSessionSettings(provider=provider, model=model),
+            app_config=app.app_config,
+            environ={},
+        )
+
+    kwargs: dict = {"focus_context": opened == "context"}
+    if opened == "suspended":
+        kwargs["suspended_draft"] = ConsoleSettingsDraftSnapshot(
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            raw_values={"console-settings-temperature": "0.4"},
+            provider_model_drafts={"llama_cpp": "model-a"},
+            provider_base_url_drafts={},
+            active_view="model",
+            scroll_anchor=0,
+            focus_control_id="console-settings-temperature",
+            disclosure_state={"advanced_generation": False, "connection_details": False},
+        )
+    modal = _basic_modal(settings, app, default_readiness_resolver=resolver, **kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert built_while_mounting.count(True) == 1
+        # The number fields' echoes have rebuilt the footer by now, so these
+        # read the settled open, not on_mount's build alone.
+        assert modal.query_one("#console-settings-save", Button).disabled is False
+        if opened == "suspended":
+            assert modal.query_one("#console-settings-temperature", Input).value == "0.4"
+            assert modal.query_one("#console-settings-save-default", Button).display
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_console_settings_subscription_change_builds_default_readiness_once() -> None:
+    """TASK-33006.21: a changed subscription snapshot builds default readiness once.
+
+    The poll synced the readiness display, which ends in the completion sync,
+    and then called the default-readiness sync a second time.
+    """
+    app = ModalHarness()
+    builds: list[str] = []
+
+    def resolver(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        builds.append(provider)
+        return build_console_settings_readiness(
+            ConsoleSessionSettings(provider=provider, model=model),
+            app_config=app.app_config,
+            environ={},
+        )
+
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app,
+        default_readiness_resolver=resolver,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        before = len(builds)
+
+        modal._subscription_readiness_snapshot = None  # any change reads as this
+        modal._poll_subscription_readiness()
+
+        assert len(builds) == before + 1
 
 
 @pytest.mark.asyncio

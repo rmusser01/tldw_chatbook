@@ -1086,14 +1086,9 @@ class ConsoleGoalCoordinator:
                 except Exception:  # noqa: BLE001 - uncertainty cannot release an owned executor
                     reason = RunTerminationReason.UNKNOWN_EFFECT
                     reason_code = "goal_cleanup_ledger_unavailable"
-            capacity = getattr(self.controller._agent_bridge, "runtime_capacity", None)
-            if capacity is not None:
-                while any(
-                    entry.conversation_id == goal.conversation_id
-                    for entry in capacity.snapshot().executions
-                ):
-                    await asyncio.sleep(0.05)
-            self.controller.fleet_wake.release_automatic_primary(session.id, slot_token)
+            wake = self.controller.fleet_wake
+            await wake.drain_automatic_primary(goal.conversation_id, children=True)
+            wake.release_automatic_primary(session.id, slot_token)
             self._active = None
             self._reserved_conversation_id = None
             self.controller._set_run_state(

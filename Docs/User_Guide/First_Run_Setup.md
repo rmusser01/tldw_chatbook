@@ -50,7 +50,10 @@ time it needs the list: when you go Back to Provider, when you press **Next →*
 there, when you come Back to the Model step from a later step, and when you
 press **Retry** on the Model step. A model list that arrives after a failed
 **Test connection** replaces that test's result. A different key or address
-always counts as a new check.
+always counts as a new check. A **Test connection** result is the app's, not
+only setup's: Console, Home, Settings and Chat settings show it for the same
+provider, address and key (a key you typed counts once setup saves it), so a
+refused test reads Not ready in Console too.
 
 When the Model step has no models to list, the list box shows one line of
 plain text instead:

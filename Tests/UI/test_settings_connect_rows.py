@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 from textual import events
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import Collapsible, Input, OptionList, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen
@@ -583,3 +583,121 @@ async def test_the_filtered_list_shows_enter_provider_id_and_the_guide_names_it(
             and str(row.renderable).startswith("Validation:")
         )
         assert "Enter provider ID" in validation and "Manual" not in validation
+
+
+#: TASK-33007.11 AC#4: a text field in two Settings categories, and an edit.
+_RELEASED_FIELDS = {
+    "providers-models": ("#settings-provider-endpoint-value", "http://127.0.0.1:9097"),
+    "console-behavior": ("#settings-console-paste-collapse-threshold", "777"),
+}
+
+#: The first row of each category's field guide while no setting has focus.
+_NO_FOCUS_GUIDE = {
+    "providers-models": ("#settings-provider-field-guide-0", "None — Tab to a setting"),
+    "console-behavior": (
+        "#settings-console-behavior-field-guide-0",
+        "Focus a Console Behavior field for setting-specific guidance.",
+    ),
+}
+
+#: The field Esc releases, where the category guides one whose tooltip the
+#: focus-help line shows (task-2835); no Console Behavior guided text field (the
+#: only kind Esc releases) has one.
+_ESC_FIELDS = {"providers-models": "#settings-session-summary-duration"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("keep", [False, True], ids=["discard", "keep-editing"])
+@pytest.mark.parametrize("category", sorted(_RELEASED_FIELDS))
+async def test_the_revert_dialog_leaves_focus_off_the_navigation_bar(
+    request, category, keep
+):
+    """TASK-33007.11: after Esc, r and either button of the Discard changes
+    dialog, Textual used to focus the screen's first widget, the nav bar's
+    Home, so Enter left Settings. Focus stays released: Enter stays, the
+    edit is kept or gone as chosen, and s and r work without another Esc."""
+    from Tests.UI.test_markup_interpolation_widget_pins import (
+        _wait_for_notification_message,
+    )
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _anthropic_host()
+    async with host.run_test(size=_SIZE) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, category)
+        screen = _active_destination_screen(host)
+        category_id = SettingsCategoryId(category)
+        selector, typed = _RELEASED_FIELDS[category]
+        field = screen.query_one(selector, Input)
+        field.focus()
+        await pilot.pause()
+        field.value = typed
+        await _until(pilot, lambda: screen._category_has_unsaved_changes(category_id))
+
+        async def revert_dialog_answered(answer: tuple[str, ...]) -> None:
+            await _until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+            assert isinstance(host.screen, ConfirmationDialog)
+            await pilot.press(*answer)  # Keep editing holds focus first
+            await _until(pilot, lambda: host.screen is screen)
+            await pilot.pause()
+
+        guide_id, no_focus_copy = _NO_FOCUS_GUIDE[category]
+
+        def guide() -> str:
+            return str(screen.query_one(guide_id, Static).renderable)
+
+        def focus_help() -> str:
+            return str(screen.query_one("#settings-focus-help", Static).renderable)
+
+        tip = screen.query_one(_ESC_FIELDS.get(category, selector), Input)
+        for node in tip.ancestors:  # the duration sits in an Advanced disclosure
+            if isinstance(node, Collapsible):
+                node.collapsed = False
+        await pilot.pause()
+        tip.focus()
+        await pilot.pause()
+        assert focus_help() == str(tip.tooltip or ""), focus_help()
+        # Capture phase: once Esc releases the field, the guide and the
+        # focus-help line stop describing it.
+        assert no_focus_copy not in guide()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert no_focus_copy in guide(), guide()
+        assert focus_help() == "", focus_help()
+        await pilot.press("r")
+        await revert_dialog_answered(("enter",) if keep else ("tab", "enter"))
+        assert no_focus_copy in guide(), guide()
+        assert focus_help() == "", focus_help()
+
+        focused = host.focused
+        assert focused is None or not any(
+            node.has_class("nav-button") for node in (focused, *focused.ancestors)
+        ), f"focus went to the navigation bar: {focused!r}"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert host.seen_routes == [], host.seen_routes  # Home's Enter navigates
+        assert host.screen is screen and _active_destination_screen(host) is screen
+        assert screen._category_has_unsaved_changes(category_id) is keep
+        assert (field.value == typed) is keep
+
+        if keep:
+            await pilot.press("r")  # no Esc first
+            await revert_dialog_answered(("enter",))
+            assert screen._category_has_unsaved_changes(category_id)
+            await pilot.press("s")
+            await _until(
+                pilot, lambda: not screen._category_has_unsaved_changes(category_id)
+            )
+            assert not screen._category_has_unsaved_changes(category_id)
+            assert field.value == typed
+        else:
+            await pilot.press("r")
+            await _wait_for_notification_message(
+                pilot, host, "No Settings changes to revert."
+            )
+            await pilot.press("s")
+            await _wait_for_notification_message(
+                pilot, host, "No Settings changes to save."
+            )

@@ -137,6 +137,7 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
     connection_credential_revision,
     listing_unavailable_endpoint_copy,
+    model_facet,
     shared_connection_evidence,
 )
 from ...Chat.sampling_params import temperature_range
@@ -151,13 +152,10 @@ from ...Chat.console_provider_support import (
 )
 from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
-    build_console_settings_readiness,
-    build_target_default_console_session_settings,
     chat_defaults_held_fields,
     chat_defaults_value,
     model_default_value,
     normalize_console_model_value,
-    readiness_words,
     settings_provider_catalog,
     verdict_readiness_words,
 )
@@ -398,6 +396,7 @@ from .settings_image_gen_defaults import (
     effective_secret_value as image_gen_effective_secret_value,
     key_source_after_clear as image_gen_key_source_after_clear,
     probe_backend as image_gen_probe_backend,
+    unsaved_field_count,
     validate_draft as validate_image_gen_draft,
 )
 from .settings_video_gen_defaults import (
@@ -3933,6 +3932,7 @@ class SettingsScreen(BaseAppScreen):
     _PROVIDER_TEST_STALE_COPY = (
         "Provider settings changed since the last check — re-run Configuration check."
     )
+    _PROVIDER_TEST_SENTINELS = (_PROVIDER_TEST_NOT_RUN_COPY, _PROVIDER_TEST_STALE_COPY)
 
     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
         from ...Tool_Packs.service import ToolProfileListing
@@ -5047,7 +5047,12 @@ class SettingsScreen(BaseAppScreen):
             Non-empty tuple of plain-text help lines.
         """
         ownership = self._ownership_record(category)
-        badge_note = f"Save contract: {self._persistence_badge(category)}."
+        badge = self._persistence_badge(category)
+        badge_note = f"Save contract: {badge}."
+        if badge.startswith("Draft") and category is not SettingsCategoryId.SPEECH_TTS:
+            badge_note += (  # TASK-33002.10: the State line has no room to say it.
+                " Switching categories keeps the draft; the rail marks it with *."
+            )
         if category is SettingsCategoryId.OVERVIEW:
             notes = [
                 badge_note,
@@ -5217,8 +5222,8 @@ class SettingsScreen(BaseAppScreen):
             self._subscription_readiness_gate = None
             return
         provider = (
-            str(self._resolve_provider_model_for_settings().provider or "")
-            if category is SettingsCategoryId.OVERVIEW
+            str(resolve_effective_provider_model(self._chat_defaults()).provider or "")
+            if category is SettingsCategoryId.OVERVIEW  # the saved pair (33005.15)
             else self._provider_widget_value()
         )
         # Cheap gate BEFORE the expensive resolution: readiness can only
@@ -5239,6 +5244,8 @@ class SettingsScreen(BaseAppScreen):
             self._provider_auth_source_value(provider),
             subscription_credential_status(background=True),
             subscription_readiness_revision(),
+            # TASK-33005.15: an evidence change elsewhere repaints the Status.
+            getattr(shared_connection_evidence(lambda: self.app), "version", 0),
         )
         if gate == self._subscription_readiness_gate:
             return
@@ -5249,19 +5256,18 @@ class SettingsScreen(BaseAppScreen):
             else self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
-        observation = (category.value, provider, readiness.subscription_status)
+        observation = (*gate[:2], readiness.subscription_status, gate[-1])
         self._subscription_readiness_gate = gate
         if observation == self._subscription_readiness_observation:
             return
         self._subscription_readiness_observation = observation
         if category is SettingsCategoryId.OVERVIEW:
             presentation = self._settings_overview_presentation()
-            for row in presentation.primary_rows:
-                if row.key == "configuration":
-                    self._set_static_text(
-                        "#settings-overview-configuration",
-                        f"{row.label}: {_fold_long_tokens(row.value)}",
-                    )
+            for row in presentation.primary_rows:  # the test row with the Status
+                self._set_static_text(
+                    f"#settings-overview-{row.key.replace('_', '-')}",
+                    f"{row.label}: {_fold_long_tokens(row.value)}",
+                )
             return
         from ..Settings_Modules.providers_models_card import refresh_key_rows
 
@@ -5272,8 +5278,7 @@ class SettingsScreen(BaseAppScreen):
         if tested_draft != (provider, self._provider_draft_generation):
             self._provider_subscription_test = None
             return
-        detail, _summary, _passed = self._provider_readiness_test_report()
-        self._provider_test_result = detail
+        self._provider_test_result = self._run_provider_readiness_test()
         self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
@@ -5334,6 +5339,9 @@ class SettingsScreen(BaseAppScreen):
         # have moved while Settings was suspended).
         mount_already_refreshed = self._settings_mount_visit_refreshed
         self._settings_mount_visit_refreshed = False
+        # TASK-33007.11: focus Esc released stays released when a dialog
+        # closes; Textual's resume would focus the nav bar, where Enter leaves.
+        self.AUTO_FOCUS = "" if self.focused is None else None
         under_theme_dialog = self._suspended_under_theme_dialog
         self._suspended_under_theme_dialog = False
         if self._manual_sync_run_in_flight:
@@ -9321,8 +9329,8 @@ class SettingsScreen(BaseAppScreen):
         """Count the fields in ``category`` that differ from their saved values.
 
         TASK-33002.4: fields, not draft keys -- the context window and its
-        reset flag are one field, and Advanced Config's raw TOML draft counts
-        as one. Only read while the category is dirty, so never below 1.
+        reset flag are one field, as are Advanced Config's raw TOML draft and an
+        Image/Video Gen field's edit or Clear. Only read while dirty, so >= 1.
         """
         snapshot = self._speech_tts_draft_snapshot
         if category is SettingsCategoryId.PROVIDERS_MODELS:
@@ -9331,7 +9339,7 @@ class SettingsScreen(BaseAppScreen):
             count = snapshot.unsaved_field_count()
         else:
             draft = self._settings_drafts.get(category)
-            count = len(draft.dirty_keys) if draft is not None else 0
+            count = unsaved_field_count(draft.dirty_keys) if draft is not None else 0
         return max(count, 1)
 
     _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
@@ -13042,8 +13050,8 @@ class SettingsScreen(BaseAppScreen):
         widget's tooltip text into the shell's focus-help line makes the
         same content reachable by Tab/j/k without a second display for
         mouse users (the line only changes on focus, never on hover). Only
-        Settings' own controls: Textual's auto-focus parks focus on the nav
-        bar when Settings resumes with none (capture finding 19).
+        Settings' own controls: first-paint auto-focus or Tab can land on the
+        nav bar (capture finding 19); a resume no longer does (TASK-33007.11).
         """
         tooltip = getattr(widget, "tooltip", None)
         ours = any(n.id == "settings-shell" for n in getattr(widget, "ancestors", ()))
@@ -13202,38 +13210,9 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_category_button_label(category)
 
     def _provider_readiness_label(self) -> str:
-        resolved = self._resolve_provider_model_for_settings()
-        provider = str(resolved.provider or "not selected").strip()
-        model = str(resolved.model or "not selected").strip()
-        if provider and provider != "not selected":
-            return (
-                f"Provider readiness: {self._provider_display_label(provider)} / {model}"
-            )
-        return "Provider readiness: needs provider and model"
+        from ..Settings_Modules.readiness_lines import readiness_label
 
-    def _provider_overview_readiness_status(self) -> str:
-        """The Overview status row's readiness word, as the Console says it.
-
-        TASK-31805: what a send would do, never the mere presence of a name.
-        TASK-33005: the Console's future-chat builder and words, test evidence
-        included, so it never reads "Ready" above a refused last test.
-
-        Returns:
-            'Ready · not tested', 'Ready · reachable/verified HH:MM' or
-            'Not ready · <reason>'.
-        """
-        resolved = self._resolve_provider_model_for_settings()
-        app_config = self._provider_readiness_app_config()
-        settings = build_target_default_console_session_settings(
-            app_config, str(resolved.provider or ""), resolved.model
-        )
-        readiness = build_console_settings_readiness(
-            # The model the Overview names, never a provider-table fallback.
-            replace(settings, model=normalize_console_model_value(resolved.model)),
-            app_config=app_config,
-            connection_evidence=shared_connection_evidence(lambda: self.app),
-        )
-        return readiness_words(readiness)
+        return readiness_label(self)  # the pair and its word (TASK-33005.7)
 
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
@@ -14356,15 +14335,16 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
-        if key != "provider":
+        original = draft.originals.get(key, current.get(key))  # before the pin
+        if key == "provider":  # the model's original, before the provider moves
+            draft.originals.setdefault("model", current.get("model"))  # 33001.8
+        else:
             self._pin_provider_draft_selection(draft, current)
         if key == "api_key":
             provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
             original = self._provider_api_key_value(provider)
-        else:
-            original = draft.originals.get(key, current.get(key))
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
@@ -14374,7 +14354,6 @@ class SettingsScreen(BaseAppScreen):
         self,
     ) -> _VllmDefaultPresentationSnapshot:
         """Capture the full mounted provider presentation before staging."""
-
         card = self.query_one("#settings-providers-models-card", Vertical)
         inputs = tuple(
             (
@@ -14905,11 +14884,7 @@ class SettingsScreen(BaseAppScreen):
         if key != "model":
             return
         identity = self._provider_current_draft_identity()
-        evidence = (
-            self._provider_evidence_store().evidence_for(identity)
-            if identity is not None
-            else None
-        )
+        evidence = self._provider_evidence_store().evidence_for(identity)
         selected_model = str(value or "").strip()
         if evidence is not None and evidence.endpoint == "testing":
             self._provider_evidence_store().invalidate(identity)
@@ -17212,9 +17187,7 @@ class SettingsScreen(BaseAppScreen):
             model = str(values.get("model") or "").strip()
             draft_endpoint = str(values.get("endpoint") or "").strip()
         draft = self._provider_draft()
-        dirty = (
-            draft.dirty_keys if draft is not None else set()
-        )  # dirty_keys is a @property
+        dirty = draft.dirty_keys if draft is not None else set()  # a @property
         # Only a name typed here is the Env var field's fault.
         typed_env_var = self._provider_draft_value("credential_env_var")
         readiness = get_provider_readiness(
@@ -17228,11 +17201,7 @@ class SettingsScreen(BaseAppScreen):
             else None
         )
         identity = self._provider_current_draft_identity()
-        evidence = (
-            self._provider_evidence_store().evidence_for(identity)
-            if identity is not None
-            else None
-        )
+        evidence = self._provider_evidence_store().evidence_for(identity)
         # TASK-33001.3 / TASK-33002.2: the rows are rebuilt from the one
         # current evidence value on every render, so no fact can repeat.
         return self._build_provider_readiness_findings(
@@ -17379,15 +17348,16 @@ class SettingsScreen(BaseAppScreen):
                 getattr(evidence, "category", None), cloud=cloud
             )
 
+        unlisted = bool(model_ids) and listing == "reachable" and model not in model_ids
         if not model:
             model_text = "not set — choose a default model"
         else:
             model_text = f"{model} (draft)" if "model" in dirty else model
             if listing == "reachable" and model_ids:
                 model_text += (
-                    " · listed by the server"
-                    if model in model_ids
-                    else " · not listed by the server — pick a listed model"
+                    " · not listed by the server — pick a listed model"
+                    if unlisted
+                    else " · listed by the server"
                 )
 
         generation = getattr(evidence, "generation", "not_tested")
@@ -17405,7 +17375,7 @@ class SettingsScreen(BaseAppScreen):
             )
         elif listing == "unreachable":
             lead = "Endpoint"
-        elif not model:
+        elif not model or unlisted:  # TASK-33002.9: an unlisted model too
             lead = "Model"
         elif generation == "failed":
             lead = "Generation"
@@ -17422,13 +17392,7 @@ class SettingsScreen(BaseAppScreen):
             ProviderReadinessSnapshot(
                 configuration=readiness.configuration_facet,
                 endpoint=listing,
-                model=(
-                    "missing"
-                    if not model
-                    else "confirmed"
-                    if listing == "reachable" and model in model_ids
-                    else "unconfirmed"
-                ),
+                model=model_facet(model, listing, model_ids),  # TASK-33005.10
                 category=(
                     getattr(evidence, "category", None)
                     if listing in {"unreachable", "model_listing_unavailable"}
@@ -17543,9 +17507,8 @@ class SettingsScreen(BaseAppScreen):
 
         Returns:
             Tuple of (redacted labelled rows, one line each, redacted toast
-            summary, passed).
+            summary, passed: no model the server's listing left out).
         """
-        passed = bool(readiness.ready and model)
         display_name = self._provider_display_name(provider) if provider else "Provider"
         # Qodo #2876: a registry id's URL and credential are its entry's, never
         # the family slot's ("provider default", "not required"). The rows are
@@ -17576,6 +17539,7 @@ class SettingsScreen(BaseAppScreen):
                 "Custom endpoints"
             )
         rows = tuple((label, registry_rows.get(label, text)) for label, text in rows)
+        passed = bool(readiness.ready and model) and rows[1][0] != "Model"
         generation = dict(rows)["Generation"]
         listing = None if checking else getattr(evidence, "endpoint", None)
         choose = "" if model else " Choose a default model."
@@ -17633,6 +17597,8 @@ class SettingsScreen(BaseAppScreen):
                 f"Configuration check complete: {display_name} is configured; "
                 f"model {model}. Live generation has not been tested."
             )
+        if readiness.ready and model and not passed:  # TASK-33002.9: as its row
+            summary += f" {model} is not listed by the server — pick a listed model."
         detail = "\n".join(
             f"{label:<{_PROVIDER_TEST_LABEL_CELLS}}{text}" for label, text in rows
         )
@@ -17650,16 +17616,12 @@ class SettingsScreen(BaseAppScreen):
         """
         if self._provider_test_result == self._PROVIDER_TEST_NOT_RUN_COPY:
             identity = self._provider_current_draft_identity()
-            if (
-                identity is not None
-                and self._provider_evidence_store().evidence_for(identity) is not None
-            ):
+            if self._provider_evidence_store().evidence_for(identity) is not None:
                 self._provider_test_result = self._provider_readiness_test_report()[0]
         return self._provider_test_result
 
     def _run_provider_readiness_test(self) -> str:
-        detail, _summary, _passed = self._provider_readiness_test_report()
-        return detail
+        return self._provider_readiness_test_report()[0]
 
     def _provider_live_probe_base_url(self) -> str:
         """Return the endpoint to live-probe after a passing readiness test.
@@ -17933,14 +17895,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = detail
         self._update_provider_test_result()
         self._update_provider_return_widgets()  # its line quotes the Key check
-        self.app.notify(
-            summary,
-            severity=(
-                "information"
-                if passed and probe_result.endpoint == "reachable"
-                else "warning"
-            ),
-        )
+        reached = passed and probe_result.endpoint == "reachable"  # listed (33002.9)
+        tone = "information" if reached else "warning"
+        self.app.notify(summary, severity=tone, markup=False)  # it names the model
 
     def _provider_probe_generation_current(self, generation: int | None) -> bool:
         """Whether a probe launched at ``generation`` still describes the draft.
@@ -17965,6 +17922,7 @@ class SettingsScreen(BaseAppScreen):
         for selector, text in (
             ("#settings-provider-test-result", lambda: self._provider_test_result),
             ("#settings-provider-readiness", lambda: key_check_verdict(self)),
+            ("#settings-provider-inspector-readiness", self._provider_readiness_label),
         ):
             try:
                 row = self.query_one(selector, Static)
@@ -17989,10 +17947,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_draft_generation = (
             getattr(self, "_provider_test_draft_generation", 0) + 1
         )
-        if self._provider_test_result in (
-            self._PROVIDER_TEST_NOT_RUN_COPY,
-            self._PROVIDER_TEST_STALE_COPY,
-        ):
+        if self._provider_test_result in self._PROVIDER_TEST_SENTINELS:
             return
         self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
         self._update_provider_test_result()
@@ -18027,9 +17982,6 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        self._set_static_text(
-            "#settings-provider-inspector-readiness", self._provider_readiness_label()
-        )
         self._set_static_text(
             "#settings-provider-endpoint-key",
             # Folded at its dots, as _detail_row composed it.
@@ -19001,10 +18953,9 @@ class SettingsScreen(BaseAppScreen):
         return re.sub(r"handoff", "transfer", str(value), flags=re.IGNORECASE)
 
     def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
-        resolved = self._resolve_provider_model_for_settings()
+        from ..Settings_Modules.readiness_lines import overview_configuration
+
         # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
-        provider = self._provider_display_label(str(resolved.provider or ""))
-        model = str(resolved.model or "not selected")
         source_rows = dict(self.server_sync_workspace_handoff_rows)
         conversation_updates = "; ".join(
             value
@@ -19016,10 +18967,8 @@ class SettingsScreen(BaseAppScreen):
         )
         return build_settings_overview(
             {
-                "configuration": (
-                    f"{provider or 'Not selected'} / {model}; Status: "
-                    f"{self._provider_overview_readiness_status()}"
-                ),
+                # TASK-31805 / TASK-33005.15: what a new chat would send with.
+                "configuration": overview_configuration(self),
                 "last_connection_test": self._provider_test_headline(
                     self._adopt_shared_provider_test_evidence()
                 ),
@@ -33749,6 +33698,11 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if not evidence_preserved:
                     self._mark_provider_test_result_stale()
+                elif setup_mutation is not None and (  # TASK-33005.8: drop "(draft)"
+                    self._provider_test_result not in self._PROVIDER_TEST_SENTINELS
+                ):
+                    self._provider_test_result = self._run_provider_readiness_test()
+                    self._update_provider_test_result()
                 if self._navigation_provider:
                     # A deep link's form now holds the model that was saved.
                     self._navigation_model = model
@@ -34442,8 +34396,7 @@ class SettingsScreen(BaseAppScreen):
             self._provider_test_result = detail
             self._update_provider_test_result()
             self.app.notify(
-                summary,
-                severity="information" if passed else "warning",
+                summary, severity="information" if passed else "warning", markup=False
             )
             return
         if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
@@ -34834,7 +34787,6 @@ class SettingsScreen(BaseAppScreen):
         self._confirm_reindex_then_save(
             values, pending_activate, _definition_action=action
         )
-        return
 
     def _confirm_reindex_then_save(
         self,
@@ -35742,12 +35694,13 @@ class SettingsScreen(BaseAppScreen):
             and isinstance(focused, (Input, TextArea))
             and not self._category_search_has_focus()
         ):
-            # task-1560: Esc releases field focus so the footer's advertised
-            # "Esc, s save category" chain is true for EVERY text-entry
-            # field -- previously only the filter input handled Esc, so
-            # keys after Esc kept feeding the field (the critique's silent
-            # no-op trap, one level deeper).
-            self.set_focus(None)
+            # task-1560: Esc releases field focus, so the footer's "Esc, s save
+            # category" chain holds for EVERY text field, not just the filter.
+            self.set_focus(None)  # no DescendantFocus follows, so reset here
+            self._update_focus_help(None)  # its focus-help line (task-2835)
+            self._active_settings_field_id = None  # TASK-33007.11: nor its guide
+            for k in ("provider", "appearance", "storage", "rag", "console_behavior"):
+                getattr(self, f"_refresh_{k}_field_guidance")()  # off-category: no-op
             self._register_footer_shortcuts()
             event.stop()
             event.prevent_default()

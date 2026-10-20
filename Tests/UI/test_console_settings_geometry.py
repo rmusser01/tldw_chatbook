@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from rich.cells import cell_len
 from textual import events
@@ -9,10 +11,12 @@ from textual.containers import ScrollableContainer
 from textual.widgets import Button, Collapsible, Input, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.test_console_settings_model_change import pick_mode_opener, settle
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
 )
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
 )
@@ -23,8 +27,18 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     _settings_screen_region,
 )
 
+# TASK-33006.24: Tests/UI/conftest.py imports tldw_chatbook.app per test, which
+# fails closed with RecoveryRequired("raw_source_selection_changed") under the
+# per-test sandbox, so this file ran only when another file imported the app
+# first. No test here writes config: the shared bootstrap profile is safe.
+pytestmark = pytest.mark.bootstrap_profile
 
 GEOMETRY_SIZES = ((80, 24), (100, 30), (160, 40), (200, 50))
+#: The two full-screen sizes the app is used at (ThinkPad, MacBook).
+FULL_SCREEN_SIZES = ((211, 44), (235, 52))
+#: The view-tab row as painted: each tab is its label and one cell either side.
+MODEL_VIEW_TAB_ROW = " ● Model and generation  Context and memory "
+CONTEXT_VIEW_TAB_ROW = " Model and generation  ● Context and memory "
 #: TASK-33006.1 (spec §6, mock (b)): $ds-chat-settings-width by $ds-size-22,
 #: each capped at $ds-percent-95 of the viewport. The 196-column wide tier is
 #: gone. The width is 176, not mock (b)'s 150, since TASK-33007 capture
@@ -59,12 +73,19 @@ class GeometryHarness(ConsolidatedCSSApp):
         }
 
 
-def build_geometry_modal(app: GeometryHarness, *, ready: bool) -> ConsoleSettingsModal:
+def build_geometry_modal(
+    app: GeometryHarness, *, ready: bool, **kwargs
+) -> ConsoleSettingsModal:
     """Build either a blocked first-use or configured power-user draft.
 
     The ready draft holds a Temperature the saved chain lacks, so the footer
     offers every action: Save as model default shows only while a save would
     change the defaults (Phase 6 final review I5).
+
+    Args:
+        app: The harness whose configuration the modal reads.
+        ready: Whether the draft names a model and is ready to send.
+        **kwargs: Further ``ConsoleSettingsModal`` arguments.
     """
     return ConsoleSettingsModal(
         settings=ConsoleSessionSettings(
@@ -77,7 +98,121 @@ def build_geometry_modal(app: GeometryHarness, *, ready: bool) -> ConsoleSetting
         providers_models={"llama_cpp": ["model-a", "model-b"] if ready else []},
         context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
         can_save=True,
+        **kwargs,
     )
+
+
+def painted_tab_row(app: GeometryHarness, modal: ConsoleSettingsModal) -> str:
+    """The view-tab row as the compositor paints it.
+
+    A tab's label string holds its '● ' mark even while the tab is too narrow
+    to paint it, so the label alone cannot show a crop.
+    """
+    row = modal.query_one("#console-settings-view-tabs").region.y
+    return app.screen._compositor.render_strips()[row].text
+
+
+@pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
+@pytest.mark.asyncio
+async def test_view_tabs_paint_their_whole_labels_after_each_view_switch(
+    size: tuple[int, int],
+) -> None:
+    """TASK-33003.11: a view tab is laid out again when its label changes.
+
+    ``Button.label`` repaints without a layout, so a tab could keep the width
+    of its old label and crop its '● ' mark. A click or Enter on a tab painted
+    whole labels before the fix too. Alt+M from the Context view, which shows
+    the Model view with no tab pressed, painted the Model tab without its mark.
+
+    Compose yields both tabs unmarked; the view switch on_mount runs marks
+    the open view's tab before the first paint, whichever view that is.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+    """
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True, focus_context=True)
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await settle(pilot, app)
+        assert CONTEXT_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+    app = GeometryHarness()
+    modal = build_geometry_modal(
+        app, ready=True, model_picker=pick_mode_opener(app, app.app_config)
+    )
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await settle(pilot, app)
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.click("#console-settings-view-context")
+        await settle(pilot, app)
+        assert CONTEXT_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.click("#console-settings-view-model")
+        await settle(pilot, app)
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.click("#console-settings-view-context")
+        await settle(pilot, app)
+        await pilot.press("alt+m")  # Change, from a Context view field
+        await settle(pilot, app)
+        assert isinstance(app.screen, ConsoleModelPopover)
+        await pilot.press("escape")  # no pick: the Model view shows, Change focused
+        await settle(pilot, app)
+        assert app.screen is modal
+        assert app.focused is modal.query_one("#console-settings-model-change")
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+
+@pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
+@pytest.mark.asyncio
+async def test_a_selected_view_tab_paints_its_mark_while_it_holds_focus(
+    size: tuple[int, int],
+) -> None:
+    """TASK-33006.23: a selected tab that holds focus paints its '●' mark.
+
+    Shift+Tab reaches the selected tab with no view switch. Enter on the
+    other tab switches by keyboard and moves focus into the view, and
+    Shift+Tab then returns to the tab that is now selected.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+    """
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True)
+
+    async with app.run_test(size=size) as pilot:
+
+        async def focus_tab(view: str) -> None:
+            """Shift+Tab until the ``view`` tab holds focus."""
+            tab = modal.query_one(f"#console-settings-view-{view}")
+            for _ in range(40):  # more than one lap of the focus order
+                if app.focused is tab:
+                    break
+                await pilot.press("shift+tab")
+            await settle(pilot, app)
+            assert app.focused is tab
+
+        await app.push_screen(modal)
+        await settle(pilot, app)
+
+        await focus_tab("model")  # the open view's tab: no switch
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.press("tab", "enter")  # the Context tab
+        await settle(pilot, app)
+        assert app.focused is not modal.query_one("#console-settings-view-context")
+        await focus_tab("context")
+        assert CONTEXT_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.press("shift+tab", "enter")  # the Model tab
+        await settle(pilot, app)
+        await focus_tab("model")
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
 
 
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)
@@ -524,9 +659,32 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         await pilot.pause()
 
         body = modal.query_one("#console-settings-body", ScrollableContainer)
+        reveal_records = []
+        original_reveal = modal._reveal_focused_control
+
+        def record_reveal(widget, generation):
+            reveal_records.append((widget, modal.focused))
+            original_reveal(widget, generation)
+
+        monkeypatch.setattr(modal, "_reveal_focused_control", record_reveal)
+
+        async def wait_for_reveal(widget) -> None:
+            """Poll, bounded by wall clock, until the modal reveals ``widget``."""
+            deadline = time.monotonic() + 10
+            while (widget, widget) not in reveal_records:
+                assert time.monotonic() < deadline, f"no reveal for #{widget.id}"
+                await pilot.pause(0.01)
+
         # TASK-33006.4: Change and Temperature replace the deleted pickers
         # as two distinct restorable targets.
-        modal.query_one("#console-settings-model-change").focus()
+        change = modal.query_one("#console-settings-model-change")
+        change.focus()
+        # TASK-33006.24: focusing arms Change's own reveal (a 0.06 s timer).
+        # Scrolling away before it ran raced the pause below: whenever the
+        # pause outlasted the timer, the reveal scrolled Change back into view
+        # and the anchor was 0 (5 of 20 runs). Wait for the reveal itself; a
+        # fixed pause only narrows the race.
+        await wait_for_reveal(change)
         body.scroll_to(y=7, animate=False)
         await pilot.pause()
         snapshot = modal.capture_suspended_draft()
@@ -537,17 +695,9 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         modal._restore_suspended_scroll_and_focus(snapshot)
         assert modal._pending_suspended_scroll_restore is not None
 
-        reveal_records = []
-        original_reveal = modal._reveal_focused_control
-
-        def record_reveal(widget, generation):
-            reveal_records.append((widget, modal.focused))
-            original_reveal(widget, generation)
-
-        monkeypatch.setattr(modal, "_reveal_focused_control", record_reveal)
         new_target = modal.query_one("#console-settings-base-url", Input)
         new_target.focus()
-        await pilot.pause(0.12)
+        await wait_for_reveal(new_target)
         await pilot.pause()
 
         assert app.focused is new_target

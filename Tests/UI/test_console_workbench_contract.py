@@ -1086,7 +1086,7 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
         assert _widget_text(console.query_one("#console-empty-body")) == (
             # TASK-34100.5 AC#11: the arrival line names what setup connected.
             "Setup complete — llama.cpp · local-model. "
-            "Ready — type a message to begin."
+            "Ready · not tested — type a message to begin."
         )
         assert not list(console.query("#console-empty-title"))
         assert not list(console.query("#console-empty-action-row"))
@@ -1138,7 +1138,7 @@ async def test_console_ready_empty_transcript_omits_setup_action_row():
         assert _widget_text(console.query_one("#console-empty-body")) == (
             # TASK-34100.5 AC#11: the arrival line names what setup connected.
             "Setup complete — llama.cpp · local-model. "
-            "Ready — type a message to begin."
+            "Ready · not tested — type a message to begin."
         )
 
 
@@ -1382,11 +1382,11 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         ),
         (
             "Provider setup needed: configure endpoint",
-            "Send blocked — configure the endpoint to continue",
+            "Send blocked — save the endpoint to continue",
         ),
         (
             "Provider setup needed: llama.cpp endpoint unavailable",
-            "Send blocked — configure the endpoint to continue",
+            "Send blocked — save the endpoint to continue",
         ),
         (
             "Provider setup needed: verify local runtime",
@@ -1402,7 +1402,18 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         ),
         (
             "Save provider endpoint in Settings > Providers & Models before sending.",
-            "Send blocked — configure the endpoint to continue",
+            "Send blocked — save the endpoint to continue",
+        ),
+        # TASK-33005.7 (whole-PR review): the one endpoint copy the Console's
+        # setup gate sends (save_endpoint); the endpoint is set, not saved.
+        (
+            "Save provider endpoint in Chat settings before sending.",
+            "Send blocked — save the endpoint to continue",
+        ),
+        # TASK-33005.7: a rejected key is never "add an API key".
+        (
+            "API key rejected. Update it in Settings > Providers & Models.",
+            "Send blocked — key rejected; update the API key",
         ),
     ),
 )

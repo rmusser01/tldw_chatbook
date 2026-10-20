@@ -46,7 +46,39 @@ class _ParticipantState:
 _participants = weakref.WeakKeyDictionary()
 _source_participants = weakref.WeakKeyDictionary()
 _path_locks = weakref.WeakValueDictionary()
-_local = threading.local()
+
+
+class _TaskLocal(threading.local):
+    """One discoverable raw operation per thread and asyncio task (ADR-126).
+
+    A plain thread-local showed an operation to every task on its thread: one
+    started eagerly inside the owner's synchronous scope (Textual installs
+    ``asyncio.eager_task_factory``), or one that runs while the owner awaits.
+    ``_check`` then refused that task's own guarded IO (TASK-33641.6).
+    Discovery is not authority: ``_check`` still verifies pid, thread and task.
+    """
+
+    def __init__(self):
+        self._plain = None  # code running outside any task
+        self._tasks = weakref.WeakKeyDictionary()
+
+    @property
+    def operation(self):
+        task = storage._task_identity()
+        return self._plain if task is None else self._tasks.get(task)
+
+    @operation.setter
+    def operation(self, value):
+        task = storage._task_identity()
+        if task is None:
+            self._plain = value
+        elif value is None:
+            self._tasks.pop(task, None)
+        else:
+            self._tasks[task] = value
+
+
+_local = _TaskLocal()
 
 
 class _RawParticipant:
@@ -351,6 +383,8 @@ class _State:
     pid: int
     thread: object
     task: object
+    # The key of the path lock this scope holds; None when it takes none.
+    source_key: str | None = None
     pinned: bool = True
     identities: dict = field(default_factory=dict)
     leases: list = field(default_factory=list)
@@ -740,6 +774,20 @@ def _scope(
     user_template=True,
     selected_read=None,
 ):
+    thread, task = threading.current_thread(), storage._task_identity()
+    if route not in config_files.ROUTES:
+        # Source locks are reentrant on a thread, so nothing can make this task
+        # wait for another task of its own thread: a source that task is in
+        # the middle of stays refused. Config is exempt, every task reads it.
+        with storage._lock:
+            if any(
+                state.active
+                and state.source is source
+                and state.thread is thread
+                and state.task is not task
+                for state in _states.values()
+            ):
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
     previous = getattr(_local, "operation", None)
     if previous is not None:
         previous_state = _check(previous)
@@ -950,6 +998,21 @@ def _scope(
                 for state in _states.values()
             ):
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
+            # The lock just taken is keyed by resolved file, or by a settings
+            # source's bound root, never by source object: the refusal above
+            # must also cover a second object under that key. A route with no
+            # path lock has only its selected file to compare.
+            if route not in config_files.ROUTES and any(
+                state.active
+                and (
+                    state.selected == selected
+                    or (source_key is not None and state.source_key == source_key)
+                )
+                and state.thread is thread
+                and state.task is not task
+                for state in _states.values()
+            ):
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
         operation = object.__new__(_RawOperation)
         state = _State(
             source,
@@ -962,6 +1025,7 @@ def _scope(
             os.getpid(),
             threading.current_thread(),
             storage._task_identity(),
+            source_key=source_key,
             pinned=pinned,
             temporary=temporary,
             temporaries=temporaries,

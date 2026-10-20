@@ -74,7 +74,8 @@ def _select_scratch_config_source(tmp_path: Path, monkeypatch) -> None:
     against the session-bound config module the ADR-126 admission refuses
     that as ``raw_source_selection_changed`` (TASK-33004.1 review: every
     ``apply_console_default_intent`` test here was red locally, and no PR
-    lane collects this file; TASK-33641.5 tracks gating it). Selecting the
+    lane collected this file; since TASK-33641.5 the PR Fast Lane runs it
+    whole). Selecting the
     same path first, through the repo's ``install_config_source``, keeps the
     gate and satisfies it.
     """
@@ -652,15 +653,19 @@ def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
     release_generation_a = threading.Event()
     generation_b_reserved = threading.Event()
     reservation_errors: list[BaseException] = []
-    real_read = config_module._read_raw_cli_config_unlocked
+    # TASK-33641.5, rewritten on purpose: A pauses at its commit fence, which
+    # the transaction calls after the read with the config lock held. It used
+    # to pause in a wrapper over _read_raw_cli_config_unlocked, but that is a
+    # guarded config body: replacing it makes the guard refuse the real read
+    # (RecoveryRequired config_source_not_installed), so A never paused.
+    real_fence = defaults_module._acquire_current_intent_commit_fence
 
-    def paused_read(config_path):
-        raw = real_read(config_path)
+    def paused_fence(*args):
         if threading.current_thread().name == "generation-a":
             generation_a_paused.set()
             if not release_generation_a.wait(timeout=5):
                 raise AssertionError("generation A was not released")
-        return raw
+        return real_fence(*args)
 
     def reserve_generation_b() -> None:
         try:
@@ -669,7 +674,9 @@ def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
         except BaseException as error:
             reservation_errors.append(error)
 
-    monkeypatch.setattr(config_module, "_read_raw_cli_config_unlocked", paused_read)
+    monkeypatch.setattr(
+        defaults_module, "_acquire_current_intent_commit_fence", paused_fence
+    )
     outcomes = {}
     intent_a = _intent(
         generation=1,

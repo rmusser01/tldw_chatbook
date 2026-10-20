@@ -6199,7 +6199,10 @@ async def test_settings_focus_help_line_never_describes_the_nav_bar(request):
     nothing focused (a dialog closing, F4 back from another screen) Textual's
     auto-focus parks focus on the nav bar's first button, whose tooltip the
     focus-help line then mirrored. The line describes Settings' own controls
-    only; Settings' Tab already treats a nav button as nothing focused."""
+    only; Settings' Tab already treats a nav button as nothing focused.
+
+    TASK-33007.11 (rewritten on purpose): the resume no longer parks focus on
+    Home at all, so the bar is focused by hand to keep the help-line pin."""
     from textual.screen import ModalScreen
 
     app = _build_test_app()
@@ -6219,7 +6222,11 @@ async def test_settings_focus_help_line_never_describes_the_nav_bar(request):
         await pilot.pause()
         await pilot.pause()
 
-        assert screen.focused is home  # Textual's auto-focus, app-wide
+        assert screen.focused is None  # released focus stays released
+        assert str(help_line.renderable) == ""
+        home.focus()  # the bar can still take focus another way
+        await pilot.pause()
+        assert screen.focused is home
         assert str(home.tooltip).strip()
         assert str(help_line.renderable) == ""
 
@@ -10698,6 +10705,90 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         assert after[1] == f"config:api_settings.{provider}.api_key"
 
 
+_LEGACY_API_SECTION_KEY = "sk-settings-legacy-api-canary-33001"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table(
+    request, monkeypatch
+):
+    """TASK-33001.15: a key that only exists under legacy ``[API]`` is saved.
+
+    The loader copies ``[API] openai_api_key`` into ``api_settings.openai`` in
+    memory, and only while ``OPENAI_API_KEY`` is unset, so Settings shows a
+    stored key. A model-only save recorded ``credential_source = "stored"``
+    and left the table on disk without an ``api_key``. Once the variable was
+    exported readiness found no stored key while requests spent the env key.
+    The save now writes the key into the table, so both resolve the stored
+    key with the variable unset, set, and after the quit rewrite. The app's
+    config is the real loader's and the real writer runs on this private
+    profile's TLDW_CONFIG_PATH.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this test in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        monkeypatch: Clears, then exports, ``OPENAI_API_KEY``.
+    """
+    import os
+
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"API": {"openai_api_key": _LEGACY_API_SECTION_KEY}}
+    ).file_replaced
+
+    def table_on_disk() -> dict:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+            "openai"
+        ]
+
+    def readiness_and_send_keys() -> tuple[str | None, str | None]:
+        """The key Console readiness resolves and the one a request spends."""
+        runtime = config_module.load_settings(force_reload=True)
+        return (
+            get_provider_readiness("openai", runtime).api_key,
+            runtime["openai_api"]["api_key"],
+        )
+
+    stored = (_LEGACY_API_SECTION_KEY, _LEGACY_API_SECTION_KEY)
+    assert "api_key" not in table_on_disk()
+    assert readiness_and_send_keys() == stored
+
+    app = _build_test_app()
+    assert app.app_config["api_settings"]["openai"]["api_key"] == (
+        _LEGACY_API_SECTION_KEY
+    )
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": str(table_on_disk().get("model") or ""),
+    }
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "gpt-4.1-mini"
+        screen.handle_model_value_changed(Input.Changed(model, model.value))
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
+
+    assert table_on_disk()["model"] == "gpt-4.1-mini"
+    assert table_on_disk()["credential_source"] == "stored"
+    assert readiness_and_send_keys() == stored
+    monkeypatch.setenv("OPENAI_API_KEY", _ENV_KEY_CANARY)
+    assert readiness_and_send_keys() == stored
+    assert table_on_disk()["api_key"] == _LEGACY_API_SECTION_KEY
+    assert config_module.persist_cli_config_for_shutdown()
+    assert readiness_and_send_keys() == stored
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch):
     app = _build_test_app()
@@ -11150,13 +11241,16 @@ async def test_settings_provider_switch_updates_inspector_readiness():
         await pilot.pause()
 
         assert screen.query_one("#settings-model-value", Input).value == ""
+        # TASK-33005.7 (rewritten on purpose): the row ends with the word
+        # the Key check row shows for the same connection.
+        word = str(screen.query_one("#settings-provider-readiness", Static).renderable)
         assert (
             str(
                 screen.query_one(
                     "#settings-provider-inspector-readiness", Static
                 ).renderable
             )
-            == "Provider readiness: Ollama / not selected"
+            == f"Provider readiness: Ollama / not selected — {word}"
         )
 
 
@@ -11227,13 +11321,16 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
         await pilot.pause()
 
         assert model_input.value == "gpt-4o"
+        # TASK-33005.7 (rewritten on purpose): the row ends with the word
+        # the Key check row shows for the same connection.
+        word = str(screen.query_one("#settings-provider-readiness", Static).renderable)
         assert (
             str(
                 screen.query_one(
                     "#settings-provider-inspector-readiness", Static
                 ).renderable
             )
-            == "Provider readiness: OpenAI / gpt-4o"
+            == f"Provider readiness: OpenAI / gpt-4o — {word}"
         )
 
         provider.value = "anthropic"
@@ -11248,13 +11345,16 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
             str(screen.query_one("#settings-provider-readiness", Static).renderable)
             == "Not ready · no key"
         )
+        # TASK-33005.7 (rewritten on purpose): the row ends with the word
+        # the Key check row shows for the same connection.
+        word = str(screen.query_one("#settings-provider-readiness", Static).renderable)
         assert (
             str(
                 screen.query_one(
                     "#settings-provider-inspector-readiness", Static
                 ).renderable
             )
-            == "Provider readiness: Anthropic / not selected"
+            == f"Provider readiness: Anthropic / not selected — {word}"
         )
 
 
@@ -14088,15 +14188,19 @@ async def test_settings_overview_status_reports_not_ready_without_model(
     path for BOTH missing-key AND missing-model, so this reports 'Not ready ·
     no model' (TASK-33005 capture checkpoint, rewritten on purpose from "Not
     ready: Select a model").
+
+    TASK-33005.15 (rewritten on purpose): the provider table's model is
+    blanked too, since a new chat falls back to it (and the Overview with it).
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    # Valid credential resolves, but NO model is selected.
+    # Valid credential resolves, but NO model is selected anywhere.
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": ""}
     api_settings = app.app_config.setdefault("api_settings", {})
     api_settings.setdefault("openai", {})["api_key"] = (
         "sk-test-overview-nomodel-0123456789"
     )
+    api_settings["openai"]["model"] = ""
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -14173,6 +14277,243 @@ async def test_settings_overview_status_reads_a_refused_test_as_the_console_does
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
         assert config_text.endswith(f"; Status: {console_word}"), config_text
+
+
+def _new_console_chat_words(config, host) -> tuple[object, str]:
+    """What a new Console chat (Ctrl+T, no control selection) starts on, and
+    its readiness word: the real session-default path."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    control = SimpleNamespace(
+        _persisted_chat_defaults=lambda: config["chat_defaults"],
+        _console_control_provider=None,
+        _console_control_model=None,
+    )
+    session = SimpleNamespace(
+        _effective_console_provider_model=lambda: (
+            ChatScreen._effective_console_provider_model(control)
+        ),
+        _provider_readiness_app_config=lambda: config,
+        _console_default_settings_memo=None,
+    )
+    settings = ConsoleSessionController._default_console_session_settings(session)
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config=config,
+        connection_evidence=shared_connection_evidence(lambda: host),
+    )
+    return settings, readiness_words(readiness)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_and_a_new_chat_agree_on_a_provider_table_model(
+    request, monkeypatch
+):
+    """TASK-33005.15 AC#1: with a blank chat-default model and a model in the
+    provider table, the Overview read "OpenAI / not selected; Status: Not
+    ready · no model" while a new Console chat took the table's model and read
+    Ready. Both now name the table's model and give the same words."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": ""}
+    app.app_config.setdefault("api_settings", {})["openai"] = {
+        "api_key": "sk-test-overview-table-0123456789",
+        "model": "gpt-4.1-mini",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        new_chat, word = _new_console_chat_words(
+            screen._provider_readiness_app_config(), host
+        )
+
+    assert (new_chat.provider, new_chat.model) == ("openai", "gpt-4.1-mini")
+    assert word == "Ready · not tested"
+    assert config_text.endswith(f"OpenAI / gpt-4.1-mini; Status: {word}"), config_text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_status_follows_evidence_settled_elsewhere(request):
+    """TASK-33005.15 AC#2: a connection test settled elsewhere (here straight
+    on the shared evidence, as a Console probe settles) never reached the
+    Overview's Status until the next visit. The existing 0.25 s readiness
+    poll now keys on the evidence revision: with that poll stopped nothing
+    repaints the line (no other timer does), and its next tick does. Whole-PR
+    review: that tick repainted the Status only, so "refused :9199" sat above
+    "Last connection test: Configuration check has not run." until a revisit;
+    it repaints the test row beside it too."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_target_default_console_session_settings,
+        console_send_connection,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+    )
+
+    app = _build_test_app()
+    config = app.app_config
+    config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    config.setdefault("api_settings", {})["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9199",
+        "model": "model-a",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        def status() -> str:
+            row = screen.query_one("#settings-overview-configuration", Static)
+            return str(row.renderable)
+
+        def last_test() -> str:
+            row = screen.query_one("#settings-overview-last-connection-test", Static)
+            return str(row.renderable)
+
+        assert status().endswith("; Status: Ready · not tested"), status()
+        screen._subscription_readiness_timer.stop()
+        live = screen._provider_readiness_app_config()
+        store = ProviderTestEvidenceStore(lambda: host)
+        store.settle(
+            store.begin(
+                console_send_connection(
+                    build_target_default_console_session_settings(
+                        live, "llama_cpp", "model-a"
+                    ),
+                    app_config=live,
+                )
+            ),
+            ProviderProbeResult("unreachable", (), "connection_refused"),
+        )
+        await pilot.pause(0.6)
+        unpolled, unpolled_test = status(), last_test()
+        screen._poll_subscription_readiness()  # the existing poll's next tick
+        await pilot.pause()
+        polled, polled_test = status(), last_test()
+
+    assert unpolled.endswith("; Status: Ready · not tested"), unpolled
+    assert unpolled_test.endswith(": Configuration check has not run."), unpolled_test
+    assert polled.endswith("; Status: Not ready · refused :9199"), polled
+    assert polled_test.startswith(
+        "Last connection test: Readiness: Not ready · refused :9199"
+    ), polled_test
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick(
+    request,
+):
+    """TASK-33005.7 AC#1 with TASK-33005.15's poll: evidence settled elsewhere
+    repainted the Key check row on the next readiness poll tick, but the
+    "Provider readiness: P / M — <word>" row beside it kept the old word
+    ("Ready · not tested" beside "Not ready · refused :9199"). One tick now
+    writes both rows from one verdict."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_target_default_console_session_settings,
+        console_send_connection,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+    )
+
+    app = _build_test_app()
+    config = app.app_config
+    config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    config.setdefault("api_settings", {})["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9199",
+        "model": "model-a",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        def rows() -> tuple[str, str]:
+            return tuple(
+                str(screen.query_one(selector, Static).renderable)
+                for selector in (
+                    "#settings-provider-readiness",
+                    "#settings-provider-inspector-readiness",
+                )
+            )
+
+        screen._subscription_readiness_timer.stop()
+        live = screen._provider_readiness_app_config()
+        store = ProviderTestEvidenceStore(lambda: host)
+        store.settle(
+            store.begin(
+                console_send_connection(
+                    build_target_default_console_session_settings(
+                        live, "llama_cpp", "model-a"
+                    ),
+                    app_config=live,
+                )
+            ),
+            ProviderProbeResult("unreachable", (), "connection_refused"),
+        )
+        screen._poll_subscription_readiness()  # the existing poll's next tick
+        await pilot.pause()
+        key_check, identity = rows()
+
+    assert key_check == "Not ready · refused :9199", key_check
+    assert identity == f"Provider readiness: llama.cpp / model-a — {key_check}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_names_an_unsaved_draft_apart_from_the_saved_pair(
+    request, monkeypatch
+):
+    """TASK-33005.15 AC#4 (Settings UX review 2026-10-14, B5): the Overview
+    showed an unsaved Providers & Models draft as the Configuration, with its
+    Status. Both describe the saved pair; the draft is named after them."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config.setdefault("api_settings", {})["openai"] = {
+        "api_key": "sk-test-overview-draft-0123456789",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        def configuration() -> str:
+            rows = screen._settings_overview_presentation().primary_rows
+            return next(row.value for row in rows if row.key == "configuration")
+
+        saved = configuration()
+        screen._stage_provider_value("model_profile_temperature", "0.3")
+        tuned = configuration()
+        screen._stage_provider_value("model", "gpt-4.1-mini")
+        drafted = configuration()
+
+    assert saved == "OpenAI / gpt-4.1; Status: Ready · not tested", saved
+    # Whole-PR review: a Temperature edit repeated the saved pair as the draft.
+    assert tuned == f"{saved}; Unsaved Providers & Models edits", tuned
+    assert drafted == f"{saved}; Unsaved draft: OpenAI / gpt-4.1-mini", drafted
 
 
 @pytest.mark.asyncio

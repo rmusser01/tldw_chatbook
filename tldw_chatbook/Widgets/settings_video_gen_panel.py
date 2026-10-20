@@ -171,7 +171,10 @@ class VideoGenSettingsPanel(Vertical):
                 id=f"settings-videogen-backend-{row.backend_id}",
                 classes="settings-imagegen-backend-row",
             ):
-                yield Static(row.label, classes="settings-input-label")
+                yield Static(
+                    row.label,
+                    classes="settings-input-label settings-imagegen-backend-label",
+                )
                 yield Static(
                     "Configured" if row.configured else "Not configured",
                     id=f"settings-videogen-status-{row.backend_id}",

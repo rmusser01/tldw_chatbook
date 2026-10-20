@@ -32,7 +32,13 @@ from loguru import logger
 #
 # Import Local
 from tldw_chatbook.Logging_Config import logging
-from tldw_chatbook.config import get_cli_setting, without_ciphertext
+from tldw_chatbook.config import (
+    ProviderSettingsError,
+    get_cli_setting,
+    load_settings,
+    provider_settings_for_key,
+    without_ciphertext,
+)
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
@@ -291,6 +297,11 @@ _CHAT_DISPATCH_NAME_ALIASES = {
 # aphrodite, mlx_lm/local_mlx_lm, moonshot and zai are covered by the
 # TASK-34895 engine-preset specs below (they had no legacy per-provider
 # function; the chat handler resolves their modern api_settings keys).
+# A summary decides its key under the provider the caller named
+# (TASK-33001.14): Settings keeps MistralAI in [api_settings.mistralai],
+# not the "mistral" spec's table. The local_* aliases keep their target's
+# table, because the summary is sent to the target handler's URL.
+_ALIASES_WITH_OWN_CREDENTIAL = frozenset({"mistralai"})
 
 
 def _dispatch_to_api(
@@ -309,24 +320,39 @@ def _dispatch_to_api(
     # each summarizer then reports its key as missing (mirrors chat_api_call).
     api_key = without_ciphertext(api_key)
     try:
-        api_name_lower = api_name.lower()
-        api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(api_name_lower, api_name_lower)
+        requested = api_name.lower()
+        api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(requested, requested)
         logging.debug(f"Dispatching to API: {api_name_lower}")
 
-        handler = _SUMMARIZER_DISPATCH.get(api_name_lower)
-        if handler is None:
+        # TASK-33641.10: every argument by keyword, so none can land on a
+        # parameter of another name. Names resolve at call time (the analyze
+        # and privacy suites monkeypatch them).
+        if api_name_lower == "mock-llm":
+            return summarize_with_mock_llm(
+                text_to_summarize=text_to_summarize,
+                custom_prompt_arg=custom_prompt_arg,
+                api_key=api_key,
+                temp=temp,
+                system_message=system_message,
+                streaming=streaming,
+            )
+        if api_name_lower not in _SUMMARIZER_CHAT_SPECS:
             error_msg = f"Error: Invalid API Name '{api_name}'"
             logging.error(error_msg)
             return error_msg
-        # NOTE: the handler functions load API keys, models, etc. from
-        # config themselves when the provided arguments are None.
-        return handler(
-            api_key,
-            text_to_summarize,
-            custom_prompt_arg,
-            temp,
-            system_message,
-            streaming,
+        # The core loads API keys, models, etc. from config itself when the
+        # provided arguments are None.
+        return _summarize_via_chat_api(
+            api_name_lower,
+            api_key=api_key,
+            input_data=text_to_summarize,
+            custom_prompt_arg=custom_prompt_arg,
+            temp=temp,
+            system_message=system_message,
+            streaming=streaming,
+            credential_provider=(
+                requested if requested in _ALIASES_WITH_OWN_CREDENTIAL else None
+            ),
         )
 
     except Exception as e:
@@ -717,13 +743,6 @@ def summarize_with_mock_llm(
 
 #
 #
-
-
-# FIXME
-
-
-#
-#
 ############################################################################################################################################
 
 
@@ -738,10 +757,10 @@ def summarize_with_mock_llm(
 # section: the diagnostic ledger pins this module's statement counts
 # (Tests/LLM_Calls/test_summarization_diagnostic_privacy.py).
 #
-# Key resolution mirrors the legacy functions exactly (parameter key,
-# then the legacy `<provider>_api` section; ciphertext never a key), so
-# keyless users see the same in-band refusal the per-provider functions
-# produced.
+# Key resolution: parameter key, then the key readiness resolves
+# (TASK-33001.14), then the legacy `<provider>_api` section while no
+# credential_source is recorded; ciphertext is never a key, and keyless
+# users see the same in-band refusal the per-provider functions produced.
 
 _CHAT_SUMMARIZER_DEFAULT_SYSTEM = (
     "You are a helpful AI assistant who does whatever the user requests."
@@ -998,7 +1017,9 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
     # --- engine presets (task-34895): summarization can now select any
     # chat-dispatch endpoint; these had NO legacy per-provider function,
     # so there is no legacy behavior to preserve -- the chat handler's own
-    # defaults govern model/temperature.
+    # defaults govern model/temperature. Moonshot and Z.ai require a key:
+    # their handlers search the environment themselves when handed none,
+    # so a summary refuses where readiness resolves none (TASK-33001.14).
     "moonshot": _SummarizerChatSpec(
         endpoint="moonshot",
         legacy_section="moonshot_api",
@@ -1007,7 +1028,6 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="Moonshot: API Key Not Provided/Found in Config file or is empty",
         empty_message="Moonshot: Summary not available",
         error_template="Moonshot: Error occurred while processing summary: {detail}",
-        require_key=False,
     ),
     "zai": _SummarizerChatSpec(
         endpoint="zai",
@@ -1017,7 +1037,6 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
         missing_key_message="ZAI: API Key Not Provided/Found in Config file or is empty",
         empty_message="ZAI: Summary not available",
         error_template="ZAI: Error occurred while processing summary: {detail}",
-        require_key=False,
     ),
     "aphrodite": _SummarizerChatSpec(
         endpoint="aphrodite",
@@ -1092,6 +1111,25 @@ def _resolve_summarizer_temp(spec: "_SummarizerChatSpec", temp: Any) -> Any:
     return spec.default_temp
 
 
+def _readiness_credential(endpoint: str) -> tuple[str | None, str | None]:
+    """The key readiness resolves for ``endpoint``, and the recorded source."""
+    from ..Chat.provider_readiness import (
+        configured_provider_credential_source,
+        provider_config_key,
+        resolve_provider_credential,
+    )
+
+    provider_key = provider_config_key(endpoint)
+    try:
+        table = provider_settings_for_key(
+            load_settings().get("api_settings"), provider_key
+        )
+    except ProviderSettingsError:
+        return None, None
+    key = resolve_provider_credential(provider_key, table, environ=os.environ)[0]
+    return key, configured_provider_credential_source(table)
+
+
 def _summarize_via_chat_api(
     spec_key: str,
     api_key,
@@ -1100,8 +1138,13 @@ def _summarize_via_chat_api(
     temp,
     system_message,
     streaming,
+    credential_provider: str | None = None,
 ):
-    """One summarization call over the unified chat provider dispatch."""
+    """One summarization call over the unified chat provider dispatch.
+
+    ``credential_provider`` names the provider whose ``[api_settings]``
+    table decides the key; the spec's endpoint when None.
+    """
     spec = _SUMMARIZER_CHAT_SPECS[spec_key]
     if isinstance(input_data, dict) and "summary" in input_data:
         return input_data["summary"]
@@ -1140,16 +1183,22 @@ def _summarize_via_chat_api(
         ChatAPIError,
     )
 
-    # Key resolution mirrors the legacy functions exactly: parameter key
-    # first, then the legacy `<provider>_api` section; `enc:` ciphertext is
-    # never a credential. Refusing HERE (in-band, before the chat dispatch)
-    # keeps the legacy refusal shape and keeps the chat handler's own
-    # settings resolution off the keyless path entirely.
-    raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
+    # Key resolution: the parameter key first; then (TASK-33001.14, ADR-012)
+    # the key readiness resolves for the provider's [api_settings] table, so
+    # credential_source decides here as it does for the Console; the legacy
+    # `<provider>_api` section only while no source is recorded. `enc:`
+    # ciphertext is never a credential. Refusing HERE (in-band, before the
+    # chat dispatch) keeps the legacy refusal shape.
+    raw_config_key = None
     if api_key and api_key.strip():
         resolved_key = api_key
     else:
-        resolved_key = without_ciphertext(raw_config_key)
+        resolved_key, source = _readiness_credential(
+            credential_provider or spec.endpoint
+        )
+        if resolved_key is None and source is None:
+            raw_config_key = get_cli_setting(spec.legacy_section, "api_key")
+            resolved_key = without_ciphertext(raw_config_key)
     if not (resolved_key and resolved_key.strip()):
         # Refuse where the provider requires a key, and wherever a key WAS
         # declared but is ciphertext -- `enc:` text is never a credential,
@@ -1224,85 +1273,3 @@ def _reasoning_only_completion_detail(result: Any) -> str:
     if parts:
         return " (" + "; ".join(parts) + ")"
     return ""
-
-
-# --- TASK-33245: dispatch table replacing the per-provider elif chain ---
-# Late-binding on purpose: the analyze/privacy suites monkeypatch the
-# module-level provider names, so entries must be lambdas resolving
-# globals at call time -- direct function references would bypass them.
-_SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
-    "openai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "openai", ak, text, cp, temp, sm, st
-    ),
-    "anthropic": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "anthropic", ak, text, cp, temp, sm, st
-    ),
-    "cohere": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "cohere", ak, text, cp, temp, sm, st
-    ),
-    "google": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "google", ak, text, cp, temp, sm, st
-    ),
-    "groq": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "groq", ak, text, cp, temp, sm, st
-    ),
-    "huggingface": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "huggingface", ak, text, cp, temp, sm, st
-    ),
-    "openrouter": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "openrouter", ak, text, cp, temp, sm, st
-    ),
-    "deepseek": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "deepseek", ak, text, cp, temp, sm, st
-    ),
-    "mistral": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "mistral", ak, text, cp, temp, sm, st
-    ),
-    # --- Mocking test LLM calls ---
-    "mock-llm": lambda ak, text, cp, temp, sm, st: summarize_with_mock_llm(
-        text, cp, ak, temp, sm, st
-    ),
-    # --- Local LLM Calls (adapters preserve each function's original
-    # argument order) ---
-    "llama.cpp": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "llama.cpp", ak, text, cp, temp, sm, st
-    ),
-    "kobold": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "kobold", ak, text, cp, temp, sm, st
-    ),
-    "ooba": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "ooba", ak, text, cp, temp, sm, st
-    ),
-    "tabbyapi": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "tabbyapi", ak, text, cp, temp, sm, st
-    ),
-    "vllm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "vllm", ak, text, cp, temp, sm, st
-    ),
-    "local-llm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "local-llm", ak, text, cp, temp, sm, st
-    ),
-    "custom-openai-api": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "custom-openai-api", ak, text, cp, temp, sm, st
-    ),
-    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "custom-openai-api-2", ak, text, cp, temp, sm, st
-    ),
-    "ollama": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "ollama", ak, text, cp, temp, sm, st
-    ),
-    # --- engine presets (task-34895): no legacy function ever existed;
-    # the chat handler resolves keys/models from api_settings ---
-    "moonshot": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "moonshot", ak, text, cp, temp, sm, st
-    ),
-    "zai": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "zai", ak, text, cp, temp, sm, st
-    ),
-    "aphrodite": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "aphrodite", ak, text, cp, temp, sm, st
-    ),
-    "mlx_lm": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
-        "mlx_lm", ak, text, cp, temp, sm, st
-    ),
-}

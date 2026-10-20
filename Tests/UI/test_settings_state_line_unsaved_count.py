@@ -260,3 +260,69 @@ async def test_dirty_state_line_renders_without_a_new_row_at_211x44(request) -> 
             "State: No changes · edits save with s | "
             "Changes affect global Console fallbacks after save."
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_image_gen_counts_a_two_key_clear_as_one_field(request) -> None:
+    """TASK-33002.11: Clear on SwarmUI's token stages the token and its legacy
+    api_key spelling, two draft keys for one field, and the count said 2."""
+    host = _SettingsCssHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        category = SettingsCategoryId.IMAGE_GENERATION
+        screen._select_category(category.value)
+        base_url = "#settings-imagegen-field-swarmui-base_url"
+        await _wait_for_selector(screen, pilot, base_url, timeout=8.0)
+        banner = screen.query_one("#settings-category-state-banner", Static)
+
+        screen._handle_image_gen_clear("swarmui", "swarm_token")
+        await pilot.pause()
+        assert len(screen._settings_drafts[category].dirty_keys) == 2
+        assert "· 1 unsaved | " in _static_text(banner)
+
+        field = screen.query_one(base_url, Input)
+        saved = field.value
+        field.value = saved + "/edited"
+        await pilot.pause()
+        assert "· 2 unsaved | " in _static_text(banner)
+        field.value = saved  # set back by hand
+        await pilot.pause()
+        assert "· 1 unsaved | " in _static_text(banner)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_video_gen_counts_an_edit_and_a_clear_of_one_field_once(request) -> None:
+    """TASK-33002.11: a backend field staged as an edit and as a Clear is one
+    field; a global key beside it is another."""
+    screen = SettingsScreen(_build_test_app())
+    video = SettingsCategoryId.VIDEO_GENERATION
+    draft = SettingsDraft(category=video)
+    draft.set_value("field::fal::api_key", "", "typed")
+    draft.set_value("cleared::fal::api_key", False, True)
+    screen._settings_drafts[video] = draft
+    assert screen._category_unsaved_count(video) == 1
+    draft.set_value("max_store_mb", "500", "600")
+    assert screen._category_unsaved_count(video) == 2
+    draft.set_value("max_store_mb", "500", "500")  # set back by hand
+    assert screen._category_unsaved_count(video) == 1
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_f1_help_says_switching_categories_keeps_the_draft(request) -> None:
+    """TASK-33002.10: the State line dropped "switching categories keeps this
+    draft" to fit the count (TASK-33002.4), and no in-app surface said it.
+    F1 help says it on every category whose draft a switch keeps; Speech &
+    TTS asks on leave instead, and Advanced Config's State line says it."""
+    screen = SettingsScreen(_build_test_app())
+    keeps = {
+        *GUIDED_SETTINGS_MUTATION_CATEGORIES,
+        SettingsCategoryId.IMAGE_GENERATION,
+        SettingsCategoryId.VIDEO_GENERATION,
+    } - {SettingsCategoryId.SPEECH_TTS}
+    note = "Switching categories keeps the draft; the rail marks it with *."
+    for category in SettingsCategoryId:
+        body = screen._workbench_help_state(category).render_text()
+        assert (note in body) is (category in keeps), category

@@ -38,6 +38,33 @@ anything, and sample other threads only when you need them. If the app logs a
 database error that no other run of the build shows, suspect the sampler
 before the code under test.
 
+## A quit that "never exits" is a join: dump threads after Quit and read the main thread first (TASK-33666, 2026-10-10)
+
+**Incident.** TASK-33666 was filed as "the process never exits" after Quit
+during a hung reply. A scratch `sitecustomize` registered
+`faulthandler.register(SIGUSR1, all_threads=True)` (it holds no frames, unlike
+the sampler above), and the app was dumped 8 s and 30 s after confirming Quit.
+The main thread was in `asyncio/runners.py close` → `shutdown_default_executor`;
+a helper thread, `_do_shutdown`, was in `ThreadPoolExecutor.shutdown` → `join`;
+and the joined worker was the reply's run thread, waiting on a provider turn
+whose cancel flag was read only between chunks. The process ended at 120.3 s
+with status 1: the exit watchdog, not the reply.
+
+With vLLM the run thread came back and the process still waited 120.4 s. The
+last line named `asyncio_0(daemon)`, the provider's worker inside `requests`'
+socket read. The model loop's thread is a daemon, so the workers of its
+executor inherit the flag, and `concurrent.futures.thread._python_exit` joins
+them at interpreter exit anyway.
+
+**What to do.** Dump after Quit, not before. The main thread's frame names the
+join: `Runner.close` → `shutdown_default_executor` is a worker of the app
+loop's default executor (`run_worker(thread=True)`, `asyncio.to_thread`);
+`threading._shutdown` → `_python_exit` is a worker of any other executor.
+`daemon=True` does not exempt a `ThreadPoolExecutor` worker from that join;
+only a thread that is not one is skipped. A hang that lasts exactly
+`[general] shutdown_grace_seconds` and ends with status 1 is the watchdog, and
+the pane's last line lists the threads that were still alive.
+
 ## A tmux key burst loses typed text, and an empty Input shows its placeholder
 
 **TASK-34100.8, 2026-10-04.** Live-editing the Voice step's Endpoint with
@@ -56,6 +83,50 @@ condition wait for the field to change is enough; a human never types that
 fast. Before calling a field's value wrong from a text capture, check whether
 the shown text equals the Input's placeholder. Use an `-e` (ANSI) capture to
 see its dim placeholder style, or change one character and re-capture.
+
+**TASK-33003.18, 2026-10-10: the keys are reordered, not dropped.** The same
+burst had been filed as a possible app defect. In Chat settings, eight
+Backspaces followed at once by `0.9` left Temperature as `0.`, `0` or empty,
+and Pilot typing never did. One command settles it:
+`tmux send-keys BSpace BSpace 1 2 3` on a field holding `0.7` gave `0.71` in
+27 of 27 live runs. In order it would read `0123`. All five keys arrived; the
+three characters went in first ("0.7123") and the two Backspaces ran after
+them. The cause is Textual's key dispatch (8.2.8), not tmux and not the
+modal. `Input._on_key` inserts a printable key at once. A bound key such as
+Backspace runs only when its Key event has bubbled through every ancestor's
+queue back to `App._on_key`, which checks the bindings; a later key already
+waiting in the app's queue is forwarded first. A bare `App` with one `Input`
+and no project code gives `''` for the same eleven keys posted without
+yielding.
+
+Measured live at 211x44, with a load average between 17 and 67:
+
+| How the eleven keys were sent | Reordered |
+|---|---|
+| One `send-keys` command | 32 of 32 |
+| One command per key, no sleep (7 to 9 ms apart) | 13 of 27 |
+| One command per key, 5 ms or more of sleep | 0 of 102 |
+| The Backspaces in one command, the text in the next | 0 of 35 |
+| The Backspaces, a wait for the empty field, then the text | 0 of 11 |
+
+The task's first report also saw `.9` with keys "paced 100 ms apart". That is
+the same reorder with only the `0` ahead of the last Backspaces, and at this
+head that pacing kept every key in 27 of 27 runs.
+
+A keyboard does not send keys that close together (key repeat is about 30 ms
+a key at its fastest), so on a responsive app this is a rule for the driver.
+It is not only the driver's, though. The reorder needs two keys in the app's
+queue at once, and a UI loop that is blocked while a person types gives it
+that: in the bare app, the five keys posted 100 ms apart gave `0123` in 5 of
+5 runs with the loop free and `0.71` in 5 of 5 with it blocked for 0.7 s. A
+field that "ate" a Backspace during a freeze is this; chase the freeze.
+
+**What to do.** Never put an editing key (Backspace, Delete, End, Home, an
+arrow, Ctrl+U) and the text that follows it in one `send-keys` command.
+Send the editing keys, wait until a capture shows their result, then send
+the text. To tell a reorder from a lost key, send `BSpace BSpace 1 2 3` in
+one command to a field whose value you know: a reorder keeps all three
+characters and deletes the wrong ones.
 
 ## A held SQLite lock must be released inside the app's 15 s busy timeout (TASK-33628.5, 2026-10-04)
 
@@ -432,14 +503,104 @@ detected llama.cpp (127.0.0.1:8080)" focused on the first launch. A guess that
 does NOT reproduce it: setting `raw_participants._local.operation` to a stray
 object — `_runtime_operation` ignores an unregistered operation. The mounted
 real-discovery test passes at both base and head, so the thread is pinned by
-recording the discovery thread, not by a reproduction. The hop moves one
-caller; it does not fix the cause. `raw_participants._local` is a
-`threading.local`, so a raw scope held across an `await` on the UI loop is
-seen, and refused, by every other task on that thread (TASK-33641.6).
+recording the discovery thread, not by a reproduction. The hop moved one
+caller; it did not fix the cause.
+
+**The cause, and why no mounted test saw it (TASK-33641.6, 2026-10-09).** The
+rider guessed a raw scope held across an `await`. There was none. A scratch
+launcher ran discovery on the UI loop again and logged two things: every raw
+scope still open when the loop next ran (none, through boot and minutes of
+idle), and every `_check` made by a task other than the operation's owner
+(exactly one, the discovery worker).
+`run_console_config_sync` (`UI/Console_Modules/config_sync.py`) holds the
+Console's `config` scope while `ChatScreen._sync_console_rail_and_controls`
+renders, and that render reaches `run_worker`. `App.run_async` installs
+`asyncio.eager_task_factory`, so the worker's first step ran inside
+`create_task`, inside the open scope, as a different `asyncio.current_task()`.
+`raw_participants._local` was a plain `threading.local`: the worker found the
+pump task's operation and `_check` refused it. `App.run_test` installs no eager
+factory, so the mounted real-discovery test stayed green. The slot is now kept
+per thread and task (`raw_participants._TaskLocal`) and `_check` is unchanged;
+a task that enters a source or a file other than config while another task of
+its thread is in the middle of it is still refused. The un-hopped launcher then
+found the server on its first launch. A plain `ContextVar` would not have fixed
+it: `create_task` copies the creator's context, and the eager worker read the
+owner's value.
+
+**Letting the second task in turned one refusal into a freeze (TASK-33641.6
+review, 2026-10-10).** Before that change a second task of the thread could not
+enter config at all, so it never reached a lock. After it, a config write from
+a task started under `_config_write_lock` reentered both thread RLocks and then
+slept on the OS file lock in 50 ms steps, on the loop thread. That lock is
+taken on a fresh descriptor, so it is not reentrant, and its holder was the
+thread now sleeping. The first report had passed this because "all 18 holders
+are in `config.py`, which starts no task". The holders are there. The code that
+runs under the lock is not: `locked_hooks_config_snapshot` yields it to
+`Agents/hook_permissions.py` and `Chat/console_runtime.py`, and the
+literal-settings transaction calls its callers' `mutation_builder`,
+`before_replace` and `after_replace`. `_config_write_lock` now refuses a thread
+that is already inside the same file's write transaction. The refusal has to
+come before any operation opens: raised from inside one, it left
+`_CONFIG_PERSISTENCE_ERROR` set to `config_operation_failed` (measured), which
+keeps the config participant from draining until the next successful write.
+
+**"Before any operation opens" held for the lock, not for two of its callers
+(second review, 2026-10-10).** The check was the first line of
+`_config_write_lock`, and the notes said the refusal recorded nothing.
+`read_cli_config_snapshot` and `replace_cli_config_serialized` open an
+operation of their own and then take the lock. For those two the refusal was
+raised inside an entered operation and the flag was set; under a holder that
+does not write (`locked_hooks_config_snapshot`) nothing cleared it. The test
+asserted the claim for `save_setting_to_cli_config` only, the one caller that
+had been read. Both now run the check (`_refuse_config_write_lock_reentry`)
+ahead of their own operation. The decorated one is split into a plain entry
+and a `_guarded` body, because `@guarded` opens the operation before the
+body's first line. The test runs all three calls and counts the operations the
+refused task opened.
+
+**Both file guards were keyed by something other than the lock they stand in
+for (same two reviews).** A second task is refused a file another task of its
+thread is in, because the path lock is reentrant and cannot make it wait. The
+first guard compared source objects, but every object on one file shares the
+lock. The second compared the selected path, but the lock is keyed by the
+resolved path (`/var/...` and `/private/var/...` are one lock) and, for a
+settings source, by its bound root whichever file the scope selects: two
+`EvalConfigLoader` objects, one saving and one exporting, both got in. The
+scope's state now carries the lock's own key and the guard compares that.
+
+**Those two entry points were then given a caller they do not have (third
+review, 2026-10-10).** The round 2 texts called the pair "the Settings raw
+editor's read and save". Only the read is the editor's, and
+`settings_advanced_config.py` runs it through `asyncio.to_thread`, on a worker
+thread that is not inside the write transaction. `replace_cli_config_serialized`
+is reached only through `SettingsConfigAdapter.replace_serialized`, which
+nothing calls, tests included. The editor saves through
+`replace_cli_config_snapshot`, also on a worker thread; that one opens no
+operation ahead of the lock, so the lock's own first line was already early
+enough for it. Neither round 2 refusal can fire from the UI today: the change
+is correct, and defensive. The adapter does wrap both functions; the callers of
+its methods had not been grepped, nor the thread they run on. The wrong label
+then did two things. It told the Capture phase that opening the editor and
+saving once would cover both changed entry points, when that run never calls
+the changed save. And it credited the change with one passing run of an
+intermittent test, `test_console_artifacts_roundtrip.py`, which calls neither
+function (logged: no call in a failing run, none in a passing one).
 
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the
-discovery seam does not cover the real entry point. Send a human gap between
+discovery seam does not cover the real entry point. A guard that compares tasks
+needs a test under `loop.set_task_factory(asyncio.eager_task_factory)`
+(`Tests/Backup_Recovery/test_raw_operation_task_discovery.py`), because only
+then does a task run inside its creator. When a change admits code that used to
+be refused, list every lock that code can now reach, and ask of each whether
+its holder can run while the newcomer waits. Audit a lock by what runs under
+it, not by where it is taken: follow every `yield` and every callback parameter
+out of the module. A check that must run before an operation opens goes ahead
+of each caller's outermost operation: list the callers and mark the ones that
+open one first, decorators included. A guard that stands in for a lock compares
+the lock's own key, not a value that usually equals it. Before writing which
+surface uses a function, follow it to a real call site: grep the callers of its
+wrapper too, and note the thread each one runs on. Send a human gap between
 keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
 Enter`): two keys in one tmux write reach the card before Switch model mounts,
 and the second is dropped.

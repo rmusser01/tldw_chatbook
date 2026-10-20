@@ -341,13 +341,98 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # rebuild pin, appended last (one mounted Console, about 3 s).
 # TASK-34406.28 raised it by two, to 326: ten browser Quit cases and the
 # flat-search native-drain regression, appended without moving earlier entries.
-# TASK-34982 raised it by 1, to 327: the poll-timer-stop row-removal pins,
-# appended last (a bare transcript host; well under 1 s).
-# TASK-34751 (2026-10-19) raised it by 2, to 329: Study's literal-text pins
-# (a markup-shaped workspace name in the scope banner; type-to-search over
-# markup-shaped deck and quiz names) and its quit-mid-rebuild pin, appended
-# last.
-MINIMUM_FILES = 329
+# Phase 9 Task 2 (2026-10-17) appends its Tests/UI tests that no lane ran,
+# each a node id (their files are slow whole or hold reds that are not this
+# task's), each 3 of 3 serial alone. TASK-33005.11's switcher rows: 321.
+# TASK-33002.9's unlisted-model lead and toast, and its key-source words: 323.
+# TASK-33005.7's Inspector Setup row and send hint, and Settings' identity row: 325.
+# TASK-33005.15's three Overview tests, its rewritten no-model pin and the
+# NOT RUNNING filter: 330.
+# Its review round 1: the identity row follows the Key check row on a poll
+# tick (TASK-33005.7): 331; a Test that probes nothing toasts its summary
+# literally (TASK-33002.9): 332.
+# Phase 9 Task 6 (2026-10-17) appends its Tests/UI node ids that no lane ran,
+# each 3 of 3 serial alone: pick mode offers a listing only for the endpoint
+# that listed it (TASK-33006.19): 333; a new entry listed under the close
+# guard says how to pick its model (TASK-33006.25): 334. Its review round 1:
+# pick mode offers a listing only where a pick of it lands (TASK-33006.19): 336.
+# Phase 9 Task 7 (2026-10-17) appends three entries no lane ran, each 3 of 3
+# serial: the State line count file whole (TASK-33002.10, .11), the new
+# fallback search file (TASK-33003.14), and the Test rows after Save
+# (TASK-33005.8): 339 (after Task 6's 336, in the Wave 4 integration).
+# Its review round 1: a Save that changes no connection field keeps the Key
+# check row (TASK-33005.8): 340.
+# Phase 9 Task 8 appends its two, each 3 of 3 serial: the mode strip's
+# literal provider text (TASK-33002.19, a new file, whole) and the footer
+# after Esc closes Chat settings (TASK-33006.20, a node id): 342 (after
+# Task 7's 340, in the Wave 4 integration).
+# Phase 9 Task 12 appends four, each 3 of 3 serial: the shared-evidence
+# readers file whole (TASK-33005.9) and three TASK-33005.10 node ids (the
+# late switcher probe, the Model summary reflow, the keyed Settings case): 346.
+# Phase 9 Task 14 appends four model-config entries no lane ran, each 3 of 3
+# serial in the lane's install set: the field-label file whole
+# (TASK-33002.17), the Lab GGUF one-row node (TASK-33641.2), the Skills
+# built-in rows file whole (TASK-33003.22) and the legacy [API] key save node
+# (TASK-33001.15); it also widens the provider save-scope node to its whole
+# file in place (TASK-33002.17, no count change): 350, after Task 12's 346,
+# in the Wave 5 integration. Its review round 1 appends the Image Gen
+# real-CSS backend-row node (TASK-33641.3), now a private-profile test: 351.
+# Phase 9 Task 15 appends the credential round-trip node (TASK-33006.16),
+# now a private-profile test, 3 of 3 serial: 352.
+# Phase 9 Task 16 appends one node id, 3 of 3 serial: a local server's
+# switcher rows are the models its probe listed (TASK-33005.12): 353, after
+# Task 15's 352, in the Wave 6 integration. Its integration review round 1
+# appends one node id, 3 of 3 serial: pick mode offers a Chat settings
+# listing beside the configured server's own listing (TASK-33005.12): 354.
+# Round 2 appends one node id, 3 of 3 serial: pick mode offers a Chat
+# settings listing beside a loaded catalog (TASK-33005.12): 355.
+# Phase 9 Task 18 renames those two nodes in place (TASK-35190: a listing at
+# this chat's endpoint replaces the configured server's and the catalog, no
+# count change) and appends three node ids, each 3 of 3 serial: a pick keeps
+# the chat's session endpoint, a registry entry keeps its own URL, and Switch
+# model keeps it and saves none (TASK-35190): 358. Its review round 1
+# appends three node ids, each 3 of 3 serial: a pick takes its provider's
+# latest endpoint, pick mode reads the session endpoint, and a Settings
+# round trip keeps it (TASK-35190): 361. Its review round 2 appends one
+# node id, 3 of 3 serial: Ctrl+N reads the configured endpoint, never
+# probed on a public host (TASK-35190): 362. Its review round 3 appends one
+# node id, 3 of 3 serial: an open's two probers share one in-flight cap
+# (TASK-35190): 363. The Phase 9 capture fix wave appends one node id, 3 of
+# 3 serial: a dispatched weekly row paints its relative next run
+# (TASK-33641.4): 364; and one more, 3 of 3 serial: every Send disabled
+# reason fits its strip whole (TASK-33005.7): 365; and one more, 3 of 3
+# serial: both generation panels' backend editors are whole and Save is
+# reachable (TASK-33641.3): 366. Its review round 1 moves the eleven
+# bootstrap_profile node ids Phase 9 appended (TASK-33006.19's three,
+# TASK-33006.25's, TASK-33005.12's two, TASK-35190's three, TASK-33641.4's
+# and TASK-33641.3's) to the PR Fast Lane's admission-sensitive step, ledger
+# R11's rule (TASK-32873: their keep_bootstrap_profile enrollment can poison
+# sandboxed suites sharing a process). Each still runs in one PR lane: 355.
+# Phase 9's whole-PR review, round 1 moves the four Chat settings geometry
+# node ids out the same way (TASK-33006.24's module pytestmark made them
+# bootstrap_profile), and four of the phase's private-profile and pure
+# Tests/UI evidence nodes take their slots in place (TASK-33003.22's two
+# governance ratchets, TASK-33641.4's definition row, TASK-33003.16's theme
+# import), so no other entry changes shard. Each still runs in one PR lane: 355.
+# Phase 9 was rebased onto dev at 69771c1811 (2026-10-19), whose floor was
+# 324: the Phase 9 counts above were taken over its base's 320, so its 35
+# entries end at 359 here. The whole-PR review's round 2 marks TASK-33641.4's
+# definition-row node bootstrap_profile (its setup imports the app under the
+# per-test redirect; it passed in shard 7 only beside files that import the
+# app at collection) and moves it to the admission-sensitive step, ledger R11.
+# The census's last entry, TASK-33005.7's reason-width node, takes its slot,
+# so no other entry changes shard. Each still runs in one PR lane: 358.
+# Rebased again onto dev at e3d32ce81a (2026-10-19), whose floor was 326
+# (TASK-34406.28's two entries): Phase 9's 34 entries end at 360 here.
+# Rebased onto dev 0fef489ece, whose TASK-34982 raised it by 1: the
+# poll-timer-stop row-removal pins (a bare transcript host; well under
+# 1 s), appended after Phase 9's entries so none of those changes shard
+# from its measured runs: 361.
+# Rebased onto dev 8e879de639, whose TASK-34751 (2026-10-19) raised it by 2:
+# Study's literal-text pins (a markup-shaped workspace name in the scope
+# banner; type-to-search over markup-shaped deck and quiz names) and its
+# quit-mid-rebuild pin, appended last, after TASK-34982's entry: 363.
+MINIMUM_FILES = 363
 
 
 def read_census(path: Path) -> list[str]:

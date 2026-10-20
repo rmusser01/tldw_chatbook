@@ -155,7 +155,7 @@ The palette is semantic and restrained: surfaces follow the active terminal them
 - **Application Canvas** (`$background`): root terminal canvas and major unused space.
 - **Panel Surface** (`$panel`): headers, footers, primary panel backgrounds, and stable control surfaces.
 - **Raised Surface** (`$surface`, `$surface-lighten-1`): cards, inputs, collapsible headers, toolbars, and list rows.
-- **Grid Line** (`$surface-lighten-1`, `$surface-lighten-2`): panel borders, dividers, table lines, and structural separators.
+- **Grid Line** (`$tldw-boundary`, 3:1 on surface and panel in every theme): panel borders, dividers, table lines, and structural separators.
 - **Readable Text** (`$text`): default foreground.
 - **Secondary Text** (`$text-muted`): metadata, footer hints, secondary help, and inactive controls.
 - **Disabled Text** (`$text-disabled`): disabled action labels only.
@@ -270,8 +270,8 @@ fields (task-1586):
   carrier — a structural marker separating controls from prose — so
   color is reinforcement, never the sole signal. Quieter than text at
   rest, but at least 3:1 against both surfaces in every theme
-  (TASK-33003.6): `$ds-control-edge` and `$ds-grid-line` resolve to
-  `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
+  (TASK-33003.6): `$ds-control-edge`, `$ds-grid-line` and `$ds-column-line`
+  resolve to `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
   per theme, user themes included.
 - **Focus:** the edge flips to `thick $ds-action-focus` and the
   background swaps to `$ds-focus-bg` (the task-345 focus surface) with
@@ -329,6 +329,7 @@ fields (task-1586):
 - **Default:** `$panel` background and `$text-muted` labels.
 - **Hover:** `$panel-lighten-1` background and `$text`.
 - **Active:** `$accent` background or `$accent` text with bold weight, depending on whether the nav is button-based or link-based.
+- **Top tab bar lines (TASK-33641.1):** the bar paints `$surface` and its separator is `$ds-grid-line`. The active tab keeps its `$primary-darken-1` fill hovered and focused (bold underline carries focus), and its outline is `$tldw-active-edge`, which `ensure_readable_text_hues` (themes.py `ACTIVE_EDGE_VARIABLE`) works out per theme at 3:1 on that fill.
 - **Overflow:** use command palette or explicit compact hints, never hidden mystery navigation.
 
 ### Destination Header

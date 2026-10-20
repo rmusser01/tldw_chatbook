@@ -11,7 +11,8 @@ The view opens core-first: the MODEL row, then Temperature, Max tokens,
 Streaming and the reasoning or thinking controls, then the Sampling,
 Connection, Request estimate and name disclosures. Closed, each is one row
 whose title carries its value (TASK-33006.3); Connection names the endpoint
-host and where the key comes from, never the key. Focus opens on Temperature,
+host and where the key comes from, never the key. Focus opens on Temperature
+(the next shown core field, or Change, when the model does not take it),
 or on the recovery action while a connection blocker stands, or on Change
 while no model is chosen; a restored focus target wins over all three
 (``_restore_suspended_scroll_and_focus``), and a missing or unavailable one
@@ -46,6 +47,8 @@ from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     console_generation_control_support,
+    provider_request_keys,
+    reasoning_effort_values_sent,
     supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -60,6 +63,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     normalize_console_model_value,
     resolve_console_value_layers,
 )
+from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
@@ -78,8 +82,9 @@ if TYPE_CHECKING:
     )
 
 #: Opens Switch model in pick-only mode for Change: (origin, draft, Find
-#: text, callback, served models by provider); the callback gets
-#: ``(provider, model)`` or ``None`` on Esc.
+#: text, callback, served models by provider, each one whose pick lands on the
+#: connection that listed it); the callback gets ``(provider, model)`` or
+#: ``None`` on Esc.
 ModelPicker = Callable[
     [
         "ConsoleSettingsOrigin",
@@ -120,6 +125,7 @@ NAME_DISCLOSURE_ID = "console-settings-identity-advanced"
 NAME_INPUT_ID = "console-settings-user-display-name"
 #: The Endpoint row: label, Base URL input and New endpoint….
 ENDPOINT_ROW_ID = "console-settings-endpoint-row"
+ENDPOINT_NEW_BUTTON_ID = "console-settings-endpoint-new"
 CONNECTION_TITLE = "Connection"
 REQUEST_ESTIMATE_TITLE = "Request estimate"
 NAME_TITLE = "Your name in this chat"
@@ -139,6 +145,8 @@ MODEL_ROW_LABEL = "Model"
 #: The MODEL row's Change: the one way to change the pair (TASK-33006.4).
 MODEL_CHANGE_ID = "console-settings-model-change"
 MODEL_CHANGE_LABEL = "Change Alt+M"
+#: When pick mode cannot open after a new entry's listing (TASK-33006.25).
+CREATED_ENTRY_PICK_LATER_COPY = "{name} is saved. Pick its model with Change (Alt+M)."
 #: Streaming at chat scope is a plain On/Off choice (ADR-095:75-81); the
 #: Source word, not a third option, says when it is inherited.
 STREAMING_OPTIONS = (("On", "on"), ("Off", "off"))
@@ -147,6 +155,10 @@ BLANK_FIELD_HELP = "the provider decides"
 #: A control whose support is unknown stays visible and says so in its help
 #: line (TASK-30012 AC#3).
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
+#: A saved level the provider's request drops stays selected, labelled as
+#: Settings labels it, and its row says why (TASK-33002.7).
+UNSENT_CHOICE_SUFFIX = "(not supported here)"
+UNSENT_CHOICE_COPY = "{level} is not supported here, so it is not sent."
 #: Ends the Sampling line that names the hidden fields (TASK-33006.2).
 HIDDEN_FIELDS_REASON = "(this provider does not accept them)"
 #: Ends the Sampling line that counts them when the names do not fit.
@@ -194,6 +206,11 @@ def field_control_id(name: str) -> str:
         The id, e.g. ``"console-settings-max-tokens"``.
     """
     return "console-settings-" + name.replace("_", "-")
+
+
+def _choice_label(choice: str) -> str:
+    """Return a choice's option label: "X-High" for xhigh, else title case."""
+    return choice.replace("xhigh", "x-high").title()
 
 
 def field_row_names(row: Widget) -> tuple[str, str]:
@@ -285,7 +302,9 @@ def generation_field_support(
 
     Samplers follow the shared ``supported_generation_fields``; the reasoning
     and thinking controls hide only on an authoritative "unsupported", and an
-    "unknown" one stays visible (TASK-30012 AC#3).
+    "unknown" one stays visible (TASK-30012 AC#3). A provider no request map
+    decides (``provider_request_keys`` is None) keeps every sampler, each
+    unknown too (TASK-33006.11).
 
     Args:
         provider: The draft's provider.
@@ -294,9 +313,10 @@ def generation_field_support(
 
     Returns:
         ``(hidden, unknown)``: the hidden field names in Sampling-line order,
-        and the shown controls whose support is unknown.
+        and the shown fields whose support is unknown.
     """
     supported = supported_generation_fields(provider, model, app_config)
+    unmapped = provider_request_keys(provider, app_config) is None
     hidden: list[str] = []
     unknown: set[str] = set()
     for name in SAMPLING_FIELDS + CORE_FIELDS:
@@ -309,6 +329,8 @@ def generation_field_support(
                 unknown.add(name)
         else:
             shown = name in supported
+            if shown and unmapped:
+                unknown.add(name)
         if not shown:
             hidden.append(name)
     return tuple(hidden), frozenset(unknown)
@@ -451,6 +473,9 @@ class ConsoleSettingsFieldRowsMixin:
     _unknown_support_fields: frozenset[str] = frozenset()
     #: The MODEL row's last readiness word, kept for context-window refreshes.
     _model_row_word = ""
+    #: What each listing served, by provider, with the connection it listed
+    #: (TASK-33006.19); the modal starts it empty.
+    _served_models: dict[str, tuple[tuple[str, str] | None, tuple[str, ...]]]
 
     def _field_row(self, name: str) -> Horizontal:
         """Build one Model view field row: label, control, Source word, help.
@@ -596,17 +621,93 @@ class ConsoleSettingsFieldRowsMixin:
         status = self.query_one("#console-settings-model-status", Static)
         _show(status, f"{self._model_row_word}{context}")
 
-    def _open_model_picker(self, query: str = "") -> None:
+    def _served_endpoint(self, provider: str) -> tuple[str, str] | None:
+        """Return the connection a listing for ``provider`` runs on now.
+
+        That is the Endpoint field for the draft's own provider and an
+        entry's own URL for an entry (TASK-33006.19).
+        """
+        return self._discovery_connection_identity(
+            provider, self._discovery_endpoint_value(provider)
+        )
+
+    def _pick_endpoint(
+        self, source: ConsoleSettingsDraftState, provider: str, model: str
+    ) -> tuple[str, str] | None:
+        """Return the connection a pick of ``provider``·``model`` lands on.
+
+        The draft's own pair stays put (``_model_picked`` does not rebase
+        it) and an entry keeps its own URL. Any other pair lands where the
+        rebaser a pick uses puts it, as the Endpoint field then shows it
+        (``_apply_rebased_state``): a remembered pair can restore its edited
+        Endpoint (TASK-33006.19), and an unseen one takes the latest Endpoint
+        of its provider's drafts, so this chat's own (TASK-35190).
+
+        Args:
+            source: The draft a pick rebases from (``_snapshot_before_rebase``).
+            provider: The pair's provider.
+            model: The pair's model.
+
+        Returns:
+            The connection identity, or None when no rebase lands it.
+        """
+        current = (
+            provider_config_key(self._active_provider),
+            self._current_model_value(),
+        )
+        if (
+            self._custom_endpoint_entry_for(provider) is not None
+            or (provider_config_key(provider), model) == current
+        ):
+            return self._served_endpoint(provider)
+        try:  # no rebaser, or one that fails: _rebase_to lands nothing either
+            url = self._draft_rebaser(
+                source,
+                provider=provider,
+                model=model,
+                app_config=self._app_config,
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            ).settings.base_url
+        except Exception:  # noqa: BLE001
+            return None
+        url = (
+            self._initial_base_url_for_provider(provider, url)
+            if self._provider_uses_base_url(provider)
+            else None
+        )
+        return self._discovery_connection_identity(provider, url)
+
+    def _keep_served_models(self, provider: str, model_ids: Iterable[str]) -> int:
+        """Keep what a listing served, with the connection it listed.
+
+        Args:
+            provider: The provider the listing ran for.
+            model_ids: The ids it served.
+
+        Returns:
+            How many distinct ids it served.
+        """
+        models = tuple(dict.fromkeys(model_ids))
+        self._served_models[provider] = (self._served_endpoint(provider), models)
+        return len(models)
+
+    def _open_model_picker(self, query: str = "") -> bool:
         """Open Switch model in pick-only mode over Chat settings (Change, Alt+M).
 
         Pick mode lists the models this modal's listings found beside the
-        saved ones; a listing never picks one (spec rule 1).
+        saved ones, each only while a pick of it lands on the connection
+        that listed it (TASK-33006.19); a listing never picks one (spec
+        rule 1). It opens on the draft as the controls show it, so it knows
+        the Endpoint a pick on this provider keeps (TASK-35190).
 
         Nothing opens while the close guard or a default recovery holds the
         modal: its Tab trap would lose focus to Change (review I4).
 
         Args:
             query: Text Find opens with; New endpoint… names the new entry.
+
+        Returns:
+            Whether pick mode opened.
         """
         if (
             self._model_picker is None
@@ -614,10 +715,21 @@ class ConsoleSettingsFieldRowsMixin:
             or self.query_one("#console-settings-close-guard").display
             or self._default_recovery_layout_phase is not None
         ):
-            return
-        self._model_picker(
-            self._origin, self._draft, query, self._model_picked, self._served_models
-        )
+            return False
+        # ponytail: one rebase per listed model (~0.07 ms each, measured);
+        # cache by pair if listings reach thousands of models.
+        source = self._snapshot_before_rebase()
+        served = {}
+        for provider, (endpoint, models) in self._served_models.items():
+            kept = tuple(
+                model
+                for model in models
+                if self._pick_endpoint(source, provider, model) == endpoint
+            )
+            if kept or not models:  # an empty listing still marks its provider used
+                served[provider] = kept
+        self._model_picker(self._origin, source, query, self._model_picked, served)
+        return True
 
     def pick_created_endpoint(self, provider_id: str | None) -> None:
         """Land a just-created entry on a pair (New endpoint… and ``/endpoint``).
@@ -643,6 +755,9 @@ class ConsoleSettingsFieldRowsMixin:
     async def _list_then_pick(self, provider_id: str, name: str) -> None:
         """List a created entry's served models, then open pick mode on it.
 
+        When pick mode cannot open (the close guard showed meanwhile), a
+        notice says the entry is saved and how to pick its model.
+
         Args:
             provider_id: The created ``custom-ep:<slug>`` id.
             name: Its display name, which Find opens with.
@@ -658,8 +773,11 @@ class ConsoleSettingsFieldRowsMixin:
         except Exception:  # noqa: BLE001 - an unlisted entry still opens pick mode
             result = None
         self._set_model_discover_status("")
-        self._served_models[provider_id] = tuple(result.model_ids) if result else ()
-        self._open_model_picker(f"{name} ")
+        self._keep_served_models(provider_id, result.model_ids if result else ())
+        if not self._open_model_picker(f"{name} "):
+            # The close guard (or a default recovery) holds the modal, so say
+            # how to pick the saved entry instead (TASK-33006.25).
+            self.notify(CREATED_ENTRY_PICK_LATER_COPY.format(name=name), markup=False)
 
     def _model_picked(self, pair: tuple[str, str] | None) -> None:
         """Rebase the draft to the picked pair; Esc (None) changes nothing.
@@ -679,7 +797,7 @@ class ConsoleSettingsFieldRowsMixin:
             )
             if (provider_config_key(provider), model) != current:
                 self._cancel_connection_probe()
-                if self._rebase_to(provider, model):
+                if self._rebase_to_pick(provider, model):
                     self._advance_model_generation_preserving_current_listing()
                     self._defer_pending_entry_discovery(provider)
         if self.is_attached:
@@ -832,10 +950,13 @@ class ConsoleSettingsFieldRowsMixin:
 
         A provider without a base URL hides the label, and the whole row when
         New endpoint… is hidden too, so no label stands without an input.
+        Its parts are found by id or class, so a row that gains a child (a
+        hint, a status) still syncs (TASK-33006.13).
         """
-        label, base_url, new_endpoint = self.query_one(f"#{ENDPOINT_ROW_ID}").children
-        label.display = base_url.display
-        label.parent.display = base_url.display or new_endpoint.display
+        row = self.query_one(f"#{ENDPOINT_ROW_ID}")
+        shown = row.get_child_by_id("console-settings-base-url").display
+        row.query_one(".console-settings-modal-label").display = shown
+        row.display = shown or row.get_child_by_id(ENDPOINT_NEW_BUTTON_ID).display
 
     def _streaming_select_value(self) -> str:
         """Return the Streaming Select value: the effective On or Off."""
@@ -847,6 +968,51 @@ class ConsoleSettingsFieldRowsMixin:
         with self.prevent(Select.Changed):
             select.value = self._streaming_select_value()
 
+    def _choice_options(self, control_id: str, value: object) -> list[tuple[str, str]]:
+        """Return a choice Select's options for the draft's provider.
+
+        Reasoning effort offers only the levels the provider's request sends,
+        decided by ``reasoning_effort_values_sent`` as Settings decides its
+        model-default list; a saved level the request drops stays listed,
+        labelled with ``UNSENT_CHOICE_SUFFIX``, rather than cleared
+        (TASK-33002.7).
+
+        Args:
+            control_id: The choice Select's id.
+            value: The value the Select is to show.
+
+        Returns:
+            ``(label, value)`` pairs in display order, the blank excluded.
+        """
+        from .console_settings_modal import _PROVIDER_CHOICE_VALUES
+
+        domain = _PROVIDER_CHOICE_VALUES[control_id]
+        offered = domain
+        if control_id == field_control_id("reasoning_effort"):
+            offered = reasoning_effort_values_sent(
+                self._active_provider, domain, self._app_config
+            )
+        options = [(_choice_label(choice), choice) for choice in offered]
+        if value in domain and value not in offered:
+            label = f"{_choice_label(str(value))} {UNSENT_CHOICE_SUFFIX}"
+            options.append((label, str(value)))
+        return options
+
+    def _show_choice(self, select: Select, value: object) -> None:
+        """Show ``value`` in a choice Select, re-listing its options first.
+
+        ``set_options`` resets the value, so the options are replaced only
+        when the provider or a dropped saved level changes them.
+
+        Args:
+            select: A provider-choice Select.
+            value: A choice, or ``Select.NULL``.
+        """
+        options = self._choice_options(str(select.id), value)
+        if select._options[1:] != options:  # the first option is the blank
+            select.set_options(options)
+        select.value = value
+
     def _field_help(self, name: str, control: Widget) -> str:
         """Return one row's help line, saying what a blank field sends.
 
@@ -856,10 +1022,16 @@ class ConsoleSettingsFieldRowsMixin:
 
         Returns:
             The field table's help, prefixed for a blank optional field; a
-            blank required field names its valid range instead. A control
-            whose support is unknown leads with the neutral copy.
+            blank required field names its valid range instead. A field
+            whose support is unknown leads with the neutral copy, and a
+            selected level the request drops says so instead.
         """
         field = MODEL_CONFIG_FIELDS[name]
+        if isinstance(control, Select) and any(
+            choice == control.value and str(label).endswith(UNSENT_CHOICE_SUFFIX)
+            for label, choice in control._options
+        ):
+            return UNSENT_CHOICE_COPY.format(level=_choice_label(str(control.value)))
         if not _is_blank(control):
             text = field.help
         elif name == "temperature":  # the provider's own range (finding 11)
@@ -947,7 +1119,7 @@ class ConsoleSettingsFieldRowsMixin:
             row = self.query_one(f"#{field_control_id(name)}-row")
             shown = name not in hidden
             if not shown and focused is not None and row in focused.ancestors_with_self:
-                self.call_after_refresh(self._focus_highest_priority_connection)
+                self.call_after_refresh(self._focus_view_open_target)
             row.display = shown
         display = provider_display_name(provider, self._app_config)
         # Literal Content: a registry display name is user text, and a str
@@ -1009,13 +1181,15 @@ class ConsoleSettingsFieldRowsMixin:
                 error.display for error in row.query(".console-settings-error")
             )
 
-    def _focus_highest_priority_connection(self) -> None:
+    def _focus_view_open_target(self) -> None:
         """Focus where the shown view opens (R13 of the Phase 6 plan).
 
         The Context view opens on Budget strategy. The Model view opens on
-        Temperature; on Change while no model is chosen (``select_model``);
-        or, while a connection blocker stands, on its recovery action inside
-        the Connection disclosure, which opens first.
+        its first shown core field, Temperature unless the model does not
+        take it, or on Change when none shows (TASK-33006.10); on Change
+        while no model is chosen (``select_model``); or, while a connection
+        blocker stands, on its recovery action inside the Connection
+        disclosure, which opens first.
         """
         if not self.is_mounted or not self.query(f"#{MODEL_CHANGE_ID}"):
             return
@@ -1029,14 +1203,17 @@ class ConsoleSettingsFieldRowsMixin:
             self._focus_change()
             return
         if action in _TUNING_RECOVERY_ACTIONS:
-            temperature = self.query_one("#console-settings-temperature", Input)
-            if self._is_effectively_focusable(temperature):
-                temperature.focus()
+            for name in CORE_FIELDS:
+                control = self.query_one(f"#{field_control_id(name)}")
+                if self._is_effectively_focusable(control):
+                    control.focus()
+                    return
+            self._focus_change()
             return
         disclosure = self.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
         if disclosure.collapsed:
             disclosure.collapsed = False
-            self.call_after_refresh(self._focus_highest_priority_connection)
+            self.call_after_refresh(self._focus_view_open_target)
             return
         selector = _RECOVERY_FOCUS.get(action)
         if selector is not None:

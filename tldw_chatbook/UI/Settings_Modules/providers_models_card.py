@@ -100,12 +100,8 @@ from ..Screens.settings_screen import (
     env_var_echo,
 )
 from .provider_return import continuation_copy, fitted_chat_title, return_outcome
-from .settings_field_rows import (
-    BUILT_IN,
-    EDITED,
-    compose_model_defaults,
-    format_value,
-)
+from .readiness_lines import readiness_label
+from .settings_field_rows import BUILT_IN, EDITED, compose_model_defaults, format_value
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -942,7 +938,7 @@ def refresh_connect_rows(screen: SettingsScreen, provider: str, endpoint: str) -
 
 
 def refresh_key_rows(screen: SettingsScreen, provider: str) -> None:
-    """Re-say the API key row's source and the Key check verdict.
+    """Re-say the API key row's source, the Key check verdict and its identity row.
 
     Args:
         screen: The Settings screen that owns the card.
@@ -951,7 +947,11 @@ def refresh_key_rows(screen: SettingsScreen, provider: str) -> None:
     key_word, key_help = api_key_row_copy(screen, provider)
     screen._set_static_text("#settings-provider-key-status", key_word)
     screen._set_static_text("#settings-provider-api-key-help", key_help)
-    screen._set_static_text("#settings-provider-readiness", key_check_verdict(screen))
+    word = key_check_verdict(screen)  # one verdict for both rows (TASK-33005.7)
+    screen._set_static_text("#settings-provider-readiness", word)
+    screen._set_static_text(
+        "#settings-provider-inspector-readiness", readiness_label(screen, word)
+    )
     sync_api_key_clear(screen, provider)
 
 

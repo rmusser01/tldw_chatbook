@@ -16,6 +16,8 @@ from pathlib import Path
 import httpx
 import pytest
 import toml
+from textual import events
+from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static
 from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.input import Selection
@@ -659,3 +661,71 @@ async def test_a_click_on_a_listed_model_picks_it(request, held):
         await pilot.click(results, offset=row)
         await pilot.pause(0.2)
         assert adapter.value == field.value == picker.value == "o3-mini-new"
+
+
+async def _open_list(pilot, screen, which: str) -> OptionList:
+    """Open the Default model or the Provider list as a keyboard user does."""
+    if which == "model":
+        _picker, field, results, _adapter = _widgets(screen)
+        field.focus()
+    else:
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.pause()
+        await pilot.press("down")
+        results = screen.query_one("#settings-provider-picker", OptionList)
+    await _until(pilot, lambda: results.display and results.region.height > 1)
+    return results
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("which", ["model", "provider"])
+@pytest.mark.parametrize("held", [False, True], ids=["released-at-once", "held"])
+async def test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none(
+    request, which, held
+):
+    """TASK-33003.12: a press on a control below an open picker list moves
+    focus there, the picker's blur collapses the list, and the rows below it
+    move up. The click must activate the control that was pressed, or none,
+    never the one the collapse moved under the pointer; no Escape first.
+
+    The press and the release are posted to the app as a terminal driver
+    posts them: the app makes a Click only when both land on one widget.
+    ``Pilot.click`` instead forwards its Click to whatever the offset holds
+    after its pauses, so after the collapse it opened the Collapsible that
+    moved there: that is the shape this test refuses (checked by swapping
+    the two posts for ``pilot.click``). A press held past the collapse
+    (an ordinary press lasts 80-150 ms) activates nothing."""
+    app = _app("openai", "gpt-4o", catalog=tuple(f"gpt-{n}" for n in range(12)))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        results = await _open_list(pilot, screen, which)
+        pressed = screen.query_one("#settings-generation-defaults", Collapsible)
+        title = pressed.query_one(CollapsibleTitle)
+        point = (title.region.x + 30, title.region.y)
+        before = {item.id: item.collapsed for item in screen.query(Collapsible)}
+        arguments = _get_mouse_message_arguments(screen, point, button=1)
+
+        host.post_message(events.MouseDown(**arguments))
+        if held:
+            await _until(pilot, lambda: not results.display)
+            await pilot.pause()
+            # The collapse reached the screen: another control is under the
+            # pointer now, so this release is the case the rider is about.
+            assert screen.get_widget_at(*point)[0] is not title
+        host.post_message(events.MouseUp(**arguments))
+        await _until(pilot, lambda: not results.display)
+        await pilot.pause(0.1)
+
+        toggled = {
+            item.id
+            for item in screen.query(Collapsible)
+            if before.get(item.id) != item.collapsed
+        }
+        assert host.focused is title
+        assert toggled <= {pressed.id}, toggled
+        if held:
+            assert toggled == set()

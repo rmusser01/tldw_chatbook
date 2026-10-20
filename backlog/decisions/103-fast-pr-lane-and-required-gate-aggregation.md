@@ -110,11 +110,11 @@ cron entry on `dev`.
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
   grown since: the UI lane runs its census as shards (TASK-34353; ten since
   TASK-33007), the Console P0 gate is a third lane (TASK-33621.27), and the PR
-  Fast Lane's admission-sensitive half, the Dreams tracking tests and the
-  Dreams and Guardian boundary contracts are jobs of their own (TASK-34916,
-  TASK-34929, TASK-34986), so an ordinary unlabeled, non-GGUF PR
-  now runs fifteen test runners at once, sixteen with perf-guard (see the
-  dated notes below).
+  Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
+  tracking tests and the Dreams and Guardian boundary contracts are jobs of
+  their own (TASK-34916, TASK-34929, TASK-34986), so an ordinary unlabeled,
+  non-GGUF PR now runs sixteen test runners at once, seventeen with perf-guard
+  (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
@@ -250,8 +250,21 @@ file at its slowest, the heaviest shard carries 15.2 pytest minutes with nine
 shards, 13.7 with ten and 12.4 with eleven, plus ~1.1-1.7 min of setup. Ten is
 the fewest that leaves a hung private-profile test's ~3.3-minute report room
 under the 20-min cap, as TASK-34917 requires (~15.4 + 3.3 of 20). Four more
-runners per PR: that makes fifteen concurrent test runners per PR, then the
+runners per PR: that made fifteen concurrent test runners per PR, then the
 aggregate, and the matrix sets no `max-parallel`. Those runners bear on the
 required check's wall-clock tail that TASK-34917 and TASK-34916 left open for an
 owner decision; the owner chose to land the ten shards without `max-parallel`
 (2026-10-15).
+
+2026-10-19 (TASK-35575, owner decision): the PR Fast Lane's admission-sensitive
+suites run in two jobs. `pr-fast-lane-admission` keeps the 41 targets `dev` had;
+Phase 9 of the model-configuration redesign put its 54 (the 52 moved, plus
+TASK-33666's two Stop-claim nodes) in a second job,
+`pr-fast-lane-admission-2` ("PR Fast Lane (admission-sensitive 2)"), with the same
+install line, 35-min cap and `--timeout=300`; the required check `needs` it and
+fails when it is not `success`. With all 93 in one job, PR #3169's two runs took
+29.8 and 27.4 min of the 35, so one hung test's ~5.3-minute report would have
+passed the cap. Over 20 PR runs (2026-10-18/19) `dev`'s 41 alone took median
+17.5 / max 20.0 min; the 52 alone ran in 266.9 s serial in the job's install set.
+One more runner per PR: that makes sixteen concurrent test runners per PR, then
+the aggregate.

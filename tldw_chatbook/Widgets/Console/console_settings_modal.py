@@ -140,7 +140,11 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ProviderSettingsNavigationTarget,
 )
-from tldw_chatbook.Utils.input_validation import validate_text_input, validate_url
+from tldw_chatbook.Utils.input_validation import (
+    escape_markup,
+    validate_text_input,
+    validate_url,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 from .console_context_controls import (
@@ -159,6 +163,7 @@ from .console_settings_field_row import (
     CONNECTION_FOCUS_IDS,
     CONNECTION_TITLE,
     CORE_FIELDS,
+    ENDPOINT_NEW_BUTTON_ID,
     ENDPOINT_ROW_ID,
     MODEL_CHANGE_ID,
     REQUEST_ESTIMATE_DISCLOSURE_ID,
@@ -192,7 +197,6 @@ MODAL_BODY_MIN_HEIGHT = 0
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
-ENDPOINT_NEW_BUTTON_ID = "console-settings-endpoint-new"
 ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
 ENDPOINT_NEW_BUTTON_WIDTH = 17
 BASE_URL_ENTRY_HINT_ID = "console-settings-base-url-entry-hint"
@@ -828,10 +832,6 @@ _PROVIDER_CHOICE_VALUES: dict[str, tuple[str, ...]] = {
     input_id: _SNAPSHOT_SETTING_CHOICE_DOMAINS[control]
     for _label, input_id, control in _PROVIDER_CHOICE_CONTROLS
 }
-PROVIDER_CHOICE_INPUTS = tuple(
-    (label, input_id, ", ".join(_SNAPSHOT_SETTING_CHOICE_DOMAINS[control]))
-    for label, input_id, control in _PROVIDER_CHOICE_CONTROLS
-)
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Applies to this chat only · saved with the conversation · defaults live in "
     "Settings ▸ Providers & Models (F4)"
@@ -1277,10 +1277,10 @@ class ConsoleSettingsModal(
         ) = None
         self._default_recovery_layout_phase: ConsoleDefaultSavePhase | None = None
         # Entry-creation follow-up probe (provider, base_url), consumed once
-        # a pick lands on the created entry; and what each listing served,
-        # which pick mode lists beside the saved models (TASK-33006.4).
+        # a pick lands on the created entry; and what each listing served, which
+        # pick mode lists beside the saved models (TASK-33006.4, .19).
         self._pending_entry_discovery: tuple[str, str] | None = None
-        self._served_models: dict[str, tuple[str, ...]] = {}
+        self._served_models = {}
         streaming_field = self._draft_field("streaming")
         self._model_discovery_generation = 0
         self._current_model_discovery_identity: ConsoleModelDiscoveryIdentity | None = (
@@ -1301,6 +1301,7 @@ class ConsoleSettingsModal(
         # refresh, once every mounted control reflects the transferred state.
         self._updating_controls = True
         self._initial_feedback_sync = True
+        self._defer_default_readiness = True  # until on_mount's closing sync
         self._edited_generation_fields: set[str] = set()
         self._submit_pending = False
         self._rebase_event_guard = False
@@ -1522,7 +1523,7 @@ class ConsoleSettingsModal(
             else Select.NULL
         )
         select = ConsoleSettingsSelect(
-            [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
+            self._choice_options(control_id, selected),
             prompt=BLANK_CHOICE_PROMPT,
             value=selected,
             allow_blank=True,
@@ -1546,7 +1547,7 @@ class ConsoleSettingsModal(
         """Return inline recovery copy for an obsolete restored enum value."""
         if control_id not in self._invalid_generation_choice_drafts:
             return ""
-        values = ", ".join(_PROVIDER_CHOICE_VALUES[control_id])
+        values = ", ".join(v for _l, v in self._choice_options(control_id, Select.NULL))
         return f"Saved value is unavailable. Choose one of: {values}."
 
     @on(Button.Pressed, "#console-settings-response-rules")
@@ -1573,40 +1574,18 @@ class ConsoleSettingsModal(
                 markup=False,
             )
             with Horizontal(id="console-settings-view-tabs"):
-                model_view = Button(
-                    _view_tab_label(
-                        "Model and generation", self._active_view == "model"
-                    ),
+                # on_mount's view switch marks the open view's tab (its
+                # label, class and tooltip) before the first paint.
+                yield Button(
+                    "Model and generation",
                     id="console-settings-view-model",
-                    classes=(
-                        "console-settings-view-tab console-settings-view-active"
-                        if self._active_view == "model"
-                        else "console-settings-view-tab"
-                    ),
+                    classes="console-settings-view-tab",
                 )
-                model_view.tooltip = (
-                    "Selected view: Model and generation"
-                    if self._active_view == "model"
-                    else "Show Model and generation"
-                )
-                yield model_view
-                context_view = Button(
-                    _view_tab_label(
-                        "Context and memory", self._active_view == "context"
-                    ),
+                yield Button(
+                    "Context and memory",
                     id="console-settings-view-context",
-                    classes=(
-                        "console-settings-view-tab console-settings-view-active"
-                        if self._active_view == "context"
-                        else "console-settings-view-tab"
-                    ),
+                    classes="console-settings-view-tab",
                 )
-                context_view.tooltip = (
-                    "Selected view: Context and memory"
-                    if self._active_view == "context"
-                    else "Show Context and memory"
-                )
-                yield context_view
             yield Static(
                 self._scope_copy(),
                 id="console-settings-scope",
@@ -2266,7 +2245,6 @@ class ConsoleSettingsModal(
         self._sync_action_layout(self.size.width)
         self._show_settings_view(self._active_view)
         self._sync_default_recovery_region()
-        self._sync_default_readiness()
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._finish_initial_control_sync)
         if self._suspended_draft is not None:
@@ -2279,6 +2257,9 @@ class ConsoleSettingsModal(
                 self.call_after_refresh(self._focus_context_control)
         self._sync_generation_control_support()
         self._sync_generation_test_controls()
+        # The view switch, the recovery-region sync and a suspended draft's restore
+        # can reach the default-readiness sync, held for this one build (TASK-33006.21).
+        self._defer_default_readiness = False
         self._sync_completion_actions()
         self._apply_accessible_control_metadata()
         if (
@@ -2287,7 +2268,7 @@ class ConsoleSettingsModal(
             and self._active_view == "model"
             and self._default_recovery_layout_phase is None
         ):
-            self.call_after_refresh(self._focus_highest_priority_connection)
+            self.call_after_refresh(self._focus_view_open_target)
         self.call_after_refresh(self._sync_responsive_layout)
 
     def _finish_initial_control_sync(self) -> None:
@@ -2324,7 +2305,7 @@ class ConsoleSettingsModal(
                             control.value = Select.NULL
                         elif normalized in _PROVIDER_CHOICE_VALUES[control_id]:
                             self._invalid_generation_choice_drafts.pop(control_id, None)
-                            control.value = normalized
+                            self._show_choice(control, normalized)
                         else:
                             self._invalid_generation_choice_drafts[control_id] = value
                             control.value = Select.NULL
@@ -2795,24 +2776,18 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-modal").set_class(
             not model_selected, "-context-view"
         )
-        model_tab = self.query_one("#console-settings-view-model", Button)
-        context_tab = self.query_one("#console-settings-view-context", Button)
-        model_tab.label = _view_tab_label("Model and generation", model_selected)
-        context_tab.label = _view_tab_label("Context and memory", not model_selected)
-        model_tab.variant = "default"
-        context_tab.variant = "default"
-        model_tab.set_class(model_selected, "console-settings-view-active")
-        context_tab.set_class(not model_selected, "console-settings-view-active")
-        model_tab.tooltip = (
-            "Selected view: Model and generation"
-            if model_selected
-            else "Show Model and generation"
-        )
-        context_tab.tooltip = (
-            "Show Context and memory"
-            if model_selected
-            else "Selected view: Context and memory"
-        )
+        for tab_id, name, selected in (
+            ("model", "Model and generation", model_selected),
+            ("context", "Context and memory", not model_selected),
+        ):
+            tab = self.query_one(f"#console-settings-view-{tab_id}", Button)
+            tab.label = _view_tab_label(name, selected)
+            # Button.label only repaints: without a layout the tab can keep
+            # its old width and crop its mark or name (TASK-33003.11).
+            tab.refresh(layout=True)
+            tab.set_class(selected, "console-settings-view-active")
+            verb = "Selected view: " if selected else "Show "
+            tab.tooltip = escape_markup(verb + name)
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model
@@ -2844,7 +2819,7 @@ class ConsoleSettingsModal(
             ),
             "endpoint_invalid": f"Enter a valid {provider} endpoint to continue.",
             "endpoint_not_saved": (
-                f"Save the {provider} endpoint in Chat settings before using it here."
+                f"Save the {provider} endpoint in Model and generation to continue."
             ),
             "credential_missing": f"Add or verify the {provider} API key to continue.",
             "credential_rejected": f"Add or verify the {provider} API key to continue.",
@@ -2868,6 +2843,8 @@ class ConsoleSettingsModal(
     def _sync_default_readiness(self) -> None:
         """Gate default actions on an exact model and future-chat readiness."""
 
+        if self._defer_default_readiness:
+            return
         try:
             save_button = self.query_one("#console-settings-save-default", Button)
             make_button = self.query_one("#console-settings-make-default", Button)
@@ -2969,7 +2946,11 @@ class ConsoleSettingsModal(
             reason = "Available when the current run finishes."
         elif not self._can_save:
             reason = "Chat settings cannot be changed right now."
-        elif apply_button.disabled and not needs_endpoint_persistence:
+        # An unsaved endpoint: the Model view offers Save endpoint instead, so
+        # only the Context view says where to save it (TASK-33006.22).
+        elif apply_button.disabled and not (
+            needs_endpoint_persistence and (show_defaults or recovery_active)
+        ):
             reason = self._primary_disabled_reason(readiness)
         disabled_reason.update(reason)
         disabled_reason.display = bool(reason)
@@ -2987,7 +2968,7 @@ class ConsoleSettingsModal(
             if disabled_reason.display:
                 self.call_after_refresh(disabled_reason.focus)
             else:
-                self.call_after_refresh(self._focus_highest_priority_connection)
+                self.call_after_refresh(self._focus_view_open_target)
 
     def _default_recovery_summary(self) -> str:
         state = self._default_durability_state
@@ -3294,7 +3275,7 @@ class ConsoleSettingsModal(
             self._show_settings_view(
                 "context" if str(event.button.id).endswith("context") else "model"
             )
-            self.call_after_refresh(self._focus_highest_priority_connection)
+            self.call_after_refresh(self._focus_view_open_target)
 
     @on(Button.Pressed, f"#{MODEL_CHANGE_ID}")
     def _change_pressed(self, event: Button.Pressed) -> None:
@@ -4288,15 +4269,13 @@ class ConsoleSettingsModal(
             if hint is not None:
                 return " / ".join(sorted(hint)) + " (consumed by this model)"
         # An unsupported choice is hidden and named on the Sampling line
-        # (TASK-33006.2), so its tooltip only lists the accepted values.
-        for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
-            if choice_input_id == input_id:
-                return placeholder
-        return ""
+        # (TASK-33006.2), so its tooltip lists only the values it sends.
+        sent = self._choice_options(input_id, Select.NULL)
+        return ", ".join(value for _label, value in sent)
 
     def _sync_provider_choice_placeholders(self) -> None:
         """Refresh constrained-choice help after the provider changes."""
-        for _label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
+        for input_id in _PROVIDER_CHOICE_VALUES:
             self.query_one(f"#{input_id}", Select).tooltip = self._choice_placeholder(
                 input_id
             )
@@ -4503,7 +4482,7 @@ class ConsoleSettingsModal(
                 else:
                     self._invalid_generation_choice_drafts.pop(control_id, None)
                     selected = normalized or Select.NULL
-                self.query_one(f"#{control_id}", Select).value = selected
+                self._show_choice(self.query_one(f"#{control_id}", Select), selected)
                 self._sync_generation_choice_validation(control_id)
             streaming = self._draft_field("streaming")
             self._streaming_effective_fallback = bool(state.settings.streaming)
@@ -5362,8 +5341,7 @@ class ConsoleSettingsModal(
                 f"Could not list models from {endpoint_display(result.base_url)}."
             )
             return
-        self._served_models[provider] = tuple(dict.fromkeys(result.model_ids))
-        count = len(self._served_models[provider])
+        count = self._keep_served_models(provider, result.model_ids)
         self._set_model_discover_status(_model_availability_copy(count, ""))
         if fenced:
             self._current_model_discovery_identity = identity
@@ -5427,7 +5405,6 @@ class ConsoleSettingsModal(
             return
         self._subscription_readiness_snapshot = snapshot
         self._sync_readiness_display()
-        self._sync_default_readiness()
 
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()

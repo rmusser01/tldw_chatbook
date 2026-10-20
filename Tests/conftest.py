@@ -189,13 +189,15 @@ importlib.import_module("tldw_chatbook.Chunking")
 # errored whenever it ran alone. ~0.45 s once per process.
 importlib.import_module("tldw_chatbook.RAG_Search.config_profiles")
 
-# TASK-33003.6: the app stylesheets reference $tldw-boundary and
-# $tldw-focus-fill, which no tcss defines. Production gets them from TldwCli's
-# ThemeVariableDefaultsMixin and from this module's import-time guard over
-# Textual's BUILTIN_THEMES (app.py imports it before any App exists). A test
-# harness App that loads the sheets gets neither unless something imported the
-# module first, and then fails with UnresolvedVariableError -- 96 tests in 10
-# files did, whenever run on their own. Import it here, as production does.
+# TASK-33003.6: the app stylesheets reference the theme guard variables
+# (themes.GUARD_VARIABLES: $tldw-boundary, $tldw-focus-fill and, since
+# TASK-33641.1, $tldw-active-edge), which no tcss defines. Production gets
+# them from TldwCli's ThemeVariableDefaultsMixin and from this module's
+# import-time guard over Textual's BUILTIN_THEMES (app.py imports it before
+# any App exists). A test harness App that loads the sheets gets neither
+# unless something imported the module first, and then fails with
+# UnresolvedVariableError -- 96 tests in 10 files did, whenever run on their
+# own. Import it here, as production does.
 importlib.import_module("tldw_chatbook.css.Themes.themes")
 
 # tasks-32951/32953 (trace-surface port): the ModelCapabilities singleton
@@ -940,7 +942,7 @@ def _no_local_server_probes(
     monkeypatch.setattr(
         connection_probe,
         "switcher_connection_prober",
-        lambda _app, _app_config: _no_switcher_probe,
+        lambda _app, _app_config, **_gate: _no_switcher_probe,
     )
 
 

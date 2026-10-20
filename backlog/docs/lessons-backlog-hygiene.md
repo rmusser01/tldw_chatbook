@@ -857,6 +857,27 @@ ancestor and review the exact commit count and branch-range diff.
 
 ---
 
+## A restacked commit can keep its task-file hunks and drop its code (P9 restack, 2026-10-16)
+
+**Incident.** The model-config Phase 9 branch was restacked onto Phase 8's
+final head on 2026-10-16. TASK-33001.14's four commits came through with
+their subjects intact, and the rider stayed Done with every AC ticked. Each
+one kept only its task-file (and lessons) hunks: the code, tests, ADR-012
+amendment and guide text were gone. Nothing failed, because no test of the
+dropped code was left to fail. A prep agent found it on 2026-10-17 by
+re-checking the rider against HEAD.
+
+**The check that found the extent.** For each restacked commit, compare its
+`git show --numstat` file set with the same-subject commit on the
+pre-restack backup branch. Of 78 commits compared, only this rider's had
+lost files.
+
+**What to do.** After a restack that resolved conflicts, run that comparison
+before trusting any Done rider: a matching subject and a ticked task file
+prove nothing about the code.
+
+---
+
 ## A background merge loop must hold a lock — `pkill -f` will not find its sibling
 
 **Incident.** PR #2260, 2026-08-31. I started a background merge loop

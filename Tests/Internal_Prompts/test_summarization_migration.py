@@ -239,6 +239,8 @@ def test_local_template_fallback_reaches_the_core_user_content(monkeypatch):
         return args[0] if args else kwargs.get("default")
 
     monkeypatch.setattr(sgl, "get_cli_setting", fake_setting)
+    # TASK-33001.14: no [api_settings] key, no source -- no profile read.
+    monkeypatch.setattr(sgl, "_readiness_credential", lambda _endpoint: (None, None))
     monkeypatch.setattr(
         sgl,
         "get_internal_prompt",

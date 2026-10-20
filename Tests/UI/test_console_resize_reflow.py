@@ -14,6 +14,7 @@ from textual.css.query import NoMatches
 from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Button, Static, Tooltip
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -1161,25 +1162,35 @@ async def test_console_resize_dismisses_stale_tooltip() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_model_summary_sync_invalidates_mounted_context_allocation(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, request
 ) -> None:
-    """The production Model mutation seam refreshes bounded demand afterward."""
+    """The production Model mutation seam refreshes bounded demand afterward.
+
+    TASK-33005.10 AC#4 (rewritten on purpose): it patched a ChatScreen
+    builder the summary sync no longer calls (the context-spend controller
+    owns it, so the patch raised), and since TASK-33005.3 its Ready -> blocked
+    mutation changes no line count, so its demand and allocation asserts held
+    with or without a reconcile. The mutation now shows the hidden readiness
+    line, so the section's demand and height must grow; the credential poll,
+    whose first ticks resync the summary on their own, is stopped first.
+    """
 
     host = _ready_console_host()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         rail = console.query_one("#console-left-rail", ConsoleLeftRail)
         model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        recovery = rail.query_one("#console-model-section-recovery")
         await _wait_for_context_condition(
             pilot,
             lambda: _context_allocation_idle(rail),
         )
-        readiness = {
-            "value": ConsoleSettingsReadiness("Ready", "", True),
-        }
+        console._stop_console_credential_poll_timer()
+        readiness = {"value": ConsoleSettingsReadiness("Ready", "", True), "word": ""}
         monkeypatch.setattr(
-            console,
+            console._context_spend,
             "_build_console_settings_summary_state",
             lambda: ConsoleSettingsSummaryState(
                 provider_row="Provider: test",
@@ -1187,29 +1198,23 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
                 context_row="Context: 0",
                 sampling_row="T 0.7 · max_tokens 100",
                 identity_row="Identity: character",
-                readiness_label=readiness_words(readiness["value"]),
+                readiness_label=readiness["word"],
                 readiness=readiness["value"],
             ),
         )
         console._sync_console_settings_summary()
         rail.apply_section_open("model", True)
         rail.activate_section("model")
-        # TASK-33005.3 (rewritten on purpose): the line now always shows the
-        # readiness word, so the mutation is Ready -> blocked (and red), not
-        # hidden -> shown.
         await _wait_for_context_condition(
             pilot,
             lambda: (
                 rail._active_section_id == "model"
-                and not rail.query_one("#console-model-section-recovery").has_class(
-                    "conversation-attention-error"
-                )
+                and not recovery.display
                 and _context_allocation_idle(rail)
             ),
         )
         before_demand = model.desired_content_lines
-        before_allocation = model.allocation
-        recovery = rail.query_one("#console-model-section-recovery")
+        before_height = model.outer_size.height
         reconcile_runs = 0
         original_reconcile = rail._run_allocation_reconcile
 
@@ -1224,7 +1229,12 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             "Provider configuration needs attention.",
             False,
         )
+        readiness["word"] = readiness_words(readiness["value"])
         console._sync_console_settings_summary()
+        # The seam's own request, before any await: the wait above ended
+        # idle, so no poll or timer has run since. The later asserts alone
+        # could pass on a reconcile the environment poll requested.
+        assert rail._allocation_reconcile_scheduled
         await _wait_for_context_condition(
             pilot,
             lambda: recovery.has_class("conversation-attention-error")
@@ -1233,8 +1243,12 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
 
         assert recovery.display is True
         assert recovery.content == "Not ready · check settings"
-        assert model.desired_content_lines >= before_demand
-        assert model.allocation == before_allocation
+        # The section re-measured the line it now shows. Without the seam's
+        # reconcile it kept its old demand and height, clipping the word.
+        assert model.desired_content_lines > before_demand
+        assert model.outer_size.height == before_height + (
+            model.desired_content_lines - before_demand
+        )
         assert reconcile_runs >= 1
         stable_runs = reconcile_runs
         await pilot.pause()

@@ -137,6 +137,35 @@ def unsaved_baseline(
     }
 
 
+def rebased_unsaved_baseline(
+    baseline: Mapping[str, object],
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the baseline after a pick rebased the draft (TASK-33006.16).
+
+    What the rebase changed is not the user's edit: a field the user had not
+    edited counts as unedited at its rebased value, and so does an edit the
+    rebase did not carry (blanked because the new provider rejects it, or
+    replaced by the new pair's own value). Only an edit it carried still
+    counts. The pair keeps its baseline, so the pick itself counts as Model.
+
+    Args:
+        baseline: The baseline before the pick.
+        before: The values just before the pick.
+        after: The values the rebase left.
+
+    Returns:
+        A new baseline.
+    """
+    rebased = dict(baseline)
+    for label in _SETTINGS_FIELDS.values():
+        edited = before.get(label) != baseline.get(label)
+        if not (edited and after.get(label) == before.get(label)):
+            rebased[label] = after.get(label)
+    return rebased
+
+
 def snapshot_unsaved_baseline(value: object) -> dict[str, object] | None:
     """Return a detached copy of a suspended draft's unsaved baseline.
 
@@ -274,6 +303,8 @@ class ConsoleSettingsUnsavedGuardMixin:
 
     _unsaved_committed: tuple[Any, Any, object]
     _unsaved_baseline: dict[str, object] | None = None
+    #: Each pair's baseline when a pick left it, so a pick back restores it.
+    _unsaved_pair_baselines: dict[object, dict[str, object]] | None = None
     _unsaved_labels: tuple[str, ...] = ()
     _unsaved_retry: Callable[[], object] | None = None
     _unsaved_discard_approved = False
@@ -297,8 +328,8 @@ class ConsoleSettingsUnsavedGuardMixin:
             if not self.query_one(control, Input).value.strip():
                 values[_SETTINGS_FIELDS[field]] = None
         # Streaming's Inherit/On/Off choice, not the effective bool: Inherit ->
-        # On over an On default is an edit (TASK-33003.10), and so is a model
-        # switch re-basing an explicit On to Inherit.
+        # On over an On default is an edit (TASK-33003.10). A pick re-basing
+        # an explicit On to Inherit is not (TASK-33006.16).
         values[_SETTINGS_FIELDS["streaming"]] = self._streaming_draft
         return values
 
@@ -325,6 +356,37 @@ class ConsoleSettingsUnsavedGuardMixin:
             return
         self._unsaved_baseline = unsaved_baseline(mounted, opened, committed)
         self._sync_unsaved_hint()
+
+    def _rebase_to_pick(self, provider: str, model: str) -> bool:
+        """Rebase the draft to a picked pair, counting only the user's edits.
+
+        A pair seen earlier in this open gets back the baseline it had; any
+        other pair is re-based by ``rebased_unsaved_baseline``
+        (TASK-33006.16).
+
+        Args:
+            provider: The picked provider.
+            model: The picked model.
+
+        Returns:
+            Whether the rebase landed.
+        """
+        try:
+            before = self._current_chat_settings_values()
+        except (NoMatches, QueryError):
+            before = None
+        if not self._rebase_to(provider, model):
+            return False
+        baseline = self._unsaved_baseline
+        if baseline is not None and before is not None:
+            after = self._current_chat_settings_values()
+            if self._unsaved_pair_baselines is None:
+                self._unsaved_pair_baselines = {}
+            self._unsaved_pair_baselines[before[_PAIR_LABEL]] = baseline
+            self._unsaved_baseline = self._unsaved_pair_baselines.get(
+                after[_PAIR_LABEL]
+            ) or rebased_unsaved_baseline(baseline, before, after)
+        return True
 
     def _unsaved_field_labels(self) -> tuple[str, ...]:
         if self._unsaved_baseline is None:

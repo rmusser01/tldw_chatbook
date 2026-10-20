@@ -138,8 +138,10 @@ FAST_LANE_TARGETS = (
     # Ruling C16 for the capture fix wave (2026-10-13): six tests it added to
     # files no lane runs (node ids; each under a second, 3 of 3 serial alone).
     # Capture round 2 finding 1: Make default checks the default it writes.
-    "Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_validates_the_temperature_the_write_saves",
-    "Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one",
+    # TASK-33641.5 gates that file whole in place of its two nodes: the Save
+    # as model default and Ctrl+N writer, the ADR-095 D3 quick-mask cases
+    # included (89 tests, ~22 s serial, 3 of 3).
+    "Tests/Chat/test_console_settings_defaults.py",
     # Capture finding 11: Temperature's range is the provider's own.
     "Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own",
     # Capture findings 9 and 20, round 1 finding 4: the model picker's lists.
@@ -169,6 +171,78 @@ FAST_LANE_TARGETS = (
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it",
     # Owner decision D2 (2026-10-17): Model's keyless-403 hint, 3 of 3 serial.
     "Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_model_step_hints_at_a_key_only_after_a_keyless_403",
+    # TASK-33001.8 (Phase 9): chat_defaults.model belongs only to its own
+    # provider -- the resolver (whole file, pure, under a second) and the real
+    # Ctrl+T session-default path fed by both surviving mirror producers.
+    "Tests/Provider/test_provider_model_resolution.py",
+    "Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another",
+    # TASK-33001.8 AC#4: the new-chat pair for the ordinary cases (no control
+    # selection; a control provider with its model) is unchanged (pure, under
+    # a second).
+    "Tests/Chat/test_console_session_settings.py::test_new_chats_resolve_the_chat_defaults_pair",
+    # TASK-33005.11: the one readiness vocabulary, a key check verifying only
+    # the models it listed included (whole file, pure, about a second).
+    "Tests/Chat/test_readiness_words.py",
+    # TASK-33005.7: the empty transcript's ready line leads with the readiness
+    # word (one pure node, under a second).
+    "Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows",
+    # Phase 9 Task 12: TASK-33005.10's begin-order lock, endpoint-parsing memo
+    # and one model facet, and TASK-33005.9's wizard store keyed by the sent
+    # key (two new pure files, about a second each, 3 of 3 serial).
+    "Tests/Chat/test_provider_evidence_hardening.py",
+    "Tests/Chat/test_first_run_connection_evidence.py",
+    # Phase 9 Task 14 (2026-10-17): model-config tests no PR lane ran, each 3
+    # of 3 serial in the lane's install set. TASK-33001.11: the production-app
+    # provider-selection tests, each in its own private-profile child (three
+    # app mounts, ~30 s).
+    "Tests/ProductionApp/test_provider_selection_ownership.py",
+    # TASK-33641.7 (ledger R11): the mounted Library Skills recovery controls,
+    # each case in a subprocess host that resolves the theme guards (13 cases,
+    # ~40 s).
+    "Tests/Backup_Recovery/test_skills_recovery_controls.py",
+    # Phase 9 Task 17 (TASK-33001.14, TASK-33641.11, TASK-33641.10): a summary
+    # sends the key readiness resolves; the legacy [API] bridge honours a
+    # recorded credential_source; analyze() hands each provider every argument
+    # by name. Real loader on scratch configs, ~20 s together, 3 of 3 serial.
+    "Tests/LLM_Calls/test_summarization_credential_source.py",
+    "Tests/Chat/test_legacy_api_key_credential_source.py",
+    "Tests/LLM_Calls/test_dispatch_local_argument_routing.py",
+    # Phase 9's whole-PR review, round 1 (2026-10-18): sandboxed model-config
+    # tests that are the only evidence for ticked criteria and ran in no PR
+    # lane, each 3 of 3 serial in this job's install set (about 50 s together).
+    # TASK-33666: Stop ends a silent stream through the stall watchdog's stop
+    # poll (node ids: the file's older test_non_finite_config_falls_back_to_default
+    # reads guarded config and refuses with RecoveryRequired in this step).
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_silent_stream_without_reporting_a_stall",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_predicate_never_drops_or_reorders_items",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stall_still_trips_between_stop_polls",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_cancel_with_a_stop_predicate_still_propagates_and_closes",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_landing_as_the_window_expires_is_a_stop_and_raises_nothing_in_the_loop",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_stream_that_went_silent_after_content",
+    "Tests/Chat/test_stream_stall_watchdog.py::test_the_stop_poll_leaves_nothing_for_the_cyclic_collector",
+    # TASK-33641.6: a guarded config read on the UI loop sees only its own
+    # task's raw scope (whole file, pure asyncio).
+    "Tests/Backup_Recovery/test_raw_operation_task_discovery.py",
+    # TASK-33003.16: the theme loader drops 'auto NN%' on a background name and
+    # a value of the wrong kind, and the loaded theme applies (whole file).
+    "Tests/Utils/test_user_theme_loader.py",
+    # TASK-33641.1 AC#3: the boot CSS byte budget
+    # and the ancestor-scoped bare-type rule ratchet (private profile each).
+    "Tests/Performance/test_boot_css_byte_budget.py",
+    "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    # TASK-33001.15: the loader names the tables it filled from legacy [API],
+    # and a kept stored key is written only into such a table.
+    "Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section",
+    "Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api",
+    # TASK-33666 (Phase 9 fix): a fleet wake and the shared drain keep the
+    # automatic slot until the conversation's physical work exits.
+    "Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work",
+    "Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits",
+    # Its review: a draining wake leaves delivery, so a close still unfences.
+    "Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release",
+    # Its review in turn: the draining wake's claim keeps a second wake turn out
+    # of its session.
+    "Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -261,6 +335,115 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",
 )
 
+#: The second admission-sensitive job's invocation, exactly, in order
+#: (TASK-35575, the owner's decision of 2026-10-19): Phase 9's
+#: model-config targets, split out of ``pr-fast-lane-admission`` when the
+#: 93 targets in one job took 29.8 and 27.4 min of its 35-min cap on
+#: PR #3169's two runs. Same order as they had there.
+ADMISSION_2_TARGETS = (
+    # Phase 9's whole-PR review, round 2 (TASK-33641.1, TASK-33003.15): the
+    # step's three many-case pure rule tests lead it, ahead of every mounted
+    # target. Tests/conftest.py collects garbage after every Tests/UI test, and
+    # that pass slows as mounted targets grow the heap: the 623-case chrome rule
+    # test took 710 s of a 956 s run behind them and 74-80 s here (42 s alone;
+    # the step's collection is the rest). Their own pytest step would save
+    # about 45 s, which is not worth a second step in this job.
+    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
+    "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
+    # setup-blocker reason strings (the capture phase's F2 copy and round 1's
+    # endpoint reason). A pure function test, but its file's module pytestmark
+    # is bootstrap_profile, so it runs here (ledger R11), not in the census.
+    "Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers",
+    # Phase 9 Task 14 (ledger R11): TASK-33641.3's backend-row tests are
+    # bootstrap_profile, so they run here (12 cases, ~20 s, 3 of 3 serial).
+    "Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column",
+    "Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row",
+    # Phase 9 capture fix wave, review round 1 (ledger R11): the bootstrap_profile
+    # node ids this phase had put in the UI census run here instead: the Image
+    # and Video Gen backend editors (TASK-33641.3, 4 cases), the endpoint discovery nodes
+    # (TASK-33006.19, TASK-33006.25, TASK-33005.12, TASK-35190; 16 cases) and
+    # the weekly queue row (TASK-33641.4, 2 cases). 22 cases, ~80 s serial.
+    "Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint",
+    "Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry",
+    "Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last",
+    "Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run",
+    # Phase 9's whole-PR review, round 1 (2026-10-18): the model-config tests
+    # that are the only evidence for ticked criteria and ran in no PR lane.
+    # Each is bootstrap_profile (its own mark, its module's, or Tests/conftest.py's
+    # file list), each 3 of 3 serial in this job's install set. TASK-33003.11 and
+    # TASK-33006.23: the view tabs paint whole labels and their '●' mark.
+    "Tests/UI/test_console_settings_geometry.py::test_view_tabs_paint_their_whole_labels_after_each_view_switch",
+    "Tests/UI/test_console_settings_geometry.py::test_a_selected_view_tab_paints_its_mark_while_it_holds_focus",
+    # The file's four UI census nodes, which TASK-33006.24's module mark made
+    # bootstrap_profile (ledger R11 puts them here, not in the census).
+    "Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible",
+    "Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen",
+    "Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart",
+    "Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport",
+    # TASK-33006.21: on_mount and a subscription change each build default
+    # readiness once; TASK-33006.22: the Context view names the unsaved endpoint.
+    "Tests/UI/test_console_session_settings.py::test_console_settings_mount_builds_default_readiness_once",
+    "Tests/UI/test_console_session_settings.py::test_console_settings_subscription_change_builds_default_readiness_once",
+    "Tests/UI/test_console_session_settings.py::test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint",
+    "Tests/UI/test_console_session_settings.py::test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason",
+    # TASK-33666: Stop on a silent provider releases the run thread (whole file).
+    "Tests/Chat/test_console_stop_silent_provider.py",
+    # TASK-33667: a second open of an open chat reuses its session, from the
+    # sidebar and while the launch wake loads its tree.
+    "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles",
+    "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_two_overlapping_opens_of_a_chat_make_one_session",
+    "Tests/Chat/test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice",
+    # TASK-33641.4: an enabled recurring reminder shows its next run, and the
+    # two queue pins the row-order fix rewrote (now marked, as the new nodes).
+    "Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status",
+    "Tests/UI/test_schedules_disabled_state.py::test_rearmed_one_time_reminder_shows_its_new_run",
+    "Tests/UI/test_schedules_disabled_state.py::test_reminder_that_will_not_run_keeps_its_dash_form",
+    "Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_with_no_next_run_reads_the_plain_dash",
+    "Tests/UI/test_schedules_disabled_state.py::test_real_recurring_dispatch_keeps_the_next_run_visible",
+    "Tests/UI/test_schedules_disabled_state.py::test_disabled_row_and_badge_read_disabled_and_survive_refresh",
+    "Tests/UI/test_schedules_next_run_relative.py::test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail",
+    "Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form",
+    # TASK-33641.4 (whole-PR review, round 2): the third rewritten pin, a
+    # definition row's subtitle. Pure, but Tests/UI/conftest.py imports the app
+    # under the per-test redirect at setup, so unmarked it errors with
+    # RecoveryRequired in a process that has not imported the app; marked
+    # bootstrap_profile, it left the UI census for this step (ledger R11).
+    "Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label",
+    # TASK-33003.15: the Workflows panes paint readable edges and text (their
+    # two rule tests lead this tuple); TASK-33003.16: a surface set to auto
+    # stays measurable; TASK-33641.1: the app chrome lines paint at 3:1 as
+    # painted (their rule test leads this tuple too).
+    "Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text",
+    "Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable",
+    "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast",
+    # TASK-33003.19 and TASK-33006.17: the Console modal inventory, launch
+    # declarations and contract tables (they drift with every new Console modal
+    # on dev), the redirected click, and the mounted rows those riders changed.
+    # Node ids, about 70 s serial: the whole file is 120 cases and ~2.7 min.
+    "Tests/UI/test_console_modal_dismissal.py::test_console_modal_launch_declarations_match_runtime_construction",
+    "Tests/UI/test_console_modal_dismissal.py::test_console_modal_inventory_matches_runtime_ast_and_transitive_launches",
+    "Tests/UI/test_console_modal_dismissal.py::test_task2_modal_contract_table_is_complete_and_adopted",
+    "Tests/UI/test_console_modal_dismissal.py::test_task3_modal_contract_table_is_complete_and_adopted",
+    "Tests/UI/test_console_modal_dismissal.py::test_task4_transitive_modal_contract_table_is_complete_and_adopted",
+    "Tests/UI/test_console_modal_dismissal.py::test_settings_redirected_select_click_uses_real_mro_dispatch",
+    "Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result",
+    "Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result",
+    "Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result",
+    # TASK-33666 (Phase 9 fix): a Stop keeps the chat start's automatic slot
+    # until the provider worker, and the bridge worker, exit (bootstrap_profile).
+    "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits",
+    "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits",
+)
+
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the
 #: admission-sensitive invocation, never in the sandboxed one above. Pinned as
@@ -328,9 +511,11 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-34916: the PR Fast Lane's admission-sensitive half is its own job.
     # TASK-34929: the Dreams tracking tests are the fifth lane.
     # TASK-34986: PR2921's Dreams/Guardian steps left console-p0-gate.
+    # TASK-35575: the admission-sensitive suites run in two jobs.
     assert required.get("needs") == [
         "pr-fast-lane",
         "pr-fast-lane-admission",
+        "pr-fast-lane-admission-2",
         "ui-fast-lane",
         "console-p0-gate",
         "dreams-boundary",
@@ -347,6 +532,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     for lane, step_name in (
         ("pr-fast-lane", "Require successful PR fast lane"),
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
+        ("pr-fast-lane-admission-2", "Require successful PR fast lane (admission-sensitive 2)"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
     ):
@@ -357,7 +543,12 @@ def _assert_required_aggregation(workflow: dict) -> None:
         )
         assert f"needs.{lane}.result" in verdict["run"]
         assert "exit 1" in verdict["run"]
-    for job_name in ("pr-fast-lane-admission", "dreams-boundary", "dreams-tracking"):
+    for job_name in (
+        "pr-fast-lane-admission",
+        "pr-fast-lane-admission-2",
+        "dreams-boundary",
+        "dreams-tracking",
+    ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
         assert all(not step.get("continue-on-error", False) for step in job["steps"])
@@ -403,6 +594,12 @@ EXACT_STEPS = {
         "pr-fast-lane-admission",
         "Run admission-sensitive suites",
         ADMISSION_TARGETS,
+        300,
+    ),
+    "admission-sensitive 2": (
+        "pr-fast-lane-admission-2",
+        "Run admission-sensitive suites 2",
+        ADMISSION_2_TARGETS,
         300,
     ),
 }
@@ -497,6 +694,12 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
             "PR Fast Lane (admission-sensitive)",
             "Run admission-sensitive suites",
         ),
+        # TASK-35575: the second admission-sensitive job, shaped the same.
+        (
+            "pr-fast-lane-admission-2",
+            "PR Fast Lane (admission-sensitive 2)",
+            "Run admission-sensitive suites 2",
+        ),
     ],
 )
 def test_fast_lane_is_one_serial_minimal_python_312_job(
@@ -519,6 +722,8 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     # the admission-sensitive step (worst case measured 28m20s). TASK-34916
     # split the two pytest invocations into two jobs instead of raising it
     # again: over 90 PR runs the halves replay at max 20.8 and 20.1 min.
+    # TASK-35575 (owner decision, 2026-10-19) split the admission-sensitive
+    # half in two the same way when Phase 9 took it to 29.8 min.
     assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
     # checkout, setup-python, install, one pytest step. TASK-32873 keeps the
@@ -609,14 +814,16 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         assert tokens[-2:] == [timeout, "--tb=short"]
         assert _pytest_targets(step["run"]), step["name"]
     # P0 targets live here, not in pr-fast-lane (whose budget they broke).
-    fast_targets = set(
-        _pytest_targets(
-            _named_step(
-                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane-admission"],
-                "Run admission-sensitive suites",
-            )["run"]
+    fast_targets = {
+        target
+        for job, name, _, _ in (
+            EXACT_STEPS["admission-sensitive"],
+            EXACT_STEPS["admission-sensitive 2"],
         )
-    )
+        for target in _pytest_targets(
+            _named_step(_workflow("derived-artifacts.yml")["jobs"][job], name)["run"]
+        )
+    }
     assert not fast_targets & set(_pytest_targets(admission["run"]))
 
 
@@ -691,6 +898,34 @@ def test_admission_target_set_is_exact() -> None:
     assert set(NOTES_SYNC_REAL_STACK_TARGETS) <= set(ADMISSION_TARGETS)
 
 
+def test_second_admission_target_set_is_exact() -> None:
+    """TASK-35575: the second admission-sensitive job is pinned the same way,
+    and the two jobs share no target (each would otherwise run twice)."""
+    _assert_exact_step(_workflow("derived-artifacts.yml"), "admission-sensitive 2")
+    # Phase 9's whole-PR review, round 2: the many-case pure rule tests lead
+    # the step, ahead of every mounted target (see ADMISSION_2_TARGETS' note).
+    assert ADMISSION_2_TARGETS[:3] == (
+        "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
+        "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
+        "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    )
+    assert len(set(ADMISSION_2_TARGETS)) == len(ADMISSION_2_TARGETS)
+    for other in (ADMISSION_TARGETS, FAST_LANE_TARGETS):
+        # FAST_LANE_TARGETS too: a bootstrap_profile enrollment poisons the
+        # sandboxed suites sharing its process (TASK-32873), the guard
+        # test_admission_sensitive_step_gates_the_notes_sync_real_stack_files
+        # keeps for the first job.
+        shared = [
+            (first, second)
+            for first in other
+            for second in ADMISSION_2_TARGETS
+            if first == second
+            or first.startswith(second + "::")
+            or second.startswith(first + "::")
+        ]
+        assert shared == []
+
+
 def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
     """Keep the "no silent winner" and no-hold pins on every pull request.
 
@@ -758,6 +993,21 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         _assert_required_aggregation(mutated)
 
 
+@pytest.mark.parametrize("lane", ["pr-fast-lane-admission", "pr-fast-lane-admission-2"])
+def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: str) -> None:
+    """TASK-35575: the required check waits on each admission-sensitive job;
+    dropping one from its ``needs`` fails the contract.
+
+    Args:
+        lane: The admission-sensitive job dropped from the aggregate's needs.
+    """
+    mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    mutated["jobs"]["derived-artifacts"]["needs"].remove(lane)
+
+    with pytest.raises(AssertionError):
+        _assert_required_aggregation(mutated)
+
+
 @pytest.mark.parametrize(
     ("job_name", "step_name"),
     [
@@ -765,6 +1015,9 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         ("pr-fast-lane-admission", None),
         ("pr-fast-lane-admission", "Run admission-sensitive suites"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive)"),
+        ("pr-fast-lane-admission-2", None),
+        ("pr-fast-lane-admission-2", "Run admission-sensitive suites 2"),
+        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 2)"),
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests"),
         ("derived-artifacts", "Require successful Dreams tracking tests"),

@@ -233,6 +233,27 @@ def console_generation_test_availability(
     return ConsoleGenerationTestAvailability.UNSUPPORTED
 
 
+def model_facet(
+    model: object, endpoint: str, model_ids: Collection[str]
+) -> ModelFacet:
+    """The model facet of a snapshot (TASK-33005.10: one derivation).
+
+    Args:
+        model: The selected model; blank or not a string is missing.
+        endpoint: The endpoint facet of the evidence for this connection.
+        model_ids: The models that evidence's listing returned.
+
+    Returns:
+        ``confirmed`` only for a model a reached listing returned.
+    """
+    model_id = model.strip() if isinstance(model, str) else ""
+    if not model_id:
+        return "missing"
+    if endpoint == "reachable" and model_id in model_ids:
+        return "confirmed"
+    return "unconfirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderReadinessSnapshot:
     """Independent configuration, credential, endpoint, model, and generation facets."""
@@ -611,6 +632,15 @@ class _MutationResult(Protocol):
 #: of the probe that BEGAN last, so a slow probe settling late on one surface
 #: never overwrites a newer one from another (and a clock step cannot either).
 _BEGIN_ORDER = count(1)
+#: TASK-33005.10: ``next()`` on a shared count is atomic only under the GIL,
+#: and stores on different threads allocate from it (the free-threaded build
+#: the owner plans gives no such guarantee), so allocation takes this lock.
+_BEGIN_ORDER_LOCK = Lock()
+
+
+def _next_begin_order() -> int:
+    with _BEGIN_ORDER_LOCK:
+        return next(_BEGIN_ORDER)
 
 
 class _ProviderTestToken:
@@ -619,7 +649,7 @@ class _ProviderTestToken:
     __slots__ = ("order",)
 
     def __init__(self) -> None:
-        self.order = next(_BEGIN_ORDER)
+        self.order = _next_begin_order()
 
     def __repr__(self) -> str:
         return "<ProviderTestToken>"
@@ -631,7 +661,7 @@ class _ProviderGenerationTestToken:
     __slots__ = ("order",)
 
     def __init__(self) -> None:
-        self.order = next(_BEGIN_ORDER)
+        self.order = _next_begin_order()
 
     def __repr__(self) -> str:
         return "<ProviderGenerationTestToken>"
@@ -655,10 +685,28 @@ class ProviderTestEvidenceStore:
     back for an exact connection. A rebound earlier result (a
     ``ProviderTestEvidence`` outcome) was published when it was observed, so
     it is not published again. Without ``app`` the store is draft-only.
+
+    TASK-33005.9: ``credential_of`` is for a surface whose draft identity
+    counts credential edits instead of digesting the key (the first-run
+    wizard). It returns the key a probe begun now sends; the probe's facts
+    publish under that key's :func:`connection_credential_revision`, the
+    connection every other surface keys. Such a store reads no facts back:
+    its identities are not connections, so an invalidated result would be
+    read back for the very identity it tested.
     """
 
-    def __init__(self, app: Callable[[], object] | None = None) -> None:
+    def __init__(
+        self,
+        app: Callable[[], object] | None = None,
+        *,
+        credential_of: Callable[[], object] | None = None,
+    ) -> None:
         self._app = app
+        self._credential_of = credential_of
+        #: (draft identity, the connection its facts publish under).
+        self._connection: tuple[ProviderDraftIdentity, ProviderDraftIdentity] | None = (
+            None
+        )
         self._shared_owner: ProviderConnectionEvidence | None = None
         self._lock = RLock()
         self._operation_epoch = 0
@@ -692,6 +740,7 @@ class ProviderTestEvidenceStore:
 
         if type(identity) is not ProviderDraftIdentity:
             raise ValueError("Provider draft identity is invalid.")
+        connection = self._probe_connection(identity)
         with self._lock:
             if identity.draft_generation < self._latest_generation:
                 raise ValueError("Draft generation is older than current evidence.")
@@ -700,6 +749,7 @@ class ProviderTestEvidenceStore:
                 self._clear_all_test_state()
                 self._advance_generation_operation()
             self._advance_operation()
+            self._connection = None if connection is None else (identity, connection)
             token = _ProviderTestToken()
             self._current_token = token
             self._current_token_epoch = self._operation_epoch
@@ -772,8 +822,9 @@ class ProviderTestEvidenceStore:
             )
             self._evidence = settled
             self._advance_operation()
+            connection = self._shared_identity(identity)
         if type(outcome) is not ProviderTestEvidence:
-            self._publish(settled, token.order, generation=False)
+            self._publish(settled, token.order, connection, generation=False)
         return True
 
     def begin_generation(
@@ -899,8 +950,9 @@ class ProviderTestEvidenceStore:
             self._evidence = settled
             self._generation_cancel_restore = None
             self._advance_generation_operation()
+            connection = self._shared_identity(identity)
         if type(outcome) is not ProviderTestEvidence:
-            self._publish(settled, token.order, endpoint=False)
+            self._publish(settled, token.order, connection, endpoint=False)
         return True
 
     def evidence_for(
@@ -910,7 +962,8 @@ class ProviderTestEvidenceStore:
 
         A linked store falls back to another surface's settled result for the
         same connection, re-stamped with ``identity`` -- but never for an
-        identity ``begin`` would refuse (TASK-33001.3's invariant).
+        identity ``begin`` would refuse (TASK-33001.3's invariant), nor in a
+        ``credential_of`` store, whose identities are not connections.
         """
 
         if type(identity) is not ProviderDraftIdentity:
@@ -918,7 +971,10 @@ class ProviderTestEvidenceStore:
         with self._lock:
             if self._evidence is not None and self._evidence.identity == identity:
                 return self._evidence
-            if identity.draft_generation < self._latest_generation:
+            if (
+                identity.draft_generation < self._latest_generation
+                or self._credential_of is not None
+            ):
                 return None
         shared = self._shared()
         return shared.evidence_for(identity) if shared is not None else None
@@ -1093,14 +1149,23 @@ class ProviderTestEvidenceStore:
                     saved_identity.draft_generation,
                 )
 
+            tested_connection = self._shared_identity(tested_identity)
+            saved_connection = saved_identity
+            if can_preserve and self._credential_of and tested_connection is not None:
+                # Same key (the revisions match): only the source moves.
+                saved_connection = replace(
+                    tested_connection,
+                    credential_source=saved_identity.credential_source,
+                )
+                self._connection = (saved_identity, saved_connection)
             self._clear_all_test_state()
             self._advance_generation_operation()
             if can_preserve and evidence is not None:
                 self._evidence = replace(evidence, identity=saved_identity)
             self._advance_operation()
         shared = self._shared() if can_preserve else None
-        if shared is not None:
-            shared.carry(tested_identity, saved_identity)
+        if shared is not None and tested_connection is not None:
+            shared.carry(tested_connection, saved_connection)
         return can_preserve
 
     def _shared(self) -> ProviderConnectionEvidence | None:
@@ -1114,15 +1179,43 @@ class ProviderTestEvidenceStore:
         self,
         evidence: ProviderTestEvidence,
         order: int,
+        connection: ProviderDraftIdentity | None,
         *,
         endpoint: bool = True,
         generation: bool = True,
     ) -> None:
-        shared = self._shared()
+        shared = self._shared() if connection is not None else None
         if shared is not None:
+            if connection != evidence.identity:
+                evidence = replace(evidence, identity=connection)
             shared.publish(
                 evidence, order=order, endpoint=endpoint, generation=generation
             )
+
+    def _probe_connection(
+        self, identity: ProviderDraftIdentity
+    ) -> ProviderDraftIdentity | None:
+        """The connection a probe of ``identity`` begun now publishes under."""
+
+        if self._credential_of is None:
+            return identity
+        try:
+            credential = self._credential_of()
+        except Exception:  # noqa: BLE001 - the probe runs; its result stays private
+            return None
+        return replace(
+            identity, credential_revision=connection_credential_revision(credential)
+        )
+
+    def _shared_identity(
+        self, identity: ProviderDraftIdentity
+    ) -> ProviderDraftIdentity | None:
+        """Under the lock: the connection ``identity``'s facts publish under."""
+
+        if self._credential_of is None:
+            return identity
+        held = self._connection
+        return held[1] if held is not None and held[0] == identity else None
 
     def _reject_settlement(
         self,

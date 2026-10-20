@@ -140,6 +140,34 @@ CharacterAvatarPrerenderJob = Callable[
 ]
 
 
+def rail_focus_shortcuts(
+    shortcuts: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Return the Console footer hints for focus inside either rail.
+
+    TASK-32322: with focus inside a rail, Tab is region-locked -- the exits
+    are F6 and Esc, taught first (degradation drops from the END). That names
+    F6 and Esc, so their own hints go (a collapsed composer's Esc too), and
+    Ctrl+K/T trail the rail's Alt+I/A/C: a 211-column footer keeps all three
+    (TASK-33006.20).
+
+    Args:
+        shortcuts: The footer's ``(key label, description)`` hints, in the
+            order the footer shows them.
+
+    Returns:
+        The rail-exit hint, then ``shortcuts`` without the F6/Esc hints and
+        with Ctrl+K/T moved after the last Alt+I/A/C hint (or to the end).
+    """
+    later = (("Ctrl+K", "switch session"), ("Ctrl+T", "new tab"))
+    gone = (("F6", "next pane"), ("Esc", "show composer"), *later)
+    rest = [p for p in shortcuts if p not in gone]
+    keys = ("Alt+I", "Alt+A", "Alt+C")
+    at = max([i + 1 for i, p in enumerate(rest) if p[0] in keys] or [len(rest)])
+    rest[at:at] = [p for p in shortcuts if p in later]
+    return (("Esc", "composer · F6 panes"), *rest)
+
+
 @dataclass(frozen=True, slots=True)
 class ContextSectionDescriptor:
     """Stable direct Context-section identity and rendered-content ceiling."""

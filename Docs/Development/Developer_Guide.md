@@ -66,7 +66,7 @@ For Personal Context internals and extension work, see [Personal Context Profile
     *   Modules responsible for making API calls to various Large Language Model (LLM) providers, both local and commercial.
     *   `LLM_API_Calls.py`: Handles calls to commercial/remote LLM APIs.
     *   `LLM_API_Calls_Local.py`: Handles calls to local LLM instances.
-    *   `Summarization_General_Lib.py`: Text summarization; routes every provider through the unified chat dispatch (`chat_api_call`) via a per-provider spec table (TASK-34895; the former `Local_Summarization_Lib.py` per-provider copy was removed).
+    *   `Summarization_General_Lib.py`: Text summarization; routes every provider through the unified chat dispatch (`chat_api_call`) via a per-provider spec table (TASK-34895; the former `Local_Summarization_Lib.py` per-provider copy was deleted by TASK-35553).
 
 *   **`tldw_chatbook/Prompt_Management/`**:
     *   `Prompts_Interop.py`: Manages the interaction between different prompt sources or formats.

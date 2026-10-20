@@ -1489,7 +1489,9 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
-/* Settings > Image Gen: the whole panel and its nested backend-editor
+/* Settings > Image Gen (and Video Gen, the same shape; its editor
+   collapsed to one row until the 2026-10-18 capture fix, TASK-33641.3):
+   the whole panel and its nested backend-editor
    scroll region default to Textual's framework-level width/height
    fallback (1fr) since neither `Vertical`/`VerticalScroll` declares one
    in DEFAULT_CSS for a widget shaped like this -- fine for a SINGLE
@@ -1502,11 +1504,13 @@ Button.settings-category-group-toggle:focus {
    defaults, Save/Revert) off the bottom entirely -- `settings-detail-
    pane` (the ancestor Settings already scrolls the WHOLE category
    through) is the one and only scroll owner here. */
-#settings-imagegen-panel {
+#settings-imagegen-panel,
+#settings-videogen-panel {
     height: auto;
 }
 
-#settings-imagegen-editor {
+#settings-imagegen-editor,
+#settings-videogen-editor {
     height: auto;
 }
 
@@ -1853,11 +1857,36 @@ Button.settings-category-group-toggle:focus {
    word beside it (switch_word) stays the text carrier. */
 /* task-1713 counterweight: the widened shared label column (24) does not
    fit the Image Gen backend rows' five controls at 120 cols -- the
-   geometry guard test pins that width. Backend-row labels are short
-   backend names; 12 never truncated them. */
-.settings-imagegen-backend-row .settings-input-label {
+   geometry guard test pins that width. The row is 52 cells there, and the
+   default backend's row (it carries "★ Default") can spare 16 at most.
+   TASK-33641.3: keyed on the row label's own class, not on the shared
+   .settings-input-label. That token is pinned to the boot bundle (another
+   screen composes it), and these two rules belong in the lazy Settings
+   sheet with the rest of the row. Two classes outrank the shared rule
+   whichever sheet loads last.
+   The last cell of the column is padding, at every width (the rule below
+   inherits it). The name wraps and the row shows its first line, so a
+   column with no padding can come out exactly as wide as what it paints:
+   "SD.cpp video" filled these 12 cells and ran into its status, and a
+   squeezed wide column painted "SwarmUI (local)Unreachable: connection
+   refused" at 151 columns. */
+.settings-imagegen-backend-row .settings-imagegen-backend-label {
     width: $ds-size-12;
     min-width: $ds-size-12;
+    padding-right: $ds-space-1;
+}
+
+/* TASK-33641.3: 12 cells cut "ComfyUI (H3 image edit)" to "ComfyUI (H3".
+   From 150 columns the name takes what the row's other controls leave, up
+   to the shared 24-cell column: the longest name (23) and the padding cell.
+   At rest (a 14-cell status) every row has the 24, so the statuses share a
+   column. A probe writes a longer result into the status in place; a fixed
+   24 then pushed Test out of the 67-cell row at 150 columns, so that row
+   shortens its own name instead (never below the 12 above). Image
+   Generation and Video Generation share this row class. */
+App.-wide-viewport .settings-imagegen-backend-row .settings-imagegen-backend-label {
+    width: $ds-width-fill;
+    max-width: $ds-size-24;
 }
 
 

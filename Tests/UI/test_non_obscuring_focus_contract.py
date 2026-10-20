@@ -127,9 +127,12 @@ SOURCE_ONLY_CSS_MODULES = (
     UNIFIED_SIDEBAR,
 )
 
+#: TASK-33003.17, rewritten on purpose: `.selection-list--button-highlighted`
+#: left this tuple and the two selector lists below. It is the unchecked box
+#: under the cursor, not a selected state; the contract painted its X like a
+#: checked one (Tests/UI/test_settings_discovered_model_toggle.py renders it).
 NATIVE_CHOICE_SELECTED_MARKERS = (
     ".option-list--option-highlighted",
-    ".selection-list--button-highlighted",
     ".selection-list--button-selected",
     ".selection-list--button-selected-highlighted",
     ".tree--cursor",
@@ -1688,7 +1691,6 @@ def test_native_choice_and_tree_states_follow_shared_contracts():
     for selector in (
         "OptionList > .option-list--option-highlighted",
         "OptionList:focus > .option-list--option-highlighted",
-        "SelectionList > .selection-list--button-highlighted",
         "SelectionList > .selection-list--button-selected",
         "SelectionList > .selection-list--button-selected-highlighted",
         "Tree > .tree--cursor",
@@ -1712,7 +1714,6 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
     for selector in (
         "OptionList > .option-list--option-highlighted",
         "OptionList:focus > .option-list--option-highlighted",
-        "SelectionList > .selection-list--button-highlighted",
         "SelectionList > .selection-list--button-selected",
         "SelectionList > .selection-list--button-selected-highlighted",
         "Tree > .tree--cursor",

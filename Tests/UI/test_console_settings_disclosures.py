@@ -27,9 +27,12 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
+    CORE_FIELDS,
     DISCLOSURE_TITLE_CELLS,
+    ENDPOINT_ROW_ID,
     FIELD_ROW_FIELDS,
     INVALID_ENDPOINT_HOST,
+    MODEL_CHANGE_ID,
     NAME_DISCLOSURE_ID,
     NAME_INPUT_ID,
     REQUEST_ESTIMATE_DISCLOSURE_ID,
@@ -528,3 +531,91 @@ async def test_focus_inside_a_closed_disclosure_opens_it_and_reveals_the_field()
             seed.region,
             body.content_region,
         )
+
+
+@pytest.mark.parametrize(
+    ("hidden", "opens_on"),
+    [
+        pytest.param(("temperature",), field_control_id("max_tokens"), id="next-field"),
+        pytest.param(CORE_FIELDS, MODEL_CHANGE_ID, id="change"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_ready_chat_without_temperature_opens_on_the_next_shown_field(
+    hidden, opens_on, monkeypatch
+) -> None:
+    """TASK-33006.10 AC#1: no provider drops Temperature today, so the
+    support sync is made to hide it. The Model view then opens on the next
+    shown core field, or on Change when no core field shows; never on
+    nothing."""
+    import tldw_chatbook.Widgets.Console.console_settings_field_row as field_row
+
+    real = field_row.generation_field_support
+
+    def without(provider, model, app_config):
+        shown_hidden, unknown = real(provider, model, app_config)
+        return tuple(dict.fromkeys(shown_hidden + tuple(hidden))), unknown
+
+    monkeypatch.setattr(field_row, "generation_field_support", without)
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await _focus_settled(pilot)
+        assert not modal.query_one(f"#{field_control_id('temperature')}-row").display
+        focused = app.focused
+        assert focused is not None and focused.id == opens_on, focused
+
+
+@pytest.mark.asyncio
+async def test_the_endpoint_row_syncs_with_an_extra_child() -> None:
+    """TASK-33006.13: the Endpoint row's sync finds the label, the Base URL
+    input and New endpoint… by id or class, so a row that gains a child (a
+    hint, a status) still shows the label only beside its input as a pick
+    moves the chat between a URL provider and a cloud one."""
+    from Tests.UI.test_console_settings_model_change import pick_modal
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        row = modal.query_one(f"#{ENDPOINT_ROW_ID}")
+        await row.mount(Static("a hint", id="endpoint-row-extra"), before=0)
+        base_url = modal.query_one("#console-settings-base-url", Input)
+        label = row.query_one(".console-settings-modal-label", Static)
+
+        for pair, url_shown in ((("openai", "gpt-5"), False), (("llama_cpp", "model-b"), True)):
+            modal._model_picked(pair)
+            await _focus_settled(pilot)
+            assert modal._active_provider == pair[0]
+            assert base_url.display is url_shown and label.display is url_shown
+            assert row.display, "New endpoint… keeps the row while entries exist"
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_chat_reopens_a_closed_connection_on_its_fix(monkeypatch) -> None:
+    """TASK-33006.14: a blocked chat composes Connection open, so the open
+    focus meets it closed only after the user closed it. Closed, then the
+    Context view and back: the Model view opens Connection again and focuses
+    the recovery action inside it."""
+    app = CoreFirstHarness()
+    _openai_missing(app, monkeypatch)
+    modal = _modal(app, _settings("openai", "gpt-5", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        connection = modal.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
+        await pilot.click(f"#{CONNECTION_DISCLOSURE_ID} CollapsibleTitle")
+        await _focus_settled(pilot)
+        assert connection.collapsed is True, "precondition: the user closed it"
+        await pilot.click("#console-settings-view-context")
+        await _focus_settled(pilot)
+        assert connection.collapsed is True, "precondition: still closed"
+
+        await pilot.click("#console-settings-view-model")
+        await _focus_settled(pilot)
+
+        assert connection.collapsed is False
+        credential = modal.query_one("#console-settings-configure-credential", Button)
+        assert app.focused is credential
+        body = modal.query_one("#console-settings-body")
+        assert body.region.contains_region(credential.region)

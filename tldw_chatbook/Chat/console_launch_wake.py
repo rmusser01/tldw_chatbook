@@ -224,6 +224,14 @@ def _ensure_launch_runtime(app: Any) -> Any:
     return controller
 
 
+def _is_open(store: Any, conversation_id: str) -> bool:
+    """Whether a session for ``conversation_id`` is already in ``store``."""
+    return any(
+        conversation_id in (session.persisted_conversation_id, session.id)
+        for session in store.sessions()
+    )
+
+
 def _restore_active_session(store: Any, session_id: str | None) -> None:
     """Put the active tab back where hydration found it.
 
@@ -308,10 +316,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
     for conversation_id in pending:
         if not wake.has_pending(conversation_id):
             continue  # Another caller completed the result after discovery.
-        if any(
-            conversation_id in (session.persisted_conversation_id, session.id)
-            for session in store.sessions()
-        ):
+        if _is_open(store, conversation_id):
             continue  # already open (a re-entrant call); the coordinator has it
         if not _conversation_exists_locally(app, conversation_id):
             _clear_unresolvable_mark(app, conversation_id)
@@ -324,6 +329,12 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
                 "staged for the next Console visit (exception_type={})",
                 type(exc).__name__,
             )
+            continue
+        if _is_open(store, conversation_id):
+            # Opened from the rail, the switcher or Library while the tree
+            # loaded. A second session's recovery card could never settle
+            # (TASK-33667), so look again after the await, as the buddy
+            # restore does.
             continue
         if tree is None:
             # The row vanished between the existence check and the load.

@@ -102,7 +102,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
-    "tldw_chatbook/Chat/console_chat_controller.py": 29184,
+    # TASK-35190: the rebaser's endpoint choice moved to
+    # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
+    # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29151,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -232,7 +235,23 @@ _BUDGETS: dict[str, int] = {
     # Rebased onto dev 2026-10-15: dev's UI-perf waves (tasks 34913, 34934,
     # 34935-34937 and their review fixes) added 51 lines; this PR's own net
     # change is unchanged: 35,818.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35818,
+    # Phase 9 Task 2, TASK-33002.9: an unlisted model leads the Test rows and
+    # its toast warns (+3), offset by two reflowed statements (-8): 35,813.
+    # TASK-33005.7: the Key block's identity row moves to
+    # Settings_Modules/readiness_lines.py and gains its word (-4): 35,809.
+    # TASK-33005.15: the Overview's Configuration row moves there too, and
+    # its readiness poll keys on the evidence revision (-28): 35,781.
+    # Its review round 1: the card's Key rows refresh writes the identity row
+    # from the Key check row's verdict, so its own write here goes (-3): 35,778.
+    # Phase 9 Task 7 (TASK-33002.10, .11, 33005.8, 33007.11): its lines are
+    # offset by dropping three evidence lookups' None guards (evidence_for
+    # refuses None itself) and the stale check's sentinel pair (net -1): 35,777.
+    # Phase 9 Task 12, TASK-33005.10: the Test rows' model facet is the
+    # snapshot's own model_facet, not a second copy (-5): 35,772.
+    # TASK-33005.15's PR review: one write covers every Overview row (-1): 35,771.
+    # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint is -1: 35,770.
+    # Rebased onto dev 88fe3108e5, whose task-35150 Tools & MCP category is +1: 35,771.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -301,8 +320,21 @@ _BUDGETS: dict[str, int] = {
     # lowers it to 6,103: Save as model default shows on the saved-defaults
     # answer, so the persisted-table predicate is gone. (Counts above predate
     # PR #2993's ruff reflow of this file, +60 lines AST-identical; Phase 6
-    # rebased onto it measures 6,193.)
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6193,
+    # rebased onto it measures 6,193.) TASK-33003.11 lowers it to 6,178: one
+    # loop sets both view tabs' label, class and tooltip. The loop alone
+    # measures 6,169; the other nine lines are the same plan task's next two
+    # riders, the single mount-time readiness build (TASK-33006.21) and the
+    # Context view's unsaved-endpoint reason (TASK-33006.22). The plan task's
+    # review fix lowers it to 6,177: the subscription poll's second
+    # default-readiness sync is gone (TASK-33006.21). Then to 6,155: compose
+    # yields the two view tabs unmarked and leaves the mark to that loop
+    # (TASK-33003.11). Then 6,160: that loop's tooltip escapes the tab name,
+    # as the markup-interpolation guard requires (escape_markup import).
+    # Phase 9 Task 6 lowers it to 6,159: a listing is kept, with the endpoint
+    # it listed, through the field rows' helper (TASK-33006.19).
+    # TASK-33002.7 shrank it to 6,153 (2629dafe36, then 4f1110488e).
+    # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint added 13: 6,166.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6166,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

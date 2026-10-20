@@ -59,6 +59,7 @@ CHECKERS = (
 VERDICTS = {
     "pr-fast-lane": "Require successful PR fast lane",
     "pr-fast-lane-admission": "Require successful PR fast lane (admission-sensitive)",
+    "pr-fast-lane-admission-2": "Require successful PR fast lane (admission-sensitive 2)",
     "ui-fast-lane": "Require successful UI fast lane",
     "console-p0-gate": "Require successful Console P0 regression gate",
     "dreams-boundary": "Require successful Dreams and Guardian boundary contracts",
@@ -95,6 +96,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         # TASK-34916: the PR Fast Lane's admission-sensitive pytest invocation,
         # moved out when the two steps together reached the 35-min cap.
         "pr-fast-lane-admission",
+        # TASK-35575: the admission-sensitive suites' second job, split out
+        # when Phase 9's targets took the first to 29.8 of its 35 min.
+        "pr-fast-lane-admission-2",
         "ui-fast-lane",
         # TASK-33621.27: the Console review's P0 regression tests, moved out
         # of pr-fast-lane when they took it to 33m41s of its 35-min cap.
@@ -390,6 +394,7 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
     for job_name in (
         "pr-fast-lane",
         "pr-fast-lane-admission",
+        "pr-fast-lane-admission-2",
         "console-p0-gate",
         "dreams-boundary",
         "dreams-tracking",
@@ -428,6 +433,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
     assert tuple(name for name, _ in steps) == (
         "pr-fast-lane: Run fast PR contract",
         "pr-fast-lane-admission: Run admission-sensitive suites",
+        "pr-fast-lane-admission-2: Run admission-sensitive suites 2",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
         "dreams-boundary: Run Dreams and Guardian boundary contracts",

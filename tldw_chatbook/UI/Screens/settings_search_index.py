@@ -746,6 +746,15 @@ def build_field_search_index() -> None:
             ),
         }
     )
+    # TASK-33003.14: Console Behavior's generation fallbacks carry Providers &
+    # Models' labels, and Providers & Models wins the tie, so each also answers
+    # to its section's name: '/fallback temperature' lands on the fallback.
+    console = FIELD_SEARCH_INDEX[SettingsCategoryId.CONSOLE_BEHAVIOR]
+    FIELD_SEARCH_INDEX[SettingsCategoryId.CONSOLE_BEHAVIOR] = console + tuple(
+        (field_id, f"Global fallback {label}")
+        for field_id, label in console
+        if field_id.startswith("settings-console-default-")
+    )
 
 
 build_field_search_index()

@@ -47,9 +47,9 @@ def _counts() -> dict[str, int]:
     those runners with perf-guard's.
 
     The runners are the shards plus every other lane the required check
-    ``needs`` (the PR Fast Lane's two jobs, the Console P0 gate, the Dreams
+    ``needs`` (the PR Fast Lane's three jobs, the Console P0 gate, the Dreams
     tracking tests and the Dreams and Guardian boundary contracts since
-    TASK-34916, TASK-34929 and TASK-34986), each one runner:
+    TASK-34916, TASK-35575, TASK-34929 and TASK-34986), each one runner:
     a second matrix job among them fails here instead of miscounting.
     """
     jobs = _jobs(WORKFLOW)

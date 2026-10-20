@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
 )
+from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
 from tldw_chatbook.config import (
     get_cli_setting,
     load_settings,
@@ -577,8 +578,8 @@ class HomeScreen(BaseAppScreen):
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
         """Assemble the T190 content snapshot from real seams, degrading quietly."""
-        console_ready = await asyncio.to_thread(
-            self._home_console_provider_ready, background_credentials=False
+        console_ready, check_failed = await asyncio.to_thread(
+            self._home_console_model_state, background_credentials=False
         )
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         conversation_service = getattr(
@@ -624,6 +625,7 @@ class HomeScreen(BaseAppScreen):
         )
         return HomeContentSnapshot(
             console_ready=console_ready,
+            model_check_failed=check_failed,
             conversation_count=_home_response_total(conversations_result),
             note_count=(
                 note_count_result if isinstance(note_count_result, int) else None
@@ -703,9 +705,9 @@ class HomeScreen(BaseAppScreen):
             logger.debug(f"Home content snapshot seam call failed: {exc}")
             return None
 
-    def _home_console_provider_ready(
+    def _home_console_model_state(
         self, *, background_credentials: bool, allow_fresh_load: bool = True
-    ) -> bool:
+    ) -> tuple[bool, bool]:
         """Return Console provider readiness from the freshest config.
 
         Reuses the exact readiness seams Console uses
@@ -715,7 +717,9 @@ class HomeScreen(BaseAppScreen):
         bug just fixed for Console (task-177) must not be reintroduced on
         Home. An injected hermetic test config (no disk-load marker
         sections) is honored verbatim, same as Console's
-        ``_provider_readiness_app_config``.
+        ``_provider_readiness_app_config``. TASK-33005.9: it reads the app's
+        shared connection evidence as the Console does (memory only, no
+        probe), so a refused test reads not ready here too.
 
         Args:
             background_credentials: Return cached credential readiness without
@@ -727,6 +731,10 @@ class HomeScreen(BaseAppScreen):
                 badge), skip the disk read and resolve readiness from the
                 in-memory ``app_config`` only, so first paint is honest and
                 cheap without a per-compose ``load_settings()`` disk hit.
+
+        Returns:
+            (ready to send, the blocker is a failed connection check: the
+            Model word then reads "Not ready", not "Not set up").
         """
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         config: Mapping[str, object] = (
@@ -750,11 +758,14 @@ class HomeScreen(BaseAppScreen):
                 settings,
                 app_config=config,
                 background_credentials=background_credentials,
+                connection_evidence=shared_connection_evidence(lambda: self.app),
             )
         except Exception as exc:
             logger.debug(f"Home Console readiness check failed: {exc}")
-            return False
-        return bool(readiness.native_send_supported)
+            return False, False
+        # The blockers a connection test produces (the Console's own set).
+        failed = readiness.blocker in {"endpoint_unreachable", "credential_rejected"}
+        return bool(readiness.native_send_supported), failed
 
     def _build_dashboard_input(self) -> HomeDashboardInput:
         test_override = getattr(self.app_instance, "_home_dashboard_test_input", None)
@@ -786,11 +797,11 @@ class HomeScreen(BaseAppScreen):
         # honest and flicker-free (no false "Ready" flash on a no-key profile);
         # the async content snapshot below refreshes it from freshly-loaded
         # config, keeping the badge in lockstep with ``console_ready``.
+        model_ready, check_failed = self._home_console_model_state(
+            background_credentials=True, allow_fresh_load=False
+        )
         dashboard_input = replace(
-            dashboard_input,
-            model_ready=self._home_console_provider_ready(
-                background_credentials=True, allow_fresh_load=False
-            ),
+            dashboard_input, model_ready=model_ready, model_check_failed=check_failed
         )
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)

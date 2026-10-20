@@ -7,7 +7,10 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS
+from tldw_chatbook.Chat.console_provider_support import (
+    GENERATION_FIELD_REQUEST_KEYS,
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityLease,
 )
@@ -17,6 +20,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     normalize_console_model_value,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
 
 # ADR-095 amendment 2026-09-26 (D3, TASK-33004.1): the quick default mask. The
@@ -192,6 +196,36 @@ def validate_console_settings_origin(
     return live_persisted_conversation_id == origin.persisted_conversation_id
 
 
+def initial_settings_draft(
+    settings: ConsoleSessionSettings,
+    context_policy: ConsoleContextPolicyOverrides,
+    *,
+    exposed_fields: frozenset[str],
+) -> ConsoleSettingsDraftState:
+    """Build one process-local transaction from an exact live snapshot.
+
+    ``ChatScreen._console_settings_initial_draft`` is this function (moved out
+    of the screen with TASK-35190's `remember_session_pair`).
+    """
+
+    return ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=context_policy,
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in sorted(exposed_fields)
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+
 def remember_model_draft(
     state: ConsoleSettingsDraftState,
 ) -> ConsoleSettingsDraftState:
@@ -206,7 +240,9 @@ def remember_model_draft(
         entry for the current provider/model pair, keyed by the canonical
         provider IDENTITY (registry entries keep the dashed
         ``custom-ep:<slug>`` spelling) so rebase targets and popover
-        carried-source lookups address the same key.
+        carried-source lookups address the same key. That entry moves to the
+        end, so the drafts run from least to most recently remembered
+        (``rebased_endpoint`` reads the latest on a provider, TASK-35190).
     """
     # CE-001: drafts are keyed by provider IDENTITY. Registry ids
     # (``custom-ep:<slug>``) must stay dashed so the key matches the rebase
@@ -222,14 +258,151 @@ def remember_model_draft(
         endpoint_draft=state.endpoint_draft,
     )
     key = (provider, model)
-    drafts = list(state.model_drafts)
-    for index, existing in enumerate(drafts):
-        if (existing.provider, existing.model) == key:
-            drafts[index] = remembered
-            break
-    else:
-        drafts.append(remembered)
-    return replace(state, model_drafts=tuple(drafts))
+    drafts = [d for d in state.model_drafts if (d.provider, d.model) != key]
+    return replace(state, model_drafts=(*drafts, remembered))
+
+
+def remember_session_pair(
+    draft: ConsoleSettingsDraftState,
+    live: ConsoleSessionSettings | None,
+) -> ConsoleSettingsDraftState:
+    """Return a reopened Chat settings draft remembering the chat's own pair.
+
+    TASK-35190: the chat's own pair stays remembered across a Settings round
+    trip, so a pick back lands where it would without the round trip: the
+    chat's own pair keeps its Endpoint, and on llama.cpp (whose direct path
+    sends on an Endpoint set only on the chat, AC#5) an unseen model keeps
+    it too.
+
+    Args:
+        draft: The draft Chat settings reopens on (a suspended one, whose
+            pair may be another provider's); never mutated.
+        live: The chat's committed settings, or None when it has none.
+
+    Returns:
+        ``draft`` itself when ``live`` is None; otherwise a copy whose
+        ``model_drafts`` are exactly the live pair's remembered draft, its
+        fields the full surface's (`FULL_MODEL_DEFAULT_FIELDS`).
+    """
+    if live is None:
+        return draft
+    own = initial_settings_draft(
+        live, draft.context_policy_overrides, exposed_fields=FULL_MODEL_DEFAULT_FIELDS
+    )
+    return replace(draft, model_drafts=remember_model_draft(own).model_drafts)
+
+
+def rebased_endpoint(
+    state: ConsoleSettingsDraftState,
+    source: ConsoleSettingsDraftState | ConsoleModelDraft,
+    *,
+    provider_id: str,
+    config_key: str,
+    default_base_url: str | None,
+    preserve_snapshot: bool,
+    full_surface: bool,
+) -> tuple[str | None, ConsoleEndpointDraft | None]:
+    """Return the base URL and endpoint draft a provider/model rebase lands on.
+
+    A kept pair (the current one, or a remembered target) keeps its own
+    endpoint. An unseen pair takes the endpoint of the latest draft on its
+    provider: the current one, else the most recently remembered one. So a
+    llama.cpp pick keeps the chat's Endpoint, after a detour through another
+    provider too, and a pick onto another provider never carries it
+    (TASK-35190). Only llama.cpp's direct path sends on an Endpoint set only
+    on the chat; any other provider blocks one it has not saved
+    (``endpoint_not_saved``), so there, as for an unset URL (the configured
+    one, not "no endpoint") and a registry entry (whose own URL is its
+    endpoint), the target's default chain applies. Only the full surface
+    carries an endpoint edit.
+
+    Args:
+        state: The draft being rebased.
+        source: The kept pair's draft (``state`` or the remembered target),
+            else ``state``.
+        provider_id: The target's provider identity.
+        config_key: The target's provider configuration key.
+        default_base_url: The base URL of the target's default chain.
+        preserve_snapshot: Whether the target is the current or a
+            remembered pair.
+        full_surface: Whether the caller exposes every field (Chat settings).
+
+    Returns:
+        The base URL, and the endpoint draft (None when there is none).
+    """
+    peer = (
+        source
+        if preserve_snapshot
+        or provider_identity_key(state.settings.provider) == provider_id
+        else next(
+            (
+                draft
+                for draft in reversed(state.model_drafts)
+                if draft.provider == provider_id
+            ),
+            None,
+        )
+    )
+    endpoint = peer.endpoint_draft if peer is not None else None
+    bound = (
+        endpoint
+        if endpoint is not None and endpoint.bound_provider_config_key == config_key
+        else None
+    )
+    if full_surface and bound is not None and bound.dirty:
+        return bound.value or None, bound
+    base_url = default_base_url
+    if (
+        peer is not None
+        and (endpoint is None or (bound is not None and not bound.dirty))
+        and (
+            preserve_snapshot
+            or (
+                peer.settings.base_url
+                # Config-free: no handler keys are read for the direct path.
+                and resolve_console_provider_identity(
+                    provider_id, handler_keys=()
+                ).uses_direct_llama_path
+            )
+        )
+    ):
+        base_url = peer.settings.base_url
+    if base_url is None or (preserve_snapshot and endpoint is None):
+        return base_url, None
+    return base_url, ConsoleEndpointDraft(
+        value=base_url, bound_provider_config_key=config_key, dirty=False, checked=False
+    )
+
+
+def pick_base_url(
+    state: ConsoleSettingsDraftState, provider: str, *, full_surface: bool
+) -> str | None:
+    """Return the URL a pick of an unseen model on ``provider`` lands on.
+
+    The rebaser's own rule (``rebased_endpoint``), so Switch model's rows,
+    its readiness and its probe read the server the rebase lands on and
+    cannot drift from it (TASK-35190).
+
+    Args:
+        state: The draft a pick would rebase.
+        provider: The provider picked onto.
+        full_surface: Whether the rebase carries an endpoint edit (Chat
+            settings, so pick mode).
+
+    Returns:
+        The URL, or None for the provider's default chain (its configured
+        endpoint, or a registry entry's own URL).
+    """
+    provider_id = provider_identity_key(provider)
+    return rebased_endpoint(
+        state,
+        state,
+        provider_id=provider_id,
+        config_key=provider_config_key(provider_id),
+        default_base_url=None,
+        preserve_snapshot=False,
+        full_surface=full_surface,
+    )[0]
 
 
 def quick_blank_field_default(

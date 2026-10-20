@@ -571,6 +571,32 @@ the lane was 125 min, not 108, and needed nine shards. With entries CI has not
 timed, run the lane once before choosing the count, or charge them at least
 twice their local seconds.
 
+## A test's solo time is not its cost inside a lane step (TASK-33641.1, 2026-10-19)
+
+**Phase 9's whole-PR review, rounds 1 and 2.** The 623-case rule test
+`Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast`
+first measured 780 s serial; that was put down to a load average near 100. At
+about 16 it ran alone in 34-37 s, so it went to the end of the PR Fast Lane's
+admission-sensitive step on that number. There the reviewer measured it at 67 s
+alone, 139 s behind five mounted nodes, and 710 s of a 956 s run in its place,
+behind the step's mounted targets. The test was not slow. Tests/conftest.py's
+`cleanup_file_descriptors` runs `gc.collect()` after every test in an
+app-mounting directory (Tests/UI, Tests/Chat and others), and a full collection
+costs more as the heap grows. The mounted targets ahead of it leave a large
+heap, so each of the 623 cases paid a slow pass. Moved to the front of the step
+it took 74-80 s. Run alone, back to back at the same load, it took 42 s; the
+gap is the step's own collection, which imports every target module before the
+first test runs. One of the step's two 89-case rule tests paid 0.38 s a case
+behind the mounted targets and 0.14 s at the front. The riders'
+evidence line "the whole step in order passed (929 passed ...)" did not help:
+it came from a different step, with the modal-dismissal file whole and no rule test.
+
+**What to do.** Time a new lane target where it will run: in its step, in the
+step's order, in the lane's install set, and never from a solo run. Put a
+many-case pure test in an app-mounting directory ahead of the mounted targets,
+because its per-case teardown is most of its cost. A "whole step passed" line
+must name the targets and order of the step it ran.
+
 ## A lane test's child process imports with the lane's install set, not your venv's
 
 **#3057, 2026-10-13.** `test_settings_openai_reconnect.py::...[approve]` ran a
@@ -886,6 +912,15 @@ Tests/integration, Tests/Notes or Tests/State it collected cleanly. Run Tests/Pr
 in an invocation of its own, and read a wall of collection errors as the command line's
 doing before the branch's.
 
+**TASK-33001.11, 2026-10-17: that conftest no longer re-points them.** It now sets only
+`TMPDIR`; HOME, the XDG roots and `TLDW_CONFIG_PATH` stay `Tests/conftest.py`'s. Measured
+with the old and the new conftest and nothing else changed: `Tests/UI/test_app_instance_warning.py`
+named beside `Tests/ProductionApp/test_provider_selection_ownership.py` went from 2 collection
+errors to 13 tests collected, and the 17 ProductionApp files run as files (xdist) went from
+6 passed / 79 errors to 31 passed, with no test that passed before failing. Most of the rest still fail
+here in their bodies with `RecoveryRequired` (local, as above). A ProductionApp test that saves
+config needs `@private_profile_test`, like any other config writer.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
@@ -932,6 +967,27 @@ module does not come along (`fixture 'no_snapshot_splash' not found`), and each 
 child pytest, so under load two focus assertions that wait one `pilot.pause()` failed and then
 passed alone three times. This is diagnosis for a local change, as above: it does not make the
 tests run in CI.
+
+## A negative control passed as a pytest plugin never reaches a `private_profile_test` body (TASK-33005.10, 2026-10-17)
+
+**Incident.** Phase 9 Task 12 checked that the rewritten
+`test_closing_mid_probe_raises_nothing_and_a_late_result_loses` fails when the
+late switcher probe raises or the evidence owner ignores begin order. The
+controls were a scratch plugin given as `-p` (through the runner's extra
+pytest arguments, then through `PYTEST_ADDOPTS`), and the test passed under
+both, which read as "the test cannot see either break". It could. The test is
+a `@private_profile_test`, and `Tests/private_profile.py` reruns the node in a
+child pytest with its own argv, `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, and
+`PYTEST_ADDOPTS` removed, so the patch was applied only in the parent, which
+runs no assertions. With the break edited into the source for the run (and
+restored with `git checkout -- <file>` after), the new test failed both ways
+and the old body still passed the raise.
+
+**What to do.** For a private-profile test, apply a negative control in the
+code the child imports: a temporary source edit, reverted at once, never a
+parent-side plugin, monkeypatch or `PYTEST_ADDOPTS`. A control that changes
+nothing is no evidence, so first check that it reaches the child: some test
+that should go red does.
 
 ## A fix round that measures a finding's premise false must stop there (TASK-33008.3, 2026-10-11)
 
@@ -1087,6 +1143,27 @@ shared failure's message as well as its name, at least for tests in the code the
 change touched. A test that already fails at base shields every new reason it
 could fail for.
 
+## Marking your own nodes `bootstrap_profile` changes how their unmarked neighbours fail
+
+**TASK-33641.4, 2026-10-09.** `Tests/UI/test_schedules_disabled_state.py` and
+`test_schedules_next_run_relative.py` carry no isolation marker, so every node
+errors at setup with `RecoveryRequired: raw_source_selection_changed`, and so
+did the new tests while they were still unmarked. Marking only the new nodes let
+them run, and it also changed the 34 nodes nobody touched. The first marked node
+imports `tldw_chatbook.app` successfully and the import stays cached in the
+worker, so each later unmarked node gets past the conftest fixture:
+- 24 still errored at setup, because they run before the first marked node;
+- 9 mounted ones now FAILED inside the test body with the same
+  `RecoveryRequired`;
+- 1 pure one passed.
+
+**What to do:** in a base-vs-head comparison, read such a file by its reason
+and not by its error/failure split; an error that became a failure there is the
+same admission trip. To prove the untouched nodes still hold, run the file once
+with a scratch `-p` plugin that stamps the marker on every `Tests/UI` item (all
+45 nodes passed here, 30 and 15). That run is diagnosis. The marked nodes are
+the evidence that holds without the plugin.
+
 ## A restore helper that reuses persisted ids as native ids hides relaunch bugs
 
 **TASK-33662, 2026-10-02.** After a real relaunch, the dispatch-recovery card's
@@ -1116,6 +1193,28 @@ claim now looks only in its own session's tree.
 - When a fix makes an id resolvable store-wide, test a second session holding
   the same conversation.
 
+## Two calls under `asyncio.gather` may not overlap where the test needs them to
+
+**TASK-33667, 2026-10-11.** Opening a chat that is already open reuses its
+session. The guarantee rests on one fact: no await separates the reuse check
+from the hydration's registration of the session. A review asked for a test
+that fails if an await is added there, and proposed two opens of one chat
+under `asyncio.gather`. That test still passed with `await asyncio.sleep(0)`
+added between the check and the registration. The conversation tree is read on
+a thread, so the two opens came back from it several loop ticks apart, and the
+first had registered its session before the second reached the check.
+
+The test now wraps the tree load so that both calls return on one loop tick.
+With the same await added it sees two sessions and fails.
+
+**What to do.**
+- A test of "nothing interleaves between A and B" puts both callers at A on
+  the same loop tick. Find the last real await before A and release both
+  callers from it together (an `asyncio.Event` set when the second arrives).
+- Prove it by mutation: add `await asyncio.sleep(0)` between A and B and watch
+  the test fail. A zero-length await is the hardest case, so a test that
+  catches it also catches real I/O.
+
 ## A CI-only pilot failure can be a product race that only a slow runner hits
 
 **TASK-33661, PR #2956, 2026-10-02.** Two real-send Console pilots failed in the
@@ -1143,6 +1242,27 @@ setup. Their failure said nothing about slowness.
 - Read each corroborating failure's message before counting it as evidence.
 - To pin the fix, stall the gap deterministically (here, hold `submit_draft`
   across several poll ticks). Do not rely on the slow runner.
+
+## A wait that ran out once may be a dropped press: time every run before raising it (TASK-33641.7, 2026-10-19)
+
+**PR #3169, CI run 2.** `test_skills_recovery_controls.py[empty]` failed "Skills
+UI checkpoint did not settle" after its 20 s wait for the review modal, and the
+review asked for 40 s. The file's other 12 cases took about 3.2 s each on that
+runner, so it was not a slow runner. A scratch probe ran the case 240 and 400
+times under xdist at load 18-25 with each wait timed. Every run that settled
+showed the modal within 0.35 s, and 4 runs never did (30-110 s). In those runs
+the pressed Button was detached, with a new one under the same id: a second
+posture load had recomposed the header after the script found the Button.
+`Button.press()` posts its message to the Button, so the message was lost with
+it. "A widget reference captured before a structural recompose is a silent
+key sink" covers a Button found too early. This one was found after the first recompose and
+lost to the next.
+
+**What to do:** before raising a wait, run the case a few hundred times and
+print each wait's time. Many fast runs plus a few that never finish means a
+lost event, not slowness, and a longer wait only makes it fail later. Print
+`is_attached` on what you pressed, and wait for the workers that recompose to
+finish (`not app.workers`, then `pilot.pause()`) before you query and press.
 
 ## A baseline tree at a generic scratchpad path is someone else's baseline too
 
@@ -2734,6 +2854,22 @@ the click answered nothing and the test timed out five seconds later at "Quit
 anyway to answer". Before clicking a widget on a screen that was just pushed, wait
 until its `region.area > 0`.
 
+**Same trap, layout-shift variant (TASK-33003.12, 2026-10-17).** A rider said a
+click on a control below an open picker list "lands on whatever moved under the
+pointer" once the blur collapses the list. `pilot.click` agreed, 3 of 3: on
+Settings ▸ Providers & Models it opened the Collapsible that the collapse moved
+under the pressed title. A terminal cannot do that. Pilot forwards MouseDown,
+MouseUp and its own Click one at a time with a pause between, and the screen
+hit-tests each one again, so its Click went to the new occupant. The driver
+sends only MouseDown and MouseUp, and `App.on_event` makes a Click only when
+both land on one widget. Posted that way (`app.post_message` with
+`textual.pilot._get_mouse_message_arguments`), the pressed control was focused
+and nothing else toggled at every hold from 0 to 400 ms. When a click races a
+layout change, post the press and release as the driver does before you call
+the product wrong. Then keep `pilot.click` as the negative control.
+`Tests/UI/test_settings_default_model_picker.py::test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none`
+is the worked example.
+
 ---
 
 ## A restored bounded reader needs a mount-time request re-kick
@@ -3006,6 +3142,28 @@ block Escape, backdrop, and Close dismissal; and expose a distinct
 outcome-unknown recovery state if rollback cannot restore the reserved draft.
 Verify with a production-shaped blocking test that tries every dismissal path,
 then releases the real thread and inspects durable state.
+
+## A loop's close does not wait for its executor; a neighbour test passed on that (TASK-33666, 2026-10-19)
+
+**Incident.** TASK-33666's stop poll ended a silent provider's read. On the
+threaded transport that cancels only the `asyncio.to_thread` wrapper, and the
+thread stays in `chat_api_call`. The model lifeline finished its ADR-134
+operation when its loop closed. `loop.close()` shuts the default executor down
+with `wait=False`, so the capacity registry showed the slot free, and the chat
+start released its automatic claim, while the provider call still ran. The
+base-vs-head comparison of PR #3169 caught it: a claim test was 3 of 3 red at
+the head and green at the base. The fix awaits `loop.shutdown_default_executor()`
+in cleanup. That turned `test_hosted_partial_call_cancellation_never_executes`
+red. Its `assert not server.stall_timed_out` had passed at the base only
+because it read the flag 0.5 s into the server's 2 s window. Timed at the base,
+the response close landed at stall start + 2.005 s, after the server had
+already given up.
+
+**What to do.** Release accounting for physical work when the work ends, not
+when its loop closes: await `shutdown_default_executor()` before `close()`
+whenever a loop's lifetime gates a slot. When a fix turns a "closed promptly"
+test red, print the monotonic times of the close and of the window at the base
+before you restore the old timing.
 
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
@@ -3568,6 +3726,29 @@ Two rules out of it:
   `Chat/console_provider_gateway.py`) already passes keywords and omits `api_key`. The
   reranker was the sole outlier, and being the sole outlier is exactly what broke it.
   Before writing a lookup at a shared seam, count the callers who do not have one.
+
+**No fake needed (TASK-33001.14, 2026-10-11).** A fix can be proved against the real
+function and still miss the app. The rider changed how `summarize_with_tabbyapi`
+resolves its key and proved it with the real summarizer, only the HTTP session
+replaced: 96 green. The app got none of it. Its only caller, `_dispatch_to_api` behind
+`analyze`, passed `(text, prompt, temp, system_message, streaming)` by position against
+`(input_data, custom_prompt_input, system_message, api_key, temp, ...)`. The system
+message arrived as the caller's key, the fixed resolver was skipped, and every request
+carried `Authorization: Bearer <system message>`. One test already went through
+`analyze` and was green, because it asserted the URL and the result, not what landed.
+A reviewer found it by sending the task's own node through `analyze`.
+
+- Before proving a fix by calling a function, grep its production callers. If there is
+  one route, the proof goes through it and asserts what landed in each parameter (the
+  header, the temperature, the first message), not only that a request was made.
+- A dispatcher that calls many functions by position is checked in one pass: for each
+  call, pair the arguments with the callee's parameter names (`ast` over both files)
+  and read the pairs. That listing showed two more wrong bindings in the same
+  function, for KoboldCpp and Ollama.
+- Binding a call correctly makes dead code reachable. The summarizer's "no key
+  declared, refuse the run" branch had never run in the app. Bound correctly, it
+  refused the shipped TabbyAPI section, which readiness reports ready. After such a
+  fix, run the shipped defaults through the real loader.
 
 ---
 
@@ -4594,6 +4775,23 @@ workbench-contract harnesses) — per-suite green on widget-level harnesses
 says nothing about whether the sheet itself parses. Grepping the variable
 name against the theme sheets costs one second and catches the
 typo-class outright.
+
+**Fifth instance, a defined name this time (TASK-33641.1, wave 1
+integration, 2026-10-10).** The tab bar's widget-tier rules gained
+`$tldw-boundary` and `$tldw-active-edge`, the first guard names in
+`widget_defaults_*.tcss`. No tcss defines them: `TldwCli` gets them from
+`ThemeVariableDefaultsMixin`, and every in-process harness from
+Tests/conftest.py importing the themes module. The rider's own gates were
+green (`Tests/UI/test_theme_contrast.py`, 1,510 nodes, and the CSS build
+files).
+`Tests/Wizards/test_first_run_backup_restore.py::test_restore_entry_returns_to_same_first_run_surface`
+starts `ConsolidatedCSSApp` in a subprocess, where no conftest runs, and
+both its nodes failed the parse on `$tldw-boundary`. They were found only
+because another task of the wave ran `Tests/Wizards` whole: a grep for the
+changed symbols cannot name a file that reaches the sheet through the
+shared harness. `ConsolidatedCSSApp` now carries the mixin, as `TldwCli`
+does. **What to do:** when a widget-tier sheet gains a `$tldw-*` name, run
+one test that starts the harness in a subprocess (that file takes 8 s).
 
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
@@ -7351,6 +7549,35 @@ tempting, and I did briefly claim, that a failing save in tests meant a failing
 save in the product. Check which layer makes a failure fatal before assigning it
 user impact.
 
+**A second incident, same rule (TASK-33641.7, 2026-10-10).** Twelve nodes of
+`Tests/Backup_Recovery/test_skills_recovery_controls.py` were filed with one
+cause: their subprocess host was a plain `App`, so `$tldw-boundary` had no
+source and the Library sheet failed to parse. Giving the host
+`ThemeVariableDefaultsMixin` did not make them pass. The stylesheet error had
+been the first of three:
+
+1. The script still read `_library_skills_trust_posture` and wrote
+   `_library_skills_view`, flat attributes the screen lost on 2026-09-04
+   (`ed4c29d45f`). With the mixin alone the node failed with `AttributeError`.
+2. It waited for `#skill-trust-bootstrap-input` and then pressed
+   `#skill-trust-bootstrap-submit`, which mounts one container level later.
+   That raised `NoMatches` in 2 of 13 nodes, then 1 of 13 twice, with the file
+   run alone. A second script in the file had the same wait against the unlock
+   modal and lost its race only once, in the ninth run.
+
+A test that has been red for weeks keeps collecting causes behind the first
+one, because nothing downstream of the crash runs. Count on that when sizing
+such a rider.
+
+**And prove which change did the fixing.** The fix added an import of
+`css/Themes/themes.py` beside the mixin. That module guards Textual's built-in
+themes in place when it is imported, so the import alone gave the plain `App`
+the names: with the mixin taken off again and the import left in, the three
+nodes tried still passed. The mixin is kept because it is what `TldwCli` uses and it also
+covers a theme registered without the guard, but the red-to-green run was not
+evidence for it. Remove each half of a two-part fix in turn before saying
+which half matters.
+
 ## A DOM swap moved into a worker is invisible to `pilot.pause()` (task-15461, 2026-08-11)
 
 **The trap.** `Pilot.pause(delay)` is `await self._wait_for_screen()` then
@@ -9065,6 +9292,29 @@ not None`, `not button.disabled`, label != "Checking"), never a mounted-state
 or pause proxy; settle `not disabled` before any programmatic `press()`. After
 the class fix: 10/10 full-file runs green (4 under the same 14-burner load)
 plus 5/5 standalone runs of the old reproducer.
+
+**TASK-33006.24 follow-up, 2026-10-09: the pause can also be too LONG.**
+`test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed`
+(`Tests/UI/test_console_settings_geometry.py`) failed 5 of 20 serial runs,
+always on its own precondition: `assert snapshot.scroll_anchor > 0`, got 0. It
+focused a control and scrolled the body away from it in the same step. Focusing
+arms Chat settings' focus reveal, a 0.06 s timer, and `wait_for_idle` keeps
+polling for up to a second while the process is busy. Under load the bare
+`pilot.pause()` outlasted the timer, and the reveal scrolled the control back
+into view before the snapshot was taken. A mounted probe showed it both ways:
+scroll inside the reveal window and the body went from 4 back to 0; let the
+reveal settle first, or disable it, and it stayed at 4. A pause has no upper
+bound short enough to mean "that timer has not fired yet", and none long
+enough to mean "it has". The first fix waited `pause(0.12)` for the 0.06 s
+timer and measured 60 of 60; review sent it back, because a longer pause only
+narrows the race. When a flaky test fails on a setup line, look for a timer
+the widget armed itself, and wait for what that timer does before the test
+changes the state it corrects. Here the test records the modal's reveal calls
+and polls, bounded by wall clock, until the focused control's own reveal has
+run. One control tells the two fixes apart: stretch the timer to 0.2 s and the
+pause after the scroll to 0.3 s, which is what load does, made repeatable. The
+fixed-pause version then fails on the same precondition every time, and the
+polling version passes. 20 of 20 after.
 
 ## A tiered design's boundary must be probed with a shape the tiers disagree on (task-16839 fix round, 2026-08-20)
 
@@ -13183,6 +13433,28 @@ then pass strict retirement without warnings. Do not change production activatio
 or add a sleep to satisfy an observer's premature assertion. Receipt:
 `Docs/QA/task-33620.9/README.md`.
 
+## A footer that names the wrong keys may be right about where focus is (TASK-33006.20, 2026-10-17)
+
+**Incident.** Two rounds of `test_console_switch_model_entry_points.py`
+(TASK-33006.5, then TASK-33007's first fix) closed Chat settings without a real
+Esc, because the footer read afterwards led "Esc composer · F6 panes" and lost
+Alt+A at 211 columns, and TASK-33006.20 was filed to add a "missing" footer
+refresh. At fc9f3ec375 nothing was missing: `on_screen_resume` re-registers the
+footer twice and the control-bar sync does again. Recording `app.focused` at the
+read showed focus still on the rail's Model toggle after the rail's Change
+action: the footer was right about the focus, and the test was wrong about it.
+
+**What to do.** Before calling a footer or hint stale, record the focused widget
+at the read and compare the hints to what that focus should show. A test for a
+refresh must fail with the refresh removed: here only removing both resume-time
+re-registrations turned the pin red; removing one left it green.
+
+**Then check the symptom on its own.** Being right about focus did not make the
+keys right. That rail footer still dropped Alt+A and Alt+C at 211 columns, and
+the rider was first closed with AC#1 ticked while its title's symptom still
+reproduced from a rail control (caught in round-1 review). A premise-false
+close still re-checks the AC on every path into the symptom.
+
 ## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
 
 **Incident.** The actual Canvas-child test configured a 45-second page timeout,
@@ -14582,6 +14854,25 @@ writes in the widget's `prevent(...Changed)` context. A synchronous rendering
 flag alone does not suppress a message delivered later. Prove the boundary with
 a mounted test that applies state, performs one user edit, and asserts exactly one
 semantic generation advance.
+
+**TASK-33006.21, 2026-10-11 (the same delivery order, in a call count).** The
+rider asked that opening Chat settings build default readiness once. The fix
+held the sync back with a flag that `on_mount` clears, and its test counted the
+resolver's calls made while `modal.is_mounted` was false: 4 before, 1 after.
+The notes, the test's docstring and a comment then said the *open* builds once.
+A print-only probe that logged every call of the sync with its callers showed
+seven builds per open: one in `on_mount`, four from the number fields'
+compose-time `Input.Changed` echoes (two per field, 0.06 to 0.15 s after
+`on_mount`'s build, all with `_updating_controls` still set) and two on the
+first 0.25 s poll tick. The count was right and the sentence was wrong: a count
+taken inside `on_mount` ends before the messages that `compose` queued are
+delivered. It cost a review round.
+
+**What to do.** Name the window in the claim ("`on_mount` builds once"), or
+count over the window the claim names: log every call with its caller chain
+until the screen is idle past its first timer tick, and read the callers, not
+only the total. `traceback.extract_stack()` filtered to the widget's own files
+names the echo handler in one run.
 
 ## Closing a thread-local database on the fixture thread does not close worker-owned handles
 
@@ -16590,6 +16881,52 @@ consumer of saved configuration, with conflicting live values as controls. An
 omitted optional setting must also be exercised: overlaying present keys does
 not establish that a child owns the absent ones.
 
+## A pick test that goes straight to its target skips the rebases a real switcher makes (TASK-35190, 2026-10-18)
+
+**Incident.** TASK-35190 keeps a chat's session endpoint when the user picks
+another model on the chat's provider. Keying that on "the draft being rebased
+is on the target's provider" passes a direct pick, but Switch model rebases
+its draft on every highlight change: with Find empty it highlights PREVIOUS
+first, often another provider's row, and typing re-ranks the highlight across
+providers. By the time Enter lands on the llama.cpp row the draft is on vLLM,
+and the pick takes the configured URL again. Chat settings has the same path
+after a pick of another provider in between. The fix reads the latest draft
+on the target's provider (the current one, else the most recently remembered
+one). With that lookup removed, the direct-pick and pick-mode listing tests
+still pass; only the three detour cases fail (`[after-openai]`,
+`[after-an-entry]`, and the Alt+M test that highlights a vLLM row first).
+Review round 1 found the lookup still wrong after a longer detour: it read
+the last entry of `model_drafts`, but `remember_model_draft` updated a pair
+already there in place, so the last entry was the last pair first
+remembered, not the latest. A pick of model-b after served-y (with :9300
+typed), model-a and gpt-5 landed on served-y's stale :9300. Remembering now
+moves the pair to the end, so the tuple's order is recency order.
+
+**What to do.** When a fix reads the draft's state at pick time, list what
+moves that state before the pick (highlight rebases, earlier picks, a
+transfer from the other surface, a Settings round trip that reopens the
+draft) and test the pick after each one, not only from the state the surface
+opened with. When it reads "the latest" from a collection, check that every
+writer keeps that order: an update in place does not.
+
+## A hand-published result can stand in for a probe the product no longer runs (TASK-35190, 2026-10-18)
+
+**Incident.** TASK-35190's review round 1 pointed Switch model's background
+probe at the endpoint a pick lands on (this chat's :9200) instead of the
+configured :9099, and moved Ctrl+N's check onto the configured readiness.
+The AC#4 test proved that check by publishing a refused result for :9099 by
+hand and pressing Ctrl+N: refused, green. In the product nothing tested
+:9099 any more, so its readiness stayed "Ready · not tested" and Ctrl+N
+saved a new-chat default that could not send. Round 2's reviewer probe (the
+real prober, :9099 refused at the network, nothing published) saved it where
+the base had refused, and the test's own first Ctrl+N, before the hand
+publish, had saved while :9099 refused at the network too.
+
+**What to do.** When a fix moves a gate onto another source of evidence,
+find what produces that evidence in the product, and test the gate with only
+that producer running. A hand-published result shows that the gate reads
+evidence, not that anything still produces it.
+
 ## A first reactive read can reenter a loader before its arguments finish evaluating
 
 **TASK-32565, 2026-09-13.** The native slow-directory picker showed duplicate
@@ -18411,7 +18748,10 @@ export BASE and HEAD to scratch trees, wrap every module-level test in
 `private_profile_test` there, and compare failing-name sets. Keep
 `Tests/ProductionApp/` out of that pytest invocation: its conftest binds
 config at startup and every Tests/UI module then fails collection with
-`RecoveryRequired`.
+`RecoveryRequired`. Since TASK-33001.11 (2026-10-17) that conftest sets only
+`TMPDIR`, so a ProductionApp path can share an invocation with Tests/UI; see
+the TASK-33001.11 paragraph in the Tests/UI `RecoveryRequired` lesson. The
+advice still holds for a scratch tree exported from before that change.
 
 ### "CI's unwrapped run is the final word" is false for Tests/ProductionApp (TASK-33001.6 fix round 1)
 
@@ -18427,7 +18767,10 @@ before this conftest loads. The file then collects, and all 3 tests fail in
 `_production_app` setup (`save_values` returns False, log `Configuration
 mutation failed (phase=lock, ..., error_type=RecoveryRequired)`). That result is
 identical at BASE and HEAD. Adding the `bootstrap_profile` marker in scratch made
-all 3 pass (rider TASK-33001.11).
+all 3 pass (rider TASK-33001.11). That rider did not adopt the marker. These
+tests write `chat_defaults` and `api_settings.*`, and the bootstrap profile is
+shared by every `bootstrap_profile` test in a worker. So it made each test
+`@private_profile_test`, and its conftest stopped rewriting `TLDW_CONFIG_PATH`.
 
 **What to do.** Before deferring a test to CI, run it in CI's collection order,
 not as a lone file: explicit file arguments load every named directory's conftest
@@ -18549,6 +18892,116 @@ at production cost before you rank anything else.
 (`TieAwareStylesheet`, last 4 themes), so a *revisited* theme reparses in
 ~1 ms in production too; a first visit still pays ~400 ms. The probe advice
 stands: without `TLDW_TEST_CSS_CACHE=0` the test cache hides first-visit cost.
+
+## A contrast gate that reads rules measures the resting state only (TASK-33641.1, 2026-10-09)
+
+**What happened.** The active top tab's outline was re-pinned to 3:1 against
+the tab's `$primary-darken-1` fill. A gate in the style of
+`test_theme_contrast.py` (rule token, theme table, ratio) passed on all 89
+measurable themes. The first rendered run then failed: textual-light painted
+the new outline `#5986A7` on `#97ACBB`, 1.66:1. The harness had auto-focused
+the active tab, and the app tier's `Button:focus` fill replaces the widget
+tier's `.nav-button.is-active:focus` fill whatever its specificity. The old
+outline read 4.21:1 on that focus fill, so the fix would have made the
+focused tab worse on light themes while every token test stayed green. A
+second rendered version, with separate hover and focus steps, still passed
+with its `:focus` selector deleted: only hover and focus together reach
+`Button:hover:focus`, which outranks a two-class rule.
+
+**What to do.** When a line or an ink is pinned against one fill, list the
+states that can change that fill (hover, focus, both at once, disabled) and
+paint each of them under the production stylesheet, on a light theme as well
+as the default. Then delete each selector of the fix in turn and check that
+the rendered test fails.
+
+## A shared line token is pinned against named fills, so measure each user on the fill it sits on (TASK-33003.15, 2026-10-10)
+
+**What happened.** `$ds-column-line` moved to `$tldw-boundary`, a colour the
+theme guard pins to 3:1 on `$surface` and `$panel`. The task notes said every
+other user of the token "paints on a `$surface` or `$panel` fill". That was
+read off the selectors, not resolved. The two Workflows pane edges set no
+fill, and neither does anything above them, so they sit on `$background`.
+The review found that and judged both exceptions "stronger than before"
+without measuring. Measured on the 89 themes, the Workflows edges are
+stronger on 88 and weaker on one: litestep went from 3.64:1 to 1.32:1,
+because its background is close to the boundary colour. Five more shipped
+themes stay under 3:1 there.
+
+**What to do.** When a token changes, list its users by grep, then resolve
+the fill under each one by walking up to the first ancestor that sets a
+`background`; "none set" means the screen's `$background`. For every fill
+that is not one the colour is pinned against, compute old and new ratios on
+every theme and look for the themes where new is lower. "Stronger on the
+default theme" says nothing about a theme whose background sits between its
+surfaces.
+
+**Update, review round 2.** The edges were fixed in the same task by giving
+both Workflows panes `background: $ds-surface-panel`. That fill alone made a
+second regression: the two pane headings inherit the theme's `$foreground`,
+and on `$panel` that text fell under 4.5:1 on five themes where it had passed
+on `$background` (atom-one-dark 6.57:1 to 3.45:1, tokyo-night 8.10:1 to
+4.23:1). The edge gate was green the whole time. A rendered sweep of the text
+cells found it, and the panes now also set `color: $ds-text-primary`.
+
+**Update, review round 3.** That sweep skipped every descendant with a fill of
+its own, and it read the rest state only. The house focus tint
+(`$ds-focus-bg`, primary at 30%) is a fill of its own and translucent, so the
+new `$panel` showed through it: the four focused rail buttons and text typed
+in the focused search field fell under 4.5:1 on five themes
+(catppuccin-frappe 5.82:1 to 4.12:1). The sweep also never saw that the
+search field takes focus on mount, so its "rest" frame had one focused
+control in it. The focused buttons now take the guarded `$tldw-focus-fill`,
+and the field's tint sits on an opaque `$background`.
+
+**Update, review round 4.** That field fix was measured on the text alone, and
+both tests asserted text alone. The tint on `$background` kept typed text at
+4.77:1 and put the focused field's fill on the rail's own luminance: 1.00x
+on textual-dark, the default theme, and under 1.25x on 17 of the 89 themes,
+where 3 had been at the task base. On 18 themes the focused field sat closer
+to the rail than the resting field did. The task notes had rejected that same
+composite for the buttons, for that reason, in the block of notes that chose
+it for the field. The field now takes `$tldw-focus-fill` as the buttons
+do, and both tests assert that a focused fill is at least as far from the
+pane's fill as the resting fill is. That fill moved two more pairs, and
+measuring them before the commit found both: the placeholder's
+`$ds-text-muted` fell under 4.5:1 on 59 themes (48 before), and the
+`$primary` focus outline fell under 3:1 on 54 (41 before; the default theme
+went from 3.01:1 to 2.25:1). Each got its own ink in the focused field.
+
+**Update, review round 5.** That list of pairs stopped at the colours the
+field's own rules name. Two more things paint in the field, in colours no
+app rule sets: Textual paints the selected value and the caret in the
+theme's own `$foreground`. On the themes the guard pins, the new fill moves
+toward the opposite pole, and a fixed `$foreground` loses its contrast
+there. Selected text was under 4.5:1 on 46 themes (41 at the task base) and
+under 2:1 on 5 (atom-one-dark 2.00:1 to 1.35:1); the caret was under 3:1
+against the fill on 8 (3 at the base). The state is an ordinary one: an
+Input selects its whole value on every keyboard return to it. The rendered
+test stepped round both. It set the value after the focus had landed, so
+nothing was ever selected, and it skipped the caret's cell. Both are now the
+field's ink reversed, and the test moves the focus away and back with the
+value in the field before it reads them.
+
+**What to do, as well.** A fill added under a line sits under everything
+inside the widget that is transparent or translucent. After adding one, read
+the text cells painted on it on every theme, and compare with the fill they
+sat on before. Skip a descendant only when its own fill is opaque
+(`background.a == 1`). Clear the focus for the rest frame, then focus each
+control in turn (enable the disabled ones first) and read its text again: a
+focus or hover tint is where a translucent fill usually comes from. A theme
+whose `$panel` equals its `$surface` (solarized) makes "cells whose
+background is the pane's fill" match a list's own cells: select by widget
+region, not by colour. A colour fix moves more than the ratio it was written
+for: before choosing one, list what each colour in the rule is read against
+(the text and the placeholder on the fill, the fill on the pane, the frame
+on the fill) and measure every pair on every theme against the task base.
+Add the pairs the widget paints in colours of its own, which no rule in the
+sheet names: for an Input, the selected text on the selection's fill, and
+that fill and the caret on the field's fill. Read them in the state a user
+reaches (focus the field again with a value in it; turn `cursor_blink` off
+so the caret is there to read). A cell painted with `reverse` paints its two
+colours swapped, so swap them before comparing a fill with another fill.
+Gate the pairs the fix must hold, and write down the ones it lowers.
 
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
 
@@ -19560,6 +20013,55 @@ Related, from the same session: on macOS `/bin/bash` 3.2 has no `mapfile`, and
 node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
 Both produced "no tests ran" on the base arm. Drive node lists through a tiny
 Python `subprocess.run([... *nodes])` runner instead.
+
+**The node-id trap in another form (TASK-33641.3, 2026-10-10).** The Bash tool
+runs zsh, and zsh reads `[...]` after a parameter as a subscript:
+`"$T[imagegen-size0]"`, meant as a parametrized node id, expanded to the empty
+string. pytest was handed five empty arguments. An empty argument is still an
+argument, so `testpaths = ["Tests"]` did not apply and collection started at
+the worktree root. It imported `Docs/Development/test_logits_openai.py`, whose
+module-level import of `tldw_chatbook.config` ran the startup admission against
+`default_bootstrap_root()`, under no test's isolation: `SystemExit: Recovery
+required: recovery_scope_uncertain`, an xdist INTERNALERROR and "no tests ran
+in 1.27s". `startup_permission` is written to read only, and no file under
+`~/.config/tldw_cli` or `~/.local/share/tldw_cli` had been modified
+(`find -mmin -20`: 0 files). Do not count on a collection outside `Tests/`
+being that harmless: only that refusal stopped this one. Read afterwards, not
+run: on a profile the admission accepts, the import goes on to
+`acquire_storage()`, and the file's `test_openai_logprobs` calls
+`load_settings()` and then `chat(...)` against OpenAI with the configured key.
+A second file,
+`Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/latest_predispatch_test.py`,
+matches `*_test.py` and is a patch script: imported with the repo root as the
+working directory, it rewrites `Tests/UI/test_console_cost_chip_screen.py`
+when the text it replaces is there (at 60cba504ea the test it renames already
+has the new name, so it would stop at its first `assert`).
+
+Brace the variable (`"${T}[imagegen-size0]"`) and `echo` one built id before
+the run. That prevents this one spelling and leaves the path open: any empty
+argument, or `pytest .`, collects from the root, and at 60cba504ea
+`pyproject.toml` keeps pytest out of `STests` only. Measured on a toy tree with
+the same `testpaths` and `addopts` (pytest 8.4.2): no argument imports nothing
+under `Docs/`; two empty arguments, or `.`, import every test-named file there.
+With `--ignore=Docs` added to the toy tree's `addopts` they import none, but
+only in a run started at the root: started in `Tests/` as `pytest ..`, the same
+option excluded nothing and both files were imported again. So start pytest at
+the root of the tree, and check that the argument list is not empty before the
+run.
+
+**The guard (TASK-33641.8, 2026-10-17).** `pyproject.toml`'s `addopts` now
+carries `--ignore=Docs` beside `--ignore=STests`.
+`Tests/CI/test_pytest_root_collection_skips_docs.py` gates it on every pull
+request through the PR Fast Lane's `Tests/CI` target. It runs pytest at the
+real root with an empty argument and with `.`, and fails if either visits any
+file under `Docs/`. A third run checks that an explicit path to a file there
+is still collected. Those runs pass `--noconftest -p no:python`, so a broken
+guard shows up as a list of visited paths and imports nothing; at the base the
+two root runs each visited all 17,093 files under `Docs/`. The option is still
+resolved from where pytest starts, so a run started inside `Tests/` is not
+covered by it, and that run ignores `Tests/Docs/` instead: its two test files
+(`test_console_library_controls_docs.py`, `test_user_guide_conflict_markers.py`)
+are dropped without a word. Start such runs at the root.
 
 ## A test-added ownership wrapper can mask the real retry leak
 

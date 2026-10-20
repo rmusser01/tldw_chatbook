@@ -4,8 +4,11 @@ Spec rule 1, pairs only: the MODEL row's Change (or Alt+M) opens the real
 pick-only switcher over the modal, and the picked provider·model pair rebases
 the draft through the controller's rebaser. Nothing is applied until Apply.
 Every test mounts the real modal under the production stylesheets and drives
-it with real keypresses; ``pick_mode_opener`` builds the switcher exactly as
-``model_switcher.open_model_picker`` does, from the harness's configuration.
+it with real keypresses; ``pick_mode_opener`` builds the switcher from the
+harness's configuration with the sources ``model_switcher.open_model_picker``
+lists from: the saved model lists, a catalog loader (the saved lists, as with
+no catalog scope service) and the configured connection's readiness. It runs
+no local probe and reads no RECENT or PREVIOUS.
 """
 
 from __future__ import annotations
@@ -60,17 +63,30 @@ def _never(*_args, **_kwargs):
     raise AssertionError("pick mode never rebases, applies or opens Settings")
 
 
-def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
+def pick_mode_opener(
+    app,
+    app_config,
+    providers_models=PROVIDERS_MODELS,
+    connection_evidence=None,
+    catalog_loader=None,
+):
     """Return the Change opener the Console passes: the real pick-only switcher.
 
     Args:
         app: The harness app the switcher is pushed on.
         app_config: The configuration its rows and readiness read.
         providers_models: The saved model lists it lists.
+        connection_evidence: The shared evidence owner its readiness reads,
+            as the Console's does; none by default.
+        catalog_loader: Its ``catalog_loader``; by default the saved list,
+            which ``load_provider_catalog`` returns with no scope service.
 
     Returns:
         A ``model_picker`` for ``ConsoleSettingsModal``.
     """
+
+    async def saved_catalog(provider):
+        return list(providers_models.get(provider, ()))
 
     def open_picker(origin, draft, query, on_pick, served):
         app.push_screen(
@@ -83,10 +99,13 @@ def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
                 durability_copy="",
                 draft_rebaser=_never,
                 live_committer=_never,
-                default_readiness_resolver=readiness_resolver(app_config),
+                default_readiness_resolver=readiness_resolver(
+                    app_config, connection_evidence
+                ),
                 pick_only=True,
                 query=query,
                 served_models=served,
+                catalog_loader=catalog_loader or saved_catalog,
             ),
             callback=on_pick,
         )
@@ -94,11 +113,12 @@ def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
     return open_picker
 
 
-def readiness_resolver(app_config):
-    """Return the configuration-only readiness pick mode reads, as the Console's.
+def readiness_resolver(app_config, connection_evidence=None):
+    """Return the configured connection's readiness pick mode reads, as the Console's.
 
     Args:
         app_config: The configuration the readiness is built from.
+        connection_evidence: The shared evidence owner it reads, if any.
 
     Returns:
         A ``default_readiness_resolver`` for ``ConsoleModelPopover``.
@@ -108,7 +128,9 @@ def readiness_resolver(app_config):
         settings = build_target_default_console_session_settings(
             app_config, provider, model
         )
-        return build_console_settings_readiness(settings, app_config=app_config)
+        return build_console_settings_readiness(
+            settings, app_config=app_config, connection_evidence=connection_evidence
+        )
 
     return readiness
 
@@ -392,7 +414,7 @@ async def test_the_consoles_pick_opener_never_rebases_and_its_committer_refuses(
         calls.append("rebase")
         return real_rebase(state, **kwargs)
 
-    def sources(_screen, _session_id, _before):
+    def sources(_screen, _session_id, _before, **_landing):
         return {
             "app_config": app.app_config,
             "providers_models": PROVIDERS_MODELS,
@@ -709,3 +731,71 @@ async def test_a_listing_feeds_pick_mode_but_never_picks() -> None:
             "llama_cpp",
             "served-y",
         )
+
+
+async def _type(pilot, modal, name: str, value: str) -> None:
+    """Edit one field row's Input as a user would leave it."""
+    modal.query_one(f"#{field_control_id(name)}", Input).value = value
+    for _ in range(3):
+        await pilot.pause()
+
+
+async def _esc_prompt(pilot, modal) -> str:
+    """Press Esc and return the first line of the unsaved prompt it opens."""
+    modal.query_one(f"#{MODEL_CHANGE_ID}", Button).focus()
+    await pilot.press("escape")
+    await pilot.pause()
+    await pilot.pause()
+    message = modal.query_one("#console-settings-close-message", Static)
+    return str(message.content).split("\n")[0]
+
+
+@pytest.mark.asyncio
+async def test_a_pick_alone_is_one_edit_named_model() -> None:
+    """TASK-33006.16 AC#1/#2: a pick re-bases the draft onto the new pair's
+    values, but only the pair is the user's edit. The prompt and the title
+    count Model alone: not the new model's defaults, not Streaming
+    following its default again, and not the Min P the new provider rejects
+    and the rebase blanked."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(min_p=0.05))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert modal._unsaved_field_labels() == ()
+        await pick(pilot, app, modal, "claude-sonnet")
+        assert modal._build_draft().min_p is None  # Anthropic rejects Min P
+        assert modal._unsaved_field_labels() == ("Model",)
+        title = modal.query_one("#console-settings-modal-title", Static)
+        assert str(title.content).endswith("· 1 unsaved edit")
+        assert await _esc_prompt(pilot, modal) == "1 unsaved edit to this chat: Model."
+
+
+@pytest.mark.asyncio
+async def test_a_pick_keeps_the_edits_it_carries_and_drops_the_rest() -> None:
+    """TASK-33006.16 AC#2: an edit the rebase carries to the new pair still
+    counts; one it blanks because the new provider rejects it does not. Back
+    on the opened pair, its own edits count again and Model does not; a
+    Streaming pick after the switch is still named (TASK-33003.10)."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await _type(pilot, modal, "temperature", "0.9")
+        await _type(pilot, modal, "min_p", "0.1")
+        assert modal._unsaved_field_labels() == ("Temperature", "Min P")
+
+        await pick(pilot, app, modal, "claude-sonnet")
+        assert modal._unsaved_field_labels() == ("Model", "Temperature")
+
+        streaming = modal.query_one("#console-settings-streaming", Select)
+        streaming.value = "off" if streaming.value == "on" else "on"
+        for _ in range(3):
+            await pilot.pause()
+        assert modal._unsaved_field_labels() == ("Model", "Temperature", "Streaming")
+
+        await pick(pilot, app, modal, "model-a")
+        assert (modal._draft.settings.provider, modal._current_model_value()) == (
+            "llama_cpp",
+            "model-a",
+        )
+        assert modal._unsaved_field_labels() == ("Temperature", "Min P")

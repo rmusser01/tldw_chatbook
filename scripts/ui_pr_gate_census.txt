@@ -277,6 +277,10 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 # check_ui_pr_gate_census.py).
 # Each keeps the comment that names what it pins, which the replay's --write
 # moves with it; the blank line below ends this header, so it stays here.
+# Four of their slots hold Phase 9 entries since Phase 9's whole-PR review,
+# round 1: the Chat settings geometry nodes there turned bootstrap_profile
+# (TASK-33006.24's module mark) and run in the admission-sensitive step, and
+# a swap in place keeps every other entry on its shard.
 # Append new entries after them; one added above them moves every one of them
 # to another shard. Entries that --write will re-order with this block (its
 # --tail counts them too) must not be blank-separated from it or from each other.
@@ -309,7 +313,8 @@ Tests/UI/test_settings_api_key_clear_reset.py
 # Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft
 # Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
-Tests/UI/test_settings_provider_save_scope.py::test_providers_models_state_line_names_its_scope_in_one_row
+# TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
+Tests/UI/test_settings_provider_save_scope.py
 # TASK-33007.2, parent AC#2: Model is at most five Tab presses from Provider.
 Tests/UI/test_settings_connect_tab_budget.py
 # Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
@@ -382,8 +387,8 @@ Tests/UI/test_settings_number_spelling.py
 # TASK-33007.3: the Default model picker -- one row, ids grouped by where they
 # came from, Custom ID and its rollback, a wide id read from its head.
 Tests/UI/test_settings_default_model_picker.py
-# Capture round 2, finding 21: the Context view leaves the nav bar visible.
-Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible
+# Whole-PR review of Phase 9, round 1 (in a bootstrap_profile geometry node's slot): TASK-33003.22 AC#2, the Python style ratchet holds at zero (~45 s under load, private profile).
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
 # Capture round 2, finding 1: the Inspector starts at a heading, says more above.
 Tests/UI/test_settings_field_guide_in_view.py::test_the_inspector_starts_at_a_heading_and_says_when_more_is_above
 # TASK-33007.5: Model defaults' one-row field-truth rows, the one-row Select
@@ -405,8 +410,9 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snaps
 # TASK-33007.3 AC#9: Save selected fills an empty default model with the first
 # saved id (17-27 s).
 Tests/UI/test_settings_provider_test_draft.py::test_model_to_activate_after_save_prefers_first_saved_when_field_empty
-# Capture finding 15: every Chat settings help line is whole at full screen.
-Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen
+# Phase 9 capture fix wave (2026-10-18), F2, 3 of 3 serial; moved from the end of this file into a geometry node's slot by the whole-PR review's round 2, when that slot's definition-row node became bootstrap_profile and went to the admission-sensitive step (ledger R11), so no other entry changes shard.
+# TASK-33005.7: every reason build_console_disabled_reason returns fits the composer's reason strip whole, chevron and padding included (~2 s).
+Tests/UI/test_console_composer_reason_width.py::test_every_disabled_reason_fits_the_strip_whole
 # A custom endpoint as the default: Settings opens on a dangling registry
 # default honestly, the row that was red in no lane (11-19 s; the file is 3.4 min).
 Tests/UI/test_settings_custom_endpoint_default.py::test_settings_opens_on_a_dangling_registry_default_honestly
@@ -433,8 +439,8 @@ Tests/UI/test_settings_save_selected_not_cancelled.py
 # Finding 12b: Chat settings' field widths, re-keyed to the control types after
 # the last capture (three cases, 13-20 s each).
 Tests/UI/test_console_session_settings.py::test_console_settings_fields_are_sized_by_value_type
-# Capture finding 16: Chat settings' footer sets its hint and buttons apart.
-Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart
+# Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33003.22 AC#1, the dimension-literal ratchet holds at zero (~4 s, private profile).
+Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
 # Post-rebase round 1, finding 1: leaving Settings waits for a snapshot Save still writing (15 s).
 Tests/UI/test_app_quit_under_modal.py::test_leaving_settings_waits_for_a_snapshot_save_in_flight
 # Parent AC#1: no listed provider's closed card needs scrolling at 211x44 (26-44 s).
@@ -457,8 +463,8 @@ Tests/UI/test_settings_custom_id_fast_typing.py
 Tests/UI/test_settings_revert_model_defaults_rows.py
 # R1 #23: a Model defaults field the provider does not accept is composed blank.
 Tests/UI/test_settings_model_defaults_hidden_field_blank.py
-# Capture finding 15 (B #15): Chat settings is its width token (176) by 22.
-Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport
+# Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33003.16 AC#3, a Settings theme import drops 'auto NN%' on a background variable and applies (~5 s, private profile).
+Tests/UI/test_settings_theme_import.py::test_import_drops_auto_on_a_background_variable
 # Capture round 2, finding 14: replay override controls sit beside a named model.
 Tests/UI/test_settings_console_reasoning_history.py::test_override_controls_show_only_beside_the_model_they_remember
 # R1 #2: an emptied Default model is not rebuilt as the text None.
@@ -576,6 +582,82 @@ Tests/UI/test_console_response_rules.py::test_console_syncs_never_wait_for_a_con
 Tests/UI/test_console_browser_quit_fence.py
 # The flat browser group must retain its issued native callback through drain.
 Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_presentation_worker[console-flat-conversation-search]
+# TASK-33005.11 (Phase 9): Switch model rows read verified only for the models the key check listed, and agree with the Console and Settings (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_rows_read_verified_only_for_the_models_the_key_check_listed
+# TASK-33002.9: a model the server did not list leads the Test rows, and the toast warns (under a second).
+Tests/UI/test_settings_provider_test_draft.py::test_a_model_the_server_did_not_list_leads_the_rows_and_warns
+# TASK-33002.9: the Key row names its source in words, never an env:/config: spelling (under a second).
+Tests/UI/test_settings_provider_test_draft.py::test_key_rows_name_their_source_in_words_never_its_spelling
+# TASK-33005.7: the Inspector's Setup row is the readiness word, and a rejected key's send hint says so (13 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_the_inspector_setup_row_and_send_hint_read_the_readiness_word
+# TASK-33005.7: Settings' "Provider readiness" row ends with the Readiness row's word (under a second).
+Tests/UI/test_settings_provider_test_draft.py::test_the_inspector_identity_row_reads_the_readiness_rows_word
+# TASK-33005.15: the Overview and a new chat agree on a provider table's model (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_and_a_new_chat_agree_on_a_provider_table_model
+# TASK-33005.15: evidence settled elsewhere repaints the Overview's Status through the existing poll only (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_follows_evidence_settled_elsewhere
+# TASK-33005.15: an unsaved Providers draft is named apart from the saved pair (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_names_an_unsaved_draft_apart_from_the_saved_pair
+# TASK-33005.15 (rewritten on purpose): no model anywhere still reads "Not ready · no model" (4 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_reports_not_ready_without_model
+# TASK-33005.15: Find filters the NOT RUNNING names as every group (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_find_filters_not_running_by_provider_name_as_every_group
+# TASK-33005.7 (review round 1): one readiness poll tick repaints the identity row with the Key check row, from one verdict (6 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick
+# TASK-33002.9 (review round 1): a Test that probes nothing toasts its summary with markup=False (6 s, private profile).
+Tests/UI/test_settings_provider_test_draft.py::test_a_test_that_probes_nothing_toasts_its_summary_literally
+# Phase 9 Task 7 (2026-10-17), each 3 of 3 serial. TASK-33002.10 and .11: F1 help says a category switch keeps the draft, and Image/Video Gen count fields, not draft keys (whole file, ~38 s).
+Tests/UI/test_settings_state_line_unsaved_count.py
+# TASK-33003.14: '/fallback <label>' lands on each Console Behavior generation fallback; bare labels still land on Providers & Models (whole file, ~10 s, private profile).
+Tests/UI/test_settings_fallback_field_search.py
+# TASK-33005.8: after 't' and Save the Test rows show the saved values, without "(draft)", on the same visit (~6 s, private profile).
+Tests/UI/test_settings_provider_test_draft.py::test_save_redraws_the_test_rows_from_the_saved_values
+# TASK-33005.8 (review round 1): a Save that changes no connection field keeps the 'Key check' row 't' added (~7 s, private profile).
+Tests/UI/test_settings_provider_key_check.py::test_a_save_that_changes_no_connection_field_keeps_the_key_check_row
+# Phase 9 Task 8: TASK-33002.19's mode strip shows a markup-like provider id or endpoint name literally, at open, on a switch and through a later push (3 cases, 25 s, private profile).
+Tests/UI/test_console_mode_strip_literal_text.py
+# TASK-33006.20: after Esc closes Chat settings the footer is the focused widget's; composer, rail and Inspect footers (composer collapsed too) keep Alt+A and Alt+C at 211x44 (15 s, private profile).
+Tests/UI/test_console_switch_model_entry_points.py::test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer
+# Phase 9 Task 12 (2026-10-17) appends four entries no lane ran, each 3 of 3 serial.
+# TASK-33005.9: a refused test reaches Home, the Library lock pre-check and, from the wizard, the Console (new file, whole, 3 cases, ~9 s, private profile).
+Tests/UI/test_shared_connection_evidence_readers.py
+# TASK-33005.10 AC#4: a late switcher probe is offered to the owner and loses, and no probe worker ends in error (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_closing_mid_probe_raises_nothing_and_a_late_result_loses
+# TASK-33005.10 AC#4: the Model summary sync re-measures the rail section it grew (8 s, private profile).
+Tests/UI/test_console_resize_reflow.py::test_model_summary_sync_invalidates_mounted_context_allocation
+# TASK-33005.10 AC#4: a keyed Settings test reaches Chat settings for the same stored key (8 s, private profile).
+Tests/UI/test_settings_provider_test_draft.py::test_settings_test_result_reaches_chat_settings_for_the_same_connection[stored-key]
+# Phase 9 Task 14 (2026-10-17) appends the model-config tests no PR lane ran, each 3 of 3 serial in the lane's install set.
+# TASK-33002.17: every model-config surface takes its labels from the one field table (whole file, 16 tests, ~22 s, private profile).
+Tests/UI/test_model_config_field_labels.py
+# TASK-33641.2 (ledger R11): the Lab GGUF "Model source:" label and its Select paint on one row at 211x44 and 235x52 (~15 s, private profile).
+Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_on_one_row
+# TASK-33003.22 (ledger R11): the Skills preview's Enabled label hugs its text under the app stylesheet (whole file, 17 cases, ~2 s).
+Tests/UI/test_library_skills_builtin_rows.py
+# TASK-33001.15 (ledger R18): a Settings model save writes a key copied from legacy [API] into the provider table (~6 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table
+# TASK-33641.3 (ledger R11, review round 1): the backend rows' controls stay inside their rows and clickable under the app stylesheet at 235x52 and 120x45 (2 cases, ~30 s, private profile).
+Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and_clickable_under_real_css
+# Phase 9 Task 15 (2026-10-18) appends one entry no lane ran, 3 of 3 serial (and 10 of 10, TASK-33003.21's bar).
+# TASK-33006.16: through a real credential round trip a pick still names Model alone, and a Temperature edit still asks (2 cases, ~40 s, private profile).
+Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
+# Phase 9 Task 16 (2026-10-17) appends one entry no lane ran, 3 of 3 serial.
+# TASK-33005.12: a local server's switcher rows are the models its probe listed; with no listing they stay the saved ones (4 cases, ~2 s).
+Tests/UI/test_console_switcher_local_probe.py::test_a_local_servers_rows_are_the_models_its_probe_listed
+# Phase 9 Task 18 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial; its two bootstrap_profile nodes run in the PR Fast Lane's admission-sensitive step since the capture fix wave's review (ledger R11).
+# TASK-35190 AC#4: Switch model's real probe and readiness read the session endpoint while the configured one is down, a pick keeps it, and (review round 2) the open's probe of the configured one makes Ctrl+N refuse, naming it (~6 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_switch_model_keeps_the_chats_session_endpoint_and_saves_none
+# Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial; its bootstrap_profile node runs in the admission-sensitive step (ledger R11).
+# TASK-35190: Chat settings' pick mode reads the session endpoint while the configured one is down, and its pick keeps it (~7 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down
+# TASK-35190: after a Settings round trip a pick on the chat's provider still keeps the session endpoint (~10 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider
+# Phase 9 Task 18 review round 2 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
+# TASK-35190 AC#4: Ctrl+N saves a pair the configured server can send while this chat's endpoint is down, and no endpoint; the configured server is probed only when local (2 cases, ~11 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_reads_the_configured_endpoint
+# Phase 9 Task 18 review round 3 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
+# TASK-35190: an open on a moved endpoint runs two probers under one in-flight cap, four local servers at most SWITCHER_PROBES_IN_FLIGHT at a time (~2 s).
+Tests/UI/test_console_switcher_local_probe.py::test_one_open_on_a_moved_endpoint_keeps_one_in_flight_cap
 # TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
 Tests/UI/test_console_transcript_poll_stop_removal.py
 # TASK-34751: Study paints a markup-shaped workspace name in its scope banner,

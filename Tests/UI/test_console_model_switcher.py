@@ -1030,37 +1030,51 @@ async def test_ctrl_o_with_a_row_highlighted_before_first_readiness_carries_it()
     assert (settings.provider, settings.model) == previous
 
 
+_OWN_30 = [f"gpt-{number}" for number in range(30)]
+
+
 @pytest.mark.parametrize(
-    "own_models, pair, reopened, kept",
+    "own_models, pair, reopened, own_listed, kept",
     [
-        (["gpt-5.1"], "gpt-5.1", None, "gpt-5.1"),
+        # The pair is OpenAI's own 31st model.
+        ([*_OWN_30, "gpt-5.1"], "gpt-5.1", None, [*_OWN_30[:29], "gpt-5.1"], "gpt-5.1"),
         # A return from Settings with no row for its pair: the row named no
         # model, or the catalog no longer lists the one it named.
-        (["gpt-5.1", "gpt-b"], None, "openai", "gpt-5.1"),
-        (["gpt-a", "gpt-b"], "gpt-5.1", "openai", "gpt-a"),
+        (["gpt-5.1", "gpt-b"], None, "openai", ["gpt-5.1", "gpt-b"], "gpt-5.1"),
+        (["gpt-a", "gpt-b"], "gpt-5.1", "openai", ["gpt-a", "gpt-b"], "gpt-a"),
     ],
     ids=["the-pair", "returned-no-pair", "returned-pair-no-longer-listed"],
 )
 async def test_a_highlight_pair_past_the_match_cap_stays_listed(
-    own_models, pair, reopened, kept
+    own_models, pair, reopened, own_listed, kept
 ) -> None:
-    """TASK-33008.2: "OpenAI " in Find also matches every aggregator id that
-    starts with it, and those rank above OpenAI's own models, which match by
-    the provider's name alone. With 30 of them the cut at 30 rows left the
-    row's pair out, and Enter applied Find's best match: another provider's
-    model. While Find is as it opened, the pair takes the last listed place.
-    The cap is unchanged, and so is the ranking once Find changes.
+    """TASK-33008.2: past the cut at 30 matches the row's pair was left out,
+    and Enter applied Find's best match. While Find is as it opened, the pair
+    takes the last listed place. The cap is unchanged once Find changes.
 
     Controller ruling of 2026-10-11: a list reopened from Settings with no
-    row for its pair keeps the returned provider's first row the same way.
-    Cut, none of that provider's rows was listed, nothing was highlighted and
-    no line named the provider (``kept`` is the model of the row kept)."""
+    row for its pair highlights the returned provider's first row (``kept``
+    is the model of the row highlighted).
+
+    Rewritten on purpose for TASK-33641.9: "OpenAI " also matches every
+    aggregator id that starts with it, and those used to rank above OpenAI's
+    own models, so 30 of them pushed OpenAI's rows past the cut. Find that is
+    exactly a provider's name now lists that provider's rows first, so the
+    pair here is past the cut of OpenAI's own models, and the aggregator's
+    ids follow them."""
     recorder = Recorder(ready=READY_PROVIDERS | {"openai"})
     aggregator = [f"openai/gpt-{number}" for number in range(30)]
     app = SwitcherHarness()
 
     def listed(switcher) -> list[tuple[str, str | None]]:
         return [(row.provider, row.model) for row in switcher._rows if row.model]
+
+    def first_30(own: list[str]) -> list[tuple[str, str | None]]:
+        rows = [
+            *(("openai", model) for model in own),
+            *(("openrouter", model) for model in aggregator),
+        ]
+        return rows[:30]
 
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
@@ -1074,10 +1088,7 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed(
                 reopened_provider=reopened,
             ),
         )
-        assert listed(switcher) == [
-            *(("openrouter", model) for model in aggregator[:29]),
-            ("openai", kept),
-        ]
+        assert listed(switcher) == first_30(own_listed)
         more = len(aggregator) + len(own_models) - 30
         # Capture fix 3 finding 2: "… 1 more matches" counts one in the singular.
         matches = "match" if more == 1 else "matches"
@@ -1093,9 +1104,9 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed(
         )
 
         find = switcher.query_one("#console-popover-find", Input)
-        find.value = "OpenAI"  # the user's own query: ranked as ever
+        find.value = "OpenAI"  # the user's own query: cut at 30 as ever
         await pilot.pause()
-        assert listed(switcher) == [("openrouter", model) for model in aggregator]
+        assert listed(switcher) == first_30(own_models)
         find.value = "OpenAI "
         await pilot.pause()
 
@@ -1104,6 +1115,48 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed(
 
     settings = recorder.submissions[0].draft.settings
     assert (settings.provider, settings.model) == ("openai", kept)
+
+
+async def test_a_reopened_providers_first_row_survives_a_namesakes_30_rows() -> None:
+    """TASK-33641.9 review: a reopen's Find is the provider's name, so its rows
+    rank first, unless another provider has that name too. A named endpoint
+    called "OpenAI", this chat's provider, lists 30 models ahead of OpenAI's;
+    a return to OpenAI that names no model still lists and highlights
+    OpenAI's first row, in the last place of the 30."""
+    recorder = Recorder(ready=READY_PROVIDERS | {"openai", "custom-ep:box"})
+    box_models = [f"box-{number}" for number in range(30)]
+    app_config = {
+        "custom_endpoints": {
+            "box": {
+                "display_name": "OpenAI",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "family": "openai_compatible",
+                "models": box_models,
+            }
+        }
+    }
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                draft=_draft("custom-ep:box", "box-0"),
+                providers_models={"OpenAI": ["gpt-5.1", "gpt-b"]},
+                app_config=app_config,
+                query="OpenAI ",
+                reopened_provider="openai",
+            ),
+        )
+        listed = [(row.provider, row.model) for row in switcher._rows if row.model]
+        row = switcher.highlighted_row()
+
+    assert listed == [
+        *(("custom-ep:box", m) for m in box_models[:29]),
+        ("openai", "gpt-5.1"),
+    ]
+    assert row is not None and (row.provider, row.model) == ("openai", "gpt-5.1")
 
 
 #: Three keyless providers listed ahead of OpenAI, three rows each for
@@ -1167,13 +1220,15 @@ async def test_the_needs_setup_overflow_line_counts_one_in_the_singular(
             ["gpt-a", "gpt-b", "gpt-c"],
         ),
         # Eight NEEDS SETUP rows end the group; three providers listed ahead
-        # of OpenAI fill it.
+        # of OpenAI fill it. Find that is exactly OpenAI's name lists its row
+        # first and never cuts it (TASK-33641.9, rewritten on purpose: the
+        # user's own "OpenAI" cut it).
         (
             {**_EIGHT_ROWS_AHEAD, "OpenAI": ["gpt-5.1"]},
             ("llama_cpp", "model-a"),
             "gpt-5.1",
             ["gpt-5.1"],
-            [],
+            ["gpt-5.1"],
         ),
         # The same eight rows, and a return that names no model: OpenAI
         # lists none, so its one NEEDS SETUP row names none and is no pair's.
@@ -1182,7 +1237,7 @@ async def test_the_needs_setup_overflow_line_counts_one_in_the_singular(
             ("llama_cpp", "model-a"),
             None,
             [None],
-            [],
+            [None],
         ),
         # The pair is the chat's own, on a model no saved list holds: with
         # nothing in Find its NEEDS SETUP row names that model, and a query
@@ -1213,7 +1268,8 @@ async def test_a_highlight_pair_keeps_its_needs_setup_row(
     Settings that names no model (``model`` is None: its provider lists none)
     keeps that provider's one row the same way; the row went into "… N more
     providers need setup" and nothing was highlighted. Once Find changes the
-    caps cut as ever (``typed_rows``)."""
+    caps cut as ever (``typed_rows``), except NEEDS SETUP's eight-row cap,
+    which never cuts the provider Find names exactly (TASK-33641.9)."""
     recorder = Recorder(ready=frozenset({"openrouter"}))
     app = SwitcherHarness()
 
@@ -1321,10 +1377,14 @@ async def test_a_list_reopened_from_settings_never_highlights_another_providers_
         assert says_no_models(switcher) == (highlighted is None)
 
         find = switcher.query_one("#console-popover-find", Input)
-        find.value = "OpenAI"  # the user's own query: Find's best match again
+        # The user's own query, exactly the provider's name: its own row, else
+        # nothing, as the reopen. Rewritten on purpose for TASK-33641.9, which
+        # lists OpenAI's rows (or its line) first: the aggregator's row was
+        # highlighted in all three cases.
+        find.value = "OpenAI"
         await pilot.pause()
-        assert highlight(switcher) == ("pair", *_AGGREGATOR_ROW)
-        assert not says_no_models(switcher)
+        assert highlight(switcher) == highlighted
+        assert says_no_models(switcher) == (highlighted is None)
         find.value = "OpenAI "
         await pilot.pause()
         assert highlight(switcher) == highlighted
@@ -1352,6 +1412,222 @@ async def test_a_list_reopened_from_settings_never_highlights_another_providers_
     ]
     assert applied == expected
     assert recorder.setup == ([] if saved else [("openai", None)])
+
+
+class _OwnReadiness(Recorder):
+    """OpenRouter ready; OpenAI reads ``own`` (saved or unsaved)."""
+
+    def __init__(self, own: ConsoleSettingsReadiness) -> None:
+        super().__init__(ready=frozenset({"openrouter"}))
+        self.own = own
+
+    def readiness(self, provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        verdict = super().readiness(provider, model)
+        return self.own if provider == "openai" else verdict
+
+
+_AGGREGATOR_IDS = [f"openai/gpt-{index}" for index in range(35)]
+
+
+@pytest.mark.parametrize(
+    "own, own_models, own_rows, pick_only",
+    [
+        # Unsaved: its NEEDS SETUP row, which Azure OpenAI's and Custom
+        # OpenAI-compatible's rows (their names hold the text) preceded.
+        (NO_KEY, [], [("setup", "openai", None)], False),
+        # Picking: the same row, which cannot be picked.
+        (NO_KEY, [], [("setup", "openai", None)], True),
+        # Saved with no model chosen or listed: also NEEDS SETUP.
+        (NO_MODEL, [], [("setup", "openai", None)], False),
+        # Saved and ready, listing nothing: no row, its own line instead.
+        (READY, [], [], False),
+        # Ready with models: they were the last of 30 matches, or cut.
+        (
+            READY,
+            ["gpt-a", "gpt-b"],
+            [("pair", "openai", "gpt-a"), ("pair", "openai", "gpt-b")],
+            False,
+        ),
+    ],
+    ids=[
+        "empty-unsaved",
+        "empty-unsaved-pick",
+        "empty-saved",
+        "empty-saved-ready",
+        "listed",
+    ],
+)
+async def test_find_with_exactly_a_providers_name_lists_its_rows_first(
+    own, own_models, own_rows, pick_only
+) -> None:
+    """TASK-33641.9: Find ranked by text alone, so a ready aggregator whose
+    ids start with a provider's name (OpenRouter's "openai/...") outranked
+    that provider's own rows: typing "openai" highlighted openrouter ·
+    openai/gpt-0, and one Enter applied another provider's model. When
+    Find's text is exactly a provider's name or id, its rows are listed
+    first in their group and its first row is highlighted, or nothing when
+    it has no row to choose (it lists nothing, or a pick cannot take its
+    NEEDS SETUP row), so Enter applies no other provider's model; a ready
+    provider that lists nothing leads READY PROVIDERS with its own line. One
+    more or one less letter ranks as before."""
+    recorder = _OwnReadiness(own)
+    app = SwitcherHarness()
+    providers_models = {
+        "Azure": ["gpt-az"],
+        "Custom": ["gpt-custom"],
+        "OpenAI": own_models,
+        "OpenRouter": _AGGREGATOR_IDS,
+    }
+
+    def ranked(switcher) -> dict[str, list[tuple[str, str, str | None]]]:
+        groups: dict[str, list[tuple[str, str, str | None]]] = {}
+        rows: list[tuple[str, str, str | None]] = []
+        for row in switcher._rows:
+            if row.kind == "header":
+                rows = groups.setdefault(row.text.split(" ·")[0], [])
+            elif row.kind in {"pair", "setup", "info"}:
+                text = row.text.strip() if row.kind == "info" else row.model
+                rows.append((row.kind, row.provider, text))
+        return groups
+
+    def highlight(switcher) -> tuple[str, str, str | None] | None:
+        row = switcher.highlighted_row()
+        return None if row is None else (row.kind, row.provider, row.model)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder, providers_models=providers_models, pick_only=pick_only
+            ),
+        )
+        await pilot.press(*"openai")
+        await _settle(app, pilot)
+        groups = ranked(switcher)
+        ready, setup = groups["READY PROVIDERS"], groups["NEEDS SETUP"]
+        if own_rows and own_rows[0][0] == "setup":
+            assert setup[: len(own_rows)] == own_rows, setup
+            assert ready[0] == ("pair", "openrouter", "openai/gpt-0")
+        elif own_rows:
+            assert ready[: len(own_rows)] == own_rows, ready
+        else:
+            line = "OpenAI · no models reported · type its name and an id"
+            assert ready[0] == ("info", "", line), ready
+        # Rewritten on purpose (round-1 review): with no row of its own to
+        # choose, the aggregator's openai/gpt-0 was highlighted.
+        expected = own_rows[0] if own_rows and not pick_only else None
+        assert highlight(switcher) == expected
+        # The painted list says the same: OpenAI's first row is highlighted.
+        if expected:
+            painted = line_with(list_lines(app, switcher), HIGHLIGHT_GLYPH)
+            assert "OpenAI" in painted and "OpenRouter" not in painted
+        else:
+            await pilot.press("enter")  # nothing applied by accident
+            await pilot.pause()
+            assert app.screen is switcher and recorder.submissions == []
+
+        await pilot.press("backspace")  # "opena": not a name, ranks as before
+        await _settle(app, pilot)
+        assert highlight(switcher) == ("pair", "openrouter", "openai/gpt-0")
+        assert ranked(switcher)["READY PROVIDERS"][0] == (
+            "pair",
+            "openrouter",
+            "openai/gpt-0",
+        )
+
+
+async def test_find_with_exactly_a_providers_id_lists_its_rows_first() -> None:
+    """TASK-33641.9 AC#1: an id counts as the name does. "llama_cpp" is in no
+    model id and not in the name "llama.cpp", so it listed none of llama.cpp's
+    rows and offered itself as a TYPED MODEL ID for this chat's provider."""
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(Recorder()))
+        await pilot.press(*"llama_cpp")
+        await _settle(app, pilot)
+        rows = [
+            (row.kind, row.provider, row.model)
+            for row in switcher._rows
+            if row.kind in {"pair", "typed"}
+        ]
+        row = switcher.highlighted_row()
+    assert rows == [("pair", "llama_cpp", "model-a"), ("pair", "llama_cpp", "model-b")]
+    assert row is not None and (row.provider, row.model) == ("llama_cpp", "model-a")
+
+
+@pytest.mark.parametrize(
+    "draft, extra, expected",
+    [
+        (
+            _draft(),
+            {
+                "providers_models": {
+                    "MistralAI": ["mistral-large-latest", "mistral-small-latest"]
+                }
+            },
+            ("mistralai", "mistral-large-latest"),
+        ),
+        (
+            _draft("ollama", "llama3"),
+            {"served_models": {"ollama": ("mistral:7b", "mistral:instruct")}},
+            ("ollama", "mistral:7b"),
+        ),
+    ],
+    ids=["mistral-ai", "ollama-served"],
+)
+async def test_find_with_an_unused_legacy_alias_id_ranks_as_any_text(
+    draft, extra, expected
+) -> None:
+    """TASK-33641.9 AC#2 (round-2 review): the catalog lists legacy aliases
+    that appear only when a chat uses them, yet "mistral" counted as the
+    unused alias Mistral AI (legacy alias)'s id: no row was its, so nothing
+    was highlighted and Enter applied nothing although Mistral AI's (or the
+    Ollama server's) mistral rows were the matches, and the chat's provider
+    was offered no TYPED MODEL ID row. It ranks as any other text."""
+    recorder = Recorder(ready=READY_PROVIDERS | {"mistralai"})
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, build_switcher(recorder, draft=draft, **extra)
+        )
+        await pilot.press(*"mistral")
+        await _settle(app, pilot)
+        row = switcher.highlighted_row()
+        assert row is not None and (row.kind, row.provider, row.model) == (
+            "pair",
+            *expected,
+        )
+        typed = [(r.provider, r.model) for r in switcher._rows if r.kind == "typed"]
+        assert typed == [(draft.settings.provider, "mistral")]
+        await pilot.press("enter")
+        await pilot.pause()
+    assert [
+        (s.draft.settings.provider, s.draft.settings.model)
+        for s in recorder.submissions
+    ] == [expected]
+
+
+@pytest.mark.parametrize(
+    "query", ["llama.cpp (legacy alias)", "Mistral AI (legacy alias)"]
+)
+async def test_find_with_an_unused_legacy_alias_name_offers_no_typed_id(query) -> None:
+    """TASK-33641.9 (round-3 review): only an unused alias's id is ordinary
+    text; its name ends in "(legacy alias)", which no search word collides
+    with. With the alias out of the name test too, the name matched the
+    canonical provider's name and a space, and "(legacy alias)" was offered,
+    highlighted, as that provider's TYPED MODEL ID, which Enter applied."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(recorder))
+        await pilot.press(*query)
+        await _settle(app, pilot)
+        assert [row for row in switcher._rows if row.kind == "typed"] == []
+        assert switcher.highlighted_row() is None
+        await pilot.press("enter")
+        await pilot.pause()
+    assert recorder.submissions == []
 
 
 async def test_a_list_reopened_with_no_pair_waits_for_readiness_too() -> None:
@@ -2002,7 +2278,45 @@ async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> N
         custom = {row.provider for row in switcher._rows if row.provider}
         text = "\n".join(list_lines(app, switcher))
     assert {"custom", "custom_2"} <= custom
-    assert "Custom OpenAI-co…ble" in text and "Custom OpenAI-co… #2" in text
+    # Rewritten on purpose for TASK-33005.14: the 140-column box has room for
+    # the whole names, which a fixed 20-column cut showed as
+    # "Custom OpenAI-co…ble" and "Custom OpenAI-co… #2".
+    assert "Custom OpenAI-compatible #2" in text and "…" not in text
+
+
+@pytest.mark.parametrize(
+    "size, cut",
+    [
+        ((211, 44), False),
+        ((235, 52), False),
+        # 120 columns leave the list no room for a longer name beside the
+        # other columns and the 26-cell note: 20 cells, as before.
+        ((120, 44), True),
+    ],
+    ids=["211x44", "235x52", "120x44"],
+)
+async def test_provider_names_show_whole_while_the_list_has_room(size, cut) -> None:
+    """TASK-33005.14 AC#2: Switch model cut provider names at a fixed 20
+    columns ("Custom OpenAI-co…ble", "Custom OpenAI-co… #2", captures 06 and
+    12) though the 140-column box had room. The column fits the longest name
+    listed while the list fits the whole row, note included; only a list too
+    narrow for that shortens a name, in the middle, to the room left (never
+    below 20). Readiness and the notes stay whole, in one column each."""
+    app = SwitcherHarness()
+    async with app.run_test(size=size) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(Recorder()))
+        await pilot.press(*"custom")
+        await _settle(app, pilot)
+        lines = [line for line in list_lines(app, switcher) if "Custom OpenAI" in line]
+    first = next(line for line in lines if "#2" not in line)
+    second = next(line for line in lines if "#2" in line)
+    assert ("Custom OpenAI-compatible  " not in first) is cut, first
+    assert ("Custom OpenAI-compatible #2" not in second) is cut, second
+    assert ("…" in second.split("Not ready")[0]) is cut, second  # in the middle
+    assert "Custom OpenAI-co" in second and " #2 " in second, second
+    assert all(line.endswith("Enter: add key in Settings") for line in lines), lines
+    readiness = {line.index("Not ready · no key") for line in (first, second)}
+    assert len(readiness) == 1, lines
 
 
 async def test_enter_on_needs_setup_opens_that_providers_settings_fix() -> None:
@@ -3412,3 +3726,131 @@ async def test_pick_only_never_picks_needs_setup_and_esc_returns_nothing() -> No
 
     assert app.result is None
     assert recorder.submissions == [] and recorder.setup == []
+
+
+def _switcher_sources_over(draft, config, monkeypatch, *, full_surface=False):
+    """``_switcher_sources`` over a stand-in screen, with the real readiness
+    (``ChatScreen._console_default_readiness`` without evidence). Returns the
+    sources and the configuration each prober was built over."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_target_default_console_session_settings,
+    )
+    from tldw_chatbook.UI.Console_Modules import connection_probe
+    from tldw_chatbook.UI.Console_Modules.model_switcher import _switcher_sources
+
+    probed: list[object] = []
+
+    def prober(_app, app_config, gate=None):
+        probed.append(app_config)
+        return lambda *_args: None
+
+    def readiness(provider, model, app_config=None):
+        app_config = app_config or config
+        settings = build_target_default_console_session_settings(
+            app_config, provider, model
+        )
+        return build_console_settings_readiness(settings, app_config=app_config)
+
+    monkeypatch.setattr(connection_probe, "switcher_connection_prober", prober)
+    screen = SimpleNamespace(
+        app=None,
+        _ensure_console_chat_store=lambda: None,
+        _providers_models=dict,
+        _ensure_console_chat_controller=lambda: SimpleNamespace(
+            rebase_console_settings_draft=None
+        ),
+    )
+    sources = _switcher_sources(
+        screen,
+        "session-a",
+        (draft.settings.provider, draft.settings.model),
+        config,
+        readiness,
+        draft=draft,
+        full_surface=full_surface,
+    )
+    return sources, probed
+
+
+@pytest.mark.parametrize("full_surface", [False, True], ids=["alt-m", "pick-mode"])
+async def test_an_unseen_pick_on_a_url_server_lands_on_its_saved_endpoint(
+    full_surface, monkeypatch
+) -> None:
+    """Whole-PR review, round 1 (TASK-35190): only llama.cpp's direct path
+    sends on an Endpoint set only on the chat; every other URL provider blocks
+    one it has not saved. An Ollama chat holding :11500 while the config says
+    :11434 (Settings does not move a chat that holds work, ADR-095) kept
+    :11500 on a pick of another Ollama model and read "endpoint unsaved",
+    while Switch model's row, read over the held URL, said Ready. The pick
+    lands on :11434 now, ready to send, and the row reads its word."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    saved = "http://127.0.0.1:11434"
+    config = {"api_settings": {"ollama": {"api_url": saved, "model": "model-a"}}}
+    draft = ConsoleSettingsModal._initial_full_draft(
+        ConsoleSessionSettings(
+            provider="ollama", model="model-a", base_url="http://127.0.0.1:11500"
+        )
+    )
+    picked = ConsoleChatController.rebase_console_settings_draft(
+        object(),
+        draft,
+        provider="ollama",
+        model="model-b",
+        app_config=config,
+        exposed_fields=FULL_MODEL_DEFAULT_FIELDS
+        if full_surface
+        else QUICK_MODEL_DEFAULT_FIELDS,
+    )
+    landed = build_console_settings_readiness(picked.settings, app_config=config)
+    sources, probed = _switcher_sources_over(
+        draft, config, monkeypatch, full_surface=full_surface
+    )
+    row = sources["default_readiness_resolver"]("ollama", "model-b")
+
+    assert picked.settings.base_url == saved
+    assert landed.operability == "ready_to_send", landed.blocker
+    assert readiness_words(row) == readiness_words(landed) == "Ready · not tested"
+    assert probed == [config]
+
+
+@pytest.mark.parametrize(
+    ("held", "probers"),
+    [("http://127.0.0.1:9099", 1), ("http://127.0.0.1:9200", 2)],
+    ids=["saved-url", "moved"],
+)
+async def test_switch_model_checks_the_saved_server_too_only_off_it(
+    held, probers, monkeypatch
+) -> None:
+    """Whole-PR review, round 1 (TASK-35190): ``with_provider_endpoint``
+    always returns a copy, so a chat that holds its saved URL explicitly
+    counted as moved, and every such Alt+M open built a second prober over an
+    identical copy. Only an Endpoint off the saved one builds the configured
+    server's prober."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"}
+        }
+    }
+    draft = ConsoleSettingsModal._initial_full_draft(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a", base_url=held)
+    )
+    _sources, probed = _switcher_sources_over(draft, config, monkeypatch)
+
+    assert len(probed) == probers
+    assert (probed[0] is config) == (probers == 1) and probed[-1] is config

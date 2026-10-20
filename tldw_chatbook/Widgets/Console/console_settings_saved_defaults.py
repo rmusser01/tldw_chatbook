@@ -164,7 +164,7 @@ class ConsoleSettingsSavedDefaultsMixin:
         if self._is_effectively_focusable(apply):
             apply.focus()
         else:
-            self._focus_highest_priority_connection()
+            self._focus_view_open_target()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Run Use saved defaults.

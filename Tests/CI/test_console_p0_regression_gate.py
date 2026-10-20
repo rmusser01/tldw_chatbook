@@ -184,6 +184,7 @@ _CASES = [
 _BOOTSTRAP_OK = (
     "UI Fast Lane census",
     "PR Fast Lane (admission-sensitive)",
+    "PR Fast Lane (admission-sensitive 2)",
     "Console P0 gate (admission-sensitive)",
     "Dreams contracts (admission-sensitive)",
 )
@@ -211,6 +212,10 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         "PR Fast Lane (sandboxed)": _step_targets("pr-fast-lane", "Run fast PR contract"),
         "PR Fast Lane (admission-sensitive)": _step_targets(
             "pr-fast-lane-admission", "Run admission-sensitive suites"
+        ),
+        # TASK-35575: the admission-sensitive suites' second job.
+        "PR Fast Lane (admission-sensitive 2)": _step_targets(
+            "pr-fast-lane-admission-2", "Run admission-sensitive suites 2"
         ),
         "Console P0 gate (sandboxed)": _step_targets(
             "console-p0-gate", "Run the sandboxed Console P0 regression tests"

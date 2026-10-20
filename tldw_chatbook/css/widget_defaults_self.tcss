@@ -335,8 +335,8 @@
         min-height: 3;
         width: 100%;
         dock: top;
-        background: $background;
-        border-bottom: solid $surface-lighten-2;
+        background: $surface;
+        border-bottom: solid $tldw-boundary;
         layout: horizontal;
         overflow: hidden;
     }

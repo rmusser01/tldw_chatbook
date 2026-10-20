@@ -107,6 +107,10 @@ jobs:
       - name: Install fast-lane dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
 
+      # Phase 9's reviews: the last 17 targets are model-config evidence that
+      # ran in no PR lane (13 from the whole-PR review's round 1, 4 from the
+      # Stop-claim fix and its reviews; Tests/CI's FAST_LANE_TARGETS names each
+      # rider); about 1 min serial in this job's install set.
       - name: Run fast PR contract
         run: |
           pytest \
@@ -187,8 +191,7 @@ jobs:
             'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]' \
             Tests/Chat/test_console_value_layers_skipped_model_defaults.py \
             Tests/Widgets/test_model_search_picker_list_keys.py \
-            Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_validates_the_temperature_the_write_saves \
-            Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one \
+            Tests/Chat/test_console_settings_defaults.py \
             Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own \
             Tests/Widgets/test_model_search_picker.py::test_a_saved_model_the_endpoint_serves_is_listed_as_served_now \
             Tests/Widgets/test_model_search_picker.py::test_saved_only_list_says_catalog_refresh_is_off_when_it_is \
@@ -205,6 +208,35 @@ jobs:
             Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_provider_tells_a_listing_that_cannot_list_as_model_does \
             Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it \
             Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_model_step_hints_at_a_key_only_after_a_keyless_403 \
+            Tests/Provider/test_provider_model_resolution.py \
+            Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another \
+            Tests/Chat/test_console_session_settings.py::test_new_chats_resolve_the_chat_defaults_pair \
+            Tests/Chat/test_readiness_words.py \
+            Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows \
+            Tests/Chat/test_provider_evidence_hardening.py \
+            Tests/Chat/test_first_run_connection_evidence.py \
+            Tests/ProductionApp/test_provider_selection_ownership.py \
+            Tests/Backup_Recovery/test_skills_recovery_controls.py \
+            Tests/LLM_Calls/test_summarization_credential_source.py \
+            Tests/Chat/test_legacy_api_key_credential_source.py \
+            Tests/LLM_Calls/test_dispatch_local_argument_routing.py \
+            Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_silent_stream_without_reporting_a_stall \
+            Tests/Chat/test_stream_stall_watchdog.py::test_stop_predicate_never_drops_or_reorders_items \
+            Tests/Chat/test_stream_stall_watchdog.py::test_stall_still_trips_between_stop_polls \
+            Tests/Chat/test_stream_stall_watchdog.py::test_cancel_with_a_stop_predicate_still_propagates_and_closes \
+            Tests/Chat/test_stream_stall_watchdog.py::test_stop_landing_as_the_window_expires_is_a_stop_and_raises_nothing_in_the_loop \
+            Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_stream_that_went_silent_after_content \
+            Tests/Chat/test_stream_stall_watchdog.py::test_the_stop_poll_leaves_nothing_for_the_cyclic_collector \
+            Tests/Backup_Recovery/test_raw_operation_task_discovery.py \
+            Tests/Utils/test_user_theme_loader.py \
+            Tests/Performance/test_boot_css_byte_budget.py \
+            Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
+            Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section \
+            Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api \
+            Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work \
+            Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits \
+            Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release \
+            Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session \
             --timeout=180 \
             --tb=short
 
@@ -217,9 +249,15 @@ jobs:
     # invocation to this one and a fresh runner changes nothing it relies on.
     #
     # timeout-minutes: the 35 the owner set for exactly these suites
-    # (TASK-33910.2). Its 90 measured runs replay at median 16.3 / max 20.1
-    # min with setup, so one hung test at --timeout=300 (about 5.3 min with
-    # the private-profile wrapper's report) still ends ~10 min under the cap.
+    # (TASK-33910.2). TASK-35575 (owner decision, 2026-10-19): this job keeps
+    # dev's 41 targets and Phase 9's 54 run beside it in
+    # pr-fast-lane-admission-2, below. With all 93 here, PR #3169's two runs
+    # took 29.8 and 27.4 min of the 35 (the pytest step 1737 s and 1590 s), so
+    # one hung test at --timeout=300 (about 5.3 min with the private-profile
+    # wrapper's report) would have passed the cap. Dev's 41 alone, over 20 PR
+    # runs (2026-10-18/19): median 17.5 / max 20.0 min with setup (the step
+    # median 996 s / max 1147 s), so a hung test's report still ends about
+    # 10 min under the cap.
     #
     # One more runner per PR (ADR-103 note, 2026-10-14).
     name: PR Fast Lane (admission-sensitive)
@@ -291,6 +329,111 @@ jobs:
             Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word \
             Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule \
             Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once \
+            --timeout=300 \
+            --tb=short
+
+  pr-fast-lane-admission-2:
+    # TASK-35575 (owner decision, 2026-10-19): the admission-sensitive suites
+    # run in two jobs side by side. pr-fast-lane-admission keeps dev's 41
+    # targets; this job holds Phase 9's 54 model-config targets: the 52 in the
+    # order they had there, then the Stop-claim fix's two (TASK-33666).
+    # Together in one job, PR #3169's two runs took 29.8 and 27.4 min of its
+    # 35 (the pytest step 1737 s and 1590 s), so one hung test at
+    # --timeout=300 (about 5.3 min with the private-profile wrapper's report)
+    # would have passed the cap. Serial in this job's install set the 52 alone
+    # took 266.9 s (959 passed, 2026-10-19, load 7-9; the two added after take
+    # about 1-3 s each, the pair 3.3-5.3 s serial), where all 93 took 1744.6 s
+    # and then 1737 s and 1590 s on CI, so expect about 5 min of pytest and
+    # 6-7 min with setup: a hung test's report ends well over 20 min under the
+    # cap.
+    #
+    # Same runner, install line, cap and --timeout=300 as
+    # pr-fast-lane-admission, and its own pytest process and bootstrap
+    # profile, as there. One more runner per PR (ADR-103 note, 2026-10-19).
+    name: PR Fast Lane (admission-sensitive 2)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+
+      # bootstrap_profile suites, kept out of a sandboxed invocation for the
+      # reason pr-fast-lane-admission's note gives (TASK-32873). Phase 9's
+      # model-config evidence that ran in no PR lane, bootstrap_profile by
+      # marker or by Tests/conftest.py's file list (Tests/CI's
+      # ADMISSION_2_TARGETS names each rider). The three many-case pure rule
+      # tests come first: Tests/conftest.py collects garbage after every
+      # Tests/UI test, and that pass slows as the mounted targets grow the
+      # heap. The 623-case chrome rule test took 710 s of a 956 s run behind
+      # them, 74-80 s first, and 42 s alone. In its own pytest step the three
+      # would save about 45 s, not worth a second step.
+      - name: Run admission-sensitive suites 2
+        run: |
+          pytest \
+            Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast \
+            Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast \
+            Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast \
+            Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers \
+            Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column \
+            Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row \
+            Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint \
+            Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry \
+            Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last \
+            Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run \
+            Tests/UI/test_console_settings_geometry.py::test_view_tabs_paint_their_whole_labels_after_each_view_switch \
+            Tests/UI/test_console_settings_geometry.py::test_a_selected_view_tab_paints_its_mark_while_it_holds_focus \
+            Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible \
+            Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen \
+            Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart \
+            Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport \
+            Tests/UI/test_console_session_settings.py::test_console_settings_mount_builds_default_readiness_once \
+            Tests/UI/test_console_session_settings.py::test_console_settings_subscription_change_builds_default_readiness_once \
+            Tests/UI/test_console_session_settings.py::test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint \
+            Tests/UI/test_console_session_settings.py::test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason \
+            Tests/Chat/test_console_stop_silent_provider.py \
+            Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles \
+            Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_two_overlapping_opens_of_a_chat_make_one_session \
+            Tests/Chat/test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice \
+            Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status \
+            Tests/UI/test_schedules_disabled_state.py::test_rearmed_one_time_reminder_shows_its_new_run \
+            Tests/UI/test_schedules_disabled_state.py::test_reminder_that_will_not_run_keeps_its_dash_form \
+            Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_with_no_next_run_reads_the_plain_dash \
+            Tests/UI/test_schedules_disabled_state.py::test_real_recurring_dispatch_keeps_the_next_run_visible \
+            Tests/UI/test_schedules_disabled_state.py::test_disabled_row_and_badge_read_disabled_and_survive_refresh \
+            Tests/UI/test_schedules_next_run_relative.py::test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail \
+            Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form \
+            Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label \
+            Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text \
+            Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable \
+            Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast \
+            Tests/UI/test_console_modal_dismissal.py::test_console_modal_launch_declarations_match_runtime_construction \
+            Tests/UI/test_console_modal_dismissal.py::test_console_modal_inventory_matches_runtime_ast_and_transitive_launches \
+            Tests/UI/test_console_modal_dismissal.py::test_task2_modal_contract_table_is_complete_and_adopted \
+            Tests/UI/test_console_modal_dismissal.py::test_task3_modal_contract_table_is_complete_and_adopted \
+            Tests/UI/test_console_modal_dismissal.py::test_task4_transitive_modal_contract_table_is_complete_and_adopted \
+            Tests/UI/test_console_modal_dismissal.py::test_settings_redirected_select_click_uses_real_mro_dispatch \
+            Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result \
+            Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result \
+            Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result \
+            Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits \
+            Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits \
             --timeout=300 \
             --tb=short
 
@@ -660,7 +803,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [pr-fast-lane, pr-fast-lane-admission, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking]
+    needs: [pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -693,6 +836,14 @@ jobs:
         run: |
           echo "PR Fast Lane (admission-sensitive) result: ${{ needs.pr-fast-lane-admission.result }}"
           echo "::error::The required PR fast lane (admission-sensitive) did not succeed."
+          exit 1
+
+      # TASK-35575: same shape, for the second admission-sensitive job.
+      - name: Require successful PR fast lane (admission-sensitive 2)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-admission-2.result != 'success' }}
+        run: |
+          echo "PR Fast Lane (admission-sensitive 2) result: ${{ needs.pr-fast-lane-admission-2.result }}"
+          echo "::error::The required PR fast lane (admission-sensitive 2) did not succeed."
           exit 1
 
       # TASK-32908: same shape as the step above. Without it the new UI job

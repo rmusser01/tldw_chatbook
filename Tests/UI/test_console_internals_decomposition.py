@@ -2151,7 +2151,7 @@ async def test_console_setup_modal_dismisses_when_readiness_and_model_satisfied(
         assert modal.is_blocking is False
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.can_focus is True
-        assert "Ready — type a message to begin." in _visible_text(console)
+        assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -2287,7 +2287,7 @@ async def test_console_on_screen_resume_resyncs_stale_setup_modal_block():
         assert modal.is_blocking is False
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.can_focus is True
-        assert "Ready — type a message to begin." in _visible_text(console)
+        assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -2378,7 +2378,7 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         text = _visible_text(console)
-        assert "Ready — type a message to begin." in text
+        assert "Ready · not tested — type a message to begin." in text
         assert (
             "Type in Composer, attach sources, or run Library RAG before sending."
             not in text
@@ -2762,7 +2762,7 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "Ready — type a message to begin." in text
+        assert "Ready · not tested — type a message to begin." in text
         assert (
             "Type in Composer, attach sources, or run Library RAG before sending."
             not in text
@@ -2791,7 +2791,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert getattr(body.render(), "plain", str(body.render())) == (
             # TASK-34100.5 AC#11: the arrival line names what setup connected.
             "Setup complete — llama.cpp · local-model. "
-            "Ready — type a message to begin."
+            "Ready · not tested — type a message to begin."
         )
         assert body.display is True
         assert not list(empty_panel.query("#console-empty-action-row"))

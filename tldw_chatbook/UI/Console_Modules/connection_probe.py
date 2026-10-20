@@ -304,7 +304,10 @@ def _recently_tested(evidence: ProviderTestEvidence | None) -> bool:
 
 
 def switcher_connection_prober(
-    app: object, app_config: Mapping[str, object]
+    app: object,
+    app_config: Mapping[str, object],
+    *,
+    gate: asyncio.Semaphore | None = None,
 ) -> Callable[[Mapping[str, str | None], Callable[[str], None]], Awaitable[None]]:
     """Return one switcher open's ``connection_prober`` (TASK-33005.5).
 
@@ -320,11 +323,14 @@ def switcher_connection_prober(
     Args:
         app: The running app the shared evidence owner is attached to.
         app_config: The configuration snapshot the switcher opened with.
+        gate: The in-flight cap, shared by every prober one open runs (so
+            two configurations still probe at most
+            ``SWITCHER_PROBES_IN_FLIGHT`` at once); a new one if None.
 
     Returns:
         The seam the switcher runs in its worker.
     """
-    gate = asyncio.Semaphore(SWITCHER_PROBES_IN_FLIGHT)
+    gate = gate or asyncio.Semaphore(SWITCHER_PROBES_IN_FLIGHT)
 
     async def probe(
         targets: Mapping[str, str | None], settled: Callable[[str], None]

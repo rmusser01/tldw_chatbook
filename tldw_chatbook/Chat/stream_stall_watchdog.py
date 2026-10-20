@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-from typing import AsyncIterator, Optional, TypeVar
+from typing import AsyncIterator, Callable, Optional, TypeVar
 
 _T = TypeVar("_T")
 
@@ -174,12 +174,70 @@ def self_hosted_read_timeout(configured: float) -> float:
     return max(configured, window + FIRST_TOKEN_READ_TIMEOUT_MARGIN_SECONDS)
 
 
+#: How often a stream that is waiting for its next item re-reads its consumer's
+#: stop predicate (TASK-33666). Half a second is what a Stop already waits out
+#: during a model-retry backoff (``agent_runtime``).
+STOP_POLL_SECONDS = 0.5
+
+
+class _Stopped(Exception):
+    """The consumer's stop predicate turned true while a read was waiting."""
+
+
+async def _next_item_unless_stopped(
+    it: AsyncIterator[_T],
+    window: Optional[float],
+    should_stop: Callable[[], bool],
+) -> _T:
+    """Await ``it``'s next item, re-reading ``should_stop`` while none arrives.
+
+    The read stays inline in the caller's task, exactly as under
+    ``asyncio.wait_for``: a stop ends it through the same ``asyncio.timeout``
+    cancellation the stall window uses, so the source sees one teardown path.
+
+    Raises:
+        _Stopped: ``should_stop()`` turned true before an item arrived.
+        TimeoutError: ``window`` seconds passed with no item (``None``: never).
+    """
+    loop = asyncio.get_running_loop()
+    stopped = False
+    try:
+        async with asyncio.timeout(window) as wait:
+            poll_handle: asyncio.TimerHandle
+
+            # `poll` is handed itself as `again` rather than naming itself: a
+            # function that names itself sits in its own closure cell, a cycle
+            # left for the collector on every item. The loop that remains,
+            # poll -> its handle -> poll, is broken by the cancel below.
+            def poll(again: Callable[..., None]) -> None:
+                nonlocal stopped, poll_handle
+                if should_stop():
+                    stopped = True
+                    # Already expiring when the window ran out on this same
+                    # tick: the read is ending anyway, and reschedule raises.
+                    if not wait.expired():
+                        wait.reschedule(loop.time())
+                else:
+                    poll_handle = loop.call_later(STOP_POLL_SECONDS, again, again)
+
+            poll_handle = loop.call_later(STOP_POLL_SECONDS, poll, poll)
+            try:
+                return await it.__anext__()
+            finally:
+                poll_handle.cancel()
+    except asyncio.TimeoutError:
+        if stopped:
+            raise _Stopped from None
+        raise
+
+
 async def watch_content_stalls(
     source: AsyncIterator[_T],
     timeout_seconds: Optional[float],
     *,
     provider: Optional[str] = None,
     first_item_timeout_seconds: Optional[float] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> AsyncIterator[_T]:
     """Yield items from ``source``, tripping on a content stall.
 
@@ -192,6 +250,12 @@ async def watch_content_stalls(
         first_item_timeout_seconds: A longer window for the FIRST item only
             (a cold local model); ``None`` uses ``timeout_seconds`` for it.
             A whitespace-only text item does not end it.
+        should_stop: The consumer's cancel predicate (TASK-33666). It is read
+            every :data:`STOP_POLL_SECONDS` while NO item arrives, with the
+            watchdog on or off; once true the stream ends as if the source
+            had, and the source is closed. A consumer that only reads its
+            cancel flag between items never sees a Stop while the provider is
+            silent. Never read while items keep arriving within the poll.
 
     Yields:
         Each item from ``source`` unchanged; every item resets the clock.
@@ -202,7 +266,8 @@ async def watch_content_stalls(
             underlying stream/worker is cancelled.
     """
     it = source.__aiter__()
-    if timeout_seconds is None or timeout_seconds <= 0:
+    watching = timeout_seconds is not None and timeout_seconds > 0
+    if not watching and should_stop is None:
         async for item in it:
             yield item
         return
@@ -210,15 +275,23 @@ async def watch_content_stalls(
     try:
         while True:
             window = (
-                first_item_timeout_seconds
+                None
+                if not watching
+                else first_item_timeout_seconds
                 if first and first_item_timeout_seconds
                 else timeout_seconds
             )
             try:
-                item = await asyncio.wait_for(it.__anext__(), window)
-            except StopAsyncIteration:
+                if should_stop is None:
+                    item = await asyncio.wait_for(it.__anext__(), window)
+                else:
+                    item = await _next_item_unless_stopped(it, window, should_stop)
+            except (StopAsyncIteration, _Stopped):
                 return
             except asyncio.TimeoutError:
+                if window is None:
+                    # No stall window is running: this is the source's own.
+                    raise
                 # No content for the whole window while the stream is still
                 # open -> stall. Report it distinctly; the `finally` closes the
                 # source, which unwinds an async-generator consumer. (A sync

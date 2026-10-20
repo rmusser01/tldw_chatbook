@@ -462,10 +462,13 @@ class ModeStrip(Horizontal):
         return f"workbench-mode-{_safe_id(mode.id)}"
 
     def _build_mode(self, mode: WorkbenchMode) -> Static:
+        # TASK-33002.19: labels carry user text (a provider id, an endpoint's
+        # name), so markup is off; `update` in `_sync_mode_label` follows it.
         label = Static(
             mode.label,
             id=self._mode_id(mode),
             classes=mode.css_classes,
+            markup=False,
         )
         setattr(label, "_workbench_mode_id", mode.id)
         return label

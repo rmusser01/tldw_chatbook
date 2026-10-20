@@ -31,7 +31,7 @@ Two things to know before trusting it:
 
 | Region | What it shows |
 |---|---|
-| **Header line** | "Home \| Ready · Local" — "Ready"/"Not set up" is model readiness (the same send-path check Console enforces), then "Local", or "Server: \<name\>" when a server is the runtime source. |
+| **Header line** | "Home \| Ready · Local" — "Ready", "Not ready" or "Not set up" is model readiness (the same send-path check Console enforces; see Details below), then "Local", or "Server: \<name\>" when a server is the runtime source. |
 | **Rail** (left) | Four collapsible sections — **Needs Attention**, **Running**, **Recent**, **Details** — each headed by its title (plus " (N)" only when it has items) and a **▾**/**▸** toggle. Work items are two-line rows: a status glyph and title, then the owning source and age ("● g2_demo_article.txt" / "    Library - 6d"). The selected row is marked **▸**. Titles longer than 20 characters are cut with "..." — hover for the full title. |
 | **Canvas** (right) | The selected item's card: title, a status line ("● failed · Library"), the failure reason when there is one ("Interrupted by app restart · retry 1"), and "Opens: \<screen\>" — plus that item's action buttons. With nothing selected it shows the **next-action card** instead (see below). |
 | **Footer** | The global "Ctrl+Q quit \| Ctrl+P palette" hints and the token/DB read-outs — Home adds nothing of its own. |
@@ -91,7 +91,7 @@ card) is the first match in a fixed priority order:
 
 | Priority | Suggestion | Goes to |
 |---|---|---|
-| 1 | "Set up Console model" — Console needs a working model before live AI tasks. | Settings (fires whenever no usable credential+model resolves — readiness is honest, task-2764) |
+| 1 | "Set up Console model" — Console needs a working model before live AI tasks. Or, when the Model word reads "Not ready" (the default connection's last connection check failed), "Reconnect Console model" — Console's model failed its last connection check. | Settings (fires whenever Model is not Ready: no usable credential+model resolves, or the last check failed — readiness is honest, task-2764) |
 | 2 | "Review pending approvals" — Agent work is waiting for a decision. | Console |
 | 3 | "Review failed schedules" — Scheduled work needs recovery. | Schedules |
 | 4 | "Review failed work" — Failed work needs recovery. | the failed item's screen |
@@ -118,10 +118,16 @@ Expanding **Details** shows one dense block: a summary line
 explanation ("Local mode is active. Server sync is optional."), "Agent
 readiness: …", "Server events: …", and "Work: N active, N approvals" (plus
 "Notifications: N unread" when any). Every readiness field shown is real:
-"Model:" is driven by the same send-path check Console enforces (it reads
-"Not set up" until a usable credential+model resolves), and "ACP:" by the ACP
-runtime manager. The former "RAG:"/"MCP:" segments — hard-coded constants
-nothing ever updated — were removed rather than shown as lies (task-2761).
+"Model:" is driven by the same send-path check Console enforces. It reads
+"Not set up" until a usable credential+model resolves, and "Not ready" when
+the default connection's last connection check could not reach the server
+or had its key rejected (or a local server answered it with any other error
+status, a redirect, or an unreadable model list; a 403 or 404 only means the
+model list is unavailable and leaves Model at Ready), wherever it ran
+(Settings, Chat settings, Switch model or setup). "ACP:"
+comes from the ACP runtime manager. The former "RAG:"/"MCP:" segments —
+hard-coded constants nothing ever updated — were removed rather than shown
+as lies (task-2761).
 
 ## Common tasks
 

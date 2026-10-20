@@ -174,6 +174,58 @@ def test_cap_accounts_for_attachment_actions_width(monkeypatch):
     assert _cap_with_row_width(composer, 100, monkeypatch) == 19
 
 
+def _disabled_reason_literals() -> list[tuple[str, bool]]:
+    """Every literal ``build_console_disabled_reason`` returns, read from its
+    source, each with whether it is a setup blocker (the strip appends the
+    2-cell " ›" to those). The pass-through ``queue_reason`` is the prompt
+    queue's own copy, not this function's, so it is not listed."""
+    import ast
+    import inspect
+
+    from tldw_chatbook.Chat import console_display_state as state
+
+    function = ast.parse(inspect.getsource(state.build_console_disabled_reason))
+    setup_branch = next(
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "send_blocked and setup_reason"
+    )
+    setup_returns = {
+        id(node) for node in ast.walk(setup_branch) if isinstance(node, ast.Return)
+    }
+    literals = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Return):
+            continue
+        if isinstance(node.value, ast.Constant):
+            text = node.value.value
+        elif isinstance(node.value, ast.Name):
+            text = getattr(state, node.value.id, None)  # a QUEUE_REASON_* constant
+        else:
+            continue
+        if isinstance(text, str) and text:
+            literals.append((text, id(node) in setup_returns))
+    return literals
+
+
+def test_every_disabled_reason_fits_the_strip_whole():
+    """The capture phase painted "Send blocked — key rejected; update the
+    API key t…": a reason fits only when its cells, the setup chevron and
+    the strip's padding (0 1) fit SEND_REASON_MAX_WIDTH (TASK-33005.7)."""
+    from rich.cells import cell_len
+
+    literals = _disabled_reason_literals()
+    assert len(literals) >= 15 and any(setup for _, setup in literals)
+    too_wide = [
+        (text, cell_len(text) + (2 if setup else 0) + 2)
+        for text, setup in literals
+        if cell_len(text) + (2 if setup else 0) + 2
+        > ConsoleComposerBar.SEND_REASON_MAX_WIDTH
+    ]
+    assert too_wide == []
+
+
 # ---------------------------------------------------------------------------
 # TASK-24620: the dictation voice chip must not starve the draft either.
 # Same starvation class TASK-24415 fixed for the send-disabled reason strip:

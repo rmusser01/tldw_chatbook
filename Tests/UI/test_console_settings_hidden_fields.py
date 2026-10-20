@@ -20,7 +20,7 @@ import time
 import pytest
 from rich.cells import cell_len
 from textual.containers import ScrollableContainer
-from textual.widgets import Button, Collapsible, Static
+from textual.widgets import Button, Collapsible, Select, Static
 from textual.widgets._collapsible import CollapsibleTitle
 
 from Tests.private_profile import private_profile_test
@@ -32,10 +32,13 @@ from Tests.UI.test_console_settings_core_first import (
     _settings,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     console_generation_control_support,
+    reasoning_effort_values_sent,
     supported_generation_fields,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import ENDPOINT_FAMILIES
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CORE_FIELDS,
@@ -45,6 +48,8 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     SAMPLING_DISCLOSURE_ID,
     SAMPLING_FIELDS,
     SAMPLING_HIDDEN_LIST_ID,
+    UNSENT_CHOICE_COPY,
+    UNSENT_CHOICE_SUFFIX,
     field_control_id,
     generation_field_support,
     hidden_fields_line,
@@ -203,6 +208,8 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
         "_GENERATION_CONTROL_INPUTS",
         "PROVIDER_CHOICE_NO_EFFECT_SUFFIX",
         "GENERATION_CONTROL_UNKNOWN_COPY",
+        # Its domain-joined placeholders outlived their reader (TASK-33002.7).
+        "PROVIDER_CHOICE_INPUTS",
     ):
         assert not hasattr(modal_module, name), name
     app = CoreFirstHarness()
@@ -228,26 +235,57 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
             ), name
 
 
+#: The provider-choice rows (Reasoning effort, Reasoning summary, Verbosity,
+#: Thinking) each registry family shows (TASK-33003.13).
+_CHOICE_ROWS = ("reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort")
+
+
+#: One registry entry per family: (slug, name, family, family_key, shown_choices).
+_FAMILY_ROWS = (
+    ("gpu-box", "GPU box", "llama_cpp", "llama_cpp", {"reasoning_effort"}),
+    ("lab", "Lab", "ollama", "ollama", set()),
+    ("gateway", "Gateway", "openai_compatible", "custom", {"reasoning_effort"}),
+)
+
+
+@pytest.mark.parametrize(
+    ("slug", "name", "family", "family_key", "shown_choices"), _FAMILY_ROWS
+)
 @pytest.mark.asyncio
-async def test_a_registry_endpoint_hides_what_its_family_hides() -> None:
+async def test_a_registry_endpoint_hides_what_its_family_hides(
+    slug, name, family, family_key, shown_choices
+) -> None:
     """AC#3 (review fix): a ``custom-ep`` entry is decided as its family, so
-    a llama.cpp entry shows no control that Apply would then clear."""
+    a llama.cpp entry shows no control that Apply would then clear.
+
+    TASK-33003.13, owner ruling 2026-10-09: a custom endpoint shows exactly
+    the provider-choice rows its registry family supports, the rule the
+    request follows; pinned over every family (``ENDPOINT_FAMILIES``)."""
+    assert {row[2] for row in _FAMILY_ROWS} == ENDPOINT_FAMILIES
     app = CoreFirstHarness()
-    modal = _modal(app, _settings("custom-ep:gpu-box", "model-a", temperature=0.7))
+    app.app_config["custom_endpoints"].setdefault(
+        slug,
+        {
+            "display_name": name,
+            "family": family,
+            "base_url": "http://192.168.1.9:8080",
+            "models": ["model-a"],
+        },
+    )
+    assert app.app_config["custom_endpoints"][slug]["family"] == family
+    provider = f"custom-ep:{slug}"
+    modal = _modal(app, _settings(provider, "model-a", temperature=0.7))
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
-        family_hidden = _shared_hidden(app.app_config, "llama_cpp", "model-a")
+        family_hidden = _shared_hidden(app.app_config, family_key, "model-a")
         assert {"reasoning_summary", "verbosity", "thinking_effort"} <= set(
             family_hidden
         )
         assert _hidden_rows(modal) == family_hidden
+        assert set(_CHOICE_ROWS) - set(_hidden_rows(modal)) == shown_choices
         shown = set(FIELD_ROW_FIELDS) - set(family_hidden)
-        assert shown <= supported_generation_fields(
-            "custom-ep:gpu-box", "model-a", app.app_config
-        )
-        assert _sampling_title(modal) == _expected_line(
-            "llama_cpp", family_hidden, "GPU box"
-        )
+        assert shown <= supported_generation_fields(provider, "model-a", app.app_config)
+        assert _sampling_title(modal) == _expected_line(family_key, family_hidden, name)
 
 
 @pytest.mark.parametrize("name", ["Lab [gpu]", "Lab [/b] box"])
@@ -454,9 +492,191 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
             # starts with a capital ("… for this model. The provider decides").
             rest = str(help_line.content)[len(GENERATION_CONTROL_UNKNOWN_COPY) :]
             assert rest[1:2].isupper(), (name, rest)
-        # Known support keeps the field table's plain help.
+            # TASK-33006.12: at 211x44 the marker leaves the field's own help
+            # painted whole beside it, not cut off by the row's ellipsis.
+            assert MODEL_CONFIG_FIELDS[name].help in painted[row.region.y], name
+        # Known support keeps the field table's plain help. Rewritten on
+        # purpose by TASK-33006.11: a provider with no request map has no
+        # known support, so its samplers carry the neutral copy too.
         temperature_help = modal.query_one("#console-settings-temperature-help", Static)
-        assert GENERATION_CONTROL_UNKNOWN_COPY not in str(temperature_help.content)
+        assert (GENERATION_CONTROL_UNKNOWN_COPY in str(temperature_help.content)) is (
+            provider not in PROVIDER_PARAM_MAP
+        )
+
+
+@pytest.mark.parametrize("provider", ["local_onnx", "local_transformers"])
+@pytest.mark.asyncio
+async def test_a_provider_without_a_request_map_says_its_samplers_are_unverified(
+    provider,
+) -> None:
+    """TASK-33006.11: local_onnx and local_transformers have no
+    ``PROVIDER_PARAM_MAP`` entry (and no chat handler), so no request decides
+    which samplers they take. Every row stays shown, and each one's help line
+    leads with the neutral copy instead of reading as supported; at 211x44
+    the field's own help still paints whole beside it."""
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
+
+    assert provider not in PROVIDER_PARAM_MAP
+    assert provider not in API_CALL_HANDLERS
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(provider, "model-x", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert _hidden_rows(modal) == ()
+        assert generation_field_support(provider, "model-x", app.app_config) == (
+            (),
+            frozenset(FIELD_ROW_FIELDS),
+        )
+        painted = _painted(app.screen)
+        for name in ("temperature", "max_tokens", "streaming"):
+            row = modal.query_one(f"#{field_control_id(name)}-row")
+            assert GENERATION_CONTROL_UNKNOWN_COPY in painted[row.region.y], name
+            assert MODEL_CONFIG_FIELDS[name].help in painted[row.region.y], name
+        for name in FIELD_ROW_FIELDS:
+            help_line = modal.query_one(f"#{field_control_id(name)}-help", Static)
+            text = str(help_line.content)
+            assert text.startswith(GENERATION_CONTROL_UNKNOWN_COPY), (name, text)
+            assert MODEL_CONFIG_FIELDS[name].help in text, name
+
+
+#: Every Reasoning effort level, in display order.
+_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def _reasoning_options(modal) -> list[tuple[str, str]]:
+    select = modal.query_one(f"#{field_control_id('reasoning_effort')}", Select)
+    return [(str(label), value) for label, value in select._options[1:]]
+
+
+@pytest.mark.parametrize(
+    ("provider", "offered"),
+    [
+        ("llama_cpp", ("none", "low", "medium", "high", "xhigh")),
+        ("custom-ep:gpu-box", ("none", "low", "medium", "high", "xhigh")),
+        ("openai", _LEVELS),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reasoning_effort_offers_only_the_levels_the_request_sends(
+    provider, offered
+) -> None:
+    """TASK-33002.7 AC#1: a strict local template's request drops "minimal"
+    (``build_local_thinking_payload_fields``), so Chat settings does not
+    offer it, decided by ``reasoning_effort_values_sent`` as Settings'
+    model-default list is; a llama.cpp registry entry follows its family."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(provider, "model-a", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert offered == reasoning_effort_values_sent(
+            provider, _LEVELS, app.app_config
+        )
+        assert [value for _label, value in _reasoning_options(modal)] == list(offered)
+
+
+@pytest.mark.asyncio
+async def test_a_saved_level_the_request_drops_stays_selected_and_says_so() -> None:
+    """TASK-33002.7 AC#2: a "minimal" saved before stays selected, listed as
+    not supported, and its row says why, rather than being cleared; Apply
+    keeps it. A deliberate pick of a sent level clears the note."""
+    app = CoreFirstHarness()
+    settings = _settings("llama_cpp", "model-a", reasoning_effort="minimal")
+    modal = _modal(app, settings)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        select = modal.query_one("#console-settings-reasoning-effort", Select)
+        assert select.value == "minimal"
+        assert _reasoning_options(modal)[-1] == (
+            f"Minimal {UNSENT_CHOICE_SUFFIX}",
+            "minimal",
+        )
+        note = UNSENT_CHOICE_COPY.format(level="Minimal")
+        help_line = modal.query_one("#console-settings-reasoning-effort-help", Static)
+        assert str(help_line.content) == note
+        row = modal.query_one("#console-settings-reasoning-effort-row")
+        assert note in _painted(app.screen)[row.region.y]
+        assert modal._build_draft().reasoning_effort == "minimal"
+
+        select.value = "low"
+        for _ in range(3):
+            await pilot.pause()
+        assert str(help_line.content) == MODEL_CONFIG_FIELDS["reasoning_effort"].help
+
+
+@pytest.mark.asyncio
+async def test_a_pick_re_lists_reasoning_effort_for_the_new_provider() -> None:
+    """TASK-33002.7: the list follows the pair a pick lands on. A "minimal"
+    picked on OpenAI and carried to llama.cpp stays, labelled; back on OpenAI
+    it is an ordinary level again."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings("openai", "gpt-4o"), draft_rebaser=_real_rebase)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        select = modal.query_one("#console-settings-reasoning-effort", Select)
+        select.value = "minimal"
+        for _ in range(3):
+            await pilot.pause()
+
+        modal._model_picked(("llama_cpp", "model-a"))
+        for _ in range(3):
+            await pilot.pause()
+        assert select.value == "minimal"
+        assert [value for _label, value in _reasoning_options(modal)] == [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "minimal",
+        ]
+        assert str(
+            modal.query_one("#console-settings-reasoning-effort-help", Static).content
+        ) == UNSENT_CHOICE_COPY.format(level="Minimal")
+
+        modal._model_picked(("openai", "gpt-4o"))
+        for _ in range(3):
+            await pilot.pause()
+        assert [value for _label, value in _reasoning_options(modal)] == list(_LEVELS)
+        assert UNSENT_CHOICE_SUFFIX not in str(_reasoning_options(modal))
+
+
+@pytest.mark.asyncio
+async def test_a_restored_draft_keeps_a_carried_level_the_request_drops() -> None:
+    """TASK-33002.7: reopening after a credential round trip restores a
+    "minimal" the draft carried onto llama.cpp; it stays selected and
+    labelled, rather than raising InvalidSelectValueError on a list that no
+    longer offers it."""
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+    )
+
+    app = CoreFirstHarness()
+    settings = _settings("llama_cpp", "model-a")
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-reasoning-effort": "minimal"},
+        provider_model_drafts={"llama_cpp": "model-a"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    modal = _modal(app, settings, suspended_draft=snapshot)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        select = modal.query_one("#console-settings-reasoning-effort", Select)
+        assert select.value == "minimal"
+        assert _reasoning_options(modal)[-1] == (
+            f"Minimal {UNSENT_CHOICE_SUFFIX}",
+            "minimal",
+        )
+        help_line = modal.query_one("#console-settings-reasoning-effort-help", Static)
+        assert str(help_line.content) == UNSENT_CHOICE_COPY.format(level="Minimal")
 
 
 @pytest.mark.asyncio

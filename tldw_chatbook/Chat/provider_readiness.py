@@ -46,6 +46,7 @@ from .provider_test_evidence import (
     ProviderReadinessSnapshot,
     ProviderReadinessVerdict,
     ProviderTestEvidence,
+    model_facet,
     provider_readiness_verdict,
 )
 
@@ -448,7 +449,6 @@ class ProviderReadiness:
         current_identity: ProviderDraftIdentity | None = None,
     ) -> ProviderReadinessSnapshot:
         """Combine legacy configuration readiness with current test evidence."""
-        model_id = selected_model.strip() if isinstance(selected_model, str) else ""
         evidence_is_current = bool(
             evidence is not None
             and current_identity is not None
@@ -459,20 +459,14 @@ class ProviderReadiness:
             endpoint = "changed_since_test"
         else:
             endpoint = evidence.endpoint if evidence is not None else "not_tested"
-        if not model_id:
-            model = "missing"
-        elif (
-            evidence_is_current
-            and evidence.endpoint == "reachable"
-            and model_id in evidence.model_ids
-        ):
-            model = "confirmed"
-        else:
-            model = "unconfirmed"
         return ProviderReadinessSnapshot(
             configuration=self.configuration_facet,
             endpoint=endpoint,
-            model=model,
+            model=model_facet(
+                selected_model,
+                endpoint if evidence_is_current else "not_tested",
+                evidence.model_ids if evidence_is_current else (),
+            ),
             category=evidence.category if evidence_is_current else None,
             configuration_issue=self.configuration_issue,
         )

@@ -326,11 +326,14 @@ class ConsoleControlBar(Vertical):
             resume.display = False
             yield resume
             speech_row.display = False
+        # TASK-33002.19: these labels carry user text (a provider id, an
+        # endpoint's name), so markup is off; `update` in `sync_state` follows.
         yield self._compatibility_layout_widget(
             Static(
                 _summary_line(self.state),
                 id="console-control-status-line",
                 classes="console-control-summary-line",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -338,6 +341,7 @@ class ConsoleControlBar(Vertical):
                 self.state.provider_label,
                 id="console-provider-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -345,6 +349,7 @@ class ConsoleControlBar(Vertical):
                 self.state.model_label,
                 id="console-model-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -352,6 +357,7 @@ class ConsoleControlBar(Vertical):
                 self.state.assistant_label,
                 id="console-assistant-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -359,6 +365,7 @@ class ConsoleControlBar(Vertical):
                 self.state.rag_label,
                 id="console-rag-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -366,6 +373,7 @@ class ConsoleControlBar(Vertical):
                 self.state.sources_label,
                 id="console-sources-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -373,6 +381,7 @@ class ConsoleControlBar(Vertical):
                 self.state.tools_label,
                 id="console-tools-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -380,6 +389,7 @@ class ConsoleControlBar(Vertical):
                 self.state.approvals_label,
                 id="console-approvals-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(

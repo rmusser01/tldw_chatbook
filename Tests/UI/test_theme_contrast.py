@@ -209,27 +209,44 @@ def _painted(table: dict, token: str) -> str:
     return value
 
 
-def _rule_token(sheet: Path, selector: str, prop: str) -> str:
+#: MainNavigationBar.BUNDLED_CSS, read on use (the widget tier's nav rules).
+NAV_BAR_CSS = "MainNavigationBar.BUNDLED_CSS"
+
+
+def _rule_token(sheet: Path | str, selector: str, prop: str) -> str:
     """The `$token` (last word) a rule in ``sheet`` sets ``prop`` to."""
     from Tests.UI.test_non_obscuring_focus_contract import css_block
 
-    block = css_block(sheet.read_text(encoding="utf-8"), selector)
-    match = re.search(rf"^\s*{prop}:\s*([^;]+);", block, re.MULTILINE)
+    if sheet == NAV_BAR_CSS:
+        from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+        text = MainNavigationBar.BUNDLED_CSS
+    else:
+        text = sheet.read_text(encoding="utf-8")
+    block = css_block(text, selector)
+    # `(?:^|;)`: _workflows.tcss writes a whole rule on one line.
+    match = re.search(rf"(?:^|;)\s*{prop}:\s*([^;]+);", block, re.MULTILINE)
     assert match, f"{selector} sets no {prop}"
     return match.group(1).split()[-1].lstrip("$")
 
 
+def _assert_edge_visible(theme: Theme, table: dict, token: str, on: str) -> None:
+    """``$token`` painted as a line on the ``$on`` fill reads at 3:1."""
+    fill = Color.parse(_painted(table, on))
+    edge = _resolve_color(_painted(table, token), fill)
+    ratio = _ratio(edge.hex, fill.hex)
+    assert ratio >= NON_TEXT, (
+        f"{theme.name}: {token} {edge.hex} is {ratio:.2f}:1 against "
+        f"{on} {fill.hex} (needs {NON_TEXT}:1)"
+    )
+
+
 def _assert_boundaries_visible(theme: Theme) -> None:
     table = _painted_variables(theme)
-    for token in ("ds-grid-line", "ds-control-edge"):
+    # TASK-33003.15 adds ds-column-line (pane frames, rail rules).
+    for token in ("ds-grid-line", "ds-control-edge", "ds-column-line"):
         for key in ("surface", "panel"):
-            surface = Color.parse(table[key])
-            edge = _resolve_color(_painted(table, token), surface)
-            ratio = _ratio(edge.hex, surface.hex)
-            assert ratio >= NON_TEXT, (
-                f"{theme.name}: {token} {edge.hex} is {ratio:.2f}:1 against "
-                f"{key} {surface.hex} (needs {NON_TEXT}:1)"
-            )
+            _assert_edge_visible(theme, table, token, key)
 
 
 @pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
@@ -238,6 +255,443 @@ def test_boundary_tokens_clear_non_text_contrast_on_every_theme(theme: Theme) ->
     at 3:1 on both surfaces, on every shipped and Textual built-in theme --
     field borders measured 1.05:1 and the modal frame 1.01:1."""
     _assert_boundaries_visible(theme)
+
+
+LIBRARY_SHEET = CSS_ROOT / "features/_library.tcss"
+LIBRARY_PANE_FRAMES = (
+    "#library-shell-grid",
+    "#library-rail",
+    "#library-file-notes-rail",
+    "#library-canvas",
+)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_library_pane_frames_clear_non_text_contrast(theme: Theme) -> None:
+    """TASK-33003.15: Library's pane frames painted $surface-lighten-2, 1.28:1
+    in textual-dark. Each frame reads at 3:1 on surface and on panel."""
+    table = _painted_variables(theme)
+    for selector in LIBRARY_PANE_FRAMES:
+        token = _rule_token(LIBRARY_SHEET, selector, "border")
+        for key in ("surface", "panel"):
+            _assert_edge_visible(theme, table, token, key)
+
+
+WORKFLOWS_SHEET = CSS_ROOT / "features/_workflows.tcss"
+FORMS_SHEET = CSS_ROOT / "components/_forms.tcss"
+WORKFLOW_PANES = {
+    "WorkflowLibrary#workflows-library": "#workflows-library",
+    "WorkflowNavigator#workflows-navigator": "#workflows-navigator",
+}
+WORKFLOW_FIELD_FOCUS = "WorkflowLibrary#workflows-library Input:focus"
+WORKFLOW_PLACEHOLDER_FOCUS = "#workflow-library-search:focus > .input--placeholder"
+WORKFLOW_MARKS_FOCUS = [f"#workflow-library-search:focus > .input--{mark}" for mark in ("selection", "cursor")]
+
+
+def _assert_ink_readable(theme: Theme, table: dict, token: str, on: Color, what: str) -> None:
+    """``$token`` painted as text on the ``on`` colour reads at 4.5:1."""
+    ink = _resolve_color(_painted(table, token), on)
+    ratio = _ratio(ink.hex, on.hex)
+    assert ratio >= AA, f"{theme.name}: {what} {ink.hex} is {ratio:.2f}:1 on {on.hex} (needs {AA}:1)"
+
+
+def _workflow_focus_fill(theme: Theme, table: dict, selector: str, pane: Color) -> Color:
+    """The fill ``selector`` paints over ``pane``. It is at least as far from
+    the pane's fill as the resting $surface fill of a Button or an Input is."""
+    fill = _over(pane, Color.parse(_painted(table, _rule_token(WORKFLOWS_SHEET, selector, "background"))))
+    rest = _ratio(Color.parse(_painted(table, "surface")).hex, pane.hex)
+    shift = _ratio(fill.hex, pane.hex)
+    assert shift >= rest, (
+        f"{theme.name}: {selector} fill {fill.hex} is {shift:.2f}x from the pane's "
+        f"{pane.hex}; the resting fill is {rest:.2f}x from it"
+    )
+    return fill
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_workflow_pane_edges_clear_non_text_contrast(theme: Theme) -> None:
+    """TASK-33003.15 AC#3: the Workflows pane edges set no fill and sat on
+    $background, where no line colour is pinned. Moving $ds-column-line to the
+    boundary colour took litestep from 3.64:1 to 1.32:1 there. Each edge reads
+    at 3:1 on the fill its own rule sets.
+
+    Review round 3: the text is gated here too, on every theme. The rule's
+    `color` reads at 4.5:1 on that fill. So does the ink of a focused control:
+    the house focus tint is translucent, and over $panel it took that ink
+    under 4.5:1 on five themes (catppuccin-frappe 4.12:1). Each focused fill
+    is measured over the pane's.
+
+    Review round 4: the fill is gated as well as the ink. The search field's
+    tint on $background kept its text readable and landed on the rail's own
+    luminance (textual-dark 1.00x, under 1.25x on 17 themes). A focused fill
+    is at least as far from the pane's as the resting fill is; the field's
+    placeholder takes an ink that reads on it; and where that fill shifts the
+    pane by less than the house floor, the field's frame reads at 3:1 on it.
+
+    Review round 5: that fill also sits under the selected query and beside
+    the caret, which Textual paints in the theme's own $foreground whatever
+    the fill is: selected text fell under 4.5:1 on 46 themes (atom-one-dark
+    1.35:1) and the caret under 3:1 on 8. Both are the field's ink reversed,
+    so each is as far from the fill as typed text is."""
+    table = _painted_variables(theme)
+    focus_ink = _rule_token(WORKFLOWS_SHEET, ".workflow-compact:focus", "color")
+    panes = {}
+    for selector in WORKFLOW_PANES:
+        edge = _rule_token(WORKFLOWS_SHEET, selector, "border-right")
+        fill = _rule_token(WORKFLOWS_SHEET, selector, "background")
+        _assert_edge_visible(theme, table, edge, fill)
+        pane = panes[selector] = Color.parse(_painted(table, fill))
+        ink = _rule_token(WORKFLOWS_SHEET, selector, "color")
+        _assert_ink_readable(theme, table, ink, pane, f"{selector} text")
+        button = f"{selector} .workflow-compact:focus"
+        focused = _workflow_focus_fill(theme, table, button, pane)
+        _assert_ink_readable(theme, table, focus_ink, focused, button)
+    # Textual's own 5% $foreground focus tint on an Input: left on, typed text
+    # is under 4.5:1 on three themes (catppuccin-mocha 4.27:1).
+    assert _rule_token(WORKFLOWS_SHEET, WORKFLOW_FIELD_FOCUS, "background-tint") == "transparent"
+    library = panes[WORKFLOW_FIELD_FOCUS.split()[0]]
+    field = _workflow_focus_fill(theme, table, WORKFLOW_FIELD_FOCUS, library)
+    # More than the caret marks the focused field: its fill shifts the pane by
+    # the house floor, or its frame reads at 3:1 on that fill (flexoki: 1.23x).
+    frame = _resolve_color(_painted(table, _rule_token(WORKFLOWS_SHEET, WORKFLOW_FIELD_FOCUS, "outline")), field)
+    shift, edge = _ratio(field.hex, library.hex), _ratio(frame.hex, field.hex)
+    assert shift >= FOCUS_SHIFT_FLOOR or edge >= NON_TEXT, (
+        f"{theme.name}: {WORKFLOW_FIELD_FOCUS} fill {field.hex} is {shift:.2f}x from the pane's "
+        f"{library.hex} and its frame {frame.hex} is {edge:.2f}:1 on it"
+    )
+    typed = _rule_token(FORMS_SHEET, "Input:focus", "color")
+    _assert_ink_readable(theme, table, typed, field, WORKFLOW_FIELD_FOCUS)
+    hint = _rule_token(WORKFLOWS_SHEET, WORKFLOW_PLACEHOLDER_FOCUS, "color")
+    _assert_ink_readable(theme, table, hint, field, WORKFLOW_PLACEHOLDER_FOCUS)
+    for mark in WORKFLOW_MARKS_FOCUS:
+        look = [_rule_token(WORKFLOWS_SHEET, mark, prop) for prop in ("background", "text-style")]
+        assert look == ["transparent", "reverse"], f"{mark} is not its ink reversed: {look}"
+        _assert_ink_readable(theme, table, _rule_token(WORKFLOWS_SHEET, mark, "color"), field, mark)
+
+
+def _text_cells(app, region, skip=()) -> set[tuple[str, str]]:
+    """{(fg hex, bg hex)} of the letters and digits painted in ``region``,
+    outside the ``skip`` regions."""
+    cells = set()
+    for y in range(region.y, region.bottom):
+        position = 0
+        for segment in app.screen._compositor.render_strips()[y]:
+            for glyph in segment.text:
+                inside = region.x <= position < region.right and glyph.isalnum()
+                if inside and not any(box.contains(position, y) for box in skip):
+                    style = segment.style
+                    cells.add(
+                        (
+                            Color.from_rich_color(style.color).hex,
+                            Color.from_rich_color(style.bgcolor).hex,
+                        )
+                    )
+                position += 1
+    return cells
+
+
+def _painted_text(app, widget) -> set[tuple[str, str]]:
+    """The text cells painted on ``widget``'s fill. Cells inside a descendant
+    with an opaque fill of its own (a list, a field, a resting button) are
+    skipped: that fill is not the pane's. A translucent one (the focus tint)
+    is read, because the pane's fill shows through it."""
+    opaque = [child.region for child in widget.walk_children() if child.styles.background.a == 1]
+    return _text_cells(app, widget.region, opaque)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "theme_name",
+    [
+        # The edge on $background: the two weakest of the six themes under 3:1.
+        "litestep",
+        "apricot",
+        # The focus tint on $panel under a focused control's text: the weakest
+        # of the five themes under 4.5:1 (atom-one-dark, below, is another).
+        "catppuccin-frappe",
+        # Typed text in the focused search field: the lowest (4.54:1), and
+        # 4.27:1 with Textual's own focus tint left on the field.
+        "catppuccin-mocha",
+        # The focus fill nearest its rail (1.23x): the field's frame marks it.
+        "flexoki",
+        # The pane headings on $panel in the theme's $foreground: under 4.5:1.
+        "atom-one-dark",
+        "tokyo-night",
+        "solarized-dark",
+        "solarized-light",
+        "pastel_dreams",
+        "textual-dark",
+        "textual-light",
+    ],
+)
+async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> None:
+    """TASK-33003.15 AC#3, rendered under the production stylesheet: the edge
+    cells are read from the frame, so the fill measured is the one that paints
+    under them (litestep 1.32:1 and apricot 2.63:1 on $background). The panel
+    fill that fixes the edge also sits under the pane headings, which
+    inherited $foreground: atom-one-dark fell from 6.57:1 to 3.45:1 there, so
+    text painted straight on the fill is read as well.
+
+    Review round 3: at rest and with each control focused in turn. The fill
+    also sat under the translucent focus tint, and the focused buttons and
+    text typed in the search field fell under 4.5:1 on five themes.
+
+    Review round 4: the fills are read too. Each focused control's fill is at
+    least as far from the pane's as its resting fill; the search field's sat
+    on the rail's own luminance (textual-dark 1.00x, catppuccin-frappe 1.01x).
+    The field is read with its placeholder and then with a typed value, and
+    its frame is read where its fill shifts the pane by less than the floor.
+
+    Review round 5: and with the value selected, as a keyboard return to the
+    field leaves it. The selected text reads at 4.5:1 on a fill that is told
+    from the field's, and the caret reads at 3:1 against the field's fill.
+    Both were skipped: atom-one-dark painted them at 1.35:1 and 1.79:1."""
+    from textual.containers import Horizontal
+    from textual.geometry import Region
+    from textual.widgets import Button, Input, OptionList
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.UI.Workflows_Modules.library import WorkflowLibrary
+    from tldw_chatbook.UI.Workflows_Modules.navigator import WorkflowNavigator
+
+    class Panes(ConsolidatedCSSApp):
+        def compose(self):
+            with Horizontal(id="workflow-panes"):
+                yield WorkflowLibrary(id="workflows-library")
+                yield WorkflowNavigator(id="workflows-navigator")
+
+    app = Panes(css_path=[str(path) for path in APP_STYLESHEETS])
+    async with app.run_test(size=(211, 44)) as pilot:
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        app.theme = theme_name
+        for button in app.query(Button):
+            button.disabled = False  # Previous and Next: no page to turn here
+        for field in app.query(Input):
+            field.cursor_blink = False  # the caret is read below
+        app.set_focus(None)  # the search field takes focus on mount
+        await pilot.pause(0.3)
+        edges, text, fills, marks = {}, {}, {}, {}
+        for selector in WORKFLOW_PANES.values():
+            widget = app.query_one(selector)
+            pane = widget.region
+            edges[selector] = {
+                cell
+                for y in range(pane.y, pane.bottom)
+                for cell in _painted_line(app, y, pane.right - 1, pane.right, "│")
+            }
+            text[selector] = _painted_text(app, widget)
+            for control in [child for child in widget.walk_children() if child.focusable]:
+                resting = _text_cells(app, control.region)
+                app.set_focus(control)
+                await pilot.pause()
+                frame, focused = [], f"{selector} with #{control.id} focused"
+                if isinstance(control, Input):
+                    box, (x, y) = control.region, control.content_region.offset
+                    frame = _painted_line(app, box.y + 1, box.x, box.x + 1, "│")
+                    assert frame, f"no #{control.id} frame"
+                    # The placeholder, without its first cell: the caret paints there.
+                    own = _text_cells(app, box, [Region(x, y, 1, 1)])
+                    assert own, f"no #{control.id} placeholder"
+                    carets = _painted_line(app, y, x, x + 1, control.placeholder)
+                    # Typed once the focus has landed: focusing selects a value.
+                    control.value = "typed 123"
+                    await pilot.pause()
+                    own |= _text_cells(app, box)
+                    # A keyboard return to the field selects the whole value.
+                    app.set_focus(None)
+                    await pilot.pause()
+                    app.set_focus(control)
+                    await pilot.pause()
+                    end = x + len(control.value)
+                    chosen = _painted_line(app, y, x, end, control.value)
+                    marks[focused] = (own, carets[:1] + chosen, carets + _painted_line(app, y, end, end + 1, " "))
+                else:
+                    own = _text_cells(app, control.region)
+                # The lists are empty here, and their fill is opaque either way.
+                assert own or isinstance(control, OptionList), f"no #{control.id} text"
+                text[focused] = own | _painted_text(app, widget)
+                fills[focused] = (selector, resting, own, frame)
+    for selector, cells in edges.items():
+        assert cells, f"{theme_name}: no {selector} edge cells painted"
+        for edge, fill in cells:
+            ratio = _ratio(edge, fill)
+            assert ratio >= NON_TEXT, f"{theme_name}: {selector} edge {edge} on {fill} is {ratio:.2f}:1"
+    for selector, cells in text.items():
+        assert cells, f"{theme_name}: no {selector} text painted on the pane fill"
+        for ink, fill in cells:
+            ratio = _ratio(ink, fill)
+            assert ratio >= AA, f"{theme_name}: {selector} text {ink} on {fill} is {ratio:.2f}:1"
+    for focused, (selector, resting, own, frame) in fills.items():
+        (pane_fill,) = {fill for _, fill in text[selector]}
+        rest = max((_ratio(fill, pane_fill) for _, fill in resting), default=0)
+        for _, fill in own:
+            shift = _ratio(fill, pane_fill)
+            assert shift >= rest, (
+                f"{theme_name}: {focused} fill {fill} is {shift:.2f}x from the pane's "
+                f"{pane_fill}; at rest it is {rest:.2f}x from it"
+            )
+        for edge, fill in frame:
+            shift, ratio = _ratio(fill, pane_fill), _ratio(edge, fill)
+            assert shift >= FOCUS_SHIFT_FLOOR or ratio >= NON_TEXT, (
+                f"{theme_name}: {focused} fill {fill} is {shift:.2f}x from the pane's "
+                f"{pane_fill} and its frame {edge} is {ratio:.2f}:1 on it"
+            )
+    # Every field gate above and below runs only for a focusable Input: with
+    # none, the frame, hint, selection and caret would all go unread and pass.
+    assert marks, f"{theme_name}: the search field was not read"
+    for focused, (own, marked, carets) in marks.items():
+        (field,) = {fill for _, fill in own}
+        assert len(marked) > 1 and len(carets) == 2, f"{theme_name}: {focused}, no selection or no caret"
+        for ink, fill in marked:
+            ratio, shift = _ratio(ink, fill), _ratio(fill, field)
+            assert ratio >= AA and shift >= FOCUS_SHIFT_FLOOR, (
+                f"{theme_name}: {focused}, text under the caret or selected {ink} on {fill} is "
+                f"{ratio:.2f}:1, and that fill is {shift:.2f}x from the field's {field}"
+            )
+        for _, block in carets:
+            ratio = _ratio(block, field)
+            assert ratio >= NON_TEXT, f"{theme_name}: {focused}, caret {block} is {ratio:.2f}:1 on the field's {field}"
+
+
+WIDGETS_SHEET = CSS_ROOT / "components/_widgets.tcss"
+NAVIGATION_SHEET = CSS_ROOT / "components/_navigation.tcss"
+CONSOLE_SHEET = CSS_ROOT / "features/_console.tcss"
+_RAIL_HEADER = ".console-rail-section-header"
+_TAB = ".nav-button.is-active"
+
+#: TASK-33641.1: line -> (the rule and property that set its colour, the fills
+#: it sits on). A fill is a rule whose `background` is read, or a surface name.
+CHROME_LINES = {
+    "tab-bar separator": (
+        (NAV_BAR_CSS, "MainNavigationBar", "border-bottom"),
+        [(NAV_BAR_CSS, "MainNavigationBar")],
+    ),
+    "active tab outline": ((NAVIGATION_SHEET, _TAB, "border"), [(NAVIGATION_SHEET, _TAB)]),
+    # The app tier above is what paints in the app; a harness that loads the
+    # widget tier alone paints these two, so both tiers name the same outline.
+    "active tab outline, widget tier": ((NAV_BAR_CSS, _TAB, "border"), [(NAV_BAR_CSS, _TAB)]),
+    "focused active tab outline, widget tier": (
+        (NAV_BAR_CSS, _TAB + ":focus", "border"),
+        [(NAV_BAR_CSS, _TAB + ":focus")],
+    ),
+    "Collapsible frame": (
+        (WIDGETS_SHEET, "Collapsible", "border"),
+        [(WIDGETS_SHEET, "Collapsible")],
+    ),
+    "Console rail section rule": (
+        (CONSOLE_SHEET, _RAIL_HEADER, "border-top"),
+        [(CONSOLE_SHEET, _RAIL_HEADER)],
+    ),
+    # No fill of its own: it sits on the rail.
+    "Console conversations rule": (
+        (CONSOLE_SHEET, ".console-workspace-conversations-header", "border-top"),
+        ["surface", "panel"],
+    ),
+}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("line", CHROME_LINES)
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_app_chrome_lines_clear_non_text_contrast(theme: Theme, line: str) -> None:
+    """TASK-33641.1 AC#1: the lines every screen shares read at 3:1 on what
+    they sit on. In textual-dark the tab-bar separator measured 1.75:1, the
+    active tab's outline 1.29:1, the Collapsible frame 1.21:1 and the Console
+    rail's section rules 1.56:1."""
+    rule, fills = CHROME_LINES[line]
+    table = _painted_variables(theme)
+    token = _rule_token(*rule)
+    for fill in fills:
+        on = fill if isinstance(fill, str) else _rule_token(*fill, "background")
+        _assert_edge_visible(theme, table, token, on)
+
+
+def _painted_line(app, y: int, x0: int, x1: int, glyphs: str) -> list[tuple[str, str]]:
+    """[(ink hex, fill hex)] of the cells on row y, columns x0..x1, that draw
+    one of ``glyphs``, as they paint: `reverse` swaps a cell's two colours."""
+    cells, position = [], 0
+    for segment in app.screen._compositor.render_strips()[y]:
+        for glyph in segment.text:
+            if x0 <= position < x1 and glyph in glyphs:
+                style = segment.style
+                pair = Color.from_rich_color(style.color).hex, Color.from_rich_color(style.bgcolor).hex
+                cells.append(pair[::-1] if style.reverse else pair)
+            position += 1
+    return cells
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme_name", ["textual-dark", "textual-light", "pastel_dreams"])
+async def test_app_chrome_lines_paint_at_non_text_contrast(theme_name: str) -> None:
+    """TASK-33641.1 AC#1, rendered under the production stylesheet: the gate
+    above reads rules, and the rule a sheet names is not always the one that
+    paints. Each line's cells are read from the frame and measured."""
+    from textual.widgets import Collapsible, Static
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+    class Chrome(ConsolidatedCSSApp):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+            yield Collapsible(Static("body"), title="Group", id="probe-frame")
+            yield Static("Section", classes=_RAIL_HEADER[1:], id="probe-rule")
+
+    app = Chrome(css_path=[str(path) for path in APP_STYLESHEETS])
+    async with app.run_test(size=(211, 44)) as pilot:
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        app.theme = theme_name
+        await pilot.pause(0.3)
+        bar = app.query_one(MainNavigationBar).region
+        tab = app.query_one("#nav-home").region
+        frame = app.query_one("#probe-frame").region
+        rule = app.query_one("#probe-rule").region
+
+        def outline() -> list[tuple[str, str]]:
+            return [
+                *_painted_line(app, tab.y, tab.x, tab.right, "╭─╮"),
+                *_painted_line(app, tab.y + 1, tab.x, tab.right, "│"),
+            ]
+
+        lines = {
+            "tab-bar separator": _painted_line(app, bar.bottom - 1, bar.x, bar.right, "─"),
+            "Collapsible frame": _painted_line(app, frame.y, frame.x, frame.right, "╭─╮"),
+            "Console rail section rule": _painted_line(app, rule.y, rule.x, rule.right, "─"),
+        }
+        # The shared Button:hover and Button:focus fills once replaced the
+        # tab's own, and the outline is pinned against the tab's fill only.
+        # The focused active tab keeps its fill and its outline, so the bold
+        # underline is the only focus cue: it is read where it paints (the
+        # widget tier's own text-style is overridden by this tier).
+        active = app.query_one("#nav-home")
+        app.set_focus(None)
+        await pilot.pause()
+        assert not active.rich_style.underline, f"{theme_name}: resting tab is underlined"
+        lines["active tab outline"] = outline()
+        await pilot.hover("#nav-home")
+        await pilot.pause()
+        assert active.mouse_hover
+        lines["active tab outline, hovered"] = outline()
+        app.set_focus(active)
+        await pilot.pause()
+        assert active.rich_style.underline, f"{theme_name}: hovered focus shows no underline"
+        lines["active tab outline, hovered and focused"] = outline()
+        await pilot.hover("#probe-rule")
+        await pilot.pause()
+        assert active.has_focus and not active.mouse_hover
+        assert active.rich_style.underline, f"{theme_name}: focus shows no underline"
+        lines["active tab outline, focused"] = outline()
+    for line, cells in lines.items():
+        assert cells, f"{theme_name}: no {line} cells painted"
+        for edge, fill in set(cells):
+            ratio = _ratio(edge, fill)
+            assert ratio >= NON_TEXT, f"{theme_name}: {line} {edge} on {fill} is {ratio:.2f}:1"
 
 
 def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
@@ -268,19 +722,26 @@ def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("name", "value"),
+    ("name", "value", "kept"),
     [
         # Textual's own form (nord: input-selection-background '#81a1c1 35%').
-        ("block-cursor-blurred-background", "#81a1c1 30%"),
-        ("text", "#ffffff 87%"),
-        ("surface-lighten-2", "#2a2a2a 50%"),
+        ("block-cursor-blurred-background", "#81a1c1 30%", True),
+        ("text", "#ffffff 87%", True),
+        ("surface-lighten-2", "#2a2a2a 50%", True),
         # Kept by sanitize_theme_variables, but no colour to measure.
-        ("block-cursor-blurred-background", "auto 30%"),
-        ("surface-lighten-2", "auto 50%"),
-        ("text", "bold"),
+        ("text", "auto 60%", True),
+        ("link-style", "italic", True),
+        # TASK-33003.16, rewritten on purpose (all three were kept): 'auto NN%'
+        # on a name painted as a background is dropped, and so is a text style
+        # on a name painted as a colour (AC#4).
+        ("block-cursor-blurred-background", "auto 30%", False),
+        ("surface-lighten-2", "auto 50%", False),
+        ("text", "bold", False),
     ],
 )
-def test_user_theme_with_any_kept_variable_form_still_loads(tmp_path, name, value) -> None:
+def test_user_theme_with_any_kept_variable_form_still_loads(
+    tmp_path, name, value, kept
+) -> None:
     """Task 6 review round 2: the guard read `text`, the house focus tint and
     `surface-lighten-2` with a bare Color.parse, which raises ColorParseError
     (not a ValueError) on the '<colour> NN%' and 'auto NN%' forms
@@ -298,8 +759,8 @@ def test_user_theme_with_any_kept_variable_form_still_loads(tmp_path, name, valu
         encoding="utf-8",
     )
     (theme,) = load_user_themes(tmp_path)
-    assert theme.variables[name] == value
-    if not value.startswith(("auto", "bold")):
+    assert theme.variables.get(name) == (value if kept else None)
+    if not (kept and value.startswith("auto")):
         _assert_boundaries_visible(theme)
         _assert_button_focus_keeps_contrast(theme)
 
@@ -345,7 +806,8 @@ def test_focused_default_button_never_loses_contrast(theme: Theme) -> None:
 #: Every theme-generated name the app's tcss references (themes.py).
 _GUARD_PROBE_CSS = (
     "\nScreen { border-left: solid $ds-grid-line;"
-    " border-right: solid $ds-control-edge; background: $tldw-focus-fill; }\n"
+    " border-right: solid $ds-control-edge; background: $tldw-focus-fill;"
+    " border-top: round $tldw-active-edge; }\n"
 )
 
 
@@ -499,10 +961,7 @@ def test_guard_colours_are_visible_on_every_registered_theme(theme: Theme) -> No
 @pytest.mark.parametrize(
     ("section", "name", "value"),
     [
-        # sanitize_theme_variables keeps both forms on any name (TASK-33003.16).
         ("variables", "surface", "#181818 50%"),
-        ("variables", "surface", "auto 50%"),
-        ("variables", "panel", "auto 10%"),
         ("colors", "surface", "#18181880"),
     ],
 )
@@ -532,4 +991,27 @@ def test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours(
     )
     (theme,) = load_user_themes(tmp_path)
     assert not _measurable(theme)
+    _assert_guard_colours_visible(theme)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(("name", "value"), [("surface", "auto 50%"), ("panel", "auto 10%")])
+def test_user_theme_with_auto_on_a_surface_stays_measurable(tmp_path, name, value) -> None:
+    """TASK-33003.16, rewritten on purpose: these were two rows of the test
+    above, where the kept 'auto NN%' left the surface with nothing to measure
+    (and nothing to paint). The sanitiser now drops it, so the surface keeps
+    its [colors] value and the guard pins real boundaries."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    (tmp_path / "probe.toml").write_text(
+        '[theme]\nname = "auto_surface_probe"\ndark = true\n'
+        '[colors]\nprimary = "#3366CC"\nbackground = "#101010"\n'
+        'surface = "#181818"\npanel = "#202020"\nforeground = "#E0E0E0"\n'
+        f'[variables]\n{name} = "{value}"\n',
+        encoding="utf-8",
+    )
+    (theme,) = load_user_themes(tmp_path)
+    assert name not in theme.variables
+    assert _measurable(theme)
+    _assert_boundaries_visible(theme)
     _assert_guard_colours_visible(theme)

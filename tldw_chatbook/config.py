@@ -1845,6 +1845,7 @@ def _normalize_legacy_provider_api_key(
     raw_api_section: Dict[str, Any],
     toml_key: str,
     env_var: str,
+    bridged_from_legacy: set[str] | None = None,
 ) -> Optional[str]:
     """One normalized credential for `provider_key` -- PR-T2 Task 7.
 
@@ -1969,6 +1970,8 @@ def _normalize_legacy_provider_api_key(
             `"anthropic_api_key"`.
         env_var: The conventional environment variable, e.g.
             `"ANTHROPIC_API_KEY"`.
+        bridged_from_legacy: When given, `provider_key` is added to it if
+            the TOML-sourced fallback filled the table (TASK-33001.15).
 
     Returns:
         The normalized credential (feeds the legacy `<provider>_api` dict
@@ -1991,13 +1994,28 @@ def _normalize_legacy_provider_api_key(
     #   * The modern/legacy branches validated the STRIPPED form but
     #     returned the raw one, so `api_key = " sk-xyz "` showed
     #     `sk-xyz` in readiness and spent ` sk-xyz ` (a 401).
-    modern_value = resolve_provider_api_key(
-        provider_table.get("api_key") if isinstance(provider_table, dict) else None
-    )
+    table = provider_table if isinstance(provider_table, dict) else {}
+    # TASK-33641.11 (ADR-012): a recorded `credential_source` decides as it
+    # does for `provider_readiness.resolve_provider_credential` (not imported:
+    # that is a cycle). "none" uses no key; "stored" the table's key or the
+    # legacy one copied below, never the variable; "environment" only the
+    # variable the table names. No source keeps the order below.
+    source = table.get("credential_source")
+    source = source.strip().lower() if type(source) is str else None
+    if source == "none":
+        return None
+    if source == "environment":
+        named = table.get("api_key_env_var")
+        named = named.strip() if isinstance(named, str) else ""
+        return resolve_provider_api_key(os.getenv(named)) if named else None
+
+    modern_value = resolve_provider_api_key(table.get("api_key"))
     if modern_value:
         return modern_value  # explicit modern config always wins
 
-    env_value = resolve_provider_api_key(os.getenv(env_var))
+    env_value = (
+        None if source == "stored" else resolve_provider_api_key(os.getenv(env_var))
+    )
     if env_value:
         return env_value
 
@@ -2007,6 +2025,8 @@ def _normalize_legacy_provider_api_key(
             provider_table = {}
             api_settings_section[provider_key] = provider_table
         provider_table["api_key"] = legacy_value
+        if bridged_from_legacy is not None:
+            bridged_from_legacy.add(provider_key)
         return legacy_value
 
     return None
@@ -2619,6 +2639,7 @@ def _load_settings_uncached(
     # never disagree about the same config. `elevenlabs` is untouched: it
     # is a TTS credential, not a Chat provider `get_provider_readiness`
     # resolves.
+    _legacy_api_key_providers: set[str] = set()
     _bridged_provider_api_keys = {
         provider_key: _normalize_legacy_provider_api_key(
             final_api_settings,
@@ -2626,6 +2647,7 @@ def _load_settings_uncached(
             raw_api_section=api_section_legacy,
             toml_key=toml_key,
             env_var=env_var,
+            bridged_from_legacy=_legacy_api_key_providers,
         )
         for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
     }
@@ -2762,6 +2784,11 @@ def _load_settings_uncached(
         "logging": final_logging_settings,  # For TUI log settings like log_max_bytes
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
+        # TASK-33001.15: provider tables whose `api_key` above is not in the
+        # table on disk -- the loader copied it from legacy `[API]`. Names
+        # only, always present; a Settings save that records "stored" for one
+        # of them writes the key into the table (provider_setup_persistence).
+        "legacy_api_key_providers": tuple(sorted(_legacy_api_key_providers)),
         "providers": final_providers_settings,  # For UI dropdowns
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
@@ -7402,17 +7429,57 @@ _config_interprocess_lock = _bind_config_interprocess_lock(_LOCK_STREAM_SELECTOR
 del _bind_config_interprocess_lock
 
 
+# The thread inside each config file's write transaction. The OS lock is taken
+# on a fresh descriptor every time, so unlike the RLocks beside it, it is not
+# reentrant: the holding thread can never get it a second time.
+_CONFIG_WRITE_LOCK_HOLDERS: dict[Path, _threading.Thread] = {}
+
+
+def _refuse_config_write_lock_reentry(config_path: Path) -> Path:
+    """Refuse the calling thread a write transaction it is already inside.
+
+    A caller that opens an operation of its own around the write lock calls
+    this first: a refusal raised inside an entered operation is recorded as a
+    failed config operation, which keeps the config participant from draining
+    until the next write that succeeds.
+
+    Returns:
+        The key the write lock records its holder under.
+
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction, in an outer frame or in another asyncio task.
+            Waiting would block the holder for good (TASK-33641.6).
+    """
+
+    # Keyed as the operation compares its target with the selection.
+    holder_key = profile_paths.lexical_path(config_path)
+    if _CONFIG_WRITE_LOCK_HOLDERS.get(holder_key) is _threading.current_thread():
+        raise RecoveryRequired("raw_operation_provenance_invalid")
+    return holder_key
+
+
 @contextmanager
 def _config_write_lock(config_path: Path) -> Iterator[None]:
-    """Serialize one config write transaction within and across processes."""
+    """Serialize one config write transaction within and across processes.
 
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before anything is entered.
+    """
+
+    holder_key = _refuse_config_write_lock_reentry(config_path)
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         with (
             _settings_rebuild_lock(),
             _config_file_lock(),
             _config_interprocess_lock(config_path),
         ):
-            yield
+            _CONFIG_WRITE_LOCK_HOLDERS[holder_key] = _threading.current_thread()
+            try:
+                yield
+            finally:
+                _CONFIG_WRITE_LOCK_HOLDERS.pop(holder_key, None)
 
 
 def _current_config_file_stamp(config_path: Path) -> Optional[tuple[int, int]]:
@@ -8160,6 +8227,7 @@ class ConfigPostCommitError(RuntimeError):
 def read_cli_config_snapshot() -> ConfigFileSnapshot:
     """Read exact serialized config without parsing or creating a missing file."""
 
+    _refuse_config_write_lock_reentry(get_cli_config_path())
     with _config_participants.operation(sys.modules[__name__]):
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
@@ -8216,7 +8284,6 @@ def read_cli_config_backup_serialized() -> str:
             return opened.stream.read().decode("utf-8")
 
 
-@_config_participants.guarded
 def replace_cli_config_serialized(
     serialized: str,
     *,
@@ -8226,7 +8293,23 @@ def replace_cli_config_serialized(
 
     Raises:
         ConfigPostCommitError: Replacement succeeded but post-save refresh failed.
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before the guarded body opens.
     """
+
+    _refuse_config_write_lock_reentry(get_cli_config_path())
+    return _replace_cli_config_serialized_guarded(
+        serialized, create_backup=create_backup
+    )
+
+
+@_config_participants.guarded
+def _replace_cli_config_serialized_guarded(
+    serialized: str,
+    *,
+    create_backup: bool,
+) -> tuple[dict[str, Any], Path | None]:
+    """Guarded body of :func:`replace_cli_config_serialized`."""
 
     loaded, backup_path, _ = _replace_cli_config_serialized(
         serialized, create_backup=create_backup

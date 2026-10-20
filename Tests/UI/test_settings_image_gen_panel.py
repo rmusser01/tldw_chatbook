@@ -19,6 +19,7 @@ import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -30,6 +31,8 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
 )
+from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness, _settle
+from tldw_chatbook.app import WideViewportTierMixin
 from tldw_chatbook.Image_Generation.config import (
     DEFAULT_SWARMUI_TIMEOUT_SECONDS,
     get_image_generation_config,
@@ -38,8 +41,10 @@ from tldw_chatbook.Image_Generation.config import (
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens import settings_video_gen_defaults as video_defaults
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_IDS,
+    BACKEND_LABELS,
     ImageGenProbeResult,
     effective_placeholder,
 )
@@ -1237,9 +1242,10 @@ enabled_backends = ["swarmui"]
 
 
 # ---------------------------------------------------------------------------
-# Live-CSS layout regression (whole-branch review): DestinationHarness (used
-# by every other test in this file) has no CSS_PATH, so it structurally
-# cannot exercise the real app-tier TCSS bundle -- it never caught that a
+# Live-CSS layout regression (whole-branch review): the plain
+# DestinationHarness most tests here use has no CSS_PATH (the
+# _SettingsCssHarness tests further down, TASK-33641.3, load the full
+# stylesheet). When this was written it had never caught that a
 # bare `Checkbox { width: 100%; height: 2; }` type selector living in
 # _conversations.tcss (unscoped, app-wide) was stretching every Enabled
 # checkbox to its row's full width, clipping the default marker + Test
@@ -1248,26 +1254,45 @@ enabled_backends = ["swarmui"]
 # `#settings-imagegen-panel` rule) starved its nested backend-editor
 # VerticalScroll down to ~1 row, hiding Backend settings/Generation
 # defaults/Save/Revert below the fold with nothing able to scroll them into
-# view. These two tests run against the REAL `TldwCli` app directly (the
-# same pattern `test_screen_navigation.py`'s real-app tests use) specifically
-# so the real CSS bundle is exercised -- confirmed live via a tmux capture
+# view. This test (both sizes) runs the REAL `TldwCli` app directly (the
+# same pattern `test_screen_navigation.py`'s real-app tests use) so the real
+# app, not a harness, is exercised -- confirmed live via a tmux capture
 # at 235 and 120 columns before writing this pin (see task-5-report.md).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("size", [(235, 52), (120, 45)])
 @pytest.mark.asyncio
-async def test_backend_row_controls_visible_and_clickable_under_real_css(
-    scratch_config, size
-):
-    scratch_config(
-        """
-[image_generation]
-default_backend = "openrouter"
-enabled_backends = ["openrouter", "swarmui"]
-"""
-    )
+@private_profile_test
+async def test_backend_row_controls_visible_and_clickable_under_real_css(request, size):
+    """The backend rows' controls stay inside their rows under the app CSS.
+
+    TASK-33002.17 (ledger R11): ``scratch_config`` re-pointed
+    ``TLDW_CONFIG_PATH`` after the config module had bound its source, which
+    the ADR-126 admission refuses at setup (``raw_source_selection_changed``),
+    so this guard has not run since that admission landed (TASK-32628,
+    2026-09-16). The real writer now stores the backends in this case's
+    private profile.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this case in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        size: Terminal size of the app.
+    """
+    from tldw_chatbook import config
+
+    assert config.apply_settings_mutation_to_cli_config(
+        {
+            "image_generation": {
+                "default_backend": "openrouter",
+                "enabled_backends": ["openrouter", "swarmui"],
+            }
+        }
+    ).file_replaced
     app = _build_test_app()
+    # The private profile's config enables the splash, which outlasts the
+    # wait for the initial screen; compose() runs after the factory patches.
+    app._cli_no_splash = True
     async with app.run_test(size=size) as pilot:
         screen = await _open_real_settings_destination(app, pilot)
 
@@ -1314,6 +1339,227 @@ enabled_backends = ["openrouter", "swarmui"]
         assert widget is save_btn, (
             f"@ {size}: Save button not reachable/clickable via scroll"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-33641.3: the backend names. A 12-cell label column cut
+# "ComfyUI (H3 image edit)" to "ComfyUI (H3" and ran "SD.cpp video" into
+# "Not configured" with no gap. Image Gen and Video Gen share the row class,
+# so one test covers every label of both panels, under the real stylesheet.
+# The wider column needs the app's wide tier, so the host carries the mixin
+# TldwCli does; 150 columns is where that tier starts. Below it the column
+# stays 12 cells, and the 120 and 149 column sizes are what pin that rule:
+# without it the shared 24-cell label pushes Test off the default row.
+# ---------------------------------------------------------------------------
+
+
+class _WideTierSettingsHarness(WideViewportTierMixin, _SettingsCssHarness):
+    """The Settings CSS harness with the app's ``-wide-viewport`` class."""
+
+
+async def _open_backends_panel(pilot, host, category, panel):
+    await _settle(pilot)
+    screen = _active_destination_screen(host)
+    screen._select_category(category.value)
+    deadline = time.monotonic() + 5.0
+    while not screen.query(f"#settings-{panel}-default_backend"):
+        assert time.monotonic() < deadline, f"the {panel} panel never loaded"
+        await pilot.pause(0.02)
+    return screen
+
+
+def _painted_before_status(screen, label, status) -> str:
+    """The cells painted on the name's line, from its column to the status."""
+    return (
+        screen._compositor.render_strips()[label.region.y]
+        .crop(label.region.x, status.region.x)
+        .text
+    )
+
+
+async def _wait_until_the_name_line_can_be_read(
+    pilot, screen, label, status, subject, status_width=None
+):
+    """Wait for the row's layout and for its scroll into view to land.
+
+    ``_painted_before_status`` reads the line at the name's row. The lower
+    rows start outside the scroll clip, and until ``scroll_visible`` lands
+    their label still has a region there: the line read at it is another
+    widget's (a rule, or blank). A fixed pause does not bound that on a
+    loaded machine. ``status_width`` also waits for a status text just
+    written.
+    """
+    deadline = time.monotonic() + 5.0
+    while not (
+        label.region.width
+        and status.region.width
+        and status_width in (None, status.region.width)
+        and screen.find_widget(label).clip.contains_region(label.region)
+    ):
+        assert time.monotonic() < deadline, (
+            f"{subject}: the name's line was never laid out and scrolled into view"
+        )
+        await pilot.pause(0.02)
+
+
+@pytest.mark.parametrize(
+    "size", [(120, 45), (149, 45), (150, 45), (211, 44), (235, 52)]
+)
+@pytest.mark.parametrize("panel", ["imagegen", "videogen"])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_backend_rows_paint_each_name_whole_before_one_status_column(size, panel):
+    category, backend_ids, labels = (
+        (SettingsCategoryId.IMAGE_GENERATION, BACKEND_IDS, BACKEND_LABELS)
+        if panel == "imagegen"
+        else (
+            SettingsCategoryId.VIDEO_GENERATION,
+            video_defaults.BACKEND_IDS,
+            video_defaults.BACKEND_LABELS,
+        )
+    )
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(pilot, host, category, panel)
+
+        status_columns = {}
+        for backend_id in backend_ids:
+            row = screen.query_one(f"#settings-{panel}-backend-{backend_id}")
+            label = row.query_one(".settings-input-label", Static)
+            status = row.query_one(".settings-imagegen-badge", Static)
+            row.scroll_visible(animate=False)
+            await _wait_until_the_name_line_can_be_read(
+                pilot, screen, label, status, f"{backend_id} @ {size}"
+            )
+            painted = _painted_before_status(screen, label, status)
+            name = labels[backend_id]
+            if size[0] < host.WIDE_VIEWPORT_COLUMNS:
+                assert label.region.width == 12, (
+                    f"{backend_id} @ {size}: the name column is "
+                    f"{label.region.width} cells below the wide tier, not 12"
+                )
+                # The column cuts the name, so only its start can be asked
+                # for; that still tells the name's line from any other line.
+                assert painted.strip() and name.startswith(painted.rstrip()), (
+                    f"{backend_id} @ {size}: {painted!r} is painted before the "
+                    f"status, not the start of the name {name!r}"
+                )
+            else:
+                assert painted.startswith(f"{name} "), (
+                    f"{backend_id} @ {size}: {painted!r} is painted before the "
+                    f"status, not the whole name {name!r} and a blank cell"
+                )
+            # A cut name needs the gap too: the 12-cell column painted
+            # "SD.cpp video" for "SD.cpp video (local)", flush to its status.
+            assert painted.endswith(" "), (
+                f"{backend_id} @ {size}: {painted!r} is painted right up to "
+                "the status, with no blank cell"
+            )
+            # The default backend's row is the widest: it carries "★ Default".
+            assert row.children[-1].region.right <= row.region.right, (
+                f"{backend_id} @ {size}: the row's last control ends at "
+                f"{row.children[-1].region.right}, past the row's right edge "
+                f"({row.region.right})"
+            )
+            status_columns[backend_id] = status.region.x
+        assert len(set(status_columns.values())) == 1, (
+            f"@ {size}: the statuses start at different columns: {status_columns}"
+        )
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+@pytest.mark.parametrize("panel", ["imagegen", "videogen"])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_the_backend_editor_is_whole_and_save_reachable(size, panel):
+    """Capture phase (TASK-33641.3): nothing sized Video Gen's panel or its
+    backend editor, so both kept ``height: 1fr`` and the editor collapsed
+    to one row, cutting Save off. Image Gen's 2026-07-25 fix (3058f378c1)
+    sized its own two ids only; the same pin now holds for both panels."""
+    category = (
+        SettingsCategoryId.IMAGE_GENERATION
+        if panel == "imagegen"
+        else SettingsCategoryId.VIDEO_GENERATION
+    )
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(pilot, host, category, panel)
+
+        editor = screen.query_one(f"#settings-{panel}-editor")
+        deadline = time.monotonic() + 5.0
+        while not editor.region.height:  # the panel loaded; wait for its layout
+            assert time.monotonic() < deadline, f"{panel} @ {size}: never laid out"
+            await pilot.pause(0.02)
+        assert editor.region.height == editor.virtual_size.height, (
+            f"{panel} @ {size}: Backend settings editor region "
+            f"({editor.region.height}) is shorter than its content "
+            f"({editor.virtual_size.height})"
+        )
+        save_btn = screen.query_one(f"#settings-{panel}-save", Button)
+        save_btn.scroll_visible(animate=False)
+        deadline = time.monotonic() + 5.0
+        while not screen.find_widget(save_btn).clip.contains_region(save_btn.region):
+            assert time.monotonic() < deadline, (
+                f"{panel} @ {size}: scrolling never brought Save into view "
+                f"(Save {save_btn.region}, editor {editor.region})"
+            )
+            await pilot.pause(0.02)
+        widget, _offset = screen.screen.get_widget_at(*save_btn.region.center)
+        assert widget is save_btn, f"{panel} @ {size}: Save is not reachable"
+
+
+@pytest.mark.parametrize("size", [(150, 45), (151, 45)])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row(size):
+    """A probe writes its result into the status in place, and it can be long.
+
+    At 150 columns the row is 67 cells. With a fixed 24-cell name column
+    "Reachable (auth unverified)" put Test outside the default backend's row
+    and "Unreachable: connection refused" clipped it on every other row.
+
+    The shortened name keeps a blank cell before the status. At 151 columns
+    that second result leaves the default SwarmUI row 15 cells for the name,
+    and a column with no padding painted "SwarmUI (local)Unreachable:
+    connection refused".
+    """
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(
+            pilot, host, SettingsCategoryId.IMAGE_GENERATION, "imagegen"
+        )
+        default_rows = 0
+        for badge in ("Reachable (auth unverified)", "Unreachable: connection refused"):
+            for backend_id in BACKEND_IDS:
+                row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
+                label = row.query_one(".settings-input-label", Static)
+                status = row.query_one(".settings-imagegen-badge", Static)
+                marker = row.query_one(".settings-imagegen-default-marker", Static)
+                test_btn = row.query_one(Button)
+                screen._apply_image_gen_probe_result(
+                    backend_id, badge, screen._image_gen_probe_session
+                )
+                row.scroll_visible(animate=False)
+                await _wait_until_the_name_line_can_be_read(
+                    pilot,
+                    screen,
+                    label,
+                    status,
+                    f"{backend_id} @ {size} with {badge!r}",
+                    status_width=len(badge),
+                )
+                default_rows += bool(marker.region.width)
+                assert test_btn.region.right <= row.region.right, (
+                    f"{backend_id} @ {size} with {badge!r}: Test ends at "
+                    f"{test_btn.region.right}, past the row's right edge "
+                    f"({row.region.right})"
+                )
+                painted = _painted_before_status(screen, label, status)
+                assert painted.endswith(" "), (
+                    f"{backend_id} @ {size} with {badge!r}: {painted!r} is "
+                    "painted right up to the status, with no blank cell"
+                )
+        assert default_rows, "no row carried the default marker"
 
 
 # ---------------------------------------------------------------------------

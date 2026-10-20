@@ -138,6 +138,7 @@ from ..Console_Modules.left_rail import (
     CONSOLE_RETRY_DEFAULT_SAVE_ID,
     CONSOLE_RETRY_GENERATION_SETTINGS_ID,
     ConsoleLeftRail,
+    rail_focus_shortcuts,
 )
 from ..Console_Modules.workspace import (
     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
@@ -191,19 +192,15 @@ from ...Chat.console_switcher_state import (
     ConsoleSwitcherCharacterResult,
     SwitcherMode,
 )
-from ...Chat.console_context_policy import (
-    ConsoleContextPolicyOverrides,
-)
 from ...Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
-    ConsoleSettingsDraftState,
-    ConsoleSettingsFieldDraft,
-    ConsoleSettingsFieldProvenance,
     ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
+    initial_settings_draft,
+    remember_session_pair,
 )
 from ...Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
@@ -327,6 +324,7 @@ from ...Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_target_default_console_session_settings,
+    readiness_words,
     unsaved_console_endpoint_warning,
     validate_console_session_settings,
 )
@@ -366,6 +364,7 @@ from ...Chat.console_display_state import (
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
     console_prompted_source_count,
+    console_setup_blocked_reason,
     console_staged_source_count,
 )
 from ...Chat.console_onboarding_state import (
@@ -2701,31 +2700,7 @@ class ChatScreen(BaseAppScreen):
         self._console_worldbook_dialog_active = True
         self.run_worker(self._console_worldbook_detach_worker(), group="console-io")
 
-    @staticmethod
-    def _console_settings_initial_draft(
-        settings: ConsoleSessionSettings,
-        context_policy: ConsoleContextPolicyOverrides,
-        *,
-        exposed_fields: frozenset[str],
-    ) -> ConsoleSettingsDraftState:
-        """Build one process-local transaction from an exact live snapshot."""
-
-        return ConsoleSettingsDraftState(
-            settings=settings,
-            context_policy_overrides=context_policy,
-            field_drafts=tuple(
-                ConsoleSettingsFieldDraft(
-                    name=name,
-                    effective_value=getattr(settings, name),
-                    profile_override=getattr(settings, name),
-                    provenance=ConsoleSettingsFieldProvenance.INHERITED,
-                    dirty=False,
-                )
-                for name in sorted(exposed_fields)
-            ),
-            model_drafts=(),
-            endpoint_draft=None,
-        )
+    _console_settings_initial_draft = staticmethod(initial_settings_draft)
 
     def _console_default_durability_state(self) -> ConsoleDefaultDurabilityState:
         """Return the single app-lifetime default recovery holder."""
@@ -3177,6 +3152,10 @@ class ChatScreen(BaseAppScreen):
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
+            if suspended_draft is not None:  # TASK-35190: and the chat's own pair
+                initial_draft = remember_session_pair(
+                    initial_draft, store.session_settings(session_id)
+                )
         else:
             origin = transfer.origin
             session_id = origin.session_id
@@ -5058,12 +5037,8 @@ class ChatScreen(BaseAppScreen):
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
-        # TASK-32322: with focus inside a rail, Tab is region-locked -- the
-        # exits are F6 and Esc, taught at the point of need. Preceded by
-        # nothing (prepended like the others: footer degradation drops
-        # hints from the END).
-        if self._console_rail_focus_active():
-            shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
+        if self._console_rail_focus_active():  # TASK-32322: the rail's exits
+            shortcuts = rail_focus_shortcuts(shortcuts)
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
@@ -13187,8 +13162,8 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             setup_rows = (
-                ConsoleDisplayRow(
-                    "Setup", "Provider configuration required", status="blocked"
+                ConsoleDisplayRow(  # TASK-33005.7: the word, e.g. "refused :9099"
+                    "Setup", readiness_words(setup_settings_readiness[1]), "blocked"
                 ),
                 ConsoleDisplayRow(
                     "Blocked impact",
@@ -13909,28 +13884,7 @@ class ChatScreen(BaseAppScreen):
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
         _settings, readiness = self._active_console_settings_readiness()
-        if readiness.operability == "ready_to_send":
-            return ""
-        if readiness.recovery_action == "wait_for_active_run":
-            # The prompt-queue presentation owns active-run admission: it
-            # blocks while a turn is preparing, then enables Queue once the
-            # provider has accepted it. Settings readiness still blocks
-            # mutations during the run, but must not override that composer
-            # lifecycle with a second, permanently-blocked gate.
-            return ""
-        if readiness.recovery_action == "select_model":
-            return "Choose a model in Chat settings before sending."
-        if readiness.recovery_action == "configure_credential":
-            if readiness.subscription_status == "pending":
-                return "Checking Claude subscription credential."
-            if readiness.subscription_status in {"missing", "expired"}:
-                return "Log in with Claude Code to refresh the subscription credential."
-            return "Add API key in Settings > Providers & Models before sending."
-        if readiness.recovery_action == "save_endpoint":
-            return "Save provider endpoint in Chat settings before sending."
-        if readiness.recovery_action == "retry_connection":
-            return "Provider unreachable. Retry connection before sending."
-        return "Finish provider setup before sending."
+        return console_setup_blocked_reason(readiness)
 
     def _console_provider_recovery_field(self) -> str:
         """Return the Settings Providers & Models field targeted by recovery."""

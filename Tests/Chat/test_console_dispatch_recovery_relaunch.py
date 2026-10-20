@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from collections.abc import Iterator
-from contextlib import closing
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, closing
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -43,6 +43,11 @@ from Tests.Chat.test_console_turn_resend import (
     _Gateway,
     _path,
 )
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from tldw_chatbook.Chat.chat_conversation_scope_service import (
+    ChatConversationScopeService,
+)
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
@@ -54,6 +59,7 @@ from tldw_chatbook.Chat.console_conversation_hydration import hydrate_console_se
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_turn_resend import resend_target_id, resend_turn
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 # Drives the real controller and store (lessons-testing-evidence.md).
 pytestmark = pytest.mark.bootstrap_profile
@@ -98,8 +104,12 @@ async def _relaunch(db, conversation_id) -> SimpleNamespace:
     )
 
 
-async def _crash_mid_reply(tmp_path, databases):
-    """Send one healthy turn, then copy the database while turn two hangs."""
+async def _crashed_database(tmp_path, databases):
+    """Send one healthy turn, then copy the database while turn two hangs.
+
+    Returns:
+        The copy, opened, and the id of the conversation it holds.
+    """
     console = _console(tmp_path, databases)
     assert (await console.controller.submit_draft("first question")).accepted
     console.gateway.mode = "hang"
@@ -114,7 +124,12 @@ async def _crash_mid_reply(tmp_path, databases):
     await asyncio.wait_for(task, 5)
     db = CharactersRAGDB(tmp_path / "crashed.sqlite", client_id="relaunch-test")
     databases.append(db)
-    return await _relaunch(db, conversation_id)
+    return db, conversation_id
+
+
+async def _crash_mid_reply(tmp_path, databases):
+    """A crash mid-reply, then a relaunch from what it left on disk."""
+    return await _relaunch(*await _crashed_database(tmp_path, databases))
 
 
 def _assert_fresh_native_ids_for_the_settled_turn(relaunched) -> None:
@@ -323,3 +338,121 @@ async def test_a_second_open_of_the_same_chat_never_settles_the_first_ones_reply
     settled = await first.controller.discard_dispatch_recovery(first.session_id)
     assert settled.accepted, settled.visible_copy
     assert _path(first)[-1].content == DISCARD_COPY
+
+
+@asynccontextmanager
+async def _mounted_console(db) -> AsyncIterator[ChatScreen]:
+    """A mounted Console over ``db``, with the real conversation services."""
+    app = _build_test_app()
+    app.chachanotes_db = db
+    app.chat_conversation_scope_service = ChatConversationScopeService(
+        local_service=ChatConversationService(db), server_service=None
+    )
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    screen = ChatScreen(app)
+    async with app.run_test(size=(160, 48)) as pilot:
+        await app.push_screen(screen)
+        app._initial_screen_pushed = True
+        await pilot.pause()
+        yield screen
+
+
+async def _discard_settles_from(screen, session_id) -> None:
+    """Discard settles the crashed reply's recovery from ``session_id``."""
+    store = screen._console_chat_store
+    controller = screen._ensure_console_chat_controller()
+    settled = await controller.discard_dispatch_recovery(session_id)
+    assert settled.accepted, settled.visible_copy
+    assert store.dispatch_recovery_for_session(session_id) is None
+    assert store.messages_for_session(session_id)[-1].content == DISCARD_COPY
+
+
+@pytest.mark.asyncio
+async def test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles(
+    tmp_path, databases
+):
+    """TASK-33667: no second open exists, so no card is left that cannot settle.
+
+    A mounted Console runs its own open path (the tree load, then
+    ``hydrate_console_session``) over the crashed database. Opening the same
+    chat again used to hydrate a second session there; the test above shows why
+    that one's card refuses. It now activates the session that is already open.
+    """
+    db, conversation_id = await _crashed_database(tmp_path, databases)
+    async with _mounted_console(db) as screen:
+        # No reuse flag, and none of the lookup a rail row does before it
+        # calls: in production only two overlapping opens get this far.
+        open_chat = screen._workspace._resume_console_workspace_conversation
+        assert await open_chat(conversation_id) is True
+        store = screen._console_chat_store
+        first_open = store.active_session_id
+        assert store.dispatch_recovery_for_session(first_open) is not None
+        elsewhere = store.create_session(title="Elsewhere")
+        store.switch_session(elsewhere.id)
+
+        assert await open_chat(conversation_id) is True
+
+        opens = [
+            session.id
+            for session in store.sessions()
+            if session.persisted_conversation_id == conversation_id
+        ]
+        assert opens == [first_open]
+        assert store.active_session_id == first_open
+        await _discard_settles_from(screen, first_open)
+
+
+@pytest.mark.asyncio
+async def test_two_overlapping_opens_of_a_chat_make_one_session(
+    tmp_path, databases, monkeypatch
+):
+    """TASK-33667: the case the reuse default exists for.
+
+    Both rail callers look the session up before they call, so the default is
+    reached only when two opens of one chat overlap. It holds because no await
+    separates the reuse check from the hydration's registration of the session
+    (``restore_persisted_session``). With an await there, both opens pass the
+    check and this test sees two sessions.
+    """
+    db, conversation_id = await _crashed_database(tmp_path, databases)
+    async with _mounted_console(db) as screen:
+        # The real read runs on a thread, so the two loads would return ticks
+        # apart. Hand both back on one tick: each open is then past its last
+        # await before either reaches the reuse check. The tree is read once,
+        # here, so the hand-back waits on no executor thread, and no load can
+        # fail inside it and leave the other open waiting (a CI run timed out
+        # that way).
+        service = screen.app.chat_conversation_scope_service
+        tree = ChatConversationService(db).get_conversation_tree(
+            conversation_id, root_limit=10_000, depth_cap=10_000
+        )
+        loaded, both_loaded = [], asyncio.Event()
+
+        async def load_together(*args, **kwargs):
+            loaded.append(args)
+            if len(loaded) == 2:
+                both_loaded.set()
+            await both_loaded.wait()
+            return tree
+
+        monkeypatch.setattr(service, "get_conversation_tree", load_together)
+        open_chat = screen._workspace._resume_console_workspace_conversation
+
+        # The budget covers the product's own hydrate and present work, which
+        # took about 100 s for two opens on one slow CI runner.
+        results = await asyncio.wait_for(
+            asyncio.gather(open_chat(conversation_id), open_chat(conversation_id)),
+            120,
+        )
+
+        assert results == [True, True]
+        store = screen._console_chat_store
+        opens = [
+            session.id
+            for session in store.sessions()
+            if session.persisted_conversation_id == conversation_id
+        ]
+        assert len(opens) == 1
+        assert store.active_session_id == opens[0]
+        await _discard_settles_from(screen, opens[0])

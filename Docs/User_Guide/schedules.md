@@ -48,8 +48,10 @@ re-enabling gives it no new run time; edit its schedule to arm it
 again). Each row shows a status
 glyph (`○` recurring, `▶` one-shot, `⏸` paused, `✓` completed), the
 title with the same owner/transfer-badge suffixes described below, and
-a subtitle line (the schedule summary plus a relative next-run time, or
-"— (paused)"/"— (disabled)" when nothing will fire). An automation row
+a subtitle line (the next run with its relative time, or
+"— (paused)"/"— (disabled)" when nothing will fire, then the schedule
+summary; the next run comes first so a narrow queue cuts the summary,
+not the time). An automation row
 with unread results carries a bold unread dot after its title.
 
 Highlighting a row opens its detail pane beside the list — a reminder's
@@ -385,6 +387,14 @@ shows "2026-08-31 14:30 UTC (in 2d)" and the queue column a shorter
 "2026-08-31 14:30 (in 2d)". Overdue times read "(overdue 2h)"; times
 within a minute read "(due now)".
 
+A recurring task keeps showing its next run after it has run. Its badge
+reads **Completed**, **Missed** or **Timed out** for the last run, and
+Next Run still names the next occurrence. A one-time task that has fired
+has no next run and reads a bare **—** (see Disabled tasks below). Edit
+its schedule to give it a new time and, once it is enabled, Next Run
+shows that time under the same **Completed** badge; until you enable it,
+it reads **— (disabled)**.
+
 ## Bulk actions — marking rows
 
 Press **x** to mark or unmark the highlighted row (●). While any rows
@@ -409,8 +419,12 @@ dispatching it also disables it and clears its next run internally, but
 the screen reads that specific shape as **finished**, not disabled —
 the detail badge and Next Run agree with the queue row: **Completed**,
 Next Run **—**, the `✓` glyph, and the **Completed** chip, everywhere at
-once. A task you disabled yourself (its next run is still armed
-underneath) is the only shape that reads **Disabled** / **— (disabled)**.
+once. Every other disabled reminder reads **Disabled** /
+**— (disabled)**, whether or not a next run is still stored underneath:
+for example one you disabled yourself, a fired one-time reminder you
+gave a new time and have not enabled yet, or an overdue one-time
+reminder the server parked disabled when you moved it there (see Moving
+a task between this device and the server below).
 
 ## Ran late — what happens to overdue reminders
 

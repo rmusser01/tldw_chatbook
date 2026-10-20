@@ -1,6 +1,6 @@
 # ADR 012: Provider Credential Settings Boundary
 
-Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17)
+Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17; amended 2026-10-10: a "stored" save writes a key copied from legacy `[API]`, TASK-33001.15; amended 2026-10-17: a summary resolves its key as readiness does, TASK-33001.14; amended 2026-10-17: a recorded credential source decides the legacy `[API]` bridge, TASK-33641.11)
 Date: 2026-06-30
 Related Task: [backlog/tasks/task-145 - Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md](../tasks/task-145%20-%20Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md)
 Supersedes: N/A
@@ -260,6 +260,161 @@ storage, keyring migration…" is narrowed.
 Rejected: the keychain as the default store for new keys (the owner's ruling), and
 encryption as a per-key choice at the key field (encryption stays one profile-wide
 choice under TASK-34100.4's lifecycle; the key field only names it).
+
+## Amendment 2026-10-10: a "stored" save writes a key copied from legacy `[API]` (TASK-33001.15)
+
+The loader copies `[API] <provider>_api_key` into `api_settings.<provider>` in
+memory, for nine cloud providers and only while the provider's environment
+variable is unset. Settings therefore shows such a key as saved. A save that
+touched no credential field recorded `credential_source = "stored"` and, since
+TASK-33001.13, wrote no `api_key`. The table on disk then said "stored" and held
+no key. Once the variable was exported the loader copied nothing, so readiness
+found no key while requests spent the environment key.
+
+**Ruling: a save that records "stored" for a key copied from legacy `[API]`
+writes that key into `[api_settings.<provider>]`.** The loaded settings name the
+tables the loader filled this way in `legacy_api_key_providers` (table names
+only, never a key). `build_provider_setup_mutation` writes the key for a table
+named there and for no other, so a key the table already holds is still kept
+in place and never revalidated (TASK-33001.13).
+
+- The `[API]` entry is left as it is. From then on the table's key outranks
+  both it and the environment variable, which is the 2026-09-19 order.
+- A copied key that the setup validator refuses (longer than 8192 characters,
+  or holding control characters) is not written. The save succeeds as before
+  and that table keeps the old gap.
+- The list is made at load. After a save in the same session it still names
+  the table, so a later save writes the table's current key again, unchanged.
+
+## Amendment 2026-10-17: a summary resolves its key as readiness does (TASK-33001.14)
+
+Every summary goes through
+`LLM_Calls/Summarization_General_Lib.py::_summarize_via_chat_api` (TASK-34895).
+When its caller passed no key, it read only `get_cli_setting("<provider>_api",
+"api_key")`. That reads the raw TOML, which has no `<provider>_api` tables: the
+loader builds them in memory. So a KoboldCpp or TabbyAPI summary never sent the
+key of the variable its table names, while readiness resolved that key. A cloud
+summary with no caller key (web search passes none) refused with "API Key Not
+Provided" even when Settings held a key. Nothing read `credential_source`.
+
+**Ruling: with no caller key, a summary takes the key that
+`resolve_provider_credential` returns for the provider's `[api_settings]`
+table.** "none" sends nothing, "stored" sends only the table's key, and
+"environment" sends only the variable the table names. Only when that yields no
+key and no source is recorded does the old `<provider>_api` read apply. A
+provider that needs a key refuses before dispatch when none resolves; Moonshot
+and Z.ai count as such, because their handlers search the environment
+themselves when handed no key. A **Mistral AI** summary (`mistralai`) resolves
+under `[api_settings.mistralai]`, the table Settings writes, though the
+`mistral` handler sends it.
+
+Five differences from readiness remain:
+
+- **A key the caller passes** outranks the table, "none" included. Library
+  ingest passes the key readiness resolved; web search passes none.
+- **A hand-written `[<provider>_api] api_key`.** With no source recorded and no
+  key resolved, a summary still reads one from config.toml. The loader never
+  writes one.
+- **A key left in a table under "none" or "environment".** Settings deletes the
+  table's key on those saves. One written by hand is still read by the chat
+  handler's own fallback when the summary hands it no key (`chat_with_kobold`
+  reads `api_settings.koboldcpp.api_key`), so it can be sent while readiness
+  resolves none. For Moonshot and Z.ai under "environment" with the named
+  variable exported, it runs the other way: the summary sends the variable,
+  and readiness returns the leftover key labelled `env:<VAR>`, because its
+  hosted re-resolve reads the table's key first (TASK-35369).
+- **`[API] kobold_api_key` and `tabby_api_key`** reach neither readiness nor a
+  summary: the loader does not copy them into `api_settings`.
+- **The local legacy aliases** `local_llamacpp`, `local_llamafile`,
+  `local_ollama` and `local_vllm` are summarized by their target's handler, at
+  that handler's URL. Their key is the one readiness resolves for the target's
+  table (`llama_cpp`, `ollama`, `vllm`), not for their own.
+
+## Amendment 2026-10-17: a recorded credential source decides the legacy `[API]` bridge (TASK-33641.11)
+
+`config.py::_normalize_legacy_provider_api_key` resolves the key that the nine
+bridged providers' legacy `<provider>_api` dicts hold, and copies a legacy
+`[API] <provider>_api_key` into `[api_settings.<provider>]` (PR-T2 Task 7). It
+read no `credential_source`. After **Clear** in Settings ("none"), or an Env var
+choice with the variable unset ("environment"), a key still under `[API]` was
+copied into both, and chat handlers that read either spent it, while readiness
+resolved no key. "none" also kept a variable's key or a hand-written table key
+in the dict, "environment" the table's key, and "stored" the variable's key.
+
+**Ruling: a recorded `credential_source` decides the bridge as it decides
+`resolve_provider_credential`.** "none" yields no key. "stored" yields the
+table's key, or the `[API]` key copied into the table when the table has none
+(the 2026-10-10 case), and never reads the variable. "environment" yields only
+the variable the table names. Under "none" and "environment" nothing is
+copied. With no source recorded the order is unchanged: the table's key, the
+provider's conventional variable, then `[API]`.
+
+One difference remains, older than this amendment: with no source recorded,
+the bridge reads the conventional `<PROVIDER>_API_KEY`, while readiness reads
+the variable the table names. A table that names another variable can resolve
+differently. A Settings save that writes the credential records a source,
+which ends it.
+
+The ruling covers the bridge and the dicts and tables it fills, not readers
+that go to the raw `[API]` section themselves. `config.get_api_key` (Console
+realtime, the OpenAI and ElevenLabs TTS backends, the MCP server's chat
+tools, and the vLLM connection probe and credential flag in
+`UI/LLM_Management/vllm_connection.py` and `UI/Screens/llm_screen.py`) never
+reads `credential_source`: it reads the table's named variable even under
+"none", then `[API] <provider>_api_key`. So the vLLM probe sends an exported
+`VLLM_API_KEY` that readiness ignores under "none".
+`RAG_Search/simplified/active_config.py` and text to speech's projection
+(`TTS/legacy_bridge.py`, whose `openai_api` dict `TTS/TTS_Backends.py` hands
+to the backend) read `[API] openai_api_key` directly, and so do the
+Settings ▸ Speech & TTS credential state
+(`UI/Screens/settings_speech_tts.py::_credential_states`, shown as "Saved
+local config" when `OPENAI_API_KEY` is not exported) and the first-run Voice
+step's key lookup
+(`UI/Wizards/first_run_voice_credentials.py::find_openai_credential`). With no
+`OPENAI_API_KEY` exported, those two agree with what synthesis sends only while
+the projection sends that key too, so they must change with it.
+`Model_Artifacts/acquisition.py` (the Hugging Face resolver that Parakeet,
+OmniVoice and remote GGUF downloads use) reads `[API] huggingface_api_key`. So
+after a Clear those still show or spend the key the user removed (TASK-35227).
+
+A second older difference holds whatever `credential_source` says. The TTS
+projection and the Voice step read `api_settings.<provider>.api_key`, then
+`[API] <provider>_api_key`, then the environment, but `_credential_states`
+ranks an exported `OPENAI_API_KEY` or `ELEVENLABS_API_KEY` first. Which
+reader that puts out of line depends on the source as well as on where the
+key is saved. With no source recorded:
+
+- **A table key.** The projection's order is the 2026-09-19 order, so the
+  panel is out of line: it says the key comes from outside Chatbook and the
+  saved one is shadowed, while synthesis sends the table key.
+- **An `[API]` key.** The projection's order inverts the 2026-09-19 order,
+  under which the variable the table names outranks `[API]`. Chat, readiness
+  and `get_api_key("openai")` send the variable and the panel agrees with
+  them, while synthesis and the Voice step use the `[API]` key. So a stale
+  `[API]` key fails synthesis even with a valid key exported, and the defect
+  is in the projection, not the panel.
+- **ElevenLabs.** No shipped table names its variable or records a source
+  for it. The projection and `get_api_key("elevenlabs")` take `[API]` before
+  `ELEVENLABS_API_KEY`, the order the 2026-09-19 amendment records for the
+  legacy fallbacks, so the loader's `elevenlabs_api` dict and the panel, which
+  take the variable first, are out of line. Moving them leaves a stale `[API]`
+  key failing synthesis with a valid variable exported, but the panel then
+  says "Saved local config" for it. Ranking the variable first instead amends
+  the 2026-09-19 amendment's fallback order.
+
+A recorded source moves chat and readiness, so the reader out of line can
+flip. Under "stored" they send the table's key, or the `[API]` key the bridge
+copied there, as `get_api_key`, the projection and the Voice step do, so the
+panel is out of line for an `[API]` key too. Under "environment" they send
+only the variable, as the panel says, so the projection and the Voice step
+are out of line for a table key too, and `get_api_key` with them. Under
+"none" they send nothing, and every other reader still finds a key.
+
+The two surfaces that save the OpenAI TTS key, Settings ▸ Speech & TTS
+Set/Replace (`Event_Handlers/STTS_Events/stts_events.py`) and the Voice step's
+Next (`UI/Wizards/first_run_voice_step.py`), write `api_settings.openai.api_key`
+and record no source. Once these readers honour "none" or "environment", a key
+saved there after a Clear would go unused. TASK-35227 covers both.
 
 ## Links
 

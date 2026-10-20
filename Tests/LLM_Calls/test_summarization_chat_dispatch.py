@@ -55,6 +55,9 @@ def _install(monkeypatch, fake: _FakeChatDispatch, cfg_key: Any = "cfg-key") -> 
     # Key/model sourcing reads the legacy config section through this
     # module-level seam; pin both the configured-key and fallback paths.
     monkeypatch.setattr(sgl, "get_cli_setting", fake_setting)
+    # No [api_settings] key and no source: the rung readiness resolves
+    # (TASK-33001.14) is pinned in test_summarization_credential_source.py.
+    monkeypatch.setattr(sgl, "_readiness_credential", lambda _endpoint: (None, None))
 
 
 SPEC_BY_NAME = dict(sgl._SUMMARIZER_CHAT_SPECS)

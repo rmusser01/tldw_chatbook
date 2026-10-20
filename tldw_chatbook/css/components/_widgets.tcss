@@ -9,12 +9,13 @@
    the raw literals; comments stay load-bearing. */
 
 
-/* Collapsible widget styling with enhanced UX */
+/* Collapsible widget styling with enhanced UX.
+   TASK-33641.1: the frame is the 3:1 grid line ($surface-lighten-1 was 1.21:1). */
 Collapsible {
     height: auto;
     min-height: $ds-size-3;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    border: round $surface-lighten-1;
+    border: round $ds-grid-line;
     background: $surface;
 }
 

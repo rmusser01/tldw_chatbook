@@ -2068,14 +2068,19 @@ def test_creation_without_owner_loop_persists_not_started(creation_controller):
 
 
 @pytest.mark.asyncio
-async def test_stop_keeps_native_claim_until_generic_provider_adapter_exits(tmp_path):
+async def test_stop_keeps_native_claim_until_generic_provider_adapter_exits(
+    tmp_path, monkeypatch
+):
     import asyncio
     from dataclasses import replace
     from threading import Event
     from Tests.Chat.test_console_agent_swap import _Gateway
     from Tests.console_provider_doubles import with_destination
+    from tldw_chatbook.Chat import console_agent_bridge
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 
+    # TASK-33666: the claim must outlast the model loop's bounded join too.
+    monkeypatch.setattr(console_agent_bridge, "_LOOP_THREAD_JOIN_SECONDS", 0.1)
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
     )
@@ -2121,7 +2126,7 @@ async def test_stop_keeps_native_claim_until_generic_provider_adapter_exits(tmp_
         assert controller.stop_active_run()
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
-                asyncio.shield(asyncio.gather(*controller._chat_start.tasks())), 0.75
+                asyncio.shield(asyncio.gather(*controller._chat_start.tasks())), 1.5
             )
         assert not exited.is_set()
         assert target.id in controller.fleet_wake._automatic_primary_claims

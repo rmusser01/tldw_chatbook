@@ -2494,8 +2494,14 @@ class _ModelCallLifeline:
                     await asyncio.gather(*pending, return_exceptions=True)
                 await self.loop.shutdown_asyncgens()
             finally:
-                if self._close_current_loop is not None:
-                    await self._close_current_loop()
+                try:
+                    if self._close_current_loop is not None:
+                        await self._close_current_loop()
+                finally:
+                    # A cancelled to_thread leaves its worker running (the
+                    # generic transport's chat_api_call): the model operation
+                    # stays owned until it returns, as ADR-134 requires.
+                    await self.loop.shutdown_default_executor()
         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
             logger.warning("model-call loop cleanup failed")
         finally:
@@ -3140,6 +3146,9 @@ class _StreamingModelAdapter:
     chunk is always accounted for, while still stopping the stream promptly
     (no more chunks are pulled once cancellation is observed) and letting the
     loop's own boundary check catch the cancellation on the next poll.
+    While NO chunk arrives it is also polled on a timer (TASK-33666; see
+    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
+    That poll runs only between chunks, so it never drops a received one.
 
     ``chat_call`` bridges into async gateway code via the single event
     ``loop`` passed in at construction — created once by
@@ -3615,6 +3624,7 @@ class _StreamingModelAdapter:
             )
         gate = StreamGate()
         any_streamed = False
+        received_item = False
         native_calls: list[dict] = []
         terminal_metadata: ProviderTurnMetadata | None = None
         call_signals: ConsoleProviderCallSignals | None = None
@@ -3632,6 +3642,7 @@ class _StreamingModelAdapter:
         @agent_async_worker_guard(self)
         async def _consume() -> None:
             nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled
+            nonlocal received_item
             if rerouted:
                 # Task 6B: the child names a provider other than the
                 # parent's -- re-resolve through the gateway's send seam
@@ -3801,7 +3812,15 @@ class _StreamingModelAdapter:
                 first_item_timeout_seconds=first_token_timeout_seconds(
                     effective_resolution.provider, stall_timeout=stall_timeout
                 ),
+                # TASK-33666: the cuts below are only reached when a chunk
+                # arrives. A provider that accepted the request and sends
+                # nothing would hold this run's thread for the whole window
+                # after a Stop, and the app's exit joins that thread. The
+                # plain cancel, not stream_cut: a redirect is not a cancel
+                # and still waits for the next chunk (TASK-28227).
+                should_stop=self._should_cancel,
             ):
+                received_item = True
                 synthetic = emission_synthetic is True
                 emission_synthetic = None
                 if terminal_metadata is not None:
@@ -3966,8 +3985,11 @@ class _StreamingModelAdapter:
                 repeated,
             )
             raise
-        # A productive turn clears this session's stall streak (AC#4).
-        reset_session_stalls(_stall_session_id, self._resolution.provider)
+        # A productive turn clears this session's stall streak (AC#4). A
+        # stream the stop poll ended before anything arrived is not one
+        # (TASK-33666): the same Stop used to run out the window as a stall.
+        if received_item:
+            reset_session_stalls(_stall_session_id, self._resolution.provider)
         _visible, tool_call = gate.result()
         if tool_call is not None and not native_calls and not is_subagent:
             self._thinking_capture.observe_tool()

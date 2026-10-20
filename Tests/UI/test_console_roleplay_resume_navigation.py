@@ -137,6 +137,22 @@ async def _wait_until(
     raise AssertionError("Timed out waiting for mounted Console lifecycle state")
 
 
+def _setup_card_settled(screen: ChatScreen) -> bool:
+    """Whether the mount-time card syncs, and the credential poll's, are done.
+
+    Each card sync pulls a focused composer back onto the card. The 0.25 s
+    credential poll syncs it on its first pass and again once the background
+    credential read settles; a deferred control-bar sync replays 0.2 s later.
+    """
+    pre_gate = screen._console_credential_pre_gate
+    return (
+        getattr(screen.app.focused, "id", None) == "console-setup-modal-action"
+        and pre_gate is not None
+        and pre_gate[0] != "pending"
+        and not getattr(screen, "_console_control_bar_sync_scheduled", False)
+    )
+
+
 def _configure_ready_console(app: object) -> None:
     app.app_config["chat_defaults"] = {
         "provider": "llama_cpp",
@@ -1074,6 +1090,9 @@ async def test_mounted_no_resume_keeps_blocking_modal_focus_transfer(
         screen = host.chat_screen
         assert screen is not None
         await _wait_for_selector(screen, pilot, "#console-setup-modal")
+        # Force the composer focus only once nothing else will sync the card:
+        # a later sync pulled it off before the assertion (TASK-33001.12).
+        await _wait_until(pilot, lambda: _setup_card_settled(screen), timeout=10)
         composer = screen.query_one("#console-native-composer")
         composer.can_focus = True
         composer.focus()

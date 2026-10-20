@@ -24,7 +24,7 @@ from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
 )
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
@@ -49,9 +49,26 @@ from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpSta
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
+from tldw_chatbook.Widgets.Chat_Widgets.worktree_recovery_dialog import (
+    WorktreeRecoveryDialog,
+)
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Console.console_agent_history_modal import (
+    ConsoleAgentHistoryModal,
+)
+from tldw_chatbook.Widgets.Console.console_agent_progress_modal import (
+    ConsoleAgentProgressModal,
+)
+from tldw_chatbook.Widgets.Console.console_appearance_picker_modal import (
+    ConsoleAppearancePickerModal,
+)
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
+)
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    ConsoleCapturePolicyDialog,
+    ConsoleTracePrivacyDialog,
+    GlobalFullCaptureConfirmation,
 )
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
@@ -69,18 +86,45 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
 from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
+    ConsoleEditThinkingModal,
 )
 from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
+from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+    ConsoleExchangeExportDialog,
+)
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
+)
+from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
+    ConsoleForkChatModal,
 )
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
+from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
+    ConsoleGoalSetupModal,
+)
+from tldw_chatbook.Widgets.Console.console_goal_status import (
+    ConsoleGoalHistory,
+    ConsoleGoalStatus,
+)
+from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+    ConsoleHooksReviewModal,
+)
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
     ConsoleImageViewerModal,
+)
+from tldw_chatbook.Widgets.Console.console_library_access_modal import (
+    ConsoleLibraryAccessModal,
+)
+from tldw_chatbook.Widgets.Console.console_library_search_modal import (
+    ConsoleLibrarySearchModal,
+    ConsoleLibrarySearchResult,
+)
+from tldw_chatbook.Widgets.Console.console_message_delete_receipt import (
+    ConsoleMessageDeleteReceiptModal,
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
@@ -89,6 +133,9 @@ from tldw_chatbook.Widgets.Console.console_project_instructions import (
 )
 from tldw_chatbook.Widgets.Console.console_prompt_comparison_modal import (
     ConsolePromptComparisonModal,
+)
+from tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog import (
+    ConsolePromptDraftSaveDialog,
 )
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     MODE_INSERT,
@@ -117,6 +164,9 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
+from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
+    ConsoleSaveMarkdownModal,
+)
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ConsoleScopePickerModal,
     ScopeListPage,
@@ -144,6 +194,9 @@ from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
 )
+from tldw_chatbook.Widgets.Console.console_terminal_session_modal import (
+    ConsoleTerminalSessionModal,
+)
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
 )
@@ -158,11 +211,13 @@ from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
 from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
+    WorkspaceArchiveReceiptModal,
 )
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
+from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
 from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -177,6 +232,9 @@ from tldw_chatbook.Widgets.modal_dismissal import (
 from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+from tldw_chatbook.Widgets.workspace_persona_default import (
+    WorkspacePersonaDefaultModal,
+)
 from tldw_chatbook.Workspaces.file_inspector import DirectoryPage, DirectoryStatus
 
 
@@ -425,6 +483,15 @@ def _prompt_variables_factory() -> PromptVariablesDialog:
     )
 
 
+def _model_popover_factory() -> ConsoleModelPopover:
+    # TASK-33003.19: Switch model's constructor grew its apply seams
+    # (TASK-33004); the sibling suite's factory builds the real popover.
+    # Imported here: that module imports the app at module scope.
+    from Tests.UI.test_console_model_popover_no_provider import _popover
+
+    return _popover("llama_cpp")
+
+
 TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
         ConsoleWorkspaceFilesModal,
@@ -517,10 +584,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleModelPopover,
-        lambda: ConsoleModelPopover(
-            settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
-            providers_models={"openai": ["gpt-test"]},
-        ),
+        _model_popover_factory,
         "#console-model-popover",
         None,
         "Console model chip",
@@ -653,12 +717,23 @@ TASK3_MODAL_CONTRACTS = (
         _RESTORE_OPENER,
     ),
     _Task3ModalContract(
+        ConsoleLibrarySearchModal,
+        ConsoleLibrarySearchModal,
+        "#console-rag-settings",
+        None,
+        (ConsoleLibrarySearchResult,),
+        "Console Search Library action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
         ConsoleRagSettingsModal,
         ConsoleRagSettingsModal,
         "#console-rag-settings",
         None,
         (ConsoleRagSettingsResult,),
-        "Console Library search chip",
+        "none: the unlaunched base of ConsoleLibrarySearchModal",
         None,
         "none",
         _RESTORE_OPENER,
@@ -794,6 +869,28 @@ TASK4_MODAL_CONTRACTS = (
         "request_safe_cancel",
         "Console confirmation launch sites",
         "cancel_callback via run_cancel_effect_once",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    # TASK-33003.19: two shared modals the Console workspace controller
+    # opens (conversation delete, workspace persona default).
+    _Task4ModalContract(
+        DeleteConfirmationDialog,
+        "#confirmation-dialog",
+        False,
+        "request_safe_cancel",
+        "Console conversation delete action",
+        "cancel_callback via run_cancel_effect_once",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        WorkspacePersonaDefaultModal,
+        "#workspace-default-dialog",
+        None,
+        "request_safe_cancel",
+        "Console workspace persona-default action",
+        None,
         "none",
         _RESTORE_OPENER,
     ),
@@ -1004,6 +1101,9 @@ _CONSOLE_ROOT = "Console"
 _CONSOLE_ROOT_SOURCE_PATHS = (
     "tldw_chatbook/UI/Screens/chat_screen.py",
     "tldw_chatbook/Widgets/Console/console_auto_speak_consent.py",
+    # TASK-33003.19: wiring.request_console_hooks_review delegates to this
+    # module's request_hook_review, which builds the modal.
+    "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py",
     *tuple(
         str(path.relative_to(_REPO_ROOT))
         for path in sorted(
@@ -1018,10 +1118,14 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 # feedback comment modal rides the same way (phase 3 task 5:
 # ChatScreen's ConsoleSelectionFeedbackRequested flow pushes it before
 # routing the composed feedback through the prompt queue).
+# TASK-33003.19: the root opens ConsoleLibrarySearchModal (its own task-3
+# row), so its ConsoleRagSettingsModal base keeps a contract row but is
+# launched by nothing. The root's restore flows open the workspace rename
+# modal itself.
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
-    if contract.modal_type is not ConsoleWorkspaceRenameModal
+    if contract.modal_type is not ConsoleRagSettingsModal
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1032,14 +1136,42 @@ _DIRECT_SHARED_MODAL_TYPES = tuple(
     # TASK-33622.15: the root's generated-video save now opens the
     # quit-guarded GeneratedVideoFileSave subclass (declared on the root edge
     # below); EnhancedFileSave itself stays reachable via TraceExportDialog.
+    # TASK-33003.19: the root's file-card Undo all opens the revert
+    # confirmation itself, so that one is the root's too.
     if contract.modal_type
     not in {
-        ChangeRevertConfirmModal,
         ChangeGitCommitModal,
         ChangeGitPushModal,
         SelectDirectory,
         EnhancedFileSave,
     }
+)
+# TASK-33003.19: Console modals the root opens that postdate the task-2..7
+# contract tables. None has a mounted contract row; the inventory test pins
+# that each still adopts the safe-dismissal contract.
+_ROOT_INVENTORY_ONLY_MODAL_TYPES = (
+    ConsoleAgentHistoryModal,
+    ConsoleAgentProgressModal,
+    ConsoleAppearancePickerModal,
+    ConsoleEditThinkingModal,
+    ConsoleEndpointTemplateModal,
+    ConsoleForkChatModal,
+    ConsoleHooksReviewModal,
+    ConsoleLibraryAccessModal,
+    ConsoleMessageDeleteReceiptModal,
+    ConsolePromptDraftSaveDialog,
+    ConsoleSaveMarkdownModal,
+    ConsoleTerminalSessionModal,
+    ResponseRulesModal,
+    WorkspaceArchiveReceiptModal,
+)
+# TASK-33003.19 (re-measured after the rebase onto Phase 8's final head): the
+# Goals modals the root opens are plain ModalScreens (Esc -> close/cancel)
+# outside the safe-dismissal contract, so they are named without one.
+_ROOT_PLAIN_MODAL_TYPES = (
+    ConsoleGoalHistory,
+    ConsoleGoalSetupModal,
+    ConsoleGoalStatus,
 )
 CONSOLE_MODAL_LAUNCH_EDGES = (
     _ModalLaunchEdge(
@@ -1047,6 +1179,8 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         (
             *_CONSOLE_DIRECT_MODAL_TYPES,
             *_DIRECT_SHARED_MODAL_TYPES,
+            *_ROOT_INVENTORY_ONLY_MODAL_TYPES,
+            *_ROOT_PLAIN_MODAL_TYPES,
             ChangeReviewScreen,
             ConsolePromptComparisonModal,
             ProjectInstructionNoticeModal,
@@ -1056,6 +1190,9 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             # TASK-33622.15: the generated video's Save-to-disk screens.
             GeneratedVideoFileSave,
             GeneratedVideoConfirmation,
+            # TASK-33003.19: a plain ModalScreen (Esc -> close) outside the
+            # safe-dismissal contract; the inventory test names it too.
+            WorktreeRecoveryDialog,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
     ),
@@ -1112,9 +1249,35 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
     ),
     _ModalLaunchEdge(
         TrajectoryScreen,
-        (TrajectoryScreen, EnhancedFileOpen, TraceExportDialog),
+        (
+            TrajectoryScreen,
+            EnhancedFileOpen,
+            TraceExportDialog,
+            ConsoleCapturePolicyDialog,
+        ),
         ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
     ),
+    # TASK-33003.19: the capture-policy module builds its confirmations in
+    # module-level functions, so this edge scans the file, not only the class.
+    _ModalLaunchEdge(
+        ConsoleCapturePolicyDialog,
+        (ConfirmationDialog, GlobalFullCaptureConfirmation),
+        ("tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",),
+    ),
+    _ModalLaunchEdge(
+        ConsoleConversationInspector,
+        (ConfirmationDialog, ConsoleExchangeExportDialog, ConsoleTracePrivacyDialog),
+        ("tldw_chatbook/Widgets/Console/console_conversation_inspector.py",),
+    ),
+    _ModalLaunchEdge(
+        ConsoleExchangeExportDialog,
+        (ConfirmationDialog,),
+        ("tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",),
+    ),
+    # No source path: the class body is this owner's whole launch surface
+    # (the module's request_hook_review opener is the root's, above).
+    _ModalLaunchEdge(ConsoleHooksReviewModal, (ConfirmationDialog,), ()),
+    _ModalLaunchEdge(ResponseRulesModal, (ConfirmationDialog,), ()),
     _ModalLaunchEdge(
         TraceExportDialog,
         (ConfirmationDialog, EnhancedFileSave),
@@ -1155,6 +1318,14 @@ def _discover_console_modal_types() -> set[type[ModalScreen[Any]]]:
     return discovered
 
 
+#: TASK-33003.19: chat_screen.py keeps two modals off the boot path (ADR-097)
+#: behind module-level accessors. Calling one yields the class, or its module,
+#: so the walk sees a launch a plain Name/Attribute reference hides.
+_LAZY_MODAL_ACCESSORS = frozenset(
+    {"_conversation_settings_modal_module", "_lazy_summarize_preview_modal"}
+)
+
+
 def _resolve_ast_reference(
     node: ast.expr, bindings: dict[str, object]
 ) -> object | None:
@@ -1163,6 +1334,13 @@ def _resolve_ast_reference(
     if isinstance(node, ast.Attribute):
         owner = _resolve_ast_reference(node.value, bindings)
         return getattr(owner, node.attr, None)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _LAZY_MODAL_ACCESSORS
+        and callable(accessor := bindings.get(node.func.id))
+    ):
+        return accessor()
     return None
 
 
@@ -1219,6 +1397,15 @@ def _constructed_modal_types(
                         # imported name is already a package attribute.
                         bound = importlib.import_module(f"{imported_name}.{alias.name}")
                     bindings[alias.asname or alias.name] = bound
+            elif (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and (lazy := _resolve_ast_reference(node.value, bindings)) is not None
+            ):
+                # ``modal_contract = _conversation_settings_modal_module()``.
+                bindings[node.targets[0].id] = lazy
 
         class _ConstructorVisitor(ast.NodeVisitor):
             def __init__(self) -> None:
@@ -1417,10 +1604,34 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         # confirmation, opened only by the generated-video save.
         GeneratedVideoFileSave,
         GeneratedVideoConfirmation,
+        # TASK-33003.19: the modals added since, by the owner that opens
+        # them: the root, the trace viewer, the inspector, capture policy.
+        *_ROOT_INVENTORY_ONLY_MODAL_TYPES,
+        ConsoleCapturePolicyDialog,
+        ConsoleExchangeExportDialog,
+        ConsoleTracePrivacyDialog,
+        GlobalFullCaptureConfirmation,
     }
 
-    assert discovered_console_types - console_contract_types == inventory_only_types
-    assert discovered_console_types == console_contract_types | inventory_only_types
+    plain_types = set(_ROOT_PLAIN_MODAL_TYPES)
+    assert (
+        discovered_console_types - console_contract_types
+        == inventory_only_types | plain_types
+    )
+    assert (
+        discovered_console_types
+        == console_contract_types | inventory_only_types | plain_types
+    )
+    # No mounted row is not no contract: each still adopts safe dismissal.
+    for modal_type in inventory_only_types:
+        assert issubclass(modal_type, SafeModalDismissMixin), modal_type
+        assert modal_type.SAFE_MODAL_CONTENT, modal_type
+        assert [
+            action
+            for binding in modal_type.BINDINGS
+            for key, action in [_binding_key_action(binding)]
+            if key == "escape"
+        ] in (["request_safe_cancel"], ["smart_dismiss"]), modal_type
 
     # The mismatch check is its own test below: a bad declaration must not
     # stop the inventory assertions in THIS test from running (task-18810
@@ -1437,14 +1648,22 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # The current dev baseline grows to 49 when TASK-26042's Workspace Files
     # owner seam joins the explicit Console launch graph. TASK-33622.15 adds the
     # generated video's two quit-guarded Save-to-disk screens: 49 -> 51.
-    assert len(reachable_modal_types) == 51
+    # TASK-33003.19 re-measures it (the 51 was already stale): 33 Console
+    # contract rows, 15 shared rows, 24 inventory-only modals (dev's
+    # ResponseRulesModal is the 24th), the three plain Goals modals and the
+    # two named below, less ConsoleRagSettingsModal, whose
+    # ConsoleLibrarySearchModal subclass is what the root opens.
+    assert len(reachable_modal_types) == 76
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
         | inventory_only_types
-        | {TrajectoryScreen}
+        # WorktreeRecoveryDialog and the Goals modals: reachable, but plain
+        # ModalScreens.
+        | plain_types
+        | {TrajectoryScreen, WorktreeRecoveryDialog}
     )
-    assert reachable_modal_types == all_contract_types
+    assert reachable_modal_types == all_contract_types - {ConsoleRagSettingsModal}
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types
@@ -1577,7 +1796,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 15
+    assert len(TASK2_MODAL_CONTRACTS) == 16
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "ConsoleWorkspaceFilesModal",
         "AutoSpeakConsentModal",
@@ -1632,12 +1851,13 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK3_MODAL_CONTRACTS) == 13
+    assert len(TASK3_MODAL_CONTRACTS) == 14
     assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
         "ConsoleComposerMenuModal",
         "ConsoleEditMessageModal",
         "ConsoleFeedbackCommentModal",
         "ConsoleGenerateImageModal",
+        "ConsoleLibrarySearchModal",
         "ConsoleRagSettingsModal",
         "ConsoleRenameSessionModal",
         "ConsoleRewindModal",
@@ -1672,12 +1892,14 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK4_MODAL_CONTRACTS) == 13
+    assert len(TASK4_MODAL_CONTRACTS) == 15
     assert {contract.modal_type.__name__ for contract in TASK4_MODAL_CONTRACTS} == {
         "WorkbenchHelpPanel",
         "DictionaryPicker",
         "WorldBookPicker",
         "ConfirmationDialog",
+        "DeleteConfirmationDialog",
+        "WorkspacePersonaDefaultModal",
         "CancelConfirmationDialog",
         "EnhancedFileOpen",
         "EnhancedFileSave",
@@ -1930,6 +2152,10 @@ class _Task2Harness(ConsolidatedCSSApp):
 
 
 class _SettingsMROHarness(App[None]):
+    # TASK-33006.17: the Model view's row grammar lives in the app bundle
+    # since TASK-33006.1. Without it a field's label takes the whole row and
+    # every control sits one cell wide, outside the modal's right edge.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]  # noqa: RUF012 - Textual reads a class-level list
     CSS = """
     ConsoleSettingsModal { align: center middle; }
     ConsoleSettingsModal #console-settings-modal { width: 100; height: 90%; }

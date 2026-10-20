@@ -36,14 +36,26 @@ WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-s
     StepChooser .choice-copy { max-height: $ds-control-height; }
 
 
-    WorkflowLibrary#workflows-library { width: $ds-size-28; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    /* TASK-33003.15: panel rails. $ds-column-line reads at 3:1 on $surface and $panel only
+     * (not on $background), and the headings on that fill take the readable ink. The house
+     * focus tint is translucent, and over $panel it took focused text under 4.5:1 on five
+     * themes: the focus rules below take the guarded fill, which reads over $panel. */
+    WorkflowLibrary#workflows-library { width: $ds-size-28; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; background: $ds-surface-panel; color: $ds-text-primary; padding: $ds-space-0 $ds-space-inset; }
     WorkflowLibrary#workflows-library OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
     WorkflowLibrary#workflows-library Input { margin: $ds-space-0; }
     WorkflowLibrary #workflow-library-pages { height: $ds-control-height-compact; }
 
 
-    WorkflowNavigator#workflows-navigator { width: $ds-workflow-navigator-width; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowNavigator#workflows-navigator { width: $ds-workflow-navigator-width; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; background: $ds-surface-panel; color: $ds-text-primary; padding: $ds-space-0 $ds-space-inset; }
     WorkflowNavigator#workflows-navigator OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
+    /* A focused button and the focused search field take the shared Button:focus fill.
+     * themes.py pins it readable on $panel and never closer to it than the resting fill.
+     * The tint on $background was readable too, and matched the rail (textual-dark 1.00x). */
+    WorkflowLibrary#workflows-library .workflow-compact:focus, WorkflowNavigator#workflows-navigator .workflow-compact:focus { background: $tldw-focus-fill; }
+    /* Textual's own 5% $foreground tint is dropped: with it typed text is under 4.5:1 on three themes.
+     * The focus outline takes the readable primary ($ds-active-fg, the Settings rail's focus edge):
+     * $primary on this fill is under 3:1 on 54 themes, the default theme among them. */
+    WorkflowLibrary#workflows-library Input:focus { background: $tldw-focus-fill; background-tint: transparent; outline: solid $ds-active-fg; }
 
 WorkflowsScreen #workflow-run:disabled {
     background: $ds-disabled-bg;
@@ -55,6 +67,12 @@ WorkflowsScreen #workflow-library-search > .input--placeholder {
     color: $ds-text-muted;
     text-style: none;
 }
+/* TASK-33003.15: on the focused field's fill $ds-text-muted is under 4.5:1 on 59 themes.
+ * The hint takes the focus ink there, and italic tells it from a typed value. */
+#workflow-library-search:focus > .input--placeholder { color: $ds-focus-fg; text-style: $ds-text-emphasis; }
+/* The selected query and the caret are that ink reversed. Textual paints both in the theme's own
+ * $foreground, which this fill took under 4.5:1 for selected text on 46 themes (under 2:1 on 5). */
+#workflow-library-search:focus > .input--selection, #workflow-library-search:focus > .input--cursor { background: transparent; color: $ds-focus-fg; text-style: reverse; }
 WorkflowConsoleContext { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; }
 WorkflowConsoleContext #workflows-run-status,
 WorkflowConsoleContext #workflows-console-unavailable { height: $ds-control-height-compact; width: $ds-width-fill; }
@@ -108,19 +126,19 @@ WorkflowEditor .workflow-collapse-title {
 
 /* One disposable session panel; the continuous authoring panes retain their flex. */
 WorkflowRunPanel { height: auto; padding: $ds-space-0 $ds-space-inset; }
-WorkflowRunPanel.workflow-session-expanded { height: 45%; min-height: 8; }
-WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-space-0; border: none; }
-WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }
-WorkflowRunPanel #workflow-session-content { height: 1fr; min-height: $ds-control-height; }
+WorkflowRunPanel.workflow-session-expanded { height: $ds-percent-45; min-height: $ds-size-8; }
+WorkflowRunPanel Collapsible { height: $ds-height-fill; padding: $ds-space-0; margin: $ds-space-0; border: none; }
+WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: $ds-height-fill; }
+WorkflowRunPanel #workflow-session-content { height: $ds-height-fill; min-height: $ds-control-height; }
 WorkflowRunPanel Static.workflow-run-copy { height: auto; }
 WorkflowRunPanel #workflow-session-status { height: $ds-control-height-compact; color: $ds-status-info; }
-WorkflowRunPanel TextArea { height: 6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
+WorkflowRunPanel TextArea { height: $ds-size-6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
 .workflow-run-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
 WorkflowRunSetup, WorkflowRunConfirmation { align: center middle; background: $background $ds-opacity-dim; }
-.workflow-run-dialog { width: 90%; max-width: 100; height: 90%; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
-.workflow-run-dialog VerticalScroll.workflow-run-scroll { height: 1fr; min-height: $ds-control-height; }
+.workflow-run-dialog { width: $ds-percent-90; max-width: $ds-size-100; height: $ds-percent-90; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+.workflow-run-dialog VerticalScroll.workflow-run-scroll { height: $ds-height-fill; min-height: $ds-control-height; }
 .workflow-run-dialog Static.workflow-run-copy { height: auto; }
 .workflow-run-heading { color: $ds-action-focus; text-style: $ds-text-strong; }
 .workflow-run-dialog Input.workflow-run-field, .workflow-run-dialog Select.workflow-run-field { height: $ds-control-height; margin: $ds-space-0; }
-.workflow-run-dialog TextArea { height: 6; padding: $ds-space-0 $ds-space-inset; }
+.workflow-run-dialog TextArea { height: $ds-size-6; padding: $ds-space-0 $ds-space-inset; }
 #workflow-setup-error { color: $ds-status-error-readable; }

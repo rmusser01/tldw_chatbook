@@ -17,7 +17,7 @@ $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
 
 $ds-grid-line: $tldw-boundary;
-$ds-column-line: $surface-lighten-2;
+$ds-column-line: $tldw-boundary;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
@@ -193,6 +193,8 @@ $ds-size-92: 92;
 $ds-size-94: 94;
 $ds-size-96: 96;
 
+$ds-size-100: 100;
+
 $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
@@ -239,6 +241,10 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 
 $ds-research-chat-pane-floor: 58;
 
@@ -1781,9 +1787,9 @@ DataTable:focus > .datatable--header {
     text-style: bold underline;
 }
 
+
 OptionList > .option-list--option-highlighted,
 OptionList:focus > .option-list--option-highlighted,
-SelectionList > .selection-list--button-highlighted,
 SelectionList > .selection-list--button-selected,
 SelectionList > .selection-list--button-selected-highlighted,
 Tree > .tree--cursor,
@@ -1805,7 +1811,8 @@ LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
 }
 
 
-#settings-discovered-models-list .selection-list--button {
+#settings-discovered-models-list .selection-list--button,
+#settings-discovered-models-list .selection-list--button-highlighted {
     color: $ds-grid-line;
     background: $ds-grid-line;
 }
@@ -1872,10 +1879,17 @@ FileSystemPickerScreen #listing-progress {
 
 
 
+.nav-button.is-active,
+.nav-button.is-active:focus {
+    background: $primary-darken-1;
+    border: round $tldw-active-edge;
+}
+
+
 .nav-button.nav-button-clip-ghost:disabled {
     opacity: 100%;
-    background: $background;
-    color: $background;
+    background: $surface;
+    color: $surface;
 }
 
 
@@ -3622,7 +3636,7 @@ Button.mcp-callout {
 
 .mcp-compact #mcp-detail-toolbar .console-action-primary,
 .mcp-compact #mcp-detail-toolbar .console-action-secondary {
-  width: 1fr;
+  width: $ds-width-fill;
   min-width: $ds-size-0;
 }
 
@@ -4848,7 +4862,7 @@ Collapsible {
     height: auto;
     min-height: $ds-size-3;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    border: round $surface-lighten-1;
+    border: round $ds-grid-line;
     background: $surface;
 }
 
@@ -5400,7 +5414,7 @@ StatCard:hover {
 }
 #settings-theme-list-column,
 #settings-theme-card-column {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 #settings-theme-list {
     height: auto;
@@ -5533,7 +5547,7 @@ StatCard:hover {
 }
 #settings-theme-editor-palette-column,
 #settings-theme-editor-preview-column {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 #settings-theme-editor.-stacked #settings-theme-editor-columns {
     layout: vertical;
@@ -11128,14 +11142,6 @@ RecoveryPassphraseDialog {
     min-width: $ds-size-0;
 }
 
-
-
-
-.settings-imagegen-backend-row .settings-input-label {
-    width: $ds-size-12;
-    min-width: $ds-size-12;
-}
-
 /* ===== MODULE: features/_home.tcss ===== */
 
 
@@ -12789,10 +12795,12 @@ VerticalScroll.media-content-right-pane > Markdown {
     padding-right: $ds-space-1;
 }
 
+
 .gguf-source-mode {
     width: $ds-width-fill;
     min-width: $ds-size-12;
     height: $ds-size-3;
+    padding-top: $ds-space-1;
 }
 
 .gguf-source-region {
@@ -15970,17 +15978,17 @@ SmartContentTree Tree > .selected-node {
 
 
 #setup-voice-preset-none {
-    width: 21fr;
+    width: $ds-wizards-voice-long-share;
 }
 
 #setup-voice-preset-pocket,
 #setup-voice-preset-omnivoice {
-    width: 14fr;
+    width: $ds-wizards-voice-mid-share;
 }
 
 #setup-voice-preset-official,
 #setup-voice-preset-custom {
-    width: 11fr;
+    width: $ds-wizards-voice-short-share;
 }
 
 
@@ -15994,7 +16002,7 @@ SmartContentTree Tree > .selected-node {
 }
 
 #setup-voice-preset.-stacked SetupRadioButton {
-    width: 1fr;
+    width: $ds-width-fill;
     height: $ds-size-1;
 }
 
@@ -19695,6 +19703,10 @@ WorkflowsScreen #workflow-library-search > .input--placeholder {
     color: $ds-text-muted;
     text-style: none;
 }
+
+#workflow-library-search:focus > .input--placeholder { color: $ds-focus-fg; text-style: $ds-text-emphasis; }
+
+#workflow-library-search:focus > .input--selection, #workflow-library-search:focus > .input--cursor { background: transparent; color: $ds-focus-fg; text-style: reverse; }
 WorkflowConsoleContext { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; }
 WorkflowsScreen WorkflowEditor TextArea.form-textarea { height: $ds-size-6; min-height: $ds-control-height; }
 WorkflowsScreen.workflow-short WorkflowEditor TextArea.form-textarea {
@@ -19705,9 +19717,9 @@ WorkflowsScreen WorkflowEditor TextArea.form-textarea.workflow-expanded { height
 
 
 WorkflowRunPanel { height: auto; padding: $ds-space-0 $ds-space-inset; }
-WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-space-0; border: none; }
-WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }
-WorkflowRunPanel TextArea { height: 6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
+WorkflowRunPanel Collapsible { height: $ds-height-fill; padding: $ds-space-0; margin: $ds-space-0; border: none; }
+WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: $ds-height-fill; }
+WorkflowRunPanel TextArea { height: $ds-size-6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
 WorkflowRunSetup, WorkflowRunConfirmation { align: center middle; background: $background $ds-opacity-dim; }
 
 /* ===== MODULE: features/_roleplay.tcss ===== */

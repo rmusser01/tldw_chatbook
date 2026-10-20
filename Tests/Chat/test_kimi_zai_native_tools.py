@@ -945,7 +945,11 @@ def test_hosted_partial_call_cancellation_never_executes(
     assert outcome.status == "cancelled"
     assert marker_observed.is_set()
     assert server.stall_started.is_set()
-    assert not server.stall_timed_out.is_set()
+    # Not `not stall_timed_out`: the deferred close lands only once the
+    # worker's read settles, and here only the server's 2 s give-up settles
+    # it (aborting that read is TASK-30015). That assert passed by reading
+    # the flag 0.5 s in; run_reply now holds its model loop until the worker
+    # returns (ADR-134, TASK-33666), so it returns after the window.
     assert len(server.requests) == 1
     # TASK-19642.7: the cancelled stream's response is closed OFF the turn's
     # critical path (a shielded async close task on the bridge loop, landed

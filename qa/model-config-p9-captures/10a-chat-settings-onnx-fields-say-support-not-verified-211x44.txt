@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                  Speak replies   ▌   Hands-free   ▌     Not ready · unsupported
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
+ Conversations   │  Chat settings · Chat 1                                                                                                                                                      │       │
+        Archive t│                                                                                                                                                                              │       │
+          Archive│  ● Model and generation  Context and memory                                                                                                                                  │       │
+        Search al│ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                                                │       │
+   Chat 1        │  Response rules                                                                                                                                                              │       │
+                 │ Model             onnx-model · ONNX Runtime (local)                                                   this chat  Not ready · unsupported · context unknown   Change Alt+M    │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ Temperature       │ 0.6         Console Behavior   Support not verified for this model. Lower stays focused; higher is more varied.                                          │       │
+  ▊  Filter visib│ Max tokens        │ 4096        provider           Support not verified for this model. Longest reply the model may give, in tokens.                                         │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Streaming         │ On       ▼  provider           Support not verified for this model. Show the reply as it is generated.                                                   │       │
+                 │ Reasoning effort  │ default  ▼  provider           Support not verified for this model. The provider decides · How much a reasoning model thinks first.                    ▃ │       │◂ Inspect
+   New conversati│ Reasoning summary │ default  ▼  provider           Support not verified for this model. The provider decides · How much of its reasoning the model sums up.                  │       │
+  Chats          │ Verbosity         │ default  ▼  provider           Support not verified for this model. The provider decides · How long and detailed replies are.                            │       │
+    Today        │ Thinking          │ default  ▼  provider           Support not verified for this model. The provider decides · How much extended thinking comes first.                       │       │
+   Chat 1        │ Thinking budget   │             provider           Support not verified for this model. The provider decides · Tokens reserved for Thinking when it is on.                   │       │
+                 │  ▶ Sampling                                                                                                                                                                  │       │
+ ────────────────│  ▼ Connection · localhost:8000 · no key needed · change it in Settings ▸ Providers & Models                                                                                  │       │
+ Character · No c│ ▼ more — scroll for the rest                                                                                                                                                 │       │
+ ────────────────│                                                                                                                                     Choose a supported provider to continue. │       │
+ Model           │                                                                                                                                                                              │       │
+ ────────────────│                                                                        Esc close  Matches saved defaults   Default for new chats (Ctrl+N)   Apply to this chat (Ctrl+Enter)  │       │
+ Agent           ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Details                       ▸    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │  setup
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent access off     Provider: ONNX Runtime (local)     Model: onnx-model     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0%
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                               Send blocked — finish provider setup to continue ›       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

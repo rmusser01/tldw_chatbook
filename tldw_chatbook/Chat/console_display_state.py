@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field, replace
 from html import escape as html_escape
 from pathlib import PurePath
-from typing import Any, Literal, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
@@ -32,6 +32,9 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
 )
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -259,6 +262,46 @@ QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
 
 
+def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the native composer's setup-specific send blocker copy.
+
+    ``ChatScreen._console_setup_blocked_reason`` returns this for the active
+    session's readiness; `build_console_disabled_reason` below turns it into
+    the reason strip's "Send blocked — ..." copy.
+
+    Args:
+        readiness: The active Console session's settings readiness.
+
+    Returns:
+        An empty string when the readiness can send, or while an active run
+        owns admission; otherwise one sentence naming the setup step.
+    """
+    if readiness.operability == "ready_to_send":
+        return ""
+    if readiness.recovery_action == "wait_for_active_run":
+        # The prompt-queue presentation owns active-run admission: it
+        # blocks while a turn is preparing, then enables Queue once the
+        # provider has accepted it. Settings readiness still blocks
+        # mutations during the run, but must not override that composer
+        # lifecycle with a second, permanently-blocked gate.
+        return ""
+    if readiness.recovery_action == "select_model":
+        return "Choose a model in Chat settings before sending."
+    if readiness.recovery_action == "configure_credential":
+        if readiness.subscription_status == "pending":
+            return "Checking Claude subscription credential."
+        if readiness.subscription_status in {"missing", "expired"}:
+            return "Log in with Claude Code to refresh the subscription credential."
+        if readiness.blocker == "credential_rejected":  # TASK-33005.7
+            return "API key rejected. Update it in Settings > Providers & Models."
+        return "Add API key in Settings > Providers & Models before sending."
+    if readiness.recovery_action == "save_endpoint":
+        return "Save provider endpoint in Chat settings before sending."
+    if readiness.recovery_action == "retry_connection":
+        return "Provider unreachable. Retry connection before sending."
+    return "Finish provider setup before sending."
+
+
 def build_console_disabled_reason(
     *,
     action_id: str,
@@ -334,10 +377,12 @@ def build_console_disabled_reason(
         # Settings > Providers & Models before sending."), so a naive
         # "model" substring match swallowed the missing-key state and
         # named the wrong blocker.
+        if "key rejected" in setup_reason_lower:  # TASK-33005.7: never "add"
+            return "Send blocked — key rejected; update the API key"
         if "api key" in setup_reason_lower:
             return "Send blocked — add an API key to continue"
         if "endpoint" in setup_reason_lower:
-            return "Send blocked — configure the endpoint to continue"
+            return "Send blocked — save the endpoint to continue"
         if "model" in setup_reason_lower:
             return "Send blocked — choose a model to continue"
         if (
