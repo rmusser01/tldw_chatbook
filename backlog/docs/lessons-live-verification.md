@@ -4381,3 +4381,10 @@ browser-session object is independently live and available; discard the result
 without replay. Keep revoked, expired, replaced, unavailable and foreign-session
 controls refused, and leave unrelated authority exceptions on their original
 failure paths. A later passing natural run alone did not disprove this race.
+
+
+## A fresh-dev rebase can change unselected benchmark configuration (TASK-34406.31, 2026-10-20)
+
+**Incident.** The current31 r3 first-send diagnostic on dev `ccf99a59c41419922e8f02db7e3bc93021da632f` completed its request and normal shutdown with no observed concurrent jobs. Ordered schemas, headers and supplied settings matched, but the original exact expanded-configuration gate refused the packet: TASK-35010 (`63696c1eced3d6a72a10e18392f0b05b921f9a3e`) had intentionally emptied the template lists for five unselected providers, while the historical reference retained their shipped sample IDs. The rejected packet was preserved without attribution, speed statistics or replacement.
+
+**What to do.** After rebasing an unlaunched experiment, compare the complete normalized expanded private configuration with its reviewed reference before any provider request, including unselected provider lists. Source pins and selected-provider settings alone do not establish configuration parity. A changed template needs a separately reviewed current-dev reference before another bounded experiment; do not ignore the differing keys, rewrite old evidence or waive the original equality gate after observing a result.
