@@ -583,5 +583,6 @@ Tests/UI/test_console_transcript_poll_stop_removal.py
 # (2 tests, 13.5 s pytest unloaded).
 Tests/UI/test_study_user_text_literal.py
 # TASK-34751: a card-list rebuild resuming while the app quits ends quietly,
-# not as WorkerFailed(MountError) at teardown (1 test).
+# not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
+# unit cases that build no app).
 Tests/UI/test_study_flashcards_quit_mid_rebuild.py
