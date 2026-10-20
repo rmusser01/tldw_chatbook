@@ -430,3 +430,34 @@ async def test_fixing_the_endpoint_takes_its_refusal_down():
         await pilot.pause()
         assert endpoint.value == "http://127.0.0.1:9099"
         assert pinned_error(wizard) == ""
+
+
+@pytest.mark.asyncio
+async def test_status_lines_print_what_the_user_typed_literally():
+    """Review v3r1, R1-10: the '/api' hint (provider-15) and the chat-URL line
+    put endpoint text the user typed into Statics that parsed Rich markup: a
+    typed '[bold]' was eaten and a stray '[/y]' raised MarkupError when the
+    line rendered. The Model step's status line already uses markup=False
+    (CLAUDE.md, TASK-1513)."""
+    typed = "http://127.0.0.1:9099/[bold]x/[/y]"
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _c, step = current_step(wizard)
+        await pick_provider(pilot, step, "custom")
+        step.query_one("#setup-provider-endpoint", Input).value = typed
+        await pilot.pause()
+        line = step._extra_path_hint()
+        assert "/[bold]x/[/y]" in line
+        step._set_status(line)
+        step.query_one("#setup-provider-endpoint-status").update(line)
+        step._set_key_note(line)
+        await pilot.pause()
+        for selector in (
+            "#setup-provider-probe-status",
+            "#setup-provider-endpoint-status",
+            "#setup-provider-key-note",
+        ):
+            assert "/[bold]x/[/y]" in static_text(step, selector), selector
+        assert "[bold]x" in static_text(step, "#setup-provider-effective-chat")

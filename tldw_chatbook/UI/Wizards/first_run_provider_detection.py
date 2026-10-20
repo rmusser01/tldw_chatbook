@@ -118,6 +118,9 @@ class QuietStatic(Static):
     """
 
     def __init__(self, content: Any = "", **kwargs: Any) -> None:
+        # Review v3r1, R1-10: these lines carry what the user typed (an
+        # endpoint's path), so they print it literally (CLAUDE.md, TASK-1513).
+        kwargs.setdefault("markup", False)
         super().__init__(content, **kwargs)
         self.display = bool(str(content).strip())
 
