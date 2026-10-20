@@ -8,14 +8,22 @@ import sys
 
 OUT = Path(__file__).resolve().parent
 CONTROL_BAR = "--control-bar" in sys.argv
-PREFIX = "control-bar" if CONTROL_BAR else "native-waits"
+MEMORY = "--memory" in sys.argv
+PREFIX = "memory" if MEMORY else "control-bar" if CONTROL_BAR else "native-waits"
 BASE_REVISION = (
-    "473c32b4edbcf4c17e982045a749b5e7c6bc49b7"
+    "d6dffdf7270bcc9e31f8b048e86581e576cd9ae7"
+    if MEMORY
+    else "473c32b4edbcf4c17e982045a749b5e7c6bc49b7"
     if CONTROL_BAR
     else "d24919ab402d503ca8210dc5ee6b0fd186adbd64"
 )
 BASE_SCOPE = (
-    ["tldw_chatbook/UI/Console_Modules/console_spend_projection.py"]
+    [
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+    ]
+    if MEMORY
+    else ["tldw_chatbook/UI/Console_Modules/console_spend_projection.py"]
     if CONTROL_BAR
     else ["tldw_chatbook/UI/Screens/home_screen.py"]
 )
@@ -66,7 +74,7 @@ print(json.dumps(summary["pooled"], indent=2))
 diagnostics = {}
 for tag in (
     ("observed-control", "observed-after")
-    if CONTROL_BAR
+    if CONTROL_BAR or MEMORY
     else ("discovery", "phases", "home", "verified-final", "verified-control")
 ):
     source = OUT / f"plain-ready-{PREFIX}-{tag}.json"
@@ -89,6 +97,13 @@ for tag in (
             hidden_starts += 1
     diagnostics[tag] = {
         "instrumented_discovery_only": True,
+        "return_journey_edges": packet.get("return_journey_edges", []),
+        "return_sync_spans": packet.get("return_sync_spans", []),
+        "return_async_timeline": [
+            row
+            for row in packet.get("return_async_timeline", [])
+            if "sleep" not in row[1]
+        ],
         "exit_code": receipt["exit_code"],
         "baseline_revision": packet.get("baseline_revision"),
         "baseline_scope": packet.get("baseline_scope"),

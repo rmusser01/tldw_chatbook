@@ -1,4 +1,4 @@
-"""Run one serial Home-only ABBA with exact exits and product source receipts."""
+"""Run serial ABBA comparisons with exact exits and product source receipts."""
 
 import hashlib
 import json
@@ -10,7 +10,8 @@ import time
 OUT = Path(__file__).resolve().parent
 ROOT = OUT.parents[3]
 CONTROL_BAR = "--control-bar" in sys.argv
-PREFIX = "control-bar" if CONTROL_BAR else "native-waits"
+MEMORY = "--memory" in sys.argv
+PREFIX = "memory" if MEMORY else "control-bar" if CONTROL_BAR else "native-waits"
 SOURCES = (
     "tldw_chatbook/UI/Screens/home_screen.py",
     "tldw_chatbook/UI/Screens/chat_screen.py",
@@ -39,7 +40,11 @@ for tag, original in (
     ]
     if original:
         command.append(
-            "--control-bar-baseline" if CONTROL_BAR else "--native-wait-baseline"
+            "--memory-baseline"
+            if MEMORY
+            else "--control-bar-baseline"
+            if CONTROL_BAR
+            else "--native-wait-baseline"
         )
     receipt = {
         "tag": tag,
