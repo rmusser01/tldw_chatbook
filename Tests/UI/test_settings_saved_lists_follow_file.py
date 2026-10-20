@@ -256,6 +256,38 @@ async def test_a_model_deleted_in_advanced_config_leaves_every_list_and_stays_go
     assert _saved("Llama_cpp") == ["None", "m-one", "m-three", "fake-alpha"]
 
 
+@private_profile_test
+async def test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists(
+    request, monkeypatch
+):
+    """Review of TASK-35010: Advanced Config's `applied` outlives the screen
+    (its session is retained), so a save that finishes after Settings closed
+    still adopts the config. The app's config and lists follow the file, and
+    the closed screen's widgets are left alone: a popped screen stays
+    `is_mounted` in Textual 8, so the guard is `is_attached`."""
+    from tldw_chatbook.config import load_settings
+
+    _llama_cpp_profile("m-one")
+    app = _booted_app()
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        await host.pop_screen()
+        await pilot.pause()
+        assert not screen.is_attached
+        calls: list[str] = []
+        monkeypatch.setattr(screen, "_sync_model_picker", lambda *_a, **_k: calls.append("picker"))
+        monkeypatch.setattr(screen, "_refresh_advanced", lambda *_a, **_k: calls.append("advanced"))
+        _write({"providers": {"Llama_cpp": ["None", "m-one", "m-late"]}})
+
+        screen._adopt_config(load_settings())
+
+        assert app.providers_models["Llama_cpp"] == ["None", "m-one", "m-late"]
+        assert calls == []
+
+
 # --- Case 3: Config reload refreshes the lists -----------------------------
 
 

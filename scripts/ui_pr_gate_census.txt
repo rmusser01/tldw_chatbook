@@ -669,4 +669,5 @@ Tests/UI/test_study_user_text_literal.py
 # unit cases that build no app).
 Tests/UI/test_study_flashcards_quit_mid_rebuild.py
 # TASK-35010 (S1 T1, 2026-10-20): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (16 cases, private profile, 90-96 s 3 of 3 serial in the lane's install set).
+# TASK-35010 (S1 T1, 2026-10-20): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (17 cases, private profile, 86-91 s 3 of 3 serial in the lane's install set).
 Tests/UI/test_settings_saved_lists_follow_file.py
