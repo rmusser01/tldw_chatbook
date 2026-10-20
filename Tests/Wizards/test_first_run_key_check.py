@@ -195,6 +195,32 @@ def test_the_model_step_quotes_the_providers_reason() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_a_refused_key_with_no_reason_reads_as_every_providers_refusal() -> None:
+    """Resume after the dev merge (live g2cv3-fresh/01 and /03, 2026-10-20):
+    one 401 to a typed key read two ways on the same screen. OpenAI's check
+    (TASK-33008's ``PROBE_FAILURE_COPY``) said '✗ OpenAI rejected this API
+    key. Update it, or continue anyway.', while Anthropic's, through the
+    shared discovery, said '✗ Anthropic rejected this key.' and its Model
+    step 'Anthropic rejected this key. Go Back to fix it, ...'. A refusal
+    with no reason of the provider's own now reads TASK-33008's lines on
+    every surface; only a provider's own reason replaces them."""
+    from collections import namedtuple
+
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    no_reason = _rejected("anthropic", "Anthropic rejected this key.", "")
+    _staged, status, probe, _scope = await _enter_key("anthropic", no_reason)
+    copy = wizard_state.probe_failure_copy(wizard_state.PROVIDER_PROBE_AUTH)
+    discovery_key = namedtuple("Key", "provider_key")("anthropic")
+    wizard = SimpleNamespace(_first_run_selected_provider_outcomes={discovery_key: no_reason})
+
+    assert status == "✗ " + copy.provider_line.format(display="Anthropic")
+    assert key_check.rejected_text(wizard, discovery_key) == copy.model_line
+    assert key_check.continue_prompt(wizard, discovery_key) == copy.confirm
+    probe.assert_not_awaited()
+
+
 def test_a_forbidden_listing_is_not_a_rejected_key() -> None:
     """Review round 2 (R2-8, wizard side): a Gemini 403 is 'refused', not a
     rejected key, as Settings shows it ('listing not permitted'). Dev's
@@ -340,12 +366,14 @@ def test_a_keyed_listing_with_no_key_sent_is_never_a_rejected_key() -> None:
         failed=True,
         attempted=True,
         key_sent=True,
-        failure_copy=lambda: "unused",
+        failure_copy=lambda: "OpenAI rejected this API key. Update it, or continue anyway.",
     )
 
     assert "rejected" not in no_key
     assert no_key == "Couldn't discover models for OpenAI. Add a key. Or go Back."
-    assert wrong_key == "✗ OpenAI rejected this key."
+    # A refusal with no reason of the provider's own reads the step's
+    # TASK-33008 line, marked as a refusal.
+    assert wrong_key == "✗ OpenAI rejected this API key. Update it, or continue anyway."
 
 
 @pytest.mark.asyncio
