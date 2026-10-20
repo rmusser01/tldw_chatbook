@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 17:58'
-updated_date: '2026-10-19 18:50'
+updated_date: '2026-10-20 05:45'
 labels:
   - console
   - tests
@@ -42,6 +42,7 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
 4. Mutation-check the custody clause. Run 10 times under `taskpolicy -b`, with 1.5 s and 5 s precapture delays, and under the CI interleaving. Compare with the pre-fix test.
 5. (2026-10-19, on resume) Rebase onto dev. Drop the uncommitted helper rewrite in favour of dev's TASK-34789 helper. Keep the poll test's diagnostics. Turn the lock-hold harness into a kept regression test of the helper. Re-run the evidence on the rebased head.
 6. (2026-10-19, second resume) Rebase onto ce4aa4a231 and re-run the evidence there. Background-QoS runs failed inside dev's helper at its one-shot asserts: log why each sync deferred, replay each order deterministically, and make the helper retry within a bound and name the reason.
+7. (2026-10-19, third resume) Rebase onto 8136af6f6f, then 0fef489ece. Re-run the red/green, both changed test files on the branch and on dev, and repeats of the three tests on the branch. File anything the whole-file runs surface.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -62,7 +63,7 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
   - `test_select_llamacpp_console_renders_after_its_readiness_proof_goes_stale`: the warm-up returns current, the loop resumes the helper 1.1 s later, and a display has started the next refresh, so the one-second proof has gone stale.
   - `test_control_bar_helper_warms_again_while_each_read_goes_stale`: the settings change during the first two reads.
 
-**Evidence** (dev ce4aa4a231, macOS, plain command unless noted, host load average 60-105 from other sessions throughout. The final test code is 2d74b40856. `e9e0089441` below has the final helper with the 30 s/20 s bounds; 78b38726d1 has the final poll test):
+**Evidence** (dev ce4aa4a231, macOS, plain command unless noted, host load average 60-105 from other sessions throughout. The final test code is 2d74b40856. `e9e0089441` below has the final helper with the 30 s/20 s bounds; 78b38726d1 has the final poll test. These are this branch's commits before its rebase onto 0fef489ece and were never pushed. After the rebase, 00bc6ddab3 is 80da38d3ff, 78b38726d1 is 59433ceb4c and 2d74b40856 is 8fb07279f0. `e9e0089441` was an earlier form of 7a85f1c445 with the same helper code):
 - AC #5 test: against the helper as it was before TASK-34789 (Edit-based mutation, restored) it fails with `AssertionError: Send is disabled: 'Add API key in Settings > Providers & Models before sending.'`; on the fixed helper it passes.
 - AC #6 tests: each fails on dev's helper with `assert False` (lines 4881 and 4878 respectively) and passes on the fixed one. The stale-proof replay on the final code passed 8/8 and failed 3/3 at line 4881 with dev's helper (both in a scratch tree of ce4aa4a231 holding the branch's test files, with a repeat plugin). Its first version stalled the first warm-up that returned current and recorded the stall only after sleeping, so the context snapshot's concurrent warm-up (from a worker) stalled as well, and one run on the final head failed its own guard with `[True, True] == [True]`. It now stalls only a warm-up called from the test's own task, where the helper runs. With every sync forced to count as deferred, the helper fails after 15 s with "The Console control bar did not render within 15.0 s (121 attempts; last: the control-bar sync deferred). Send disabled=... tooltip=...".
 - AC #1 and the CI symptom: with the pre-TASK-34789 helper and another thread holding both config locks for 1.5 s from the helper's call, this branch's poll test fails with `AssertionError: Send is disabled: 'Add API key ...'`. Dev's version fails with the CI's bare `TimeoutError` at its `wait_for(entered.wait(), 10)`.
@@ -87,6 +88,15 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
     - Every red was a UI wait timing out (Textual `WaitForScreenTimeout`, a selector wait, or a private-profile child's TimeoutError) in code this branch does not change. The poll test and both new tests in this file passed.
   - Tests/UI/test_console_readiness_config_projection.py: 27 of 28 on the branch, 26 of 27 on dev. The one red on both, `test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation`, is filed as TASK-35662.
 
+**Rebased onto dev 8136af6f6f, then 0fef489ece (2026-10-19, third resume).** Neither rebase had conflicts. Dev's 37 new commits do not touch the three test files. Near this code they change `console_transcript.py` (TASK-34982's poll-stop fix) and, in 0fef489ece, the full UI sync's rail-visibility and guidance reads (TASK-35444). They do not change the control-bar sync the helper calls. Results (macOS, plain command, host load 43-87 from other sessions; code head 8fb07279f0 on 0fef489ece):
+- Red/green, re-run on both dev commits: the branch's two test files were copied into a detached worktree of dev, so they ran against dev's helper. On each, `test_control_bar_helper_warms_again_while_each_read_goes_stale` fails at line 4878 (`assert await projection.warm()`), and `test_select_llamacpp_console_renders_after_its_readiness_proof_goes_stale` fails at line 4881 (`assert rendered`). Both pass on the branch.
+- Tests/UI/test_console_readiness_config_projection.py, on both bases: 27 of 28 on the branch, 26 of 27 on dev. The one red on both is TASK-35662's.
+- Tests/UI/test_console_turn_resend_ui.py, one whole-file run per tree on each base:
+  - On 0fef489ece: branch 17 of 17 (load 57-63), then dev 14 of 15. Dev's red, `test_transcript_resend_retains_failed_rows_until_connection_is_ready`, timed out waiting for the Resend button. This branch does not change that test, and it was a dev-only red before the rebase as well.
+  - On 8136af6f6f: branch 16 of 17 (load 43-52), then dev 15 of 15. The branch's red, `test_resend_poll_survives_initial_hook_admission_read`, failed after its helper call and press had succeeded. It waits a fixed `pilot.pause(0.65)` and then asserts the streamed reply is painted; the reply was in the store, but the screen still showed the run as Preparing. Run alone, alternating between trees, it passed 4 of 4 on each (load 47-58). It was red on both trees before the rebase. Filed as TASK-35743.
+- Repeats on the branch, as separate pytest runs of the poll pilot, the AC #5 lock-hold test and the stale-proof replay: 15 of 15 on 8136af6f6f (5 each, load 62-87) and 9 of 9 on 0fef489ece (3 each, load 49-65). Each run took 22-61 s, including pytest startup.
+- `./scripts/preflight.sh` passes on the rebased head.
+
 **Callers that expect Send to stay disabled.** The helper waits for its own sync to render, never for Send to be enabled. So it cannot hang a caller whose Send legitimately stays blocked, for example by an empty draft.
 
 **CI cost.** The two new tests in Tests/UI/test_console_turn_resend_ui.py, which is already in the UI PR gate census, each boot the app. In the whole-file run at load ~100 they took 45 s and 35 s, plus 6-14 s teardown; the file's other pilots took 45-166 s in that run. No CI timing for them exists yet.
@@ -94,6 +104,7 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
 **Found on the way.**
 - `test_stop_renders_stopped_state_even_when_direct_sync_coalesces` passes when its stream never starts, and `test_stop_click_acknowledges_synchronously_and_records_stop_row` is red locally on clean dev: TASK-35661.
 - `test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation` is red on dev because its stub screen has no rate reading: TASK-35662.
+- `test_resend_poll_survives_initial_hook_admission_read` asserts a streamed paint after a fixed 0.65 s pause: TASK-35743.
 
-**Files:** `Tests/UI/test_console_turn_resend_ui.py`, `Tests/UI/test_console_native_chat_flow.py` (the shared helper), `Tests/UI/test_console_readiness_config_projection.py`, `backlog/docs/lessons-testing-evidence.md` (addenda to TASK-34789's entry), this task, TASK-35661 and TASK-35662.
+**Files:** `Tests/UI/test_console_turn_resend_ui.py`, `Tests/UI/test_console_native_chat_flow.py` (the shared helper), `Tests/UI/test_console_readiness_config_projection.py`, `backlog/docs/lessons-testing-evidence.md` (addenda to TASK-34789's entry), this task, TASK-35661, TASK-35662 and TASK-35743.
 <!-- SECTION:NOTES:END -->
