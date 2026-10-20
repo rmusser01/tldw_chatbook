@@ -46,8 +46,7 @@ class ToolsStep(SetupStep):
         """Every gate, read from the config snapshot this step edits."""
         from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
 
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        return all_tool_gates(config=posture_mod.gate_config_view(app_config))
+        return all_tool_gates(config=posture_mod.gate_config_view(self.wizard))
 
     def _current_gates(self) -> dict[str, bool]:
         # TASK-34100.5.3's Full agent tools switch (group "agent") is on this

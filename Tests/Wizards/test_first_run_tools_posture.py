@@ -426,3 +426,50 @@ async def test_a_twin_gate_change_changes_the_run_reuse_key(monkeypatch) -> None
     assert key_for({}) == off
     assert key_for({"create_note_enabled": True}) != off
     assert key_for({"character_tools_enabled": False}) != off
+
+
+# -- review F8: a same-session re-run reads the config as it is now -------------
+
+
+class _LiveWizard(SimpleNamespace):
+    """Stands in for SetupWizardContainer: the app's own wizard reads live config."""
+
+    reads_live_config = True
+
+
+def test_the_apps_wizard_reads_live_config() -> None:
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    assert SetupWizardContainer.reads_live_config is True
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_shows_gates_changed_since_launch(monkeypatch) -> None:
+    """Review F8 (TASK-34100.13): the step read COMPREHENSIVE_CONFIG_RAW, the
+    TOML as it was at launch. After a gate was turned on in MCP ▸ Tool gates
+    the same session's re-run still showed it off and "All 8 are off"."""
+    import tldw_chatbook.config as config_module
+
+    stale = {"COMPREHENSIVE_CONFIG_RAW": {"tools": {}, "console": {}}}
+    live = {"tools": {"read_file_enabled": True}, "console": {}}
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", lambda **_: live
+    )
+    wizard = _LiveWizard(
+        app_instance=MagicMock(app_config=stale),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=7),
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switch_on = step.query_one("#setup-tool-read_file", Switch).value
+        sentence = str(step.query_one("#setup-tools-posture", Static).render())
+        ok, _ = await step.commit()
+    assert switch_on is True
+    assert sentence.startswith(f"1 of {len(_GATEABLE_BUILTINS)} ")
+    assert ok
+    wizard.commit_config.assert_not_awaited()
