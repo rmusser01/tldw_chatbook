@@ -20,6 +20,12 @@ disabling poll arming still failed the original assertion with
 `reconciled=True`. This barrier does not witness retirement of later queued
 refreshes; that remains the separate lesson below.
 
+## A held lock shows one waiting read per run; a recording lock shows them all (TASK-35645, 2026-10-20)
+
+**Incident.** The response-rules phase test holds config's rebuild lock and prints where the UI loop blocked. Three times (TASK-35444, its round 2, and a local 1-in-13 failure) the stack named one read, the fix moved it, and the next run blocked at another. A real hold can only show the first wait: the loop stops there. One scratch run instead patched the two lock accessors with a proxy that recorded every blocking acquire from the main thread, refused non-blocking probes as if held, and forced the warm-cache checks to miss. Over a full UI sync it listed 2 sites (14 waits), the last two, and 0 after the fix.
+
+**What to do.** When a held-lock test keeps finding the next blocked read, enumerate instead of iterating: record the lock's acquires from the UI thread during the window, with the caches forced cold, and fix the whole list at once. Then pin with a real hold, and check each fix's revert fails it.
+
 ## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
 **Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.

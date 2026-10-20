@@ -114,6 +114,38 @@ def replay_whole_console_sync(screen) -> bool:
     return False
 
 
+def config_read_would_wait() -> bool:
+    """Whether a CLI config read on this thread would wait for another thread.
+
+    TASK-35645: a warm read never waits; a cold one waits while another
+    thread holds the config locks (a rebuild or write), so they are probed
+    without blocking, in their usual order.
+    """
+    from tldw_chatbook import config
+
+    if config._warm_config_cache_hit() is not None:
+        return False
+    with ExitStack() as acquired:
+        for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
+            if not lock.acquire(blocking=False):
+                return True
+            acquired.callback(lock.release)
+    return False
+
+
+def sync_console_core_state(screen) -> None:
+    """Push the provider selection from checked display config, never waiting.
+
+    TASK-35645: the full UI sync pushed it with a live ``load_settings()``,
+    which waited out any config rebuild on the UI loop. A deferral hands the
+    whole sync to the replay; the rest of this pass still runs, and each later
+    step defers itself. A send pushes the live selection itself
+    (``_ensure_console_chat_controller``).
+    """
+    if not run_console_presentation_sync(screen, screen._sync_console_chat_core_state):
+        replay_whole_console_sync(screen)
+
+
 def sync_console_rail_visibility(screen) -> bool:
     """Apply rail visibility from checked display config, never waiting.
 

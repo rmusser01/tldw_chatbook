@@ -17570,7 +17570,7 @@ class ChatScreen(BaseAppScreen):
                 self._console_preparing_display_task = asyncio.current_task()
                 self._console_preparing_display_record = poll_record
             if poll_record is None:
-                self._sync_console_chat_core_state()
+                config_sync.sync_console_core_state(self)
             self._session._sync_console_session_draft()
             # AC10: publish current tabs before cold presentation reads can
             # defer the rest of FULL. The tab owner revalidates every await.

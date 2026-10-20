@@ -9,6 +9,7 @@ from Tests.UI.response_rules_fixtures import mounted_rules_console, seed_answer
 from Tests.UI.test_console_native_chat_flow import (
     _build_console_send_test_app,
     _configure_native_ready_console,
+    _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -554,16 +555,18 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sync", ["recovery", "full-ui"])
+@pytest.mark.parametrize("sync", ["recovery", "full-ui", "full-ui-held"])
 async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
-    """TASK-35444: display syncs never reload config while a rebuild holds it.
+    """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
     The phase test above failed in CI when a sync during Stop rebuilt the
     provider selection with ``load_settings()`` on the UI loop while a config
     rebuild held its lock: first through the transcript's recovery
-    placeholder, then, once that was fixed, through the full UI sync's
-    transcript step and its rail visibility pass, both after the sync's first
-    await. Here the rebuild starts as the transcript step begins. The
+    placeholder, then through the full UI sync's transcript step and its rail
+    visibility pass, then its core-state push and the transcript's row
+    reconcile. Here the rebuild starts as the transcript step begins, which
+    then reconciles the seeded rows ("full-ui"), or before the whole sync
+    ("full-ui-held"). Queued refreshes get loop turns inside the hold too. The
     watchdog records where the UI thread was waiting.
     """
     import sys
@@ -609,6 +612,16 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                 start_rebuild()
                 region.sync_recovery()
             else:
+                seed_answer(case)
+                transcript = case.console.query_one("#console-native-transcript")
+                reconcile_rows, reconciled = transcript._reconcile_rows, []
+
+                async def counted_reconcile(*args, **kwargs):
+                    if held.is_set():
+                        reconciled.append(True)
+                    return await reconcile_rows(*args, **kwargs)
+
+                monkeypatch.setattr(transcript, "_reconcile_rows", counted_reconcile)
                 transcript_sync = case.console._sync_native_console_transcript
                 test_task = asyncio.current_task()
 
@@ -616,8 +629,11 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                     # Only this test's sync: the app's own syncs pass through.
                     if asyncio.current_task() is not test_task:
                         return await transcript_sync(*args, **kwargs)
-                    start_rebuild()
-                    # Past the TASK-34958 tick gate: the whole pipeline runs.
+                    if sync == "full-ui":
+                        start_rebuild()
+                    # Past the TASK-34958 tick gate and the refresh key: the
+                    # whole pipeline runs, through the rows' reconcile.
+                    case.console._last_native_transcript_refresh_key = None
                     await transcript_sync(force=True)
 
                 monkeypatch.setattr(
@@ -631,8 +647,14 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                         case.console, "_console_control_bar_replay_whole_sync", False
                     ):
                         await asyncio.sleep(0.01)
+                if sync == "full-ui-held":
+                    start_rebuild()
                 await case.console._sync_native_console_chat_ui()
+                for _ in range(10):
+                    await asyncio.sleep(0.02)
                 assert held.is_set(), "the full sync never reached its transcript step"
+                if sync == "full-ui":
+                    assert reconciled, "no transcript rows reconciled under the rebuild"
             elapsed = time.monotonic() - started
             assert not release.is_set(), (
                 f"{sync} sync waited {elapsed:.3f}s for the config rebuild:\n"
@@ -644,3 +666,11 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
             release.set()
             holder.join(3)
         assert not holder.is_alive()
+        if sync != "recovery":
+            # Deferred, not dropped: any whole-sync replay finishes after release.
+            async with asyncio.timeout(5):
+                while case.console._console_sync_in_progress or getattr(
+                    case.console, "_console_control_bar_replay_whole_sync", False
+                ):
+                    await asyncio.sleep(0.01)
+            await _wait_for_text(case.console, case.pilot, "Missing proof")
