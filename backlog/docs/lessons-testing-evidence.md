@@ -21612,3 +21612,23 @@ that method from source into a namespace with no `__name__` (`KeyError:
   timing, not your import.
 - Methods of `chat_screen.py` are compiled from source by several tests.
   Give a hook a module-level name, not a function-local relative import.
+
+
+## A rebase can auto-merge a function-local import that shadows your module-level name
+
+**TASK-33620.15.1, 2026-10-20.** The branch imported `config_sync` at
+`chat_screen.py`'s module level and called `config_sync.begin_console_sync`
+on the first line of `_sync_native_console_chat_ui`. Dev's PR #3175 added
+`from ..Console_Modules import config_sync` about twenty lines further down the
+same method. That line merged without a conflict marker (the conflict was
+in a different hunk), and the file still compiled. But any import inside a
+function makes the name local to the whole function, so the first line
+would have raised `UnboundLocalError` on every sync. It was caught by
+grepping the resolved file for every import of the name, not by the
+conflict or by `py_compile`.
+
+**What to do.** After resolving a rebase, grep the resolved files for every
+import of each module-level name your branch adds or calls
+(`grep -n 'import <name>'`). If dev added a function-local import of the
+same name in a function where your code reads it earlier, drop dev's local
+import.
