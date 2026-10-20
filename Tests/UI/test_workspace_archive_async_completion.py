@@ -11,6 +11,11 @@ from tldw_chatbook.UI.Console_Modules import workspace
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
+# TASK-35640: Tests/UI's autouse model-catalog fixture imports the app, which
+# raised RecoveryRequired (raw_source_selection_changed) under the per-test
+# profile sandbox, so no test here ran on a developer machine.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _host(registry):
     tasks, dialogs = [], []
