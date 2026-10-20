@@ -264,7 +264,10 @@ result in the provider's own terms:
   accepted this key — found 15 model(s)." A wrong key reads "✗ Google
   rejected this key: API key not valid."
 - **Anthropic**: its authenticated model list. "✓ Anthropic accepted this
-  key — found 13 model(s)."
+  key — found 13 model(s)." A wrong key reads as it does for OpenAI: "✗
+  Anthropic rejected this API key. Update it, or continue anyway." (a
+  provider that refuses a key without giving a reason always reads this
+  way).
 - **OpenRouter** and **Hugging Face**: their model lists answer any key, so
   setup asks each provider's key endpoint. "✓ OpenRouter accepted this key —
   found 466 model(s)", or "✗ OpenRouter rejected this key: User not found."
