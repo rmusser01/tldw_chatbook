@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 19:05'
-updated_date: '2026-10-20 00:59'
+updated_date: '2026-10-20 06:36'
 labels:
   - console
   - tabs-sessions
@@ -63,4 +63,20 @@ Verification (rebased on origin/dev ce4aa4a231, 2026-10-19; host load ~50 on 14 
 - Live (real app, isolated profile, claude-haiku-4-5 via the review proxy, 160x45; six queued-click runs counting the morning round): in every run, fix and dev, no typed key stayed in a tab being left or was lost. A normal tab-switch send (click Chat 3, type 0.2 s later, Enter 0.4 s after) went to Chat 3 and got "ALPHA" back. Queued clicks (Chat 1, Chat 2, "x", Chat 3, "y" at 0.15 s gaps): on the fix, both keys landed in Chat 3 twice and in Chat 2 once ("y" too). All three dev runs put both keys in Chat 3. The lost-click order behind minor #2 did not occur live on dev, so the deterministic tests are the evidence for minors 1 and 2. Evidence: uxrev/evidence/bd5/RTF/ (README, shots 01-04 and 11-14).
 
 - ./scripts/preflight.sh: all derived-artifact checks passed on the rebased head (diagnostic inventory, backlog ids, textual worker contract with no new findings, markup census, UI gate census).
+
+**Branch re-review follow-ups (2026-10-19, second pass).** The re-review of this branch found nothing blocking. Its cheap follow-ups are applied here; the rest are filed.
+- One repaint request. `_request_console_repaint` is now the public `request_console_repaint`, and `send_acknowledgement._resync` calls it after forgetting the transcript key, so the re-arm-or-start rule has a single copy.
+- Both halves of the press-bound record are pinned. The lost-click test also opens the tab by a keyboard press of the same button: removing the `finally` clear turns only that case red (A's composer "a-own:zz"). A unit test posts another message mid-click: removing the `isinstance` guard makes the Pressed carry None and the other message "record:a". Both mutants were restored with an empty diff.
+- `test_console_archive_recovery_boundaries.py` and `test_workspace_archive_async_completion.py` now carry `bootstrap_profile`. Before, they errored at setup on a developer machine (Tests/UI's autouse model-catalog fixture imports the app; RecoveryRequired raw_source_selection_changed), so the doubles this branch edited there never ran locally. With the marker: head 23/23 and 24/24. Dev 8136af6f6f with the same marker added as a probe: 23/23 and 22/24, the two reds being the late-resume double without `_begin_manual_read_visit` (AttributeError); this branch's double update is what fixes it.
+- session.py's wave-4 comment now says the tab press takes the `Button.Pressed`. The User Guide now says typed keys never stay in the tab you were on before you clicked (the tab you started from), which the queued-click run where a key typed after clicking Chat 3 landed in Chat 2 no longer contradicts.
+- Filed: TASK-35830 (the five #3065 send-guard tests that fail at setup on dev), TASK-35711 (assign queued-click keys by event time).
+
+Verification at aed885fb4e (rebased on origin/dev 8136af6f6f), each file compared by test id with a detached 8136af6f6f on the same host, load 45-73 on 14 cores:
+- `test_console_tab_switch_binds_composer.py`: head 22 passed, 5 failed. The head file on dev: 16 passed, 11 failed. The 5 shared reds are TASK-35830's ids. The 6 dev-only reds are this task's tests: repaint[False], the lost click (activation and keyboard press), the Pressed-only guard (ImportError on dev), queued clicks, workspace_new_session.
+- Same red ids on both trees: test_console_workspace_controller 10 of 127 (nine RecoveryRequired at setup, plus the constructor-docstring check missing `complete_manual_read_visit:`), test_console_switch_draft_integrity 3/3, test_console_send_resend_guard 7 of 17, test_console_send_draft_snapshot 1 of 30, test_console_sync_outlives_screen 5/5 (RecoveryRequired), test_module_size_ratchet 7 of 64 (none a file this branch touches), test_ui_ready_module_census 1 of 4 (dev 1033 modules resident, head 1032, limit 1031; this branch adds no module).
+- All green on head: test_console_send_acknowledgement 9, its _extended file 8, test_console_session_tab_strip 23, test_console_workspace_reconcile 9, test_console_conversation_activation 40, test_switcher_reuse_decisions 12, test_ci_queue_pressure_contract 70, test_console_p0_regression_gate 172.
+- test_console_session_controller: 46 of 47 in the file run. test_fork_validation_freezes_the_accepted_title_until_retry hit the same DuplicateIds ('console-archive-chat' during a rail remount) as the earlier sweep; run alone it passed 2/2 on each tree.
+- Live (real app, isolated profile, claude-haiku-4-5 via the review proxy, 160x45): a send in Chat 1 painted the user turn and "ALPHA" (every send's release goes through the shared repaint request). From Chat 2 (draft "two:"), clicking Chat 1's tab and typing 0.2 s later sent exactly the typed text to Chat 1, which answered "BRAVO". Chat 2's draft "two:" was intact afterwards. The app log shows both provider calls and no errors.
+
+Merge evidence: not merged yet. This lands with the pull request for branch fix/task-33622.7-tab-click-followups; record the merge commit here when it merges.
 <!-- SECTION:NOTES:END -->
