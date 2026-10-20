@@ -117,11 +117,24 @@ def _hosted_wizard(*, resume_draft=None, app_config=None):
     return _Host(wizard)
 
 
-def _progress(container) -> tuple[int, int]:
+async def _progress_at(container, position: int) -> tuple[int, int]:
+    """(tracker items, nav total) once the nav shows ``position``.
+
+    Polls with plain sleeps: ``pilot.pause()`` waits up to 30 s for the whole
+    screen to go idle, and on a loaded host a Summary or Speech ``on_show``
+    worker overran that (WaitForScreenTimeout) although the counts were right.
+    """
+    import asyncio
+
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardNavigation
 
-    items = len(container.query(".setup-progress-item"))
     nav = container.query_one(".wizard-navigation", WizardNavigation)
+    items = 0
+    for _ in range(200):
+        await asyncio.sleep(0.05)
+        items = len(container.query(".setup-progress-item"))
+        if nav.current_step == position + 1 and items == nav.total_steps:
+            break
     return items, nav.total_steps
 
 
@@ -144,12 +157,10 @@ async def test_the_live_full_track_counts_ten_steps_across_next_and_back() -> No
             if position == 2:
                 container.note_key_entered()
             container.show_step(index)
-            await pilot.pause()
-            seen.append(_progress(container))
-        for index in reversed(order[:-1]):
-            container.show_step(index)
-            await pilot.pause()
-            seen.append(_progress(container))
+            seen.append(await _progress_at(container, position))
+        for position in reversed(range(len(order) - 1)):
+            container.show_step(order[position])
+            seen.append(await _progress_at(container, position))
         assert "notes" not in container.active_ids
     assert set(seen) == {(10, 10)}
 
