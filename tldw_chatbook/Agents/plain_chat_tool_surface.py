@@ -553,7 +553,7 @@ def light_surface_note(summary: ToolSurfaceSummary) -> str:
     return (
         f"Plain chat: {_join(summary.light_names)}, plus any Agent built-in or "
         f"Deep web research switched on. {FULL_AGENT_TOOLS_TITLE} adds the "
-        "rest: sub-agents, skills, web, Watchlists, files and characters."
+        "rest: sub-agents, skills, web, Watchlists, workspace tools and characters."
     )
 
 
