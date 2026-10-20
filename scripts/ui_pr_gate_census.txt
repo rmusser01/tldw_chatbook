@@ -668,11 +668,6 @@ Tests/UI/test_study_user_text_literal.py
 # not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
 # unit cases that build no app).
 Tests/UI/test_study_flashcards_quit_mid_rebuild.py
-# TASK-35010 (S1 T1, 2026-10-20): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (16 cases, private profile, 90-96 s 3 of 3 serial in the lane's install set).
-# TASK-35010 (S1 T1, 2026-10-20): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (17 cases, private profile, 86-91 s 3 of 3 serial in the lane's install set).
-Tests/UI/test_settings_saved_lists_follow_file.py
-# TASK-35011 (S1 T2, 2026-10-20): a discovered model chosen as the default joins its saved list on s, Add to model list's label, order, receipts and Inspector rows (17 cases, private profile, 135-139 s 3 of 3 serial in the lane's install set; its shard, 37 entries with it at the tail, 537 s serial here).
-Tests/UI/test_settings_pick_joins_saved_list.py
 # TASK-35010 (S1 T1): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (12 functions, private profile, 86 s serial in the lane's install set).
 # TASK-35011 (S1 T2): a discovered model chosen as the default joins its saved list on s, Add to model list's label, order, receipts and Inspector rows (15 functions, private profile, 145 s serial in the lane's install set).
 # TASK-35012 (S1 T3, 2026-10-20): Switch model and Chat settings' model picker list each provider's saved default first (9 functions after T2's, private profile, 2.4-7.2 s each and 39.2 s together summed from junit test durations, 3 of 3 serial in the lane's install set; the probe function's listing-bound case since review round 2).

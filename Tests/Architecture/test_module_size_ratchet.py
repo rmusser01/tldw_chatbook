@@ -257,6 +257,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-35011: Save selected's receipts, retry steps and empty-Model fill
     # move to Settings_Modules/saved_model_list.py with the new pick-joins-
     # on-s logic, and the duplicate capability line goes (-19): 35,746.
+    # Rebased onto dev 1bbc145ffc, where #3169 merged at 35,771 (+1 over
+    # S1's base of 35,770): 35,747.
     "tldw_chatbook/UI/Screens/settings_screen.py": 35747,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for

@@ -440,6 +440,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35012 (S1 T3, 2026-10-20) appends its nine test functions after
 # T2's, one node id each, so nine of the S1 block's ten shard groups gain
 # one function each: 396.
+# Rebased onto dev 1bbc145ffc, where #3169 merged at 363 (three entries
+# over S1's base of 360): S1's 36 nodes end at 399.
 MINIMUM_FILES = 399
 
 
