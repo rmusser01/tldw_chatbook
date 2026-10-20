@@ -554,9 +554,13 @@ async def test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join(
     assert title.startswith("Saved model list · 2 saved in config"), title
     assert "joins on save" not in title and "model list." not in toast, toast
     for (data, toast, markup, _row, _title_), model_id, why in (
-        (no_list_seen, "fake-beta", "[providers] has no list for it"),
+        (no_list_seen, "fake-beta", "[providers] has no list for llama.cpp"),
         (unreadable_seen, "fake-gamma", "the config file could not be read"),
-        (ambiguous, "fake-delta", "more than one [providers] list matches it"),
+        (
+            ambiguous,
+            "fake-delta",
+            "more than one [providers] list matches llama.cpp",
+        ),
     ):
         assert data["chat_defaults"]["model"] == model_id
         assert data["providers"]["Llama_cpp"] == ["None", "m-one", "fake-alpha"]
@@ -599,41 +603,74 @@ async def test_a_discovered_id_that_is_a_shipped_sample_id_is_saved_as_the_defau
 
 
 @private_profile_test
-async def test_a_saved_list_holding_an_id_settings_cannot_write_still_saves_the_default(
+async def test_a_saved_list_settings_cannot_write_still_saves_the_default(
     request, monkeypatch
 ):
-    """Review round 1: the combined save only writes a list every id of
-    which passes its safe-model check. A list hand-edited to hold an id
-    over 120 characters would refuse the whole save; the join checks first,
-    so s saves the default alone and the toast says why the pick was not
-    added. The file's list is left as it is."""
+    """Review rounds 1 and 2: the combined save writes a list only under a
+    key that matches its config-key pattern and names the save's own
+    provider, and only when every id passes its safe-model check. A join
+    that broke either rule would refuse the whole save; the join runs the
+    same shared check first, so s saves the default alone and the toast
+    says why the pick was not added. The file is left as it is. Each pick
+    and s in turn:
+    - a list under the key "Llama_cpp " (trailing space), which still
+      resolves to llama.cpp. The template's own key makes such a key
+      ambiguous in a real file today, so only the read before the lock is
+      patched; it pins the key half of the check (review round 2);
+    - a list hand-edited to hold an id over 120 characters and a
+      whitespace-only one."""
+    from tldw_chatbook import config
+
     long_id = "x" * 121
+    saved = ["None", "m-one", long_id, "  "]
     _write(
         {
             "chat_defaults": {"provider": "llama_cpp", "model": "m-one"},
-            "providers": {"Llama_cpp": ["None", "m-one", long_id]},
+            "providers": {"Llama_cpp": saved},
         }
     )
     app = _booted_app()
-    _route_discovery_to(monkeypatch, _listing("fake-beta"))
+    _route_discovery_to(monkeypatch, _listing("fake-beta", "fake-gamma"))
     host = _SettingsCssHarness(app, "settings")
+    real = config.get_atomic_config_snapshot
 
+    def spaced_key():
+        snapshot = real()
+        lists = snapshot.values["providers"]
+        snapshot.values["providers"] = {"Llama_cpp ": ["None", "m-one"]}
+        assert "Llama_cpp" in lists
+        return snapshot
+
+    seen = []
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
-        await _pick(host, pilot, screen, "fake-beta")
-        await _save_with_s(host, pilot, screen)
-        result = screen._provider_save_result
-        toast = _saved_toast(host) if result != _NOT_WRITTEN_PREFIX else None
+        for model_id, read in (("fake-beta", spaced_key), ("fake-gamma", real)):
+            await _pick(host, pilot, screen, model_id)
+            monkeypatch.setattr(config, "get_atomic_config_snapshot", read)
+            await _save_with_s(host, pilot, screen)
+            monkeypatch.setattr(config, "get_atomic_config_snapshot", real)
+            result = screen._provider_save_result
+            toast = _saved_toast(host).message if result != _NOT_WRITTEN_PREFIX else ""
+            seen.append((model_id, _file(), result, toast))
 
-    data = _file()
-    assert data["chat_defaults"]["model"] == "fake-beta", result
-    assert data["providers"]["Llama_cpp"] == ["None", "m-one", long_id]
-    assert toast is not None and toast.message.endswith(
-        " fake-beta was not added to llama.cpp's model list: the list holds an "
-        "id Settings cannot write (over 120 characters, or not plain text)."
-    ), toast
+    for (model_id, data, result, toast), why in zip(
+        seen,
+        (
+            'the [providers] key "Llama_cpp " is not one Settings can write',
+            (
+                "the list holds an id Settings cannot write (empty, over 120 "
+                "characters, or not plain text)"
+            ),
+        ),
+        strict=True,
+    ):
+        assert data["chat_defaults"]["model"] == model_id, result
+        assert data["providers"]["Llama_cpp"] == saved
+        assert toast.endswith(
+            f" {model_id} was not added to llama.cpp's model list: {why}."
+        ), toast
 
 
 # --- Case 6: the list moved between the read and the locked write ------------
@@ -965,3 +1002,14 @@ async def test_the_combined_save_admits_only_its_own_list_holding_the_model(requ
     assert not _admits("llama_cpp", "m", {"Llama_cpp": ["m"], "llama_cpp": ["m"]})
     assert not _admits("llama_cpp", "m", {"Llama_cpp": ["m", "x\x00"]})
     assert not _admits("llama_cpp", "", {"Llama_cpp": ["m"]})
+    assert not _admits("llama_cpp", "m", {"Llama_cpp ": ["m"]})
+    # Review round 2: the key half lives in the check the join shares too
+    # (the validator's own key loop alone would hide its absence here).
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        saved_model_list_admits,
+    )
+
+    assert saved_model_list_admits("Llama_cpp", ["m"], "m", "llama_cpp")
+    for key in ("Llama_cpp ", "Llama cpp", "z.ai", "Custom 2", "OpenAI"):
+        assert not saved_model_list_admits(key, ["m"], "m", "llama_cpp"), key
+    assert not saved_model_list_admits("Llama_cpp", ["m", "  "], "m", "llama_cpp")

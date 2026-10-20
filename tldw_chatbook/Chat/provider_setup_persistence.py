@@ -1578,13 +1578,10 @@ def _validate_combined_provider_settings_mutation(
                 raise error
         elif section == "providers":
             # TASK-35011: a discovered pick joins its own provider's saved
-            # list. The owner by provider_config_key: _ownership_for cannot
-            # spell the template's Custom_2.
+            # list, by the check Settings' join runs before adding it.
             list_key, models = next(iter(values.items()))
-            if (
-                len(values) != 1
-                or normalize_provider_config_key(list_key) != ownership.provider_key
-                or not saved_model_list_admits(models, model)
+            if len(values) != 1 or not saved_model_list_admits(
+                list_key, models, model, ownership.provider_key
             ):
                 raise error
         elif extra_keys:
@@ -1889,22 +1886,32 @@ def _configured_section_key(
     return ownership.config_section
 
 
-def saved_model_list_admits(models: object, model: str) -> bool:
-    """Say whether a combined save may write ``models`` as a saved list.
+def saved_model_list_admits(
+    list_key: object, models: object, model: str, owner: str
+) -> bool:
+    """Say whether a combined save may write ``models`` under ``list_key``.
 
-    The list must hold ``model`` and only ids that pass the safe-model check
-    (TASK-35011); Settings checks it before adding a list to a save, so a
+    The one check the combined validator and Settings' join both run
+    (TASK-35011), so a list Settings adds is one the save accepts, and a
     list it may not write leaves the default to save alone.
 
     Args:
-        models: The saved list to write.
+        list_key: The ``[providers]`` key to write: a config key that
+            normalizes to ``owner`` (the owner by ``provider_config_key``,
+            since ``_ownership_for`` cannot spell the template's Custom_2).
+        models: The saved list to write: it holds ``model``, and every id
+            passes the safe-model check.
         model: The model the save makes the default.
+        owner: The save's canonical provider key.
 
     Returns:
         True when the combined save's validator admits the list.
     """
     return (
         bool(model)
+        and type(list_key) is str
+        and _CONFIG_KEY_PATTERN.fullmatch(list_key) is not None
+        and normalize_provider_config_key(list_key) == owner
         and type(models) is list
         and model in models
         and all(_safe_model(item) is not None for item in models)

@@ -455,7 +455,10 @@ def join_pick(
     if not model or pending_pick(screen) != model:
         return ListJoin()
     from ... import config
-    from ...Chat.provider_setup_persistence import saved_model_list_admits
+    from ...Chat.provider_setup_persistence import (
+        canonical_provider_key,
+        saved_model_list_admits,
+    )
     from ...LLM_Provider_Catalog.model_discovery_persistence import (
         append_models_to_provider_list,
     )
@@ -479,23 +482,31 @@ def join_pick(
         return not_added("the config file could not be read")
     resolution = resolve_provider_list_key(provider, providers)
     if resolution.status == "ambiguous":
-        return not_added("more than one [providers] list matches it")
+        return not_added(f"more than one [providers] list matches {label}")
     if resolution.status != "resolved":
-        return not_added("[providers] has no list for it")
+        return not_added(f"[providers] has no list for {label}")
     list_key = str(resolution.provider_list_key)
     read = providers[list_key]
     if isinstance(read, list) and model in read:
         return ListJoin(pending=True)  # added elsewhere since: nothing to write
     updated = append_models_to_provider_list({list_key: read}, list_key, [model])
-    # The combined save's own check: a list it would refuse would refuse the
-    # default with it (review round 1).
-    if not saved_model_list_admits(updated[list_key], model):
-        return not_added(
-            "it is a sample id older versions shipped, which saved lists ignore"
-            if model in SHIPPED_SAMPLE_MODEL_IDS
-            else "the list holds an id Settings cannot write (over 120 "
-            "characters, or not plain text)"
-        )
+    try:
+        owner = canonical_provider_key(provider)
+    except ValueError:
+        owner = ""  # the save itself refuses this provider
+    # The combined save's own check (review rounds 1 and 2): a list it would
+    # refuse would refuse the default with it.
+    if not saved_model_list_admits(list_key, updated[list_key], model, owner):
+        if model not in updated[list_key]:
+            why = "it is a sample id older versions shipped, which saved lists ignore"
+        elif not saved_model_list_admits(list_key, [model], model, owner):
+            why = f'the [providers] key "{list_key}" is not one Settings can write'
+        else:
+            why = (
+                "the list holds an id Settings cannot write (empty, over 120 "
+                "characters, or not plain text)"
+            )
+        return not_added(why)
     section_values["providers"] = {list_key: updated[list_key]}
     return ListJoin(
         pending=True,
