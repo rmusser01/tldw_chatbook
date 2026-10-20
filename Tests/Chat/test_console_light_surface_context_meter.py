@@ -9,6 +9,7 @@ the whole agent surface (TASK-34100.5, AC#6 notes).
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from types import SimpleNamespace
 
@@ -949,3 +950,149 @@ def test_switching_a_tool_on_never_leaves_fewer_tools_than_the_default(tmp_path)
         local_provider=_AskUserProvider(),
     )
     assert _native_names(gateway, gateway.calls - 1) == LIGHT | {"read_file"}
+
+
+# -- review round 3: the history preflight -- every send after the first (TE-1)
+
+
+async def _history_preflight(bridge, resolution, words_per_row, *, memory=False):
+    """Drive the real history-path preflight
+    (``_apply_conversation_memory_preflight``) for a session holding two
+    exchanges of ``words_per_row`` words each plus the current request.
+
+    Returns ``(rows the preflight sized the tools as, messages it hands the
+    send)``. Compaction is off, so the preflight returns the request as the
+    send gets it; with ``memory`` a stored summary replaces both exchanges.
+    """
+    from Tests.Chat.test_console_context_compaction import (
+        _ControllerGateway,
+        _ControllerPersistence,
+        _ControllerRepository,
+        _memory,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextCompactionMode,
+    )
+
+    persistence = _ControllerPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session()
+    store.persist_session_if_needed(session.id)
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.OFF),
+    )
+    for index in range(2):
+        for role in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT):
+            store.append_message(
+                session.id,
+                role=role,
+                content=f"{role.value}-{index} " + _words(words_per_row),
+                persist=True,
+            )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Reply with just: hi",
+        persist=True,
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    gateway = _ControllerGateway(context_window_tokens=resolution.context_window.tokens)
+    repository = _ControllerRepository(persistence)
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, context_repository=repository
+    )
+    controller._agent_bridge = bridge
+    if memory:
+        snapshots = controller._durable_context_snapshots(session.id)
+        repository.memories.append(
+            _memory(snapshots, boundary=snapshots[-2].message_id)
+        )
+    sized: list[list[dict]] = []
+    prepare = gateway.prepare_chat_request
+
+    def recording(resolution_, messages, *, tools=None, **kwargs):
+        if tools is not None:
+            sized.append(list(tools))
+        return prepare(resolution_, messages, tools=tools, **kwargs)
+
+    gateway.prepare_chat_request = recording
+    output, blocked = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=resolution,
+        provider_messages=controller._provider_messages_for_session(
+            session.id, annotate_ids=True
+        ),
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=True,
+    )
+    assert blocked is None, blocked
+    assert sized, "the preflight never sized the request's tools"
+    return sized[0], output
+
+
+@pytest.mark.parametrize(
+    ("full", "words_per_row", "memory", "shape"),
+    [
+        (False, 20, False, "light"),
+        # The history fits the 3,584-token ceiling alone, not beside the
+        # light set; the last row alone would fit beside it.
+        (False, 800, False, "none"),
+        # The stored summary replaces that history: the light set fits again.
+        (False, 800, True, "light"),
+        # The direct set and discovery no longer fit beside the history; the
+        # last row alone leaves room for discovery.
+        (True, 150, False, "inbox-only"),
+    ],
+    ids=["light-short-history", "light-long-history", "light-memory", "full-medium"],
+)
+def test_the_history_preflight_counts_what_the_send_carries(
+    tmp_path, full, words_per_row, memory, shape
+):
+    """Review round 3 (TE-1, major): every send after the first goes through
+    the history preflight, and nothing guarded its tool count. Sized against
+    one row instead of the conversation -- the stand-in shape V2-1 fixed on
+    the first-message path -- it counted 3,351 tokens of discovery tools for
+    a four-message gpt-4 chat the send carried only the inbox reader for.
+    Here the rows the preflight hands ``prepare(tools=...)`` must be the rows
+    the send then carries, for the request the preflight returns: the
+    retained history plus the memory row that replaces older turns."""
+    if full:
+        assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [["hi"], ["hi"]]
+    )
+    if full:
+        _send(bridge, session, assistant_id, _roomy_native())
+    resolution = _gpt4_8k()
+
+    sized, request = asyncio.run(
+        _history_preflight(bridge, resolution, words_per_row, memory=memory)
+    )
+    if memory:
+        assert "Earlier facts." in str(request)
+        assert _words(words_per_row) not in str(request)
+    light_provider = {} if full else {"local_provider": _AskUserProvider()}
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        resolution,
+        agent_messages=[dict(row) for row in request],
+        **light_provider,
+    )
+    sent = _native_names(gateway, gateway.calls - 1)
+
+    assert _row_names(sized) == sent, (sorted(_row_names(sized)), sorted(sent))
+    if shape == "light":
+        assert sent == LIGHT, sorted(sent)
+    elif shape == "inbox-only":
+        assert sent == {"read_agent_messages"}, sorted(sent)
+    else:
+        assert sent == set(), sorted(sent)
