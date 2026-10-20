@@ -21006,6 +21006,18 @@ makes the condition impossible (here: a shared helper that holds both config loc
 True). Grep every call site that drops the result before trusting one; only the ones followed by a press, a click or
 an assertion on what it renders are exposed.
 
+**Reading a dropped press from the CI log (TASK-35660).** You can see a dropped press in CI without reproducing it.
+Pytest prints loguru output under the failed test's "Captured stderr call" section. Both failed jobs (114249247572,
+114260833572) show this test's other `chat_screen` lines there, but not
+`ChatScreen on_button_pressed called with button: console-send-message`, which every local run writes. Send's handler
+never ran, so the send was never made, and no runner would have been fast enough. Before you blame a slow runner for
+a timeout after a pilot `press()`, grep the failed test's captured output for the handler's log line. Also assert
+`not button.disabled`, naming its tooltip, right before any press that a later wait depends on.
+
+Read the failed job's own log with `gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`. On 2026-10-19
+`gh run view --job 114249247572 --log` returned the log of that run's passing re-run (attempt 2, job 114263924697,
+"704 passed"), so the failure looked absent.
+
 
 ## Loaded controller data does not give a newly shown button mouse geometry
 
