@@ -433,7 +433,7 @@ def _config_bytes() -> bytes | None:
     return path.read_bytes() if path.exists() else None
 
 
-def _compose_first(monkeypatch, **attrs):
+def _compose_first(monkeypatch, *, created_profile=False, **attrs):
     from Tests.app_module_patches import set_app_global
     from tldw_chatbook.app import TldwCli
 
@@ -448,6 +448,9 @@ def _compose_first(monkeypatch, **attrs):
     stub = SimpleNamespace(
         _compose_main_ui=lambda: iter([sentinel]),
         splash_screen_active=False,
+        # TASK-34100.13: __init__ records whether this launch created the
+        # profile's config file (first_profile_created_this_session()).
+        library_new_profile_admission=created_profile,
         **attrs,
     )
     first = next(iter(TldwCli.compose(stub)))
@@ -480,12 +483,22 @@ def test_without_the_flag_the_configured_splash_still_plays(monkeypatch):
     from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
     # TASK-34100.13 (entry-exit-handoff-17): a profile's FIRST launch plays no
-    # splash, so the control is a profile that has launched before.
-    first, _sentinel, stub = _compose_first(
-        monkeypatch, app_config={"first_run": {"setup_completed": True}}
-    )
+    # splash, so the control is a launch that did not create the profile. Its
+    # config has no [first_run] flag at all -- a hand-written or pre-wizard
+    # profile -- and still plays the configured splash (review F1).
+    first, _sentinel, stub = _compose_first(monkeypatch, app_config={})
     assert isinstance(first, SplashScreen)
     assert stub.splash_screen_active is True
+
+
+@pytest.mark.bootstrap_profile
+def test_the_launch_that_creates_the_profile_plays_no_splash(monkeypatch):
+    """TASK-34100.13 (entry-exit-handoff-17): first launch = config created now."""
+    first, sentinel, stub = _compose_first(
+        monkeypatch, created_profile=True, app_config={}
+    )
+    assert first is sentinel
+    assert stub.splash_screen_active is False
 
 
 # --- the flags reach the app through both real runners ----------------------
