@@ -437,7 +437,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Its review round 1 (2026-10-20) lists both S1 files as one node per test
 # function (12 + 15) instead of two whole files, so no shard takes either
 # file whole: 387.
-MINIMUM_FILES = 390
+# TASK-35012 (S1 T3, 2026-10-20) appends its nine test functions after
+# T2's, one node id each, so nine of the S1 block's ten shard groups gain
+# one function each: 396.
+MINIMUM_FILES = 399
 
 
 def read_census(path: Path) -> list[str]:
