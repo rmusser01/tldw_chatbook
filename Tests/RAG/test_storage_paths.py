@@ -113,5 +113,7 @@ def test_cleaner_and_path_errors_propagate(paths, monkeypatch):
 def test_profile_directory_uses_live_user_data_accessor(name, monkeypatch, tmp_path):
     module = importlib.import_module(f"tldw_chatbook.RAG_Search.{name}")
     for child in ("first", "second"):
-        monkeypatch.setattr(module, "get_user_data_dir", lambda: tmp_path / child)
+        monkeypatch.setattr(
+            module, "get_user_data_dir", lambda child=child: tmp_path / child
+        )
         assert module.default_rag_profiles_dir() == tmp_path / child / "rag_profiles"

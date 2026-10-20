@@ -2,7 +2,6 @@
 
 from Tests.Packaging.test_chunking_import_closure import _run_isolated_python
 
-
 _SNIPPET = """
 import sys
 from tldw_chatbook import config

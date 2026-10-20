@@ -52,6 +52,7 @@ Families: cross-encoder (local, offline — loads with `local_files_only=True`; 
 
 - `[rag.service] profile` — default `hybrid_basic`; profiles: bm25_only / vector_only / hybrid_basic / hybrid_enhanced / hybrid_full.
 - `[AppRAGSearchConfig.rag.<section>]` — `vector_store` (type/persist_directory, `auto` resolves chroma-with-deps else in-memory), `indexing` (`enabled` kill switch), `retriever` (`hybrid_alpha`), search/cache keys.
+- `RAG_Search/storage_paths.py` owns default Chroma/profile directory resolution without importing the retrieval engine. `simplified.config` and `config_profiles` retain their zero-argument entry points and live accessors; `Utils/sensitive_paths` uses the lightweight defaults and retains its per-call path/freshness checks. Chroma priority remains `RAG_PERSIST_DIR` → explicit vector-store config → legacy Chroma config → user data directory.
 - `[Embeddings]` — `embedding_provider` (default openai), `embedding_model` (default text-embedding-3-large; dataclass default for local profiles `mxbai-embed-large-v1`), `onnx_model_path`, `chunk_size`/`overlap` (defaults 400/100 words), api url/key.
 - Dataclass defaults: top_k 10, inline citations on, cache TTL 3600 s, `hybrid_alpha` 0.7, `rrf_k` 5, pool multiplier 2.
 
