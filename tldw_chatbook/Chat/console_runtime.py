@@ -3159,6 +3159,8 @@ class ConsoleRuntime:
             entry.source_claim
         ):
             raise RuntimeError("Recovery owner changed.")
+        # TASK-33621.20: a composer send keeps its own text as the draft until it
+        # is accepted, so a refused one's Restore finds exactly that: no merge.
         live_draft = store.session_draft(entry.session_id)
         if live_draft and live_draft != entry.draft:
             raise RuntimeError("Recovery live draft changed; refusing ambiguous merge.")
