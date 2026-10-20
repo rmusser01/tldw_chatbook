@@ -259,7 +259,8 @@ _BUDGETS: dict[str, int] = {
     # on-s logic, and the duplicate capability line goes (-19): 35,746.
     # Rebased onto dev 1bbc145ffc, where #3169 merged at 35,771 (+1 over
     # S1's base of 35,770): 35,747.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35747,
+    # TASK-35677/35678: bounded paste ownership and action support (-13).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35734,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

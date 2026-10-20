@@ -100,6 +100,21 @@ All visual values are `$ds-*` tokens in `core/_variables.tcss` (ADR-150): spacin
 
 `UI/Screens/settings_screen.py` is the canonical settings destination (~30 categories via `SettingsCategoryId`), with companion modules `settings_config_models.py`, `settings_config_adapter.py`, and per-category default modules. One category is a hosted workbench, not a form: **Tools & MCP** (`SettingsCategoryId.TOOLS`, pane module `settings_tools_hub.py`) re-homes the four-mode MCP workbench — Servers / Tools / Permissions / Audit — that used to be its own shell destination; the `mcp`/`tools_settings` routes alias Settings with a `{"category": "tools"}` default context (ADR-240). The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Do not add new settings anywhere but the Settings screen.
 
+Composer paste handling is a bounded child region owned by
+`Widgets/Settings_Widgets/composer_paste_panel.py::ComposerPasteSettingsPanel`
+(TASK-35676/35677). It keeps the existing field IDs and token-backed layout,
+suppresses programmatic `Changed` messages, and posts `Edited` messages for
+local changes. Settings retains the category draft, validation and Save/Revert
+writer. `sync_values()` updates controls in place; equal threshold values do
+not disturb cursor/selection. The panel imports only when its category renders.
+
+`SettingsScreen._category_action_supported()` supplies category capabilities
+to action dispatch, guided-button composition and the custom footer/F1 help
+(TASK-35678). Focus, dirty state, worker fences, validation and destructive
+confirmation remain live checks with their existing owners. Guidance-only
+shortcuts stay bound; Theme and Personal Context widgets project their own
+focus/selection-dependent hints. These are the existing ADR-031/033 contracts.
+
 ## Splash subsystem
 
 `Widgets/splash_screen.py` (`SplashScreen`) with effects in `Utils/Splash_Screens/` by category (classic/environmental/tech/gaming/psychedelic/custom) plus custom cards from `examples/custom_splash_cards/`. Config under `[splash_screen]`: `enabled`, `duration` (default 7.0 s), `skip_on_keypress`, `show_progress`, `card_selection`. On close the app removes the splash widget, mounts the main UI, pushes the initial screen (first-run → Home; focus-mode request or default → Console/chat), and defers logging setup until then.

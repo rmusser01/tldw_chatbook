@@ -442,7 +442,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # one function each: 396.
 # Rebased onto dev 1bbc145ffc, where #3169 merged at 363 (three entries
 # over S1's base of 360): S1's 36 nodes end at 399.
-MINIMUM_FILES = 399
+# TASK-35676/35677/35678 append six bounded Settings entries after dev
+# ccf99a59c4: 405 entries before the parallel-run qualification.
+MINIMUM_FILES = 405
 
 
 def read_census(path: Path) -> list[str]:
