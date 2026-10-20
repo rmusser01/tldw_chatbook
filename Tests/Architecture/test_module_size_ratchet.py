@@ -398,7 +398,12 @@ _BUDGETS: dict[str, int] = {
     # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 2,468.
     # TASK-35011: the Saved model list block and its title summaries move to
     # saved_model_list.py (-100): 2,365.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2365,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +33.
+    # 2026-10-20, TASK-34100.6 review v3r1 (R1-03), re-measured on dev
+    # 2026-10-27: 2,365 -> 2,398. The Inspector's Key block says where to get
+    # a key from the shared catalog (key_url_line, its compose and its
+    # refresh), as first-run setup does.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2398,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
