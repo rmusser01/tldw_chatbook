@@ -643,19 +643,23 @@ keys reach the composer through `ChatScreen.on_key` ->
 `composer.handle_console_key`, so they wait in the screen's message queue
 behind the held `on_button_pressed`, exactly like the presses. The record a
 second click takes therefore cannot contain keys typed before it, and both
-records were identical; no replay can split them. The two environments then
-disagreed on the order itself. Injected back to back (the test harness), the
-keys reached the composer ahead of the presses. Live on a loaded host (about
-1 s per activation; click Chat 1, click Chat 2, "x", click Chat 3, "y" at
-0.15 s gaps), the log shows the three presses handled at :26, :27 and :29,
-and both keys ended in Chat 3 ("three:xy", Chat 2 untouched) on dev and on
-the fix alike. Typing order would have put "x" in Chat 2, so live both keys
-reached the composer only after every queued press. Neither order is the one
-the keys were typed in.
+records were identical; no replay can split them. The arrival order itself
+is not fixed either. Injected back to back (the test harness), the keys
+reached the composer ahead of the presses. Live on a loaded host (click
+Chat 1, click Chat 2, "x", click Chat 3, "y" at 0.15 s gaps, from Chat 4),
+six runs gave two outcomes. In five (two on the fix, three on dev) both keys
+ended in Chat 3, so they reached the composer after every queued press;
+typing order would have put "x" in Chat 2. In one run on the fix both keys,
+"y" included, ended in Chat 2 ("two:xy"), so they reached the composer
+before Chat 3's press. Not one run applied them in the order they were
+typed.
 
 **What to do.** Before ordering keystrokes against clicks in the Console,
 remember both travel to the screen's queue and are handled in arrival order;
 a widget-side snapshot sees only what the screen has already applied. Pin such
 behaviour with assertions that hold for every arrival order (nothing stays in
-the chat being left, nothing is lost, order kept), and only write an exact
-attribution claim into the User Guide after a live run on a busy host.
+the chat being left, nothing is lost, order kept). Write the User Guide
+claim from several live runs, not one. After the first run, the guide said
+"text typed between the two clicks can land in either"; the third run put a
+key typed after the second click into the first tab, and the sentence had
+to widen.

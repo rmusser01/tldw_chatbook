@@ -896,8 +896,8 @@ async def test_keys_typed_while_two_tab_clicks_wait_stay_out_of_the_chat_being_l
     A's composer before either press is handled; C's press carries its own
     record, which moves them out of A into C. D's record was taken before
     any key was applied, so it cannot tell "x" from "y" and both stay with
-    C. Live on a loaded host it went the other way: every queued press was
-    handled before either key, and both keys landed in D. Whatever the order,
+    C. Live on a loaded host, runs differed: usually every queued press came
+    first and both keys landed in D, once both landed in C. Whatever the order,
     no key may stay in A or be lost, and they keep their order (the old
     controller-wide slot lost C's record to D's, and A kept "xy").
     """
