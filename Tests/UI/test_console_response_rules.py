@@ -554,15 +554,22 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 
 @pytest.mark.asyncio
-async def test_recovery_sync_never_waits_for_a_config_rebuild(tmp_path):
-    """TASK-35444: the transcript's recovery placeholder never reloads config.
+@pytest.mark.parametrize("sync", ["recovery", "full-ui"])
+async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
+    """TASK-35444: display syncs never reload config while a rebuild holds it.
 
-    The phase test above failed in CI when Stop's transcript sync rebuilt the
-    controller's provider selection with ``load_settings()`` on the UI loop
-    while a config rebuild held its lock.
+    The phase test above failed in CI when a sync during Stop rebuilt the
+    provider selection with ``load_settings()`` on the UI loop while a config
+    rebuild held its lock: first through the transcript's recovery
+    placeholder, then, once that was fixed, through the full UI sync's
+    transcript step and its rail visibility pass, both after the sync's first
+    await. Here the rebuild starts as the transcript step begins. The
+    watchdog records where the UI thread was waiting.
     """
+    import sys
     import threading
     import time
+    import traceback
 
     from tldw_chatbook import config
 
@@ -573,27 +580,66 @@ async def test_recovery_sync_never_waits_for_a_config_rebuild(tmp_path):
         )
         region = case.console._console_transcript_region_or_none()
         assert region is not None and region.is_mounted
-        held, release = threading.Event(), threading.Event()
+        hold, held, release = threading.Event(), threading.Event(), threading.Event()
+        blocked = []
 
         def hold_rebuild():
+            hold.wait(5)
             with config._settings_rebuild_lock():
                 config._invalidate_config_caches()
                 held.set()
                 release.wait(5)
 
-        holder = threading.Thread(target=hold_rebuild)
-        watchdog = threading.Timer(2, release.set)
-        holder.start()
-        try:
+        def expire():
+            frame = sys._current_frames()[threading.main_thread().ident]
+            blocked.extend(traceback.format_stack(frame))
+            release.set()
+
+        def start_rebuild():
+            hold.set()
             assert held.wait(3)
             watchdog.start()
+
+        holder = threading.Thread(target=hold_rebuild)
+        watchdog = threading.Timer(2, expire)
+        holder.start()
+        try:
             started = time.monotonic()
-            region.sync_recovery()
+            if sync == "recovery":
+                start_rebuild()
+                region.sync_recovery()
+            else:
+                transcript_sync = case.console._sync_native_console_transcript
+                test_task = asyncio.current_task()
+
+                async def rebuild_then_transcript(*args, **kwargs):
+                    # Only this test's sync: the app's own syncs pass through.
+                    if asyncio.current_task() is not test_task:
+                        return await transcript_sync(*args, **kwargs)
+                    start_rebuild()
+                    # Past the TASK-34958 tick gate: the whole pipeline runs.
+                    await transcript_sync(force=True)
+
+                monkeypatch.setattr(
+                    case.console, "_sync_native_console_transcript", rebuild_then_transcript
+                )
+                # The app's own sync may be running: this call would then
+                # return at entry (two of the flags its entry guard checks).
+                # Nothing awaits between the check and entry.
+                async with asyncio.timeout(5):
+                    while case.console._console_sync_in_progress or getattr(
+                        case.console, "_console_control_bar_replay_whole_sync", False
+                    ):
+                        await asyncio.sleep(0.01)
+                await case.console._sync_native_console_chat_ui()
+                assert held.is_set(), "the full sync never reached its transcript step"
             elapsed = time.monotonic() - started
             assert not release.is_set(), (
-                f"recovery sync waited {elapsed:.3f}s for the config rebuild"
+                f"{sync} sync waited {elapsed:.3f}s for the config rebuild:\n"
+                + "".join(blocked[-14:])
             )
         finally:
+            hold.set()
             watchdog.cancel()
             release.set()
             holder.join(3)

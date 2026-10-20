@@ -34,6 +34,8 @@ on the UI loop, fix the read and pin it deterministically (hold the lock, call
 the read, assert it returns). Check the stack's siblings too: here three display
 builders made the same call, and fixing only the first would have moved the wait.
 
+**Follow-up (2026-10-19).** That fix was not enough: after it merged the test failed 7 times in 31 runs, every time at a read on the same full UI sync that the first stacks never reached. A pin that runs the whole sync with the rebuild starting at its transcript step then found two more, and fixing those exposed another. Pin the whole path the stack ran on, from the await where the hold can begin, not only the read the stack named; and before making a live read defer, check how often ordinary work holds its lock (here: constantly, so the sync deferred on every pass and another test broke 5 of 5).
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule

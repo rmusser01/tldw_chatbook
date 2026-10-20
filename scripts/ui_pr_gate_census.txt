@@ -568,8 +568,8 @@ Tests/UI/test_settings_provider_test_draft.py::test_a_keyless_403_listing_sugges
 Tests/UI/test_console_session_settings.py::test_a_keyless_403_to_test_connection_suggests_a_key_in_settings
 # TASK-35413: a project-instruction status sync before the row is built paints the synced status (well under 1 s).
 Tests/UI/test_console_project_instruction_choose_folder.py::test_status_row_synced_before_its_compose_runs_paints_that_state
-# TASK-35444: the transcript's recovery sync never waits for a config rebuild (about 3 s).
-Tests/UI/test_console_response_rules.py::test_recovery_sync_never_waits_for_a_config_rebuild
+# TASK-35444: the recovery and full UI syncs never wait for a config rebuild (about 3 s each).
+Tests/UI/test_console_response_rules.py::test_console_syncs_never_wait_for_a_config_rebuild
 
 # TASK-34406.28: both browser routes reject queued/late/detached reads at
 # approved Quit, retain real native retirement, and preserve Stay (ten cases).

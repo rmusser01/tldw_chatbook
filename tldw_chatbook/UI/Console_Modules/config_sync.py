@@ -101,3 +101,36 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
         return render()
     projection = ConsoleReadinessConfigProjection.for_screen(screen)
     return projection.run(lambda: render(projection))
+
+
+def replay_whole_console_sync(screen) -> bool:
+    """Hand the rest of a full UI sync to the coalesced control-bar replay.
+
+    Returns:
+        False, for the full sync to return.
+    """
+    screen._console_control_bar_replay_whole_sync = True
+    screen._request_console_control_bar_sync(delayed=True)
+    return False
+
+
+def sync_console_rail_visibility(screen) -> bool:
+    """Apply rail visibility from checked display config, never waiting.
+
+    TASK-35444: the full UI sync ran this after its transcript await with a
+    live ``load_settings()``, which waited out any config rebuild that began
+    in between, on the UI loop. It now reads like the other rail-visibility
+    sync (``wiring.py``): checked display data, or a deferral that replays the
+    whole sync.
+
+    Returns:
+        True after applying; False when the replay owns it.
+    """
+    if run_console_presentation_sync(
+        screen,
+        lambda: screen._sync_console_rail_visibility_if_changed(
+            screen._current_console_rail_state()
+        ),
+    ):
+        return True
+    return replay_whole_console_sync(screen)
