@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from textual.css.query import NoMatches
+from textual.widget import MountError
 from textual.widgets import Button
 
 from Tests.UI.test_study_flashcards_real_service_contract import (  # noqa: F401
@@ -24,6 +26,7 @@ from Tests.UI.test_study_flashcards_real_service_contract import (  # noqa: F401
     _open_flashcards,
     _wait_until,
 )
+from tldw_chatbook.UI.Study_Modules.flashcards_handler import _quiet_when_swapped_out
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -41,14 +44,18 @@ async def _add_cards(app, deck_id: str, fronts: list[str]) -> None:
         )
 
 
-def _hold_card_fetches(app) -> tuple[asyncio.Event, asyncio.Event]:
-    """Hold each card fetch's result; return (fetched, release) events.
+def _hold_card_fetches(app) -> tuple[asyncio.Event, asyncio.Event, asyncio.Event]:
+    """Hold each card fetch's result; return (fetched, release, resumed).
 
     The real fetch runs first; only its return waits, so the test chooses
-    the moment the rebuild resumes instead of racing a sleep.
+    the moment the rebuild resumes instead of racing a sleep. ``resumed`` is
+    set once a held fetch hands its cards back to the rebuild, so the test
+    can show the rebuild really ran on past the hold (a worker cancelled
+    while held would leave it unset).
     """
     fetched = asyncio.Event()
     release = asyncio.Event()
+    resumed = asyncio.Event()
     service = app.study_scope_service
     real_list_flashcards = service.list_flashcards
 
@@ -56,16 +63,17 @@ def _hold_card_fetches(app) -> tuple[asyncio.Event, asyncio.Event]:
         cards = await real_list_flashcards(**kwargs)
         fetched.set()
         await release.wait()
+        resumed.set()
         return cards
 
     service.list_flashcards = held_list_flashcards
-    return fetched, release
+    return fetched, release, resumed
 
 
 @pytest.mark.asyncio
 async def test_a_card_list_rebuild_resuming_after_quit_ends_quietly():
     """Refresh is pressed, the app quits while the card fetch is out, then
-    the fetch returns. RED on dev 4de437a5c5: leaving ``run_test`` raises
+    the fetch returns. RED on dev ce4aa4a231: leaving ``run_test`` raises
     ``WorkerFailed: MountError("Can't mount widget(s) before
     ListView(id='card-list') is mounted")`` from the Refresh worker."""
     app, _db = _build_real_study_app()
@@ -73,7 +81,7 @@ async def test_a_card_list_rebuild_resuming_after_quit_ends_quietly():
         controller = await _open_flashcards(app, pilot)
         deck_id = await _create_deck(app, pilot, controller, "Quit deck")
         await _add_cards(app, deck_id, ["Q0", "Q1"])
-        fetched, release = _hold_card_fetches(app)
+        fetched, release, resumed = _hold_card_fetches(app)
 
         app.screen.query_one("#flashcard-refresh-button", Button).press()
         await _wait_until(pilot, fetched.is_set, what="the Refresh card fetch")
@@ -83,3 +91,55 @@ async def test_a_card_list_rebuild_resuming_after_quit_ends_quietly():
         # first in, first out).
         release.set()
         app.exit()
+    # Without this, a Textual that cancelled the worker before it resumed
+    # would turn the test green without ever reaching the guard.
+    assert resumed.is_set(), "the Refresh rebuild never resumed past its fetch"
+
+
+class _Window:
+    """The few StudyWindow attributes `_quiet_when_swapped_out` reads."""
+
+    def __init__(self, *, attached: bool, current_view: str) -> None:
+        self.is_attached = attached
+        self.current_view = current_view
+        self.display = True
+        self.view_swaps = 0
+
+
+class _Controller:
+    def __init__(self, window: _Window, error: Exception) -> None:
+        self.window = window
+        self.error = error
+
+    @_quiet_when_swapped_out
+    async def act(self) -> None:
+        raise self.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_view", ["flashcards", "dashboard"])
+async def test_a_mount_error_while_the_window_is_attached_still_raises(current_view):
+    """Negative control for the quit guard: only a detached window makes a
+    ``MountError`` quiet. Attached, it is a bug and must surface -- whether
+    or not Flashcards is still the sub-view (a view swap is the
+    ``NoMatches`` case, not this one). A guard that swallowed every
+    ``MountError`` would pass the quit test above; this fails it."""
+    controller = _Controller(
+        _Window(attached=True, current_view=current_view),
+        MountError("Can't mount widget(s) before ListView() is mounted"),
+    )
+    with pytest.raises(MountError):
+        await controller.act()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [MountError("not mounted"), NoMatches("No nodes match '#card-list'")],
+    ids=["MountError", "NoMatches"],
+)
+async def test_a_lookup_or_mount_error_once_the_window_is_detached_ends_quietly(error):
+    """With the window detached (as every widget reads once ``App._exit`` is
+    set), the action ends without raising, even with Flashcards shown."""
+    controller = _Controller(_Window(attached=False, current_view="flashcards"), error)
+    assert await controller.act() is None
