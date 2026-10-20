@@ -364,6 +364,14 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     streaming. When the poll does not tick there was no poll to render it
     before either.
 
+    Since PR #3023 a projection renders from a checked display, with no
+    operation, while that display is under a second old, and pays the
+    native operation (or defers) once it is stale; its presentation reads
+    can also publish a follow-up whole sync. A skipped tick pays none of
+    that: no render, no display bookkeeping, no follow-up. Counted with a
+    fake clock (one 0.2 s tick each, a 15-chunk streamed run), a run made
+    25-35 projections without this cadence and 9-14 with it.
+
     Args:
         screen: The Console screen whose sync tick is running.
         force: Run the projections even when nothing moved.
