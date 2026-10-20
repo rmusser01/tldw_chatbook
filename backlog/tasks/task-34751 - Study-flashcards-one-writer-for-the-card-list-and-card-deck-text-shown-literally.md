@@ -116,6 +116,7 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 - `test_boot_css_byte_budget.py` passes. `test_ui_ready_module_census.py` fails identically on dev and the branch (1032 resident modules against a limit of 1031, the same 22 new and 12 shed modules, none of them Study); this branch adds no module and no CSS.
 - No module-size ratchet row covers `flashcards_handler.py` or `Study_Window.py`. `./scripts/preflight.sh` passes (329 gated entries, floor 329).
 - Live, on the rebased head (evidence `uxrev/evidence/bd5/R64/rebased/`): a deck named `r64rb Bio [/b] [new] deck` shows literally in the picker; a card `What does [/b] do? r64rb` lists literally with `[new]`; Refresh twice then Ctrl+Q exits with 0 matching lines in the 297-line profile log. A smoke check only, as above.
+- Rebased once more onto dev 0fef489ece (Console-only changes plus one Console census row; no conflict, floor still 327 on dev). On that head: preflight passes; quit file 5/5, contract file 2/2, literal file 2/2. One earlier literal-file run on that head ended in the TASK-35663 teardown error at load 60 with both test bodies passing; the rerun exited 0.
 
 **Files:**
 - `tldw_chatbook/UI/Study_Modules/flashcards_handler.py`
