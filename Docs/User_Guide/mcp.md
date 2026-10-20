@@ -269,7 +269,7 @@ subheadings:
   **Character cards** switches read "on" by default but add nothing to plain
   chat: they choose which groups Full agent tools adds. Off by default
   (`[tools] full_agent_tools_enabled`); turning it on gives chat sub-agents,
-  skills, web search and fetch, Watchlists, workspace files, character
+  skills, web search and fetch, Watchlists, workspace tools, character
   cards, Canvas, chat forks and chatbook's own MCP tools on the next send.
   An individual **Agent built-ins** gate (or `web_deep_search`) needs no
   Full agent tools: plain chat offers that one tool as soon as it is on. A
