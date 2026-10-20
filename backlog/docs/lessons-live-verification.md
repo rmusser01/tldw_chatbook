@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## A probe thread that polls `sys.modules` can catch a module mid-import and die unseen (TASK-33620.15.5, 2026-10-19)
+
+**Incident.** The probe-free arm of the run-start latency rounds timed each
+provider call from a `sitecustomize` daemon thread. The thread polled
+`sys.modules.get("requests.sessions")`, then wrapped `Session.send`. In 2 of
+8 launches no timing file appeared at all, although each app's log showed
+`provider_entry` and every reply arrived. Another thread was still executing
+`requests.sessions` when the poll found it, so `mod.Session` raised
+`AttributeError` and the thread died without a word. Once the poll waited
+for the class itself, all 6 later launches recorded. Earlier the same day a
+whole round recorded nothing for a different reason: the output path went in
+as a relative environment variable, and `launch.sh` starts the app in its
+profile directory, so the path resolved there.
+
+**What to do.** In a probe thread, wait for the attribute you will patch
+(`getattr(mod, "Session", None)`), not for the module's key, and write a
+patch failure to the probe's output instead of letting the thread die. Pass
+output paths as absolute paths. Before you analyse a round, count each
+launch's records and rerun the launches that have none. Otherwise the
+analysis silently drops those pairs.
+
 ## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
 
 **Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.
