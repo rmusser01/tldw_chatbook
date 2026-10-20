@@ -24,6 +24,9 @@ UI Fast Lane job 9 (`--shard 8 10`) has the least headroom of the ten jobs on de
 - **Why it matters.** The workflow's own budget leaves about 3.3 minutes for a hung test's report, and job 9 has under a minute of it. Any PR that adds load to this shard's positions, or a slower runner, turns the required check red with no defect.
 
 Found by the S1 rebase review (2026-10-20). The S1 PR keeps its own entries light on job 9, but it cannot fix dev's base load.
+
+
+Additional evidence from [PR #3176](https://github.com/rmusser01/tldw_chatbook/pull/3176): [UI job 9 in run 39447290920](https://github.com/rmusser01/tldw_chatbook/actions/runs/39447290920/job/118712469761) exhausted its 20-minute limit on head 3c2b0e5601 while the final added paste journey was running. GitHub's check annotation explicitly names the 20m0s maximum; there was no assertion failure. That PR applies interim measured slot swaps and retains every entry and all limits. This does not distribute the heavy file by function, establish a three-minute margin, or supply three post-change runs; all criteria here remain open. Its qualification report records raw per-occurrence timings because repeated file names produced a negative cost in the stock replay helper.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

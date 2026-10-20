@@ -191,3 +191,36 @@ The stock replay helper assigned a negative model-row cost because the Theme
 file appears on both sides of it. These measurements instead use consecutive
 per-occurrence progress timestamps. The helper itself is outside this change.
 No new ADR is required: this applies the existing CI placement policy.
+
+
+## Rebase after S1 merged (2026-10-20)
+
+While run 39447290920 was finishing, PR #3179 merged S1 into dev at
+`ccf99a59c41419922e8f02db7e3bc93021da632f`. GitHub reported a fresh merge
+conflict and no Actions run for `c8d9dd1d9e`. The second rebase preserves
+S1's 399 census entries, including its complete 36-node block in the same
+positions, then retains this PR's nine regressions: 408 unique entries and
+floor 408. Settings measures 35,733 lines; an AST comparison finds no new
+duplicate methods against this base.
+
+The 36 added base entries shift the new nine-entry tail to census index
+399 (jobs 10, then 1 through 8). Its placement was checked again against
+[the latest passing S1 run](https://github.com/rmusser01/tldw_chatbook/actions/runs/39446897270).
+That run's jobs 1 and 3 took 19m09s and 19m37s, while jobs 10 and 4 took
+15m05s and 12m47s. Two further measured pairs exchange slots:
+
+- Connect key rows (331.30 s, job 1) and Connect paint (215.19 s, job 10).
+- Advanced disclosures (444.15 s, job 3) and Connect Tab budget (170.45 s,
+  job 4).
+
+Together with the previous adjustment, eight older entries change position;
+every other base entry stays put, including S1. All assertions, test
+functions, workflow limits and product patches are preserved. The real
+census checker passes. The 80 selected census/count and size/no-slack checks
+pass; the 17 qualified Settings cases are being rerun against the new base.
+Hosted CI must qualify the final ordering before a green-head claim.
+
+The existing [TASK-35834](../../../backlog/tasks/task-35834%20-%20UI-Fast-Lane-job-9-runs-within-a-minute-of-its-20-minute-cap-on-dev.md)
+owns broader shard headroom, function-level distribution and three-run
+confirmation. This placement-only qualification does not close that task or
+claim its three-minute margin. It applies existing ADR-103; no new ADR.

@@ -71,7 +71,7 @@ Reason: bounded changes under the existing Settings and approved screen-decompos
 2. Share pure category eligibility for save/revert/test, RAG and profile actions across handlers, footer/help and relevant controls.
 3. Preserve guidance-only and focused-text semantics and mutation-time safety gates.
 4. Verify matrix, keyboard/button flows, narrow layouts and scoped static checks.
-5. Qualify the rebased PR within the existing UI job budget: use hosted per-occurrence timings to rebalance census slots if the new journey reaches the 20-minute limit; retain every entry and assertion, the 372-entry floor, shard count and timeouts (existing CI workflow policy; ADR-103).
+5. Qualify the rebased PR within the existing UI job budget: use hosted per-occurrence timings to rebalance census slots if the new journey reaches the 20-minute limit; retain every entry and assertion, the current census floor, shard count and timeouts (existing CI workflow policy; ADR-103).
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -85,4 +85,7 @@ ADR required: no new ADR; [ADR-031](../decisions/031-tui-keybinding-and-footer-h
 
 
 Current-dev qualification (2026-10-20): a fresh requested Superpowers review found no issues on 1bbc145ffc..3c2b0e5601; 17 targeted Settings cases and two size checks passed. Seven additional local footer fixture failures reproduced identically on unchanged dev. Hosted UI shard 9 then exhausted its existing 20-minute budget without an assertion failure. Qualification therefore swaps three measured census pairs across shards 5/6/9, including four upstream entries as an explicit exception to initial append-only placement. All 372 entries and assertions remain; workflow limits and product source are unchanged. The 78 census/count checks and real census validation pass. The qualification report records timestamps, upstream comparison and pending hosted confirmation. This follows existing [ADR-103](../decisions/103-fast-pr-lane-and-required-gate-aggregation.md), with no new ADR. Backlog CLI is unavailable locally; this plan/note update preserves the task's existing metadata and completed criteria.
+
+
+Latest-base integration: S1 merged while CI was running, so the PR was rebased again onto ccf99a59c4. The base contributes 399 entries and this PR keeps its nine regressions (408 total/floor). S1's 36-node block stays exactly in place; eight older entries exchange measured slots to retain the fixed job budgets. Settings measures 35,733 lines. Eighty census/count/size checks pass; selected Settings behavior is being requalified, and hosted CI remains required before a current-head green claim. Existing ADR-103 applies; the qualification report links the already-created broader capacity owner rather than duplicating it.
 <!-- SECTION:NOTES:END -->

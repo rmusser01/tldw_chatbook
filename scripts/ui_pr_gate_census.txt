@@ -285,9 +285,9 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 # to another shard. Entries that --write will re-order with this block (its
 # --tail counts them too) must not be blank-separated from it or from each other.
 
-# TASK-33007.2: Connect's API key source words and Clear key, the Key check
-# row, an endpoint with no shipped default and the card's result line.
-Tests/UI/test_settings_connect_key_rows.py
+# TASK-33007.9: Connect painted whole -- the open provider list's box and a
+# wide provider name from its head, at both full-screen sizes.
+Tests/UI/test_settings_connect_paint.py
 # R2 card note (a2-N2): the Key check verdict reads the credential Save keeps.
 Tests/UI/test_settings_key_check_env_var_draft.py
 # TASK-33007.7 AC#7: a memory save refuses an invalid trigger/target pair (15-28 s).
@@ -315,8 +315,9 @@ Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot
 # Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
 # TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
 Tests/UI/test_settings_provider_save_scope.py
-# TASK-33007.2, parent AC#2: Model is at most five Tab presses from Provider.
-Tests/UI/test_settings_connect_tab_budget.py
+# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
+# state, state words on every row, one frame level, '/' opening its disclosure.
+Tests/UI/test_settings_advanced_disclosures.py
 # Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
 Tests/UI/test_settings_save_commit_models.py::test_model_catalog_fields_document_instant_apply_in_the_inspector
 # TASK-33007.4: who a save reaches -- the real D1 reach save and Ctrl+T in Console.
@@ -394,9 +395,9 @@ Tests/UI/test_settings_field_guide_in_view.py::test_the_inspector_starts_at_a_he
 # TASK-33007.3: the Default model picker -- one row, ids grouped by where they
 # came from, Custom ID and its rollback, a wide id read from its head.
 Tests/UI/test_settings_default_model_picker.py
-# TASK-33007.9: Connect painted whole -- the open provider list's box and a
-# wide provider name from its head, at both full-screen sizes.
-Tests/UI/test_settings_connect_paint.py
+# TASK-33007.2: Connect's API key source words and Clear key, the Key check
+# row, an endpoint with no shipped default and the card's result line.
+Tests/UI/test_settings_connect_key_rows.py
 # Capture 13c: a kept snapshot edit is forgotten once it is reverted (14 s).
 Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[revert]
 # R2 F10: arriving on the Provider control does not open its list.
@@ -445,9 +446,8 @@ Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
 Tests/UI/test_app_quit_under_modal.py::test_leaving_settings_waits_for_a_snapshot_save_in_flight
 # Parent AC#1: no listed provider's closed card needs scrolling at 211x44 (26-44 s).
 Tests/UI/test_settings_providers_models_card_fits_the_pane.py
-# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
-# state, state words on every row, one frame level, '/' opening its disclosure.
-Tests/UI/test_settings_advanced_disclosures.py
+# TASK-33007.2, parent AC#2: Model is at most five Tab presses from Provider.
+Tests/UI/test_settings_connect_tab_budget.py
 # Capture fix 2 round 2, finding 2: Image Gen's on check reads on light themes.
 Tests/UI/test_settings_theme_card_contrast.py::test_image_gen_on_check_is_readable_on_light_themes
 # Ruling cf3r1-N1 (b): Settings keeps unsaved snapshot preferences; Ctrl+Q names them.
@@ -709,6 +709,9 @@ Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_reverted_before_s_l
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_kept_through_leaving_settings_is_added_by_the_next_s
 Tests/UI/test_console_switcher_saved_default.py::test_a_lifted_default_lists_the_same_models_and_the_more_count
 
+# PR #3176 on dev ccf99a59c4: preserve S1's 36-node block and its slots.
+# This nine-entry tail starts at 399 (jobs 10, 1..8); the eight older entries
+# exchanged above balance measured loads without changing the gate limits.
 # TASK-35676/35677/35678: local paste events, retained editing state and shared
 # action support. Split the mounted journeys by parameter to bound each entry.
 Tests/UI/test_composer_paste_settings_panel.py

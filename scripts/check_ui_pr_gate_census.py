@@ -445,9 +445,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-35676/35677/35678 append six bounded Settings entries after dev
 # ccf99a59c4: 405 entries before the parallel-run qualification.
 # TASK-35680 appends three bounded parallel-run regressions: 408.
-# TASK-35678 rebalances four older entries across shards 5/6/9 after
-# run 39447290920 hit the 20-minute cap. The nine new entries follow S1;
-# re-derive their shard placement at the new 399-entry boundary.
+# TASK-35678 rebalances eight older entries after run 39447290920 hit
+# the 20-minute cap and dev ccf99a59c4 added S1. S1's 36-node block stays
+# in place; the nine new entries follow it at the 399-entry boundary.
+# Coverage, shard count, timeout and the inherited floor are preserved.
 MINIMUM_FILES = 408
 
 
