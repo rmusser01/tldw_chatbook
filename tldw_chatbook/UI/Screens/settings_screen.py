@@ -21,6 +21,7 @@ import threading
 import tomllib
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 from rich.cells import cell_len
 from rich.table import Table
@@ -4078,9 +4079,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
-        self._syncing_console_agent_budget = False
-        self._syncing_console_tool_result_display_chars = False
-        self._syncing_console_sidechat = False
+        self._pending_console_input_edits = WeakKeyDictionary[Input, list[str]]()
         self._syncing_console_thinking_visibility = False
         toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
         if toggle_writes is None:
@@ -19774,7 +19773,7 @@ class SettingsScreen(BaseAppScreen):
             for budget_field in AGENT_BUDGET_FIELDS:
                 with Horizontal(classes="settings-input-row"):
                     yield Static(budget_field.label, classes="settings-input-label")
-                    yield Input(
+                    yield self._tracked_console_input(
                         value=str(self._agent_budget_value(budget_field)),
                         id=budget_field.widget_id,
                         classes=(f"settings-compact-input {AGENT_BUDGET_INPUT_CLASS}"),
@@ -19798,7 +19797,7 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Agent tool-result display cap", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
                 yield Static("Display cap (chars)", classes="settings-input-label")
-                yield Input(
+                yield self._tracked_console_input(
                     value=str(self._tool_result_display_chars_value()),
                     id="settings-console-tool-result-display-chars",
                     classes="settings-compact-input",
@@ -19890,7 +19889,7 @@ class SettingsScreen(BaseAppScreen):
             )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Side chat model", classes="settings-input-label")
-                yield Input(
+                yield self._tracked_console_input(
                     value=self._console_input_value(
                         self._console_behavior_value("sidechat_model")
                     ),
@@ -19900,7 +19899,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Prompt template", classes="settings-input-label")
-                yield Input(
+                yield self._tracked_console_input(
                     value=self._console_input_value(
                         self._console_behavior_value("sidechat_prompt_template")
                     ),
@@ -28778,27 +28777,45 @@ class SettingsScreen(BaseAppScreen):
         """Compatibility entry for callers outside the widget message path."""
         self._apply_console_paste_edit("paste_collapse_threshold", event.value)
 
+    def _tracked_console_input(self, **kwargs: Any) -> Input:
+        """Remember edits synchronously, before their Changed message is delivered."""
+        control = Input(**kwargs)
+        self.watch(
+            control,
+            "value",
+            lambda value: self._pending_console_input_edits.setdefault(
+                control, []
+            ).append(value),
+            init=False,
+        )
+        return control
+
+    def _sync_console_input(self, control: Input, value: str) -> None:
+        # A refresh may precede the latest genuine edit's queued message.
+        if self._pending_console_input_edits.get(control):
+            return
+        with control.prevent(Input.Changed):
+            control.value = value
+        self._pending_console_input_edits.pop(control, None)
+
+    def _console_input_edit_is_current(self, event: Input.Changed, value: str) -> bool:
+        pending = self._pending_console_input_edits.get(event.input)
+        if pending and event.value == pending[0]:
+            pending.pop(0)
+            if not pending:
+                self._pending_console_input_edits.pop(event.input)
+        return event.value == event.input.value and event.value != value
+
     @on(Input.Changed, f".{AGENT_BUDGET_INPUT_CLASS}")
     def handle_console_agent_budget_changed(self, event: Input.Changed) -> None:
-        """One handler for all five budget inputs.
-
-        They share a CSS class and differ only by id, so a single
-        selector-matched handler replaces five near-identical decorated
-        methods. `_syncing_console_agent_budget` guards the same
-        write-back loop every other Console field guards against: the
-        revert/sync path assigns `.value`, which re-fires Input.Changed.
-
-        Args:
-            event: The Input.Changed carrying the edited text. Its input's
-                id selects which `AGENT_BUDGET_FIELDS` entry to stage.
-        """
-        if self._syncing_console_agent_budget:
-            return
+        """Stage the current user edit from one of the five budget inputs."""
         field = next(
             (f for f in AGENT_BUDGET_FIELDS if f.widget_id == event.input.id),
             None,
         )
-        if field is None:
+        if field is None or not self._console_input_edit_is_current(
+            event, str(self._agent_budget_value(field))
+        ):
             return
         self._stage_agent_budget_value(field, event.value)
         self._refresh_agent_budget_hints()
@@ -28809,12 +28826,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     def _refresh_agent_budget_hints(self) -> None:
-        """Re-render every budget field's live hint and the step warning.
-
-        All five are refreshed on any change, not just the edited one: the
-        step-floor warning is a function of TWO fields, so editing either
-        must update it.
-        """
+        """Refresh all hints: the step-floor warning depends on two budget fields."""
         for budget_field in AGENT_BUDGET_FIELDS:
             self._set_static_text(
                 f"#{budget_field.widget_id}-help",
@@ -28844,7 +28856,9 @@ class SettingsScreen(BaseAppScreen):
     def handle_console_tool_result_display_chars_changed(
         self, event: Input.Changed
     ) -> None:
-        if self._syncing_console_tool_result_display_chars:
+        if not self._console_input_edit_is_current(
+            event, str(self._tool_result_display_chars_value())
+        ):
             return
         self._stage_tool_result_display_chars_value(event.value)
         self._console_behavior_result = "Console behavior settings staged."
@@ -28858,14 +28872,14 @@ class SettingsScreen(BaseAppScreen):
     def handle_console_sidechat_changed(self, event: Input.Changed) -> None:
         """Stage a selection side-chat string preference (phase 2 task-2)."""
         event.stop()
-        if self._syncing_console_sidechat:
-            return
         key_by_id = {
             "settings-console-sidechat-model": "sidechat_model",
             "settings-console-sidechat-prompt-template": "sidechat_prompt_template",
         }
         key = key_by_id.get(event.input.id or "")
-        if key is None:
+        if key is None or not self._console_input_edit_is_current(
+            event, self._console_input_value(self._console_behavior_value(key))
+        ):
             return
         self._stage_console_default_value(key, event.value)
         self._console_behavior_result = "Console behavior settings staged."
@@ -35316,43 +35330,28 @@ class SettingsScreen(BaseAppScreen):
             pass
         for budget_field in AGENT_BUDGET_FIELDS:
             try:
-                self._syncing_console_agent_budget = True
-                try:
-                    self.query_one(f"#{budget_field.widget_id}", Input).value = str(
-                        self._agent_budget_value(budget_field)
-                    )
-                finally:
-                    self._syncing_console_agent_budget = False
+                self._sync_console_input(
+                    self.query_one(f"#{budget_field.widget_id}", Input),
+                    str(self._agent_budget_value(budget_field)),
+                )
             except QueryError:
                 pass
         self._refresh_agent_budget_hints()
         try:
-            self._syncing_console_tool_result_display_chars = True
-            try:
-                self.query_one(
-                    "#settings-console-tool-result-display-chars", Input
-                ).value = str(self._tool_result_display_chars_value())
-            finally:
-                self._syncing_console_tool_result_display_chars = False
+            self._sync_console_input(
+                self.query_one("#settings-console-tool-result-display-chars", Input),
+                str(self._tool_result_display_chars_value()),
+            )
         except QueryError:
             pass
-        try:
-            self._syncing_console_sidechat = True
+        for key in ("sidechat_model", "sidechat_prompt_template"):
             try:
-                self.query_one(
-                    "#settings-console-sidechat-model", Input
-                ).value = self._console_input_value(
-                    self._console_behavior_value("sidechat_model")
+                self._sync_console_input(
+                    self.query_one(f"#settings-console-{key.replace('_', '-')}", Input),
+                    self._console_input_value(self._console_behavior_value(key)),
                 )
-                self.query_one(
-                    "#settings-console-sidechat-prompt-template", Input
-                ).value = self._console_input_value(
-                    self._console_behavior_value("sidechat_prompt_template")
-                )
-            finally:
-                self._syncing_console_sidechat = False
-        except QueryError:
-            pass
+            except QueryError:
+                pass
         self._syncing_console_context_memory = True
         try:
             context_selects = {

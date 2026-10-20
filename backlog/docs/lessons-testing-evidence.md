@@ -20959,3 +20959,21 @@ picker file were checked the same way before changing test placement.
 profile each occurrence in order. Check for negative costs before trusting a
 replay aggregate. This incident used raw per-occurrence intervals; it does not
 claim to fix the helper.
+
+## Native Windows source edits must specify UTF-8 on every read
+
+**TASK-35867, 2026-10-20.** An intermediate Settings event-origin edit used
+`Path.read_text()` without an encoding on native Windows. The default cp1252
+codec accepted the UTF-8 bytes and a later UTF-8 write silently changed unrelated
+em dashes and navigation glyphs into mojibake. Compilation and the first mounted
+regression still passed. A comparison of unchanged method ASTs against the Git
+base caught the changed string constants before commit; the complete diff then
+showed the unrelated copy changes. The patch was rebuilt from exact Git bytes
+decoded as UTF-8, all unrelated method/string ASTs were compared again, and the
+intermediate verification runs were excluded from final evidence.
+
+Use explicit `encoding="utf-8"` for repository text reads and writes, including
+small follow-up scripts. For a Unicode-heavy large file, inspect the complete
+diff and compare untouched method/string ASTs before treating targeted green
+tests as evidence for the final source. Compilation cannot detect text corruption
+that remains valid Python.

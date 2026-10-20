@@ -108,6 +108,16 @@ local changes. Settings retains the category draft, validation and Save/Revert
 writer. `sync_values()` updates controls in place; equal threshold values do
 not disturb cursor/selection. The panel imports only when its category renders.
 
+The remaining eight Console inputs (five agent budgets, tool-result display cap,
+side-chat model and prompt template) stay screen-owned (TASK-35867). Refreshes
+use each Input's native `prevent(Input.Changed)` context. A synchronous public
+value watcher remembers pending user edits in weak per-Input value queues
+until their queued events arrive, so refresh cannot overwrite typing, even
+when it returns to a previous display. Initialization, stale and duplicate events do not stage
+edits; ordinary refresh retains Input identity, focus and selection. Existing
+Settings draft, validation and Save/confirmed Revert writers retain authority
+under ADR-033/161; this bookkeeping introduces no persistence boundary.
+
 `SettingsScreen._category_action_supported()` supplies category capabilities
 to action dispatch, guided-button composition and the custom footer/F1 help
 (TASK-35678). Focus, dirty state, worker fences, validation and destructive

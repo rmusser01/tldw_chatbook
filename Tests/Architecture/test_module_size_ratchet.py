@@ -261,7 +261,7 @@ _BUDGETS: dict[str, int] = {
     # S1's base of 35,770): 35,747.
     # TASK-35677/35678: bounded paste ownership and action support (-13).
     # TASK-35680: parallel-run origin handling removes one more line.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35733,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35732,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
