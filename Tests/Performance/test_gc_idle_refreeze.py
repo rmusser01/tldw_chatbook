@@ -689,8 +689,9 @@ async def test_a_stranded_note_frees_switched_away_transcripts_at_the_next_maint
 
     Negative control: with the budget out of reach and no stranded note, the
     maintenance after a switch only re-freezes, and the switched-away rows
-    (frozen while shown) survive a full collection. With the note, that
-    maintenance compacts and every switched-away row is freed.
+    (frozen while shown) survive a full collection. With the note, the next
+    idle request -- quiet periods and a real Textual timer -- compacts, and
+    every switched-away row is freed.
     """
     gc.unfreeze()
     gc.collect()
@@ -698,7 +699,11 @@ async def test_a_stranded_note_frees_switched_away_transcripts_at_the_next_maint
     try:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            refreezer = real_refreezer(min_growth=10_000_000)
+            refreezer = real_refreezer(
+                min_growth=10_000_000,
+                quiet_seconds=0.05,
+                compaction_quiet_seconds=0.1,
+            )
             await app.show("alpha")
             assert refreezer.maintain("conversation_painted") == "refreeze"
             alpha = await switch_away(app, pilot, app.rows(), "bravo")
@@ -711,7 +716,13 @@ async def test_a_stranded_note_frees_switched_away_transcripts_at_the_next_maint
 
             bravo = await switch_away(app, pilot, app.rows(), "charlie")
             refreezer.note_stranded()
-            assert refreezer.maintain("conversation_painted") == "compact"
+            # Through the idle path: a request, the quiet periods, a real timer.
+            refreezer.request("conversation_painted", app, lambda _owner: False)
+            for _ in range(100):
+                if refreezer.actions[-1][0] == "compact":
+                    break
+                await pilot.pause(0.05)
+            assert list(refreezer.actions)[-1] == ("compact", "conversation_painted")
             assert alive(alpha) == 0, "the compaction left stranded rows alive"
             assert alive(bravo) == 0, "the compaction left stranded rows alive"
     finally:
