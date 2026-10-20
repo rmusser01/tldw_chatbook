@@ -611,7 +611,7 @@ def card_field_guide(
     screen: SettingsScreen, field_id: str | None
 ) -> tuple[tuple[str, str], ...] | None:
     """The Inspector's guide for card controls the screen has no branch for:
-    Sign in with, the restored-connection review, the Saved model list's.
+    Sign in with, the restored-connection review and the Saved model list controls.
 
     Capture fixes 3 and 7: with either focused the guide read "None — Tab to
     a setting"; Sign in with's long copy left its row for here.
