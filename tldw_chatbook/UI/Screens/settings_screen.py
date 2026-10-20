@@ -13208,7 +13208,7 @@ class SettingsScreen(BaseAppScreen):
 
         self.app_instance.app_config = loaded
         refresh_providers_models(self.app_instance, force=force)
-        if self.is_attached:  # A late Advanced Config save; a popped screen stays is_mounted.
+        if self.is_attached:  # a popped screen stays is_mounted
             self._sync_model_picker(self._provider_widget_value() or None, reload=True)
             self._refresh_advanced()
 

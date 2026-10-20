@@ -377,10 +377,12 @@ navigation boundary before releasing it.
 
 **Recurred, TASK-35010 review, 2026-10-20.** A guard written as `if
 self.is_mounted:` to skip a closed Settings screen never skipped: in Textual
-8.2.8 `_is_mounted` is set on mount and never cleared, and popping a screen only
-detaches it. The guard was copied from `SettingsScreen._raw_config_changed`,
-which has the same no-op check, so a convention in the same file is not
-evidence. For "has this screen left the stack", use `is_attached`, and pin it
+8.2.8 `_is_mounted` is set on mount and never cleared, so popping a screen
+unmounts and detaches it but leaves `is_mounted` True. The guard was copied
+from `SettingsScreen._raw_config_changed`, whose `is_mounted` check only skips a
+screen not yet mounted (its unmount detaches that callback): a convention in
+the same file had answered a different question, "mounted yet?", not "left the
+stack?". For "has this screen left the stack", use `is_attached`, and pin it
 with a test that pops the screen first
 (`test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists`
 failed with `is_mounted`).

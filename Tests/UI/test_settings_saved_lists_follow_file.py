@@ -278,8 +278,12 @@ async def test_a_late_advanced_config_save_after_settings_closed_updates_only_th
         await pilot.pause()
         assert not screen.is_attached
         calls: list[str] = []
-        monkeypatch.setattr(screen, "_sync_model_picker", lambda *_a, **_k: calls.append("picker"))
-        monkeypatch.setattr(screen, "_refresh_advanced", lambda *_a, **_k: calls.append("advanced"))
+        monkeypatch.setattr(
+            screen, "_sync_model_picker", lambda *_a, **_k: calls.append("picker")
+        )
+        monkeypatch.setattr(
+            screen, "_refresh_advanced", lambda *_a, **_k: calls.append("advanced")
+        )
         _write({"providers": {"Llama_cpp": ["None", "m-one", "m-late"]}})
 
         screen._adopt_config(load_settings())
