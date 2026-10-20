@@ -17,6 +17,10 @@ replacing any guarded identity.
 from __future__ import annotations
 
 import os
+import sys
+import threading
+from contextlib import contextmanager
+from types import CodeType
 
 import pytest
 
@@ -34,6 +38,7 @@ from Tests.Backup_Recovery.test_participant_lifetimes import (
 )
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules import character_context
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.usefixtures("local_root")]
 
@@ -47,6 +52,44 @@ def _assert_one_handle(observed) -> None:
     assert len(observed["connections"]) == 1
     if os.name != "nt":
         assert observed["helpers"] == 1, observed["helpers"]
+
+
+@contextmanager
+def _loop_checks():
+    """Count the UI-loop owner checks a display check makes, on every thread.
+
+    ``midpoints`` is the scope pair's on-loop ambient check (the probe's one
+    loop handoff from its worker); ``owner_handoffs`` and ``owner_checks``
+    are the batch readers' post-pair handoff and their on-loop owner check
+    (reader provenance plus the display owner key).
+    """
+    readers = character_context._CharacterRefreshReaders
+    pair = character_context.ConsoleCharacterContextController._read_database_scope_metadata_pair
+    midpoint = [
+        item
+        for item in pair.__code__.co_consts
+        if type(item) is CodeType and item.co_name == "validate"
+    ]
+    assert len(midpoint) == 1
+    codes = {
+        midpoint[0]: "midpoints",
+        readers.ambient_on_loop.__code__: "owner_handoffs",
+        readers.ambient_current.__code__: "owner_checks",
+    }
+    stats = dict.fromkeys(codes.values(), 0)
+
+    def observe(frame, event, _argument):
+        name = codes.get(frame.f_code)
+        if name is not None and event == "call":
+            stats[name] += 1
+
+    old_thread, old_main = threading.getprofile(), sys.getprofile()
+    threading.setprofile_all_threads(observe)
+    try:
+        yield stats
+    finally:
+        threading.setprofile_all_threads(old_thread)
+        sys.setprofile(old_main)
 
 
 async def _settled(database, *, run_active: bool):
@@ -113,6 +156,32 @@ async def test_unchanged_display_check_stops_after_its_scope_read(
         assert controller.state is before
         assert observed["pairs"] == 1 and observed["recent"] == 0
         _assert_one_handle(observed)
+    finally:
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_active", [True, False], ids=["active", "idle"])
+async def test_unchanged_display_check_keeps_the_probe_loop_cost(
+    tmp_path, run_active
+):
+    """Folding the reload in adds no UI-loop work to an unchanged check.
+
+    The unchanged check is the common one (about once a second during a
+    run). Like the original probe it makes one on-loop midpoint inside its
+    pair and confirms the ambient scope on the loop after retirement; it
+    makes no reader owner check or extra loop handoff.
+    """
+    database = CharactersRAGDB(tmp_path / "loop-cost.sqlite", "one-helper")
+    try:
+        controller, screen, _ = await _settled(database, run_active=run_active)
+        before = controller.state
+
+        with _loop_checks() as observed:
+            assert await _display(controller, screen) is False
+
+        assert controller.state is before
+        assert observed == {"midpoints": 1, "owner_handoffs": 0, "owner_checks": 0}
     finally:
         database.close()
 

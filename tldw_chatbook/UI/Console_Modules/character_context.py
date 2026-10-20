@@ -1237,9 +1237,19 @@ class ConsoleCharacterContextController:
         return groups, self._load_unavailable_details_sync(service, groups)
 
     def _read_refresh_scope_sync(
-        self, readers: _CharacterRefreshReaders
+        self,
+        readers: _CharacterRefreshReaders,
+        *,
+        settled: ConsoleCharacterScopeFingerprint | None = None,
     ) -> _ConsoleCharacterScopeSnapshot:
-        """Run all original pair reads and post-pair ambient checks fresh."""
+        """Run all original pair reads and post-pair ambient checks fresh.
+
+        A display check's first read passes the fingerprint the display shows
+        as ``settled`` (TASK-33620.15.6). A settled pair that still matches it
+        returns before the full post-pair owner check: nothing is published
+        from it, and the caller confirms the ambient scope on the loop, as
+        after the original probe.
+        """
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
             readers.require_current()
             try:
@@ -1269,10 +1279,8 @@ class ConsoleCharacterContextController:
                 continue
             if pair[0] != pair[1]:
                 continue
-            if not readers.ambient_on_loop():
-                raise _ConsoleCharacterScopeChanged("Character display owner changed")
             authority, revision = pair[1]
-            return _ConsoleCharacterScopeSnapshot(
+            snapshot = _ConsoleCharacterScopeSnapshot(
                 readers.database,
                 ConsoleCharacterScopeFingerprint(
                     database_identity=id(readers.database),
@@ -1287,6 +1295,11 @@ class ConsoleCharacterContextController:
                     open_conversation_id=readers.conversation,
                 ),
             )
+            if settled is not None and snapshot.fingerprint == settled:
+                return snapshot
+            if not readers.ambient_on_loop():
+                raise _ConsoleCharacterScopeChanged("Character display owner changed")
+            return snapshot
         raise _ConsoleCharacterScopeChanged("Character context scope did not settle")
 
     def _read_recent_scope_sync(
@@ -1294,7 +1307,9 @@ class ConsoleCharacterContextController:
     ) -> _CharacterRecentRead:
         """Only the inner pair/groups/pair share this existing finite interval."""
         readers.require_current()
-        snapshot = readers.scope.__func__(readers.controller, readers)
+        snapshot = readers.scope.__func__(
+            readers.controller, readers, settled=readers.unchanged_from
+        )
         if (
             readers.unchanged_from is not None
             and snapshot.fingerprint == readers.unchanged_from
@@ -1350,9 +1365,12 @@ class ConsoleCharacterContextController:
         that read still matches ``settled``, and otherwise loads and fences
         as a refresh does. Every original check stays inside the callback
         (``_await_database_work`` admission and retirement, the on-loop
-        ambient midpoint and post-pair checks, reader provenance). Nothing is
-        published until the callback has retired; a reload then advances
-        the generation, as ``_begin`` would, and publishes its result.
+        ambient midpoint and post-pair checks, reader provenance). An
+        unchanged check keeps the probe's cost: one on-loop midpoint inside
+        the pair, then the ambient scope confirmed on the loop after
+        retirement, as ``_capture_scope`` does. Nothing is published until
+        the callback has retired; a reload then advances the generation, as
+        ``_begin`` would, and publishes its result.
 
         Args:
             presentation: The original display-owner closure.
@@ -1367,10 +1385,11 @@ class ConsoleCharacterContextController:
             changed during the read gets no publication, and a scope that
             moved again during the load is reloaded by the original
             ``refresh``. None when the check reached no decision for a
-            current owner (no stock readers, an ambient change before the
-            read, a first scope read that did not settle or failed, a refresh
-            dispatch customized during the read): the caller then takes the
-            original probe-then-refresh route, which owns those outcomes.
+            current owner (no stock readers, an unchanged read whose ambient
+            scope or displayed fingerprint changed by its retirement, a first
+            scope read that did not settle or failed, a refresh dispatch
+            customized during the read): the caller then takes the original
+            probe-then-refresh route, which owns those outcomes.
 
         Raises:
             BaseException: An original ambient accessor failure, unchanged.
@@ -1385,11 +1404,6 @@ class ConsoleCharacterContextController:
             readers.require_current()
             return readers.batch.__func__(readers.controller, readers)
 
-        try:
-            if not readers.ambient_current():
-                return None
-        except _ConsoleCharacterReaderChanged:
-            return None
         ambient_error = None
         try:
             result = await self._await_database_work(readers.database, read_current)
@@ -1419,8 +1433,13 @@ class ConsoleCharacterContextController:
         if ambient_error is not None:
             raise ambient_error
         if result.unchanged:
-            # As after the original probe: a display invalidated meanwhile
-            # no longer shows ``settled`` and reloads by the original route.
+            # As after the original probe: the ambient scope is confirmed on
+            # the loop, and a display invalidated meanwhile no longer shows
+            # ``settled``; either change takes the original route.
+            if not self._ambient_scope_matches(
+                readers.database, readers.current, readers.conversation
+            ):
+                return None
             return False if self.state.scope_fingerprint == settled else None
         try:
             if not readers.ambient_current():
