@@ -3,11 +3,11 @@ id: TASK-34751
 title: >-
   Study flashcards: one writer for the card list, and card/deck text shown
   literally
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 16:28'
-updated_date: '2026-10-10 16:35'
+updated_date: '2026-10-19 17:30'
 labels:
   - study
   - ui
@@ -20,7 +20,9 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Study > Flashcards rebuilds #card-list from several writers that can be in flight at once: refresh_decks restores or picks the deck through Select.value, which posts Select.Changed, and StudyWindow.handle_deck_select_changed rebuilds the list in a study-refresh-cards worker while the caller (create_deck, delete_selected_deck, initialize_view) rebuilds it too; Create/Delete/Move Card and the Refresh button are further writers. Each rebuild cleared the list and appended row by row with an await per row, so overlapping rebuilds interleaved. Evidence on dev 75159f8843: a 4-card deck re-listed through initialize_view showed 7 rows out of order; two overlapping refresh_cards calls showed 8 rows; the investigation also saw two 'No cards in this deck.' rows on the create path. The same interleave makes the gated UI-lane contract test test_real_service_create_deck_select_deck_and_add_card_in_local_mode flaky on a loaded runner (assert [] == ['No cards in this deck.'] read between the deck switch's clear and append) and the still-running worker then raises MountError in run_test teardown, which blocks unrelated PRs in the merge queue. Separately, card fronts/backs and deck names are user text but reach Label/Static/Select as Textual markup: the '[new]' queue state on every row is swallowed as a style tag, and a front such as 'What does [/b] do?' raises MarkupError in the compositor, which exits the app (reproduced in a Pilot run: Refresh button -> row mounted -> reflow -> MarkupError); a deck name with '[/b]' raises from create_deck itself.
+Study > Flashcards rebuilt #card-list from several writers that could be in flight at once (create/delete/move card, Refresh, initialize_view, and the deck switch's own Select.Changed rebuild worker), each clearing the list and appending row by row, so overlapping rebuilds interleaved: on dev 75159f8843 a 4-card deck re-listed showed 7 rows, two overlapping refreshes showed 8. The same race made the gated UI-lane contract test test_real_service_create_deck_select_deck_and_add_card_in_local_mode flaky on a loaded runner, and a rebuild still running when the test app shut down raised MountError at teardown, blocking unrelated PRs in the merge queue. Separately, card fronts/backs, deck and quiz names and workspace names are user text but reached Label/Static/Select as Textual markup: '[new]' vanished as a style tag and '[/b]' raised MarkupError, which exits the app.
+
+Since this task was filed, dev took most of that in PR #3057 (commits tagged TASK-33007: one #card-list rebuild at a time behind a lock, Flashcards actions that end quietly when the sub-view is swapped out mid-await, literal card rows, review panel, deck/quiz pickers, dashboard and quiz session), and dev's notification helper now passes markup=False. Still broken on dev ce4aa4a231 (2026-10-19): the contract test still flakes (the deck switch's rebuild can queue behind create_card's and replace the row the test waits to see painted, or resume after the app quits); a card-list rebuild resuming while the app quits raises MountError from its worker; and a workspace name shaped like markup crashes the app when the Study scope banner first paints.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -29,37 +31,79 @@ Study > Flashcards rebuilds #card-list from several writers that can be in fligh
 - [x] #2 The gated contract test test_real_service_create_deck_select_deck_and_add_card_in_local_mode no longer flakes: it passes repeatedly, including with extra event-loop turns injected before its card-list assert and with create_deck's own rebuild slowed
 - [x] #3 A card-list rebuild still in flight when the list leaves the app (view switch, app shutdown) stops without writing, so no MountError at teardown
 - [x] #4 Card fronts/backs, deck names, quiz names/questions/answers and workspace names containing markup-like brackets render literally everywhere Study shows them (card and question rows, review panel, status lines, deck/quiz pickers, dashboard, quiz session panel, the deck-created toast) and never raise MarkupError
-- [x] #5 Each new or changed test fails on origin/dev for the stated reason and passes with the fix
+- [x] #5 Each new or changed test fails on origin/dev for the stated reason and passes with the fix; a test that pins behaviour dev already has fails under the mutation it guards against
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Reproduce on origin/dev with a real-app Pilot regression file: initialize_view re-list (7 rows for 4 cards), two overlapping refresh_cards (8 rows), markup-like card front / deck name (MarkupError).
-2. Single-writer rule in StudyFlashcardsController.refresh_cards: each call claims a generation; after every await a superseded or detached rebuild stops without writing; rows are built first and mounted with one extend. Keep callers' explicit refresh_cards (they must work even when no Select.Changed fires) -- the guard makes the redundant Select.Changed rebuild harmless instead of relying on knowing which events fire.
-3. Contract test waits for Study workers to settle before reading #card-list (the deck switch's rebuild is legitimately still running when create_deck returns).
-4. Render user text literally: markup=False on card rows and the review/quiz Statics that show user text; deck/quiz picker prompts passed as Content.
-5. Verify: red on dev / green on branch per test; contract test repeated and under induced delay; other Study files vs dev by test id; module-size ratchet; preflight; live tmux run.
+Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
+1. Re-baseline on dev: keep only what is still red there; drop this branch's own card-list writer rule, the notification-sink change and the literal-text edits dev now carries.
+2. Contract test: read #card-list only once no study-* worker is pending (checked after a pause, and again after a second), after the first load, the deck switch and create_card.
+3. Shutdown: _quiet_when_swapped_out ends an action quietly on NoMatches or MountError once the Study window has left the app (App._exit set); a MountError while attached still raises.
+4. Scope banner: the workspace name Static renders without markup.
+5. Pin the deck/quiz pickers' type-to-search over markup-shaped names (rich Text prompts; Content prompts are not searchable).
+6. Verify: red on dev / green on branch per test; an induced-ordering sweep of the contract test; Study test files compared with dev by test id; preflight; live tmux run.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Single writer for `#card-list`.** `refresh_cards` is the one function that writes the list, and the most recent call owns it: each call claims a generation (`_claim_card_list`), and after every `await` (clear, fetch, mount) a call that a newer claim superseded -- or whose list left the app (`is_attached`: a sub-view switch, or `_exit` at shutdown) -- stops without writing (`_owns_card_list`). `handle_scope_changed`, which empties the list, claims too. Rows are built first and mounted with one `extend` (one checkpoint instead of one per row).
+**Scope after the rebase (2026-10-19, onto dev ce4aa4a231).** PR #3057 had landed most of the original scope while this PR waited, under commits tagged TASK-33007: one `#card-list` rebuild at a time (`_refresh_cards_lock`), `_quiet_when_swapped_out` on the Flashcards actions, literal card/question rows, review and quiz-attempt Statics, dashboard and quiz session, deck/quiz picker prompts as rich `Text`, and a picked move target that stays picked. Dev's notification helper and dispatch fallback now pass `markup=False`, and the Scheduling `notify` fakes take `markup`. This branch's own versions of those (a generation-claim single writer with one `extend`, its `markup=False` edits, the sink change) did not survive the rebase. What remains is what was still red on dev. AC #1 is met by dev's lock; the lock serialises rebuilds, so the last one to run writes the whole list.
 
-Rule chosen over "callers stop calling `refresh_cards` when a `Select.Changed` rebuild will run": whether `Select.Changed` fires depends on Textual internals (`set_options` resets the value, so a restored selection posts it; an empty deck list may not), and the list has other writers no worker group can serialise (Create/Delete/Move Card, Refresh, the deck-switch worker, `initialize_view`). Guarding the writer covers every interleave; the price is one redundant fetch per programmatic deck switch, and `await create_deck()` no longer implies the list is final -- the deck switch's own rebuild may still be running.
+**1. Contract test (AC #2).** `_wait_for_study_workers` pauses, then requires no pending `study-*` worker across two pauses. `_open_flashcards` waits for the view's first load. The test reads `#card-list` only after the deck switch's rebuild has finished, and again after create_card's. Dev's lock serialises rebuilds but does not order them: when create_card's rebuild takes the lock before the deck switch's worker reaches it, the worker runs last and replaces the row the test is waiting to see painted.
 
-**Contract test.** `test_real_service_create_deck_select_deck_and_add_card_in_local_mode` now waits until no `study-*` worker is pending before reading `#card-list`. The code fix alone does not close the flake: in an induced-delay harness (0/1/2/4/8/16/32 `asyncio.sleep(0)` between `create_deck()` and the assert, with and without `create_deck`'s own rebuild slowed 50 ms), the original assert failed on dev at 0-4 yields with exactly the CI signature (`[] == ['No cards in this deck.']` + `WorkerFailed(MountError)` in teardown) and still read the legitimate in-flight rebuild at 1-4 yields on the fix (no MountError). With the wait, all 28 cases pass on both, and the fixed contract test passed 9/9 repeated runs.
+**2. Shutdown (AC #3).** Once `App._exit` is set, `is_attached` is False for every widget, so a rebuild resuming after its fetch appended into a list "not mounted" and raised `MountError` from its worker. `_quiet_when_swapped_out` now ends quietly on `NoMatches` or `MountError` once the window is detached, and still raises a `MountError` while it is attached. A view switch was already quiet on dev: mounting into a pruned list is a no-op, and `NoMatches` after a swap is handled.
 
-**Literal user text.** Card rows, question rows and the Study Statics that show user text (`#review-status/-front/-back/-next-intervals`, the quiz attempt status/question/history, the workspace-name banner, the dashboard's scope/recent decks/recent quizzes/source status, the quiz session panel) are `markup=False`; deck and quiz picker prompts are `Content`; the dashboard's Resume label is `Content`. The queue state (`[new]`) now shows on every row.
+**3. Scope banner (AC #4).** `#study-scope-workspace-name` is `markup=False`. `_sync_scope_banner`'s own `except Exception` swallowed the `MarkupError` from `update()`, so the crash came later, when the compositor first painted the banner. No in-app path enters workspace scope on dev (`enter_workspace_scope` has no caller outside tests), so this is verified in Pilot only.
 
-**Deviation: the notification sink.** The live run on the branch found one more crash after every widget above was fixed: `LocalStudyService.create_deck` raises a "Local study deck created: ..." toast through `NotificationDispatchService`, and `App.notify` defaults to markup, so a deck named `bd9st Bio [/b] deck` exited the app the moment it was created. No Pilot test could see it: `run_test` disables notifications unless `notifications=True`, and the real-service builder leaves the dispatcher unwired. Fixed at the sink (`Utils/NotificationHelper.show_notification` and the dispatch fallback pass `markup=False`); dispatched titles/messages are composed from data everywhere (study, quizzes, watchlists, reminders, research, media, evaluations) and none carries intended markup. The toast text itself still repeats its title ("Local study deck created: Local study deck created: ...") -- untouched.
+**4. Picker pin (AC #4).** Typing a first letter in the open deck or quiz picker selects a markup-named entry, and its label paints literally. Textual 8.2.8's `SelectOverlay._find_search_match` reads only `Text`/`str` prompts, so `Content` prompts render correctly but cannot be found by typing.
 
-**Tests.** New `Tests/UI/test_study_card_list_single_writer.py` (4: re-list 7->4 rows, two overlapping refreshes 8->4, slowed create-deck 2->1 empty rows, rebuild in flight when the view switches -> `NoMatches` on dev) -- added to the UI PR gate census (16.5 s pytest / 19.8 s wall; `MINIMUM_FILES` 164). New `Tests/UI/test_study_user_text_literal.py` (5, all `MarkupError` on dev; outside the lane at ~22-27 s). Updated `Tests/Subscriptions/test_notification_dispatch_service.py` (+1) and `Tests/Scheduling/test_reminder_handler.py` (fake `notify` takes `markup`, asserts it is off). Mutation checks: dropping the post-fetch ownership check re-fails the slowed create-deck test; dropping `is_attached` re-fails the in-flight test; re-enabling markup on `#review-next-intervals` re-fails the surfaces test.
+**Red/green, on dev ce4aa4a231 vs this branch:**
+- `test_study_flashcards_quit_mid_rebuild.py`: RED on dev with `WorkerFailed: MountError("Can't mount widget(s) before ListView(id='card-list', ...) is mounted")`; GREEN.
+- `test_workspace_name_with_markup_brackets_paints_literally_in_the_scope_banner`: RED on dev with `MarkupError: closing tag '[/b]' does not match any open tag`, raised from the compositor; GREEN.
+- `test_deck_and_quiz_pickers_find_a_markup_named_entry_by_typing` pins dev's `Text` prompts, so it is GREEN on dev. It fails with the deck prompts built as `Content` ("typing 'z' to pick the Zebra deck") and with the quiz prompts as `Content` ("typing 'g' to pick the Graph quiz"). Both mutations were restored by Edit.
+- Contract test under loaded orderings: a scratch probe (deleted) ran the test unchanged under 17 orderings: the deck switch's rebuild started 0.01-0.4 s late or 1-16 loop turns late, every card fetch slowed 50 ms (create_deck's included), and extra loop turns added after each of the test's waits, before its asserts. Dev's version failed 6/17 with the CI signatures: `WorkerFailed(MountError)` at teardown (4 occurrences), "timed out ... the card row to be painted" (2), `assert [] == ['No cards in this deck.']` (1), and a row region of zero, meaning the row was replaced (1). The branch passed 17/17. An earlier 7-case sweep (wall-time delays only) gave the same split: dev 4/7 failed, branch 7/7 passed.
 
-**Verified** against dev `75159f8843` on 2026-10-10: 13 Study-related, 15 notification-sink and 7 other Study-referencing test files show identical outcomes by test id on dev and branch (the reds are environmental `RecoveryRequired: raw_source_selection_changed` and pre-existing dev failures). `./scripts/preflight.sh` passes; the Textual worker contract reports no new post-await lookups. Live (isolated profile, null keyring, 160x45): deck `bd9st Bio [/b] deck` created with its toast shown literally, cards `What does [/b] do? [new]` / `bd9st Q2 [x]` / `bd9st Q3` listed once each after three rapid Refresh presses and a Dashboard -> Flashcards re-list, review front/back literal, zero unhandled exceptions in the profile log.
+**Study tests compared with dev by test id** (one file per command, host load 60-100 on 14 cores):
+- `test_study_flashcards_real_service_contract.py`: 2/2 on both.
+- `test_study_controls_geometry.py`: 6/6 on both. Dev also had one teardown error ("Native app workers remain uncertain; config retirement refused" plus a TimeoutError). The branch did not; this is not claimed as a fix.
+- `test_study_flashcards_screen.py`: 29 identical reds on both, all environmental `RecoveryRequired`. The branch had one more red, `test_a_picked_move_target_stays_picked_and_enables_move` (Move still disabled after one pause, load 97); it then passed 3/3 on the branch and 3/3 on dev.
+- `test_study_screen.py` (11 reds), `test_study_dashboard.py` (7 reds + 1 error) and `test_study_quizzes_screen.py` (15 reds): identical by test id on both, all `RecoveryRequired`.
+- `Tests/UI/test_mount_io_off_pump.py`: 10 errors on both, identical by test id, all `RecoveryRequired`.
+- Architecture tests (`test_study_handler_service_keywords`, `test_backwards_select_option_guard`, `test_tier2_evals_media_study_guards`): all pass on both.
+- New files on the branch: `test_study_user_text_literal.py` 2/2 in 27.9 s of pytest at load 66; `test_study_flashcards_quit_mid_rebuild.py` 1/1 in 25.3 s at load 70.
 
-**Follow-ups not in scope.** `quizzes_handler.refresh_questions` has the same clear-then-append-per-row shape as the old `refresh_cards`; a move-target value set programmatically while its dropdown was open read back as blank, plausibly via `handle_move_target_changed` -> `_sync_move_target_options` -> `set_options` resetting it (seen once while writing the deck-name test; not reproduced by hand, not investigated).
+**Census.** Both new files are in `scripts/ui_pr_gate_census.txt`. `MINIMUM_FILES` goes from dev's 326 to 328.
 
-Files: `tldw_chatbook/UI/Study_Modules/flashcards_handler.py`, `UI/Study_Modules/quizzes_handler.py`, `UI/Study_Window.py`, `Widgets/Study/study_dashboard.py`, `Widgets/Study/quiz_session_widget.py`, `Utils/NotificationHelper.py`, `Notifications/notification_dispatch_service.py`, the four test files above, `Tests/UI/test_study_flashcards_real_service_contract.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+**Live** (2026-10-19 17:28-17:39, `launch.sh` at 160x45, isolated profile, null keyring; evidence in `uxrev/evidence/bd5/R64/final/`):
+- Created a deck named `r64f Bio [/b] [new] deck`. The picker and the toast showed it literally.
+- Added cards `What does [/b] do?`, `r64 Q2 [x]` (its back is `[@click=app.quit]x[/]`) and `r64 Q3 [bold]plain?`. Each was listed once, with `[new]` shown.
+- Pressed Refresh six times in a row; still 3 rows.
+- Pressed Refresh twice, switched to Dashboard at once, then back to Flashcards; still 3 rows.
+- Created `Alpha r64 deck`, opened the deck picker and typed `r` then Enter. The `[/b]` deck was selected, with its label literal and its 3 cards listed.
+- Review showed the front and back literally.
+- Pressed Refresh twice and quit at once. The profile log has 0 lines matching `unhandled_exception|MarkupError|MountError|WorkerFailed|Traceback`.
+
+**The 2026-10-10 review's items:**
+- IMPORTANT 1 (the Scheduling `notify` fakes) and IMPORTANT 2 (`Content` prompts break type-to-search) are on dev already. The second is pinned here.
+- MINOR 3 (`is_attached` during teardown): the guard now runs after the exception is raised. A mount into a pruning list is a no-op, and `is_attached` turns False exactly when `App._exit` is set, which is the case the guard handles.
+- MINOR 4 (callers writing the review panel after `refresh_cards` stopped): each caller is itself wrapped in `_quiet_when_swapped_out`. The overwritten "Deck created." status is TASK-34755.
+- MINOR 6: the worker wait pauses before its first check, and the quit test holds the fetch on Events.
+- MINOR 7: follow-ups TASK-34752 (the quizzes question list), TASK-34753 (doubled toast title) and TASK-34755 (Deck-created status) are filed. Their ids were checked as unused on every ref and in every worktree. The move-target draft (34754) was dropped because dev pins that behaviour.
+
+**Out of scope.** `#review-next-intervals` stays markup-on. It shows scheduler interval strings, not user text.
+
+**Docs.** Study has no User Guide page, and the visible change is a crash fix, so no guide edit was made. A new lesson in `backlog/docs/lessons-backlog-hygiene.md` covers this overlap: a flaky gated test gets fixed inside every PR it blocks, so search dev by code, not by task id.
+
+**Files:**
+- `tldw_chatbook/UI/Study_Modules/flashcards_handler.py`
+- `tldw_chatbook/UI/Study_Window.py`
+- `Tests/UI/test_study_flashcards_real_service_contract.py`
+- `Tests/UI/test_study_user_text_literal.py` (new)
+- `Tests/UI/test_study_flashcards_quit_mid_rebuild.py` (new)
+- `scripts/ui_pr_gate_census.txt`
+- `scripts/check_ui_pr_gate_census.py`
+- `backlog/docs/lessons-backlog-hygiene.md`
+- `backlog/tasks/task-34752`, `task-34753`, `task-34755`
 <!-- SECTION:NOTES:END -->
