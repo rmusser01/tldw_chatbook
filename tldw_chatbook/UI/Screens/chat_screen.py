@@ -17527,7 +17527,6 @@ class ChatScreen(BaseAppScreen):
         ``post_message`` was silently dropped and navigation was dead.
         """
         from ..Console_Modules import config_sync  # Off the UI-ready path.
-
         config_sync.begin_console_sync(self)  # TASK-33620.15.1 cadence.
         if _console_screen_is_torn_down(self):
             # The re-arm below is skipped for the same reason; clearing the
@@ -17890,7 +17889,6 @@ class ChatScreen(BaseAppScreen):
 
         async def _poll_transcript() -> None:
             from ..Console_Modules import config_sync  # The cadence's poll mark.
-
             # TASK-34789: work ending mid-paint wrote rows this paint missed,
             # and nothing else repaints a finished turn (starters only ask for
             # this poll, a no-op while it runs). Only a paint begun with no live
