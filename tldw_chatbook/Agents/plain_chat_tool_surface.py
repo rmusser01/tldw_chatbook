@@ -303,11 +303,16 @@ def provider_names(provider: Any | None) -> tuple[str, ...]:
 def light_surface_local_names() -> tuple[str, ...]:
     """Local-provider tools the light surface can carry, in one list.
 
-    The safe set's local member(s) plus ``LIGHT_SURFACE_LOCAL_OPT_INS``; the
-    local provider says which of these it can describe without being
-    composed, and which gate each follows.
+    The safe set's local member(s) -- every name that is not a built-in --
+    plus ``LIGHT_SURFACE_LOCAL_OPT_INS``; the local provider says how it
+    describes each one without being composed, and which gate each follows,
+    and refuses a name it cannot (review round 2, R2-3).
     """
-    return tuple(dict.fromkeys((*LIGHT_SURFACE_TOOL_NAMES, *LIGHT_SURFACE_LOCAL_OPT_INS)))
+    from tldw_chatbook.Agents.tool_catalog import ALWAYS_ON_BUILTIN_NAMES, _GATEABLE_BUILTINS
+
+    builtin = {*ALWAYS_ON_BUILTIN_NAMES, *(entry.tool_name for entry in _GATEABLE_BUILTINS)}
+    names = dict.fromkeys((*LIGHT_SURFACE_TOOL_NAMES, *LIGHT_SURFACE_LOCAL_OPT_INS))
+    return tuple(name for name in names if name not in builtin)
 
 
 def light_surface_tool_schemas(
@@ -408,12 +413,11 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
         local_opt_in_gates,
     )
     from tldw_chatbook.Agents.local_tool_provider import (
-        ASK_USER_DEFAULT_ENABLED,
-        ASK_USER_GATE_KEY,
         CHARACTER_TOOLS_DEFAULT_ENABLED,
         CHARACTER_TOOLS_GATE_KEY,
+        light_surface_local_gate,
     )
-    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+    from tldw_chatbook.Agents.tool_catalog import ALWAYS_ON_BUILTIN_NAMES, _GATEABLE_BUILTINS
     from tldw_chatbook.config import coerce_bool_setting
 
     tools = _section(app_config, "tools")
@@ -423,25 +427,43 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
         return coerce_bool_setting(section.get(key, default), default)
 
     local_on = flag(console, "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED)
-    ask_on = local_on and flag(tools, ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED)
+    builtin_gates = {entry.tool_name: entry.gate_key for entry in _GATEABLE_BUILTINS}
+
+    def member_on(name: str) -> bool:
+        # Each member follows the gate the send obeys (review round 2,
+        # R2-3): an always-on built-in, a gated built-in's own switch, or a
+        # local tool's switch behind the local master. A name none of these
+        # knows raises rather than being named as on.
+        if name in ALWAYS_ON_BUILTIN_NAMES:
+            return True
+        if name in builtin_gates:
+            return flag(tools, builtin_gates[name], False)
+        gate_key, default = light_surface_local_gate(name)
+        return local_on and flag(tools, gate_key, default)
+
     light_names = tuple(
-        LIGHT_SURFACE_TOOL_TITLES[name]
-        for name in LIGHT_SURFACE_TOOL_NAMES
-        if name != "ask_user" or ask_on
+        LIGHT_SURFACE_TOOL_TITLES[name] for name in LIGHT_SURFACE_TOOL_NAMES if member_on(name)
     )
     switched_on = [
-        entry.title for entry in _GATEABLE_BUILTINS if flag(tools, entry.gate_key, False)
+        entry.title
+        for entry in _GATEABLE_BUILTINS
+        if entry.tool_name not in LIGHT_SURFACE_TOOL_NAMES and flag(tools, entry.gate_key, False)
     ]
     # The local opt-ins come from the one list, named by their own gate rows
     # ("Deep web research (web_deep_search)" -> "Deep web research"), read
-    # from the config-free gate table so this stays pure.
+    # from the config-free gate table so this stays pure. An opt-in with no
+    # gate row raises (R2-3) instead of being sent unnamed.
     gates = local_opt_in_gates()
     opt_ins_on = [
         name
         for name in LIGHT_SURFACE_LOCAL_OPT_INS
-        if name in gates and local_on and flag(tools, gates[name][0], False)
+        if flag(tools, gates[name][0], False) and local_on
     ]
-    switched_on.extend(gates[name][1].split(" (", 1)[0] for name in opt_ins_on)
+    switched_on.extend(
+        gates[name][1].split(" (", 1)[0]
+        for name in opt_ins_on
+        if name not in LIGHT_SURFACE_TOOL_NAMES
+    )
     return ToolSurfaceSummary(
         full_agent=full_agent_tools_enabled(tools),
         light_names=light_names,

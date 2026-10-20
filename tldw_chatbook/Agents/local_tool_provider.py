@@ -5655,6 +5655,39 @@ def _ask_user_spec(ask_user: AskUserCallback) -> LocalToolSpec:
     )
 
 
+def _providerless_local_tools() -> dict[
+    str, tuple[str, bool, Callable[[], LocalToolSpec]]
+]:
+    """``{name: (gate key, gate default, spec builder)}`` for the local tools
+    the light surface can describe without composing a provider."""
+    return {
+        "ask_user": (
+            ASK_USER_GATE_KEY,
+            ASK_USER_DEFAULT_ENABLED,
+            lambda: _ask_user_spec(lambda _questions: None),
+        ),
+        "web_deep_search": (WEB_DEEP_SEARCH_GATE_KEY, False, _web_deep_search_spec),
+    }
+
+
+def light_surface_local_gate(name: str) -> tuple[str, bool]:
+    """The ``[tools]`` gate key and default of light-surface local tool ``name``.
+
+    Setup's Summary asks this, so it reads each local member's gate from the
+    same table the meter counts it from (TASK-34100.5.3 review round 2,
+    R2-3).
+
+    Raises:
+        ValueError: ``name`` is not a local tool the light surface can
+            describe -- a name added to the light set without a spec here
+            would be sent but neither counted nor named, so it fails loudly.
+    """
+    known = _providerless_local_tools().get(name)
+    if known is None:
+        raise ValueError(f"{name!r} is not a light-surface local tool")
+    return known[0], known[1]
+
+
 def light_surface_local_schemas(names: Sequence[str]) -> tuple[ToolSchema, ...]:
     """The light-surface local tools among ``names``, as schemas.
 
@@ -5673,31 +5706,27 @@ def light_surface_local_schemas(names: Sequence[str]) -> tuple[ToolSchema, ...]:
 
     Returns:
         One schema per named tool that is on, in ``names`` order.
+
+    Raises:
+        ValueError: A name this module cannot describe (review round 2,
+            R2-3: it used to be skipped, so the meter silently undercounted).
     """
     from tldw_chatbook.Agents.builtin_tool_gate import (
         LOCAL_TOOLS_DEFAULT_ENABLED,
         LOCAL_TOOLS_MASTER_KEY,
     )
 
+    providerless = _providerless_local_tools()
+    for name in names:
+        light_surface_local_gate(name)  # every named tool must be known
     if not coerce_bool_setting(
         get_cli_setting("console", LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED),
         LOCAL_TOOLS_DEFAULT_ENABLED,
     ):
         return ()
-    providerless: dict[str, tuple[str, bool, Callable[[], LocalToolSpec]]] = {
-        "ask_user": (
-            ASK_USER_GATE_KEY,
-            ASK_USER_DEFAULT_ENABLED,
-            lambda: _ask_user_spec(lambda _questions: None),
-        ),
-        "web_deep_search": (WEB_DEEP_SEARCH_GATE_KEY, False, _web_deep_search_spec),
-    }
     specs: list[LocalToolSpec] = []
     for name in names:
-        known = providerless.get(name)
-        if known is None:
-            continue
-        gate_key, default, build = known
+        gate_key, default, build = providerless[name]
         if coerce_bool_setting(get_cli_setting("tools", gate_key, default), default):
             specs.append(build())
     return tuple(
