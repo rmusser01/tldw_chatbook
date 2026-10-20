@@ -5049,8 +5049,8 @@ class ConsoleTranscript(VerticalScroll):
         """Read the turn-file-card presentation switch once per render pass.
 
         task-32804.6: a per-row read cost ~5 ms, so row passes thread this bool;
-        `get_cli_setting` here is a test's patch point. TASK-35645: a read that
-        would wait out another thread's config rebuild keeps the last value.
+        `get_cli_setting` here is a test's patch point. TASK-35645: while another
+        thread's rebuild holds either cold config cache, keep the last value.
         """
         if not config_read_would_wait():
             self._turn_file_cards_shown = bool(get_cli_setting("console", "turn_file_cards", True))
