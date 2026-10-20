@@ -615,7 +615,7 @@ def test_the_meter_counts_the_agent_surface_while_the_conversations_children_run
 # -- review round 2: the meter sizes the tools against the request itself ----
 
 
-def _gpt4_8k():
+def _gpt4_8k(window: int = 8_192):
     """gpt-4's shape: native tools, a verified 8,192-token window and 4,096
     tokens reserved for the reply (the live V2-1 model)."""
     from Tests.Chat.test_console_agent_bridge import _test_resolution
@@ -625,7 +625,7 @@ def _gpt4_8k():
         execution_key="openai",
         model="gpt-4",
         max_tokens=4096,
-        context_window=ContextWindowResolution(8_192, "model catalog", True),
+        context_window=ContextWindowResolution(window, "model catalog", True),
     )
 
 
@@ -634,26 +634,30 @@ def _words(count: int) -> str:
 
 
 @pytest.mark.parametrize(
-    ("full", "system_words", "user_words", "shape"),
+    ("full", "window", "system_words", "user_words", "shape"),
     [
-        (True, 0, 5, "direct"),
-        (True, 0, 600, "discovery"),
-        (True, 0, 1500, "inbox-only"),
-        (False, 0, 5, "light"),
-        (False, 0, 3700, "none"),
-        (False, 3700, 5, "none"),
+        # Planned within the gateway's own ceiling (window - reply reserve -
+        # safety margin: 3,584 tokens on 8k), so the full surface's direct
+        # set needs a larger window than gpt-4's.
+        (True, 32_768, 0, 5, "direct"),
+        (True, 8_192, 0, 5, "discovery"),
+        (True, 8_192, 0, 600, "inbox-only"),
+        (False, 8_192, 0, 5, "light"),
+        # Under the 3,584-token ceiling alone, over it beside the light set.
+        (False, 8_192, 0, 3300, "none"),
+        (False, 8_192, 3300, 5, "none"),
     ],
     ids=[
+        "full-short-32k",
         "full-short",
         "full-medium",
-        "full-long",
         "light-short",
         "light-long-message",
         "light-long-session-prompt",
     ],
 )
 def test_the_preflight_counts_what_the_send_carries_for_this_conversation(
-    tmp_path, full, system_words, user_words, shape
+    tmp_path, full, window, system_words, user_words, shape
 ):
     """Review round 2 (V2-1, major; R2-1): the meter re-planned the tools
     against a one-row stand-in request, so it counted the surface that fits
@@ -677,7 +681,10 @@ def test_the_preflight_counts_what_the_send_carries_for_this_conversation(
 
     metered = _row_names(
         _preflight_tools(
-            bridge, _gpt4_8k(), session_id=session.id, messages=[*system, *request]
+            bridge,
+            _gpt4_8k(window),
+            session_id=session.id,
+            messages=[*system, *request],
         )
     )
     # A light send composes the real ``ask_user`` schema, as production does
@@ -689,7 +696,7 @@ def test_the_preflight_counts_what_the_send_carries_for_this_conversation(
         bridge,
         session,
         assistant_id,
-        _gpt4_8k(),
+        _gpt4_8k(window),
         agent_messages=request,
         session_system_prompt=session_prompt,
         **light_provider,
@@ -741,3 +748,52 @@ def test_a_first_message_that_fits_without_the_tools_is_not_refused(tmp_path):
     )
 
     assert verdicts == [None]
+
+
+def test_a_first_message_in_the_gateways_safety_margin_goes_out_without_tools(
+    tmp_path,
+):
+    """Review round 2 (R2-1's residual band; V2-2's cause). The planner kept
+    a tool set whenever the request fit ``window - reply reserve``, but the
+    gateway refuses anything over ``window - reply reserve - safety margin``
+    (``resolve_request_capacity``: at least 512 tokens). A first message
+    whose request fit tool-less, but not beside the tools inside that margin,
+    was refused before commit; with Full agent tools on an 8k model the same
+    gap failed sends outright ("Mandatory Console request material exceeds
+    the effective input ceiling (4033 > 3584)"). The planner now plans within
+    the gateway's own ceiling, so the tools are dropped and the message
+    goes out."""
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    resolution = _test_resolution(
+        model="qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        max_tokens=4096,
+        context_window=ContextWindowResolution(8_192, "server metadata", True),
+    )
+    prepare = ConsoleProviderGateway(environ={}).prepare_chat_request
+    # ~3,150 tokens: under the gateway's 3,584-token ceiling alone, over it
+    # beside the ~490-token light set, and under the planner's old
+    # 4,096-token test either way.
+    message = [{"role": "user", "content": _words(3150)}]
+    assert not prepare(resolution, message, apply_safety_window=False).known_overflow
+    controller = ConsoleChatController(store=bridge._store, provider_gateway=None)
+    controller._agent_bridge = bridge
+    verdicts = []
+
+    controller._assess_request_capacity_only(
+        session_id=session.id,
+        owner=SimpleNamespace(context_policy_overrides=None),
+        resolution=resolution,
+        provider_messages=message,
+        prepare=prepare,
+        agent_tools_enabled=True,
+        assessment_sink=lambda hold, decision, alert: verdicts.append(alert),
+    )
+
+    assert verdicts == [None]
+    assert bridge.preview_tool_schemas(
+        resolution, session_id=session.id, messages=message
+    ) == []
