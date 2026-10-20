@@ -1507,6 +1507,13 @@ class ArtifactAcquisitionService:
             # metadata (the fetch-state sidecar) is written under
             # ``stage.state`` -- a sibling of ``payload``, never
             # promoted -- see ``_fetch_sidecar_path``.
+            #
+            # Recorded as touched BEFORE the stage call: that native hop
+            # cannot be interrupted, so a cancel landing during it is
+            # delivered only after the stage exists (``_settle_native``),
+            # and the discard must still find it. Discarding a descriptor
+            # whose stage was never created is a no-op.
+            scope.touched.append(descriptor)
             stage = await self._run_core_call(
                 "stage",
                 descriptor.reference,
@@ -1518,7 +1525,6 @@ class ArtifactAcquisitionService:
             # Optional return type only covers the create=False
             # lookup path (see _staged_bytes_for).
             assert stage is not None
-            scope.touched.append(descriptor)
             # TASK-1695: this descriptor's slice of the closure-wide
             # resolved source map -- already validated (complete,
             # credential-free) by the _aggregate_closure call above,

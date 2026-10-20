@@ -222,6 +222,57 @@ def test_cancel_is_not_honoured_once_install_has_started(tmp_path: Path) -> None
     assert core._download_stage_for(descriptor, create=False) is None
 
 
+def test_cancel_landing_while_the_stage_is_being_created_still_removes_it(
+    tmp_path: Path,
+) -> None:
+    """The stage call cannot be interrupted, so a cancel waits it out -- and
+    the stage it just created (or reused, partial and all) is still removed.
+
+    ``_settle_native`` lets the native stage call finish and THEN raises
+    ``CancelledError``; the wrapper below reproduces exactly that ordering
+    (stage on disk, cancellation delivered before the call returns).
+    """
+    core = ModelArtifactService(tmp_path / "root")
+    ref = ArtifactRef("speech-model", "r1", "int8")
+    body = b"c" * 4096
+    with FixtureArtifactServer() as srv:
+        srv.serve("/model.onnx", body)
+        descriptor = make_descriptor(
+            ref=ref, files_body=body, source_url=srv.url("/model.onnx")
+        )
+        catalog = DictCatalog({ref: descriptor})
+        service = ArtifactAcquisitionService(
+            core, free_bytes_probe=lambda _p: 10**12, trusted_origins=_trusted(srv)
+        )
+        consent = grant_consent(service, ref, catalog)
+        control = _download_control("Speech model")
+        run_core_call = service._run_core_call
+
+        async def cancel_as_the_stage_lands(operation, call_ref, func):
+            result = await run_core_call(operation, call_ref, func)
+            if operation == "stage":
+                control.cancel()
+                # Several watcher polls: the cancellation arrives here, after
+                # the stage exists and before the call has returned.
+                await asyncio.sleep(1.0)
+            return result
+
+        service._run_core_call = cancel_as_the_stage_lands
+        from tldw_chatbook.Model_Artifacts.acquisition import (
+            AcquisitionCancelledError,
+        )
+
+        with pytest.raises(AcquisitionCancelledError) as excinfo:
+            asyncio.run(service.provision(ref, consent, catalog, control=control))
+
+    assert excinfo.value.installed_refs == ()
+    assert excinfo.value.staging_removed is True
+    assert "/model.onnx" not in srv.requests
+    assert core._download_stage_for(descriptor, create=False) is None
+    assert not any(core.staging_path.glob("download-*"))
+    assert _lease_is_free(core)
+
+
 # ---------------------------------------------------------------------------
 # [voice-speech-08] / task-33079: a second install queues or names the holder.
 # ---------------------------------------------------------------------------
