@@ -5,16 +5,18 @@ send's ``PromptHistory.append`` built a file job whose source selection called
 ``default_prompt_history_path()``, and each call ran guarded config operations
 (storage admission, companion guard, pause probe) on the UI loop, inside run
 start's longest callback; in this test profile one resolution costs about
-10 ms. The path is now kept while the resolution's inputs hold: the installed
-config module, its identity (``current_config_identity()``: generation and
-effective path) and ``HOME``, which the default data root follows. A bound
-history's state check still compares its path with the live config's mapping
-before any IO, so a stale path can only be refused there, never written to.
+10 ms. The path is now kept while the resolution's inputs hold: the config
+module, the mapping it has installed (a forced reload installs a new one
+without a new generation), its identity (``current_config_identity()``:
+generation and effective path) and ``HOME``, which the default data root
+follows. A bound history's state check still compares its path with the live
+config's mapping before any IO.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 
 import pytest
@@ -104,27 +106,39 @@ def test_a_new_home_resolves_a_new_default_path(local_root, monkeypatch, tmp_pat
     assert after == config.get_user_data_dir() / "prompt_history.jsonl"
 
 
+def _edit_users_name(config, name: str) -> None:
+    """Edit the selected config file outside the app, then force a reload.
+
+    A forced reload (Settings, briefings and others pass ``force_reload``)
+    installs the edited file as a new mapping without a new generation, so
+    ``current_config_identity()`` does not move.
+    """
+    source = config._get_effective_config_path()
+    text = source.read_text()
+    if re.search(r"^users_name\s*=", text, flags=re.M):
+        text = re.sub(r'^users_name\s*=\s*"[^"]*"', f'users_name = "{name}"', text, flags=re.M)
+    else:
+        text = text.replace("[general]", f'[general]\nusers_name = "{name}"', 1)
+    source.write_text(text)
+    identity = config.current_config_identity()
+    config.load_cli_config_and_ensure_existence(force_reload=True)
+    assert config.current_config_identity() == identity
+    assert config.get_cli_setting("general", "users_name", None) == name
+
+
 @pytest.mark.asyncio
-async def test_a_profile_change_the_identity_misses_is_still_refused(
+async def test_a_history_bound_before_a_reload_to_another_profile_is_refused(
     local_root, monkeypatch
 ):
-    """An external edit installs a new config without moving the identity.
+    """The bound history's path names the old profile; its append is refused.
 
-    The kept path then names the old profile; the worker's scope compares it
-    with the live config's selection and refuses, as origin/dev refuses (there
-    the bound source no longer matches the freshly resolved path). Nothing is
-    written for either profile.
+    As on origin/dev (there the bound source no longer matches the freshly
+    resolved path). Nothing is written for either profile.
     """
     config = install_config_source(monkeypatch)
     history = PromptHistory(prompt_history.default_prompt_history_path())
     assert await history.append("first prompt")
-    identity = config.current_config_identity()
-    monkeypatch.setattr(
-        config,
-        "_CONFIG_CACHE",
-        {**config._CONFIG_CACHE, "general": {"users_name": "bd10rs_other"}},
-    )
-    assert config.current_config_identity() == identity
+    _edit_users_name(config, "bd10rs_other")
 
     assert await history.append("must refuse") is False
 
@@ -133,26 +147,20 @@ async def test_a_profile_change_the_identity_misses_is_still_refused(
 
 
 @pytest.mark.asyncio
-async def test_a_history_opened_after_an_external_edit_binds_the_live_path(
+async def test_a_history_opened_after_a_reload_binds_the_live_path(
     local_root, monkeypatch
 ):
-    """A reload installs a new config without moving the identity.
+    """A history opened after the reload binds the live profile's path.
 
-    A history opened afterwards must bind the live profile's path, as on
-    origin/dev, and append there. Red when the kept path outlives the
-    installed config: the new history bound the old profile's path and its
-    first append was refused (``RecoveryRequired``).
+    As on origin/dev, and it appends there. Red when the kept path outlived
+    the installed config (kept on ``current_config_identity()`` alone): the
+    new history bound the old profile's path and its first append was
+    refused with ``RecoveryRequired``.
     """
     config = install_config_source(monkeypatch)
     history = PromptHistory(prompt_history.default_prompt_history_path())
     assert await history.append("first prompt")
-    identity = config.current_config_identity()
-    monkeypatch.setattr(
-        config,
-        "_CONFIG_CACHE",
-        {**config._CONFIG_CACHE, "general": {"users_name": "bd10rs_other"}},
-    )
-    assert config.current_config_identity() == identity
+    _edit_users_name(config, "bd10rs_other")
     live = config.get_user_data_dir() / "prompt_history.jsonl"
     assert live != history.path
 
