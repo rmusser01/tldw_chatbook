@@ -6,7 +6,8 @@ could not be reduced, and themes were listed by raw id. It now offers
 "Startup animation: Off / Short (2 s) / Full", "Reduce motion" and "Plain
 ASCII status marks", names the current splash card read-only, and labels
 themes by display name with a tone tag. Every write is a delta: an untouched
-control writes nothing.
+control writes nothing, except the ASCII box's terminal preset when no glyph
+choice was ever saved (see ``ascii_checkbox_value``).
 """
 
 from __future__ import annotations
