@@ -5238,3 +5238,19 @@ the QA evidence directory (never restart a shared one), clear the directory befo
 each send you want to attribute, and stop the server when done. A port in use makes
 `llama-server` exit at once ("exiting due to HTTP server error"), so check
 `lsof -iTCP:<port> -sTCP:LISTEN` first.
+
+## Re-run size-sensitive live checks after a rebase: schemas grow on dev (TASK-34100.5.3, 2026-10-19)
+
+**Incident.** Before the branch was rebased (review round 2, 2026-10-06), switching on Read file on
+an 8,192-token llama.cpp window sent the light set plus `read_file` (captured with
+`--log-prompts-dir`). After the rebase onto a dev ~2,000 commits newer, the same
+steps sent no tools at all: dev had grown `read_file`'s parameter schema, so the
+light set plus `read_file` measured 907 fenced tokens against the planner's
+all-or-nothing direct-disclosure limit of 819 (10% of the window). No test failed;
+only the live request body showed it.
+
+**What to do.** Any claim that depends on a token budget (what a small window
+carries, whether a request is held or refused) is a measurement of today's schemas
+and prompts. After a rebase, re-run those live checks rather than citing earlier
+evidence, and record the measured sizes next to the claim so a later drift is
+visible.

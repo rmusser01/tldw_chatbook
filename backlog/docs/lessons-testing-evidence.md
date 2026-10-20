@@ -23441,3 +23441,25 @@ provider family (`reasoning_replay` for llama.cpp and other local servers,
 "did not raise". If a live readout disagrees with a captured request, reproduce with
 the real object before blaming an adjacent known issue: this one was first written up
 as the window-cache problem.
+
+## A component that predicts another's verdict must share its ceiling and its input (TASK-34100.5.3 review round 2, 2026-10-19)
+
+**Incident.** Three places decide whether a Console request "fits": the first-request
+planner (`_first_request_plan_fits`: `window - reply reserve`), the provider gateway
+(`resolve_request_capacity`: `window - reply reserve - safety margin`, at least 512
+tokens) and the send preflight, which asks the planner (through the meter's
+re-plan) which tools to count. Each was unit-tested against its own formula and
+input, and all passed. Live on gpt-4 (8k) with Full agent tools on, every short send
+failed with "Mandatory Console request material exceeds the effective input ceiling
+(4033 > 3584)": the planner had kept a discovery surface that fit its 4,096 but not
+the gateway's 3,584. The meter re-planned against a one-row stand-in request instead
+of the conversation, so it counted 3,351 tokens of tools the send (planned against
+the real conversation) never carried, and held a four-message chat for compaction;
+OpenAI reported 510 input tokens for that send.
+
+**What to do.** When one component predicts another's verdict, derive both limits
+from one function (`request_safety_margin_tokens` now feeds both the gateway and
+`planning_window`) and give the predictor the exact input the acceptor will see. Test
+the prediction against the real acceptor (`prepare_chat_request(...).known_overflow`)
+and assert "counted rows == dispatched rows" over several input sizes, not each side
+against its own formula.
