@@ -100,3 +100,14 @@ def test_the_route_suffix_has_one_owner_the_endpoint_contract_reads():
         assert base, key
         resolution = resolve_provider_endpoint(key, base)
         assert resolution.chat_url == base.rstrip("/") + suffix, key
+
+
+def test_first_run_hides_exactly_the_aliases_the_console_calls_legacy():
+    """Review v3r1, R1-09: the wizard's legacy list repeated the catalog's
+    alias set (TASK-33007.9) plus the '#2' slot, with nothing tying the two:
+    an alias dev adds later would be hidden in one surface and shown in the
+    other. This fails until both lists move together."""
+    from tldw_chatbook.Chat.provider_catalog import PROVIDER_LEGACY_ALIAS_KEYS
+    from tldw_chatbook.Chat.provider_setup_facts import LEGACY_PROVIDER_KEYS
+
+    assert LEGACY_PROVIDER_KEYS == PROVIDER_LEGACY_ALIAS_KEYS | {"custom_2"}
