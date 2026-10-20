@@ -19,7 +19,11 @@ from types import FunctionType, MethodType, ModuleType
 from typing import Any
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
-from ...Chat.console_chat_controller import (_is_empty_transcript_row, ConsoleChatController, _CONSOLE_CONTEXT_PRESENTATION_READERS)
+from ...Chat.console_chat_controller import (
+    ConsoleChatController,
+    _CONSOLE_CONTEXT_PRESENTATION_READERS,
+    _is_empty_transcript_row,
+)
 from ...Chat.console_received_dispatch import stock_native_methods
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -62,6 +66,12 @@ from . import tokenizer_display as _tokenizer_display
 
 _PRICING_DISPLAY_SOURCE = _pricing_display._SOURCE_CAPSULE
 _DISPLAY_PRICING_CLASS = _pricing_display.DisplayPricingCatalog
+_TRANSCRIPT_CONTEXT_READER = (
+    ConsoleChatController.context_control_presentation_inputs,
+    ConsoleChatController.context_control_presentation_inputs.__code__,
+    ConsoleChatController.context_control_presentation_inputs.__defaults__,
+    ConsoleChatController.context_control_presentation_inputs.__kwdefaults__,
+)
 
 _ACCEPTED_RECOVERY_KINDS = frozenset(
     {
@@ -1000,6 +1010,36 @@ def console_readiness_presentation(function: Callable) -> Callable:
     return wrapped
 
 
+def _context_presentation_source_key(controller: Any) -> tuple:
+    """Retain callback identities so restored stock readers cannot reuse custom UI."""
+    from ...Chat.console_chat_controller import _CONTEXT_DISPLAY_CALLBACKS
+
+    sources = []
+    for name in (
+        "context_control_presentation_inputs",
+        *(item[0] for item in _CONTEXT_DISPLAY_CALLBACKS),
+    ):
+        bound = getattr(controller, name, None)
+        method = type(bound) is MethodType
+        function = bound.__func__ if method else bound
+        if type(function) is FunctionType:
+            sources.append(
+                (
+                    bound.__self__ if method else None,
+                    function,
+                    id(function.__code__),
+                    function.__code__,
+                    id(function.__defaults__),
+                    function.__defaults__,
+                    id(function.__kwdefaults__),
+                    function.__kwdefaults__,
+                )
+            )
+        else:
+            sources.append((id(bound), bound))
+    return tuple(sources)
+
+
 class ConsoleContextReadSnapshot:
     """Share disposable presentation inputs behind exact owner/revision fences.
 
@@ -1117,6 +1157,7 @@ class ConsoleContextReadSnapshot:
                 store.session_settings_revision(session_id),
                 store.session_context_summary(session_id),
                 self.config_projection._key() if self.config_projection else None,
+                _context_presentation_source_key(controller),
             )
         except (AttributeError, KeyError, StopIteration):
             return None
@@ -1225,6 +1266,57 @@ class ConsoleContextReadSnapshot:
             self.schedule(
                 self.refresh(), exclusive=False, group="console-context-publication"
             )
+
+
+def console_transcript_context_inputs(
+    screen: Any,
+    controller: Any,
+    session_id: str,
+) -> tuple | None:
+    """Share disposable memory display inputs without holding transcript paint."""
+    from ...Chat.console_chat_controller import (
+        _CONTEXT_DISPLAY_CALLBACKS,
+    )
+
+    reader = getattr(controller, "context_control_presentation_inputs", None)
+    function, code, defaults, kwdefaults = _TRANSCRIPT_CONTEXT_READER
+    if (
+        type(controller) is ConsoleChatController
+        and type(reader) is MethodType
+        and reader.__self__ is controller
+        and reader.__func__ is function
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is kwdefaults
+    ):
+        for (
+            name,
+            function,
+            code,
+            defaults,
+            kwdefaults,
+            static,
+        ) in _CONTEXT_DISPLAY_CALLBACKS:
+            bound = getattr(controller, name, None)
+            original = (
+                bound is function
+                if static
+                else (
+                    type(bound) is MethodType
+                    and bound.__self__ is controller
+                    and bound.__func__ is function
+                )
+            )
+            if (
+                not original
+                or function.__code__ is not code
+                or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not kwdefaults
+            ):
+                break
+        else:
+            return screen._context_spend._context_inputs(controller, session_id)
+    return None  # The transcript retains its original post-gate custom read.
 
 
 async def prepare_console_settings_context(

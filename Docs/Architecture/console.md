@@ -78,6 +78,15 @@ scope (TASK-35613). Each loads current config once, reuses an enclosing scope wh
 present, and drops the memo on return or failure. The next independent call reads
 again; config path posture checks and native action admission remain unchanged.
 
+The transcript memory banner shares the controls' existing disposable context
+inputs for qualified stock readers (TASK-35679). Cold preparation hides only
+the banner while message painting continues. Effective-memory publication joins
+the transcript tick gate, so a finite read can repaint an otherwise unchanged
+transcript. The memo key retains reader binding/code/default identities, refusing
+custom results after a stock reader is restored. Custom callbacks keep their
+original synchronous post-gate path and call cadence. Branch-memory validation,
+finite native retirement, freshness deadlines and live action reads are unchanged.
+
 Attach/resume reconciliation launches from a synchronous after-refresh callback
 into the finite `console-attach-reconciliation` view worker (TASK-35614).
 Textual awaits async after-refresh callbacks inside the screen message pump;
