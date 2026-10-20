@@ -10,16 +10,19 @@ from tldw_chatbook.UI.Screens import chat_screen
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "action,draft,cleared",
+    "action,draft,cleared,shown",
     [
-        ("cancel", "", True),
-        ("cancel", "new draft", True),
-        ("cancel", "", False),
-        ("send_without_compacting", "", True),
+        ("cancel", "", True, "held"),
+        ("cancel", "new draft", True, "held"),
+        ("cancel", "", False, "held"),
+        ("send_without_compacting", "", True, "held"),
+        # TASK-33621.20: a tab switch while Cancel ran leaves the composer on
+        # another conversation, which never receives this one's message.
+        ("cancel", "", True, "other"),
     ],
 )
 async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
-    monkeypatch, action, draft, cleared
+    monkeypatch, action, draft, cleared, shown
 ):
     screen = chat_screen.ChatScreen.__new__(chat_screen.ChatScreen)
     screen.app_instance = SimpleNamespace()
@@ -46,7 +49,9 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     )
     events = []
     hold = [object()]
-    held = SimpleNamespace(preparation_id="p", executed_draft="held draft")
+    held = SimpleNamespace(
+        preparation_id="p", executed_draft="held draft", session_id="held"
+    )
 
     def preparation():
         events.append("held")
@@ -56,9 +61,13 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         events.append("hold")
         return hold[0]
 
+    store = SimpleNamespace(
+        active_session_id="held", preparation_by_id=lambda _id: held
+    )
     controller = SimpleNamespace(
         trace_call_recovery_preparation=preparation,
         context_compaction_hold=context_hold,
+        store=store,
     )
     screen._ensure_console_chat_controller = lambda: controller
     screen._console_terminal_open = False
@@ -78,6 +87,7 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     loaded = []
     composer = SimpleNamespace(draft_text=lambda: draft, load_draft=loaded.append)
     screen._console_composer_or_none = lambda: (events.append("composer"), composer)[1]
+    screen._session._console_visible_draft_session_id = "held"
     result = object()
 
     async def dispatch(actual_controller, actual_action, preparation_id, **kwargs):
@@ -87,13 +97,18 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         assert kwargs == {"on_started": started, "on_finished": finished}
         if cleared:
             hold[0] = None
+        # The conversation the composer shows when the action ends.
+        store.active_session_id = shown
+        screen._session._console_visible_draft_session_id = shown
         return result
 
     monkeypatch.setattr(chat_screen, "dispatch_trace_call_recovery_action", dispatch)
     assert await callback(action, "p") is result
     assert events[:4] == ["held", "hold", "dispatch", "composer"]
     assert loaded == (
-        ["held draft"] if action == "cancel" and cleared and not draft else []
+        ["held draft"]
+        if action == "cancel" and cleared and not draft and shown == "held"
+        else []
     )
     state = object()
 

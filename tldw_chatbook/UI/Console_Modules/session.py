@@ -6910,8 +6910,12 @@ class ConsoleSessionController:
         )
         cancelled = action == "cancel" and settled
         refill = cancelled and shown and not composer.draft_text().strip()
-        to_own_draft = cancelled and not shown and own_draft_takes_it_back(
-            controller.store, held.session_id, held_text
+        # Only a shelf-releasable pause has an unsent turn to send back there.
+        to_own_draft = (
+            releasable
+            and cancelled
+            and not shown
+            and own_draft_takes_it_back(controller.store, held.session_id, held_text)
         )
         if releasable:
             returned = card_action_finished(
