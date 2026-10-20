@@ -410,10 +410,12 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
         assert send.disabled, "no mount-time block for the helper to lift"
         warm = ConsoleReadinessConfigProjection.warm
         late: list[bool] = []
+        # The helper runs in this task; the context snapshot warms from workers.
+        helper_task = asyncio.current_task()
 
         async def warm_then_resume_late(projection) -> bool:
             current = await warm(projection)
-            if current and not late:
+            if current and not late and asyncio.current_task() is helper_task:
                 await asyncio.sleep(1.1)  # past the proof's one second
                 projection.run(lambda: None)  # a display starts the next refresh
                 late.append(projection.pending)
