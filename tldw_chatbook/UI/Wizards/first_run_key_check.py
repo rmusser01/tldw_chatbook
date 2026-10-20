@@ -161,27 +161,42 @@ def key_verified(provider_key: object, result: Any, *, key_sent: bool) -> bool:
     return _key(provider_key) in _KEYED_LISTING_PROVIDERS
 
 
+def _refused_key(result: Any) -> bool:
+    """Whether a discovery result is the provider's 401 to the key it was sent.
+
+    Only a 401 rejects a key: a 403 means this key may not list models
+    (owner ruling 2026-10-02; TASK-33008 reads it as "listing unavailable").
+    """
+    error = getattr(result, "error", None)
+    return (
+        getattr(error, "kind", None) == "missing_credentials"
+        and getattr(error, "category", None) == "unauthorized"
+    )
+
+
 def rejected_key_message(display: str, result: Any) -> str:
-    """The provider's own refusal of a key, or ``""`` when it was not one.
+    """The provider's own words refusing a key, or ``""``.
+
+    A refusal that carries no reason of the provider's own also returns
+    ``""``: every surface then reads TASK-33008's ``PROBE_FAILURE_COPY`` line
+    for it, as it does for OpenAI's check (resume after the dev merge: one
+    401 read '✗ Anthropic rejected this key.' beside '✗ OpenAI rejected this
+    API key. Update it, or continue anyway.').
 
     Args:
-        display: The provider's display name.
+        display: The provider's display name (the discovery message names it).
         result: A ``ModelDiscoveryResult`` (or anything else).
 
     Returns:
         For example 'OpenRouter rejected this key: User not found.'
     """
-    error = getattr(result, "error", None)
-    if getattr(error, "kind", None) != "missing_credentials":
+    del display  # the discovery's own message already names the provider
+    if not _refused_key(result):
         return ""
-    category = getattr(error, "category", None)
+    error = getattr(result, "error", None)
     message = str(getattr(error, "message", "") or "").strip()
     reason = str(getattr(error, "provider_reason", "") or "").strip()
-    # Only a 401 rejects a key: a 403 means this key may not list models
-    # (owner ruling 2026-10-02; TASK-33008 reads it as "listing unavailable").
-    if category == "unauthorized":
-        return message if reason else f"{display} rejected this key."
-    return ""
+    return message if reason else ""
 
 
 def discovery_status_copy(
@@ -252,8 +267,10 @@ def _discovery_status_text(
         # Review round 1 (live F1): a keyed provider's listing answers 401
         # before any key is typed. That is no verdict on a key -- only a key
         # that was sent can be rejected.
-        rejected = rejected_key_message(display, result) if key_sent else ""
-        return f"✗ {rejected}" if rejected else failure_copy()
+        if key_sent and _refused_key(result):
+            # The provider's own reason, or the step's TASK-33008 line.
+            return f"✗ {rejected_key_message(display, result) or failure_copy()}"
+        return failure_copy()
     if attempted:
         return f"Checked {display}; no models were reported."
     return ""
