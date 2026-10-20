@@ -1,6 +1,7 @@
 """Coordinator contention defers presentation without native fallback."""
 
 import asyncio
+import copy
 import threading
 from types import SimpleNamespace
 
@@ -84,7 +85,7 @@ async def test_checked_display_defers_contended_coordinator(tmp_path, request, e
 @pytest.mark.asyncio
 @private_profile_test
 @pytest.mark.parametrize("helper", ["pricing", "capacity"])
-async def test_expired_native_display_retires_before_contention_retry(
+async def test_unqualified_native_display_retires_before_contention_retry(
     tmp_path, request, helper
 ):
     from Tests.UI import test_console_checked_display_scope as fixture
@@ -118,6 +119,10 @@ async def test_expired_native_display_retires_before_contention_retry(
     def render():
         operations.append(getattr(raw._local, "operation", None))
         assert operations[0] in raw._states
+        # Native entry was required by the unqualified copy. Once this body
+        # restores its genuine proof, busy metadata must still refuse and the
+        # actual native operation must retire before retry publication.
+        projection._display_proof = issued_proof
         holder.start()
         assert held.wait(2)
         try:
@@ -135,8 +140,10 @@ async def test_expired_native_display_retires_before_contention_retry(
 
     try:
         projection = await fixture._warm(screen, tasks)
+        issued_proof = projection._display_proof
         await asyncio.sleep(projection.max_age + 0.02)
         assert not projection.pending
+        projection._display_proof = copy.copy(issued_proof)
         assert run_console_presentation_sync(screen, render) is False
         assert retries == [True]
         assert operations[0] not in raw._states

@@ -335,7 +335,6 @@ class ConsoleReadinessConfigProjection:
         runtime = _readiness_runtime(screen)
         if getattr(screen, "_closing", False) or getattr(runtime, "_disposed", False):
             return False
-        pending_at_entry = self.pending
         key = self._key()
         current = (
             _same_readiness_key(key, self.key)
@@ -371,19 +370,16 @@ class ConsoleReadinessConfigProjection:
         if not current:
             return False
         previous = getattr(screen, "_console_readiness_projection_active", None)
-        previous_pending = getattr(self, "_display_refresh_pending_at_entry", None)
         screen._console_readiness_projection_active = (
             threading.get_ident(),
             self.value,
             self,
         )
         try:
-            self._display_refresh_pending_at_entry = pending_at_entry
             with screen._console_derivation_scope():
                 return body() is not False
         finally:
             screen._console_readiness_projection_active = previous
-            self._display_refresh_pending_at_entry = previous_pending
 
     def tokenizer_ready(self, model: str, provider: str) -> bool:
         """Prepare cold stock tokenizers under this display's finite read owner."""
@@ -679,8 +675,7 @@ def _checked_display_status(projection: Any) -> bool | None:
     if not _checked_pricing_current(projection, proof):
         return None
     # These lexical checks include the current generation and raw selected path.
-    # An expired same-owner mapping may use the original native fallback; a
-    # different owner/source may never enter a body around that old mapping.
+    # A different owner/source may never enter a body around an old mapping.
     if (
         not _same_readiness_key(projection._key(), projection.key)
         or not _same_readiness_key(projection.key, proof.owner)
@@ -717,14 +712,10 @@ def _checked_display_status(projection: Any) -> bool | None:
     if projection.at != proof.at:
         return None
     if time.monotonic() - proof.at >= min(1.0, projection.max_age):
-        # Defer only a refresh pending before this synchronous display entry;
-        # a direct call that starts its own refresh keeps its native fallback.
-        return (
-            False
-            if projection.pending is True
-            and getattr(projection, "_display_refresh_pending_at_entry", None) is True
-            else None
-        )
+        # run() already requested the existing finite checked refresh. Direct
+        # presentation must also wait for it instead of entering native work
+        # on the event loop; refusal retains the existing coalesced retry.
+        return False
     return True
 
 
