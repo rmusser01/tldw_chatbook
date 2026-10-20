@@ -716,8 +716,9 @@ class ProviderSetupMutation:
     delete_keys: Mapping[str, tuple[str, ...]]
     semantic_identity: ProviderDraftIdentity | None
     #: TASK-34100.6 AC#6 (coverage-08): other providers whose key comes from an
-    #: exported variable, each ``{"credential_source": "environment",
-    #: "api_key_env_var": NAME}`` -- the variable's name, never its value.
+    #: exported variable, each ``{"api_key_env_var": NAME}`` -- the variable's
+    #: name, never its value, and no ``credential_source`` (review v3r1, R1-04:
+    #: an api_key added to config.toml later still outranks the variable).
     #: Written in the same atomic write as the commit, and dropped (never the
     #: commit) when a concurrent write made one stale.
     environment_records: Mapping[str, Mapping[str, object]] = field(
@@ -1033,12 +1034,16 @@ def environment_credential_records(
     """Every other provider whose key comes from an exported variable.
 
     TASK-34100.6 AC#6 (review coverage-08): setup commits one default
-    provider; each other provider whose key is exported is recorded as
-    ``credential_source = "environment"`` so the decision is explicit, with
-    no secret written. A provider is recorded only when nothing in config
-    decides it already: no ``credential_source`` and no saved key (a saved key
-    outranks the variable, so recording the variable would switch which key
-    is sent). Legacy aliases are skipped (their canonical row is recorded).
+    provider; each other provider whose key is exported is recorded by the
+    variable's name (``api_key_env_var``), with no secret written. Review
+    v3r1, R1-04: the record no longer fixes ``credential_source =
+    "environment"``. That pinned the variable for good, so an ``api_key`` the
+    user later added to config.toml was ignored without a word, against the
+    rule that an explicit api_key outranks the exported variable. Naming the
+    variable keeps the precedence the user already had. A provider is
+    recorded only when nothing in config decides it already: no
+    ``credential_source`` and no saved key. Legacy aliases are skipped
+    (their canonical row is recorded).
 
     Args:
         app_config: The configuration the commit is built from.
@@ -1046,9 +1051,8 @@ def environment_credential_records(
         environ: The environment to read (the process environment by default).
 
     Returns:
-        ``{"api_settings.<section>": {"credential_source": "environment",
-        "api_key_env_var": NAME}}``, read-only, using each provider's
-        configured section spelling and variable name.
+        ``{"api_settings.<section>": {"api_key_env_var": NAME}}``, read-only,
+        using each provider's configured section spelling and variable name.
     """
     from .provider_setup_facts import provider_setup_facts
 
@@ -1074,9 +1078,7 @@ def environment_credential_records(
         )
         if not is_valid_provider_api_key(environ.get(env_var)):
             continue
-        records[section] = MappingProxyType(
-            {"credential_source": "environment", environment_key: env_var}
-        )
+        records[section] = MappingProxyType({environment_key: env_var})
         if len(records) >= _MAX_ENVIRONMENT_RECORDS:
             break
     return MappingProxyType(records)
@@ -1138,8 +1140,7 @@ def _validate_environment_records(
         environment_key = owner.credential_keys[1]
         if (
             type(values) is not _MAPPING_PROXY_TYPE
-            or set(values) != {"credential_source", environment_key}
-            or values["credential_source"] != "environment"
+            or set(values) != {environment_key}  # never a source (review R1-04)
             or _existing_environment_name(values[environment_key])
             != values[environment_key]
         ):

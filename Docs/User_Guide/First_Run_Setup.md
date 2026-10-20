@@ -181,9 +181,10 @@ is used instead of an exported one, and the step says so. If you move to
 another provider after typing a key, a line under the list says that key
 won't be saved unless you choose its provider. When setup saves your
 provider, every other provider whose key is exported, and that your config
-doesn't already decide, is saved as using that variable
-(`credential_source = "environment"` with the variable's name). The key
-itself is never written to `config.toml`.
+doesn't already decide, is saved with the variable's name
+(`api_key_env_var`). The key itself is never written to `config.toml`, and
+nothing else changes: an `api_key` you add to that provider's table later
+still takes precedence over the variable.
 
 **Check key** beside the key lists the provider's models with that key — the
 same non-billable check Settings makes — and reads "✓ Key works — OpenAI

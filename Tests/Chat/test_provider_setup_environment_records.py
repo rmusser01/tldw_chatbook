@@ -2,10 +2,11 @@
 
 Setup commits one default provider. Every *other* provider whose key comes from
 an exported variable -- no explicit decision in config and no saved key -- is
-recorded as ``credential_source = "environment"`` with the variable's name, in
-the same atomic write, and never with the variable's value. A record that a
-concurrent write made stale is dropped under the config lock; the commit itself
-never fails because of it.
+recorded by the variable's name (``api_key_env_var``), in the same atomic write,
+and never with the variable's value. The record fixes no ``credential_source``
+(review v3r1, R1-04), so an api_key added to config.toml later still outranks
+the variable. A record that a concurrent write made stale is dropped under the
+config lock; the commit itself never fails because of it.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ _MISTRAL = "m" * 32
 
 
 def _record(env_var: str) -> dict[str, str]:
-    return {"credential_source": "environment", "api_key_env_var": env_var}
+    return {"api_key_env_var": env_var}
 
 
 def _plain(records) -> dict[str, dict[str, str]]:
@@ -141,15 +142,21 @@ def test_the_configured_section_spelling_and_variable_name_are_kept():
             }
         },
         {"api_settings.anthropic": _record("not a name")},
+        {
+            "api_settings.anthropic": {
+                "credential_source": "environment",
+                "api_key_env_var": "ANTHROPIC_API_KEY",
+            }
+        },
         {"chat_defaults": _record("ANTHROPIC_API_KEY")},
         {
             "api_settings.anthropic": _record("ANTHROPIC_API_KEY"),
             "api_settings.Anthropic": _record("ANTHROPIC_API_KEY"),
         },
     ],
-    ids=["default", "secret", "stored", "bad-name", "not-a-provider", "twice"],
+    ids=["default", "secret", "stored", "bad-name", "pins-source", "not-a-provider", "twice"],
 )
-def test_a_mutation_refuses_any_record_that_is_not_a_bare_environment_choice(records):
+def test_a_mutation_refuses_any_record_that_is_not_a_bare_variable_name(records):
     valid = build_provider_setup_mutation(_openai_draft(), {})
 
     with pytest.raises(ValueError):
@@ -265,3 +272,32 @@ def test_a_record_made_stale_under_the_lock_is_dropped_never_the_commit(
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"]
     assert saved["anthropic"] == {"api_key": saved_key}, "the saved key still wins"
     assert saved["openai"]["credential_source"] == "stored"
+
+
+def test_a_key_added_to_config_after_setup_still_outranks_the_recorded_variable():
+    """Review v3r1, R1-04: the record used to write ``credential_source =
+    "environment"``, which pins the variable for good -- an ``api_key`` the
+    user later adds to config.toml was ignored without a word, against the
+    documented rule that an explicit api_key outranks the exported variable
+    (CLAUDE.md, Configuration). The record names the variable only, so the
+    precedence the user already had is the precedence they keep."""
+    from tldw_chatbook.Chat.provider_readiness import resolve_provider_credential
+
+    records = environment_credential_records(
+        {}, exclude_provider="openai", environ={"ANTHROPIC_API_KEY": _ANTHROPIC}
+    )
+    recorded = dict(records["api_settings.anthropic"])
+    environ = {"ANTHROPIC_API_KEY": _ANTHROPIC}
+
+    # As recorded: the exported variable is the key that is sent.
+    assert resolve_provider_credential("anthropic", recorded, environ=environ)[:2] == (
+        _ANTHROPIC,
+        "env:ANTHROPIC_API_KEY",
+    )
+    # Later, the user adds a key to [api_settings.anthropic] by hand.
+    hand_key = "sk-ant-" + "h" * 40
+    edited = {**recorded, "api_key": hand_key}
+    assert resolve_provider_credential("anthropic", edited, environ=environ)[:2] == (
+        hand_key,
+        "config:api_settings.anthropic.api_key",
+    ), "a key added to config.toml after setup must outrank the recorded variable"
