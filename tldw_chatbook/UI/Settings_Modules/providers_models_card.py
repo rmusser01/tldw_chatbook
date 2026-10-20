@@ -607,11 +607,11 @@ def auth_source_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, st
     )
 
 
-def connect_field_guide(
+def card_field_guide(
     screen: SettingsScreen, field_id: str | None
 ) -> tuple[tuple[str, str], ...] | None:
-    """The Inspector's guide for Sign in with, the restored-connection review
-    and the Saved model list's controls (TASK-35011, B19).
+    """The Inspector's guide for card controls the screen has no branch for:
+    Sign in with, the restored-connection review, the Saved model list's.
 
     Capture fixes 3 and 7: with either focused the guide read "None — Tab to
     a setting"; Sign in with's long copy left its row for here.

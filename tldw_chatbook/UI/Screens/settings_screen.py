@@ -4009,6 +4009,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_clears_in_flight = 0
         # Add to model list is serialised, never cancelled (TASK-19559's rule).
         self._discovered_models_save_lock = asyncio.Lock()
+        self._discovered_pick: tuple[str, str] | None = None  # TASK-35011
         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
         self._model_catalog_save_status = ""
         self._model_catalog_save_failed = False
@@ -16451,8 +16452,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         # A monotonic revision rejects late work even after an A -> B -> A edit.
         self._model_discovery_revision += 1
-        if forget_pick:  # TASK-35011: a pick from the old listing joins nothing
-            self._discovered_pick = None
+        self._discovered_pick = None if forget_pick else self._discovered_pick
         self._model_discovery_status = status
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
@@ -18166,9 +18166,9 @@ class SettingsScreen(BaseAppScreen):
             from ..Settings_Modules.providers_models_card import endpoint_field_guide
 
             return endpoint_field_guide(provider, endpoint_key)
-        from ..Settings_Modules.providers_models_card import connect_field_guide
+        from ..Settings_Modules.providers_models_card import card_field_guide
 
-        if (guide := connect_field_guide(self, field_id)) is not None:
+        if (guide := card_field_guide(self, field_id)) is not None:
             return guide
         if field_id == "settings-provider-api-mode":
             purpose = (
