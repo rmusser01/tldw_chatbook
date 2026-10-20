@@ -251,8 +251,9 @@ change any of this later by running setup again."
 Below the navigation buttons, one quiet row holds **Reduce motion** and
 "Moving from another computer? **Restore a backup**". They sit after the
 buttons on purpose: Tab goes from the track list to **Next** first. Reduce
-motion takes effect at once (the Console's setup backdrop, the next splash) and
-is saved when you press Next, only if you changed it.
+motion takes effect at once for the animations already running (Buddy and
+character expressions) and is saved when you press Next, only if you changed
+it; once saved, the splash plays still from the next launch.
 
 A profile's first launch plays no splash screen, so Welcome appears as soon as
 the app has loaded; warnings from optional dependencies go to the log file, not
@@ -269,7 +270,10 @@ the terminal before the app opens.
   nothing to protect (the progress tracker then marks it – instead of ✓).
 - **Full setup** — adds search, dictation, tools and appearance (ten steps).
   Every added step starts on "leave as is": pressing Next without changing
-  anything writes nothing.
+  anything writes nothing. The one exception is Appearance on a terminal that
+  asks for plain output (`NO_COLOR` set, or the Linux console) when no glyph
+  choice was ever saved: it proposes plain ASCII status marks, and Next saves
+  that proposal.
 
 ## What each step does
 
@@ -364,7 +368,8 @@ Nothing is written to `[transcription]` unless you chose something in this run.
 The Appearance step lists themes by name with their tone ("Default dark",
 "Nord · dark"), offers **Startup animation: Off / Short (2 s) / Full**,
 **Reduce motion** and **Plain ASCII status marks** (ticked for you when
-`NO_COLOR` is set or on the Linux console), and names the current splash card
+`NO_COLOR` is set or on the Linux console, unless you saved a choice before),
+and names the current splash card
 with a pointer to Settings ▸ Splash Screen for choosing one. The Full track has
 no Notes step: notes folder sync is set up from Library ▸ Notes ▸ Add from
 files…, as the Summary says.
