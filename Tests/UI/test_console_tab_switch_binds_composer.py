@@ -851,13 +851,18 @@ async def test_an_activation_that_loses_authority_after_switching_asks_for_a_rep
 
 
 @pytest.mark.asyncio
-async def test_a_click_whose_press_never_arrives_carries_nothing_into_a_later_switch():
+@pytest.mark.parametrize("opened_by", ["activation", "keyboard_press"])
+async def test_a_click_whose_press_never_arrives_carries_nothing_into_a_later_switch(
+    opened_by,
+):
     """TASK-35640: a click record belongs to its own press, nothing else.
 
     A click on A that never becomes a press (here: the button is still in its
     pressed animation, so Textual skips the press) must not move what is
-    typed in B afterwards into A when A is later opened another way
-    (Alt+1..9 and Ctrl+K share this activation).
+    typed in B afterwards into A when A is later opened another way: by the
+    activation Alt+1..9 and Ctrl+K share, or by a keyboard press of A's own
+    tab (Tab to it, Enter), which posts a Pressed from the very button the
+    lost click left its record on unless that click cleared it.
     """
     host = _host()
     async with _running(host) as pilot:
@@ -877,12 +882,69 @@ async def test_a_click_whose_press_never_arrives_carries_nothing_into_a_later_sw
         await pilot.press("z", "z")
         assert composer.draft_text() == B_LEFTOVER + "zz"
 
-        await console._session._activate_native_console_session(a.id)
+        if opened_by == "activation":
+            await console._session._activate_native_console_session(a.id)
+        else:
+            tab.remove_class("-active")
+            tab.action_press()
+            await until(lambda: store.active_session_id == a.id)
         await _sync_idle(console)
         assert {
             "composer": composer.draft_text(),
             "B stored draft": store.session_draft(b.id),
         } == {"composer": A_OWN, "B stored draft": B_LEFTOVER + "zz"}
+
+
+@pytest.mark.asyncio
+async def test_a_click_record_rides_only_on_the_pressed_message_its_click_posts():
+    """TASK-35640: another message the tab posts mid-click never takes the record.
+
+    The tab can post other messages while its click is in flight (here one
+    posted as the press starts its active styling). Only the click's own
+    ``Button.Pressed`` may carry the record; anything else that took it would
+    leave that press, and so the switch, without one.
+    """
+    from textual.app import App
+    from textual.message import Message
+
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        ConsoleSessionTabButton,
+        session_tab_click_record,
+    )
+
+    class _Other(Message):
+        pass
+
+    pressed: list[Button.Pressed] = []
+
+    class _TabApp(App):
+        def compose(self):
+            yield ConsoleSessionTabButton(
+                "A",
+                session_id="a",
+                capture_click_record=lambda session_id: f"record:{session_id}",
+            )
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            pressed.append(event)
+
+    other = _Other()
+    async with _TabApp().run_test() as pilot:
+        tab = pilot.app.query_one(ConsoleSessionTabButton)
+        start_active = tab._start_active_affect
+
+        def _post_other_then_start_active() -> None:
+            tab.post_message(other)
+            start_active()
+
+        tab._start_active_affect = _post_other_then_start_active
+        await pilot.click(tab)
+        await until(lambda: len(pressed) == 1)
+
+    assert {
+        "pressed": session_tab_click_record(pressed[0]),
+        "other": session_tab_click_record(other),
+    } == {"pressed": "record:a", "other": None}
 
 
 @pytest.mark.asyncio
