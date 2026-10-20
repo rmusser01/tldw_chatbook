@@ -334,8 +334,8 @@ async def test_a_local_servers_listing_orders_the_default_and_never_adds_it(
     them; once the server's listing answers, the rows are what it listed, so
     a default it lists 4th leads within the listing, and one it does not list
     is gone, not added back. A listing that reaches the probe's bound (100 of
-    150 read) keeps the saved models after the listed ones, so a default the
-    server never listed is one of the rows and leads them all."""
+    150 read) keeps the saved models after the listed ones, so a default past
+    the 100 the probe reads is one of the rows and leads them all."""
     default = "m120" if listing == "past-the-bound" else "fake-beta"
     listed = ["fake-alpha", "fake-gamma", "fake-delta"]
     listed.append("fake-beta" if listing == "lists-the-default-4th" else "fake-eps")
