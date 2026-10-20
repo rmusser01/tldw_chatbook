@@ -4857,6 +4857,10 @@ async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     raise AssertionError("Console workspace switcher modal did not open")
 
 
+#: How long _sync_console_control_bar_now keeps retrying a sync that defers.
+_CONTROL_BAR_RENDER_TIMEOUT_S = 15.0
+
+
 async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> None:
     """Await the checked display owner, then render before the caller acts.
 
@@ -4864,21 +4868,57 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
     Holding both locks during the final sync retains the existing immediate
     render guarantee without racing a config rebuild (TASK-34415/34789).
 
+    The sync renders from the proof the warm-up read, which is good for one
+    second. A loop that resumes this helper later than that, after another
+    display has started the next refresh, makes the sync defer instead
+    (TASK-35660), and a late resume can leave the warm-up itself not current.
+    So warm and sync again until the sync renders, and fail naming Send's
+    state if it has not within the timeout. A closing screen or a disposed
+    runtime can never render, so that fails at once.
+
     Args:
         console: The mounted ChatScreen to render.
         *rail_state: The optional pre-computed rail state the sync accepts.
+
+    Raises:
+        AssertionError: The owner is closing or disposed, or no sync rendered
+            within ``_CONTROL_BAR_RENDER_TIMEOUT_S``.
     """
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
+        _readiness_runtime,
     )
 
     projection = ConsoleReadinessConfigProjection.for_screen(console)
-    if not await projection.warm():
+    deadline = time.monotonic() + _CONTROL_BAR_RENDER_TIMEOUT_S
+    attempts = 0
+    while True:
+        attempts += 1
         # A mount read may still belong to the pre-selection settings revision.
-        assert await projection.warm()
-    with config_module._settings_rebuild_lock(), config_module._config_file_lock():
-        rendered = console._sync_console_control_bar(*rail_state)
-    assert rendered
+        if not await projection.warm():
+            # The same two refusals warm() makes before it reads anything.
+            assert not getattr(console, "_closing", False), "the Console is closing"
+            assert not getattr(
+                _readiness_runtime(console), "_disposed", False
+            ), "the Console runtime is disposed"
+            last = "the readiness warm-up was not current"
+        else:
+            with config_module._settings_rebuild_lock(), config_module._config_file_lock():
+                if console._sync_console_control_bar(*rail_state):
+                    return
+            last = "the control-bar sync deferred"
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(0.05)
+    try:
+        send = console.query_one("#console-send-message", Button)
+        state = f"Send disabled={send.disabled} tooltip={send.tooltip!r}"
+    except (AttributeError, NoMatches):
+        state = "Send is not mounted"
+    raise AssertionError(
+        f"The Console control bar did not render within {_CONTROL_BAR_RENDER_TIMEOUT_S} s "
+        f"({attempts} attempts; last: {last}). {state}"
+    )
 
 
 async def _select_llamacpp_console(console: ChatScreen) -> None:

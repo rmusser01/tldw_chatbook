@@ -116,6 +116,34 @@ async def test_control_bar_helper_still_refuses_an_unavailable_owner(monkeypatch
         await _sync_console_control_bar_now(screen)
 
 
+@pytest.mark.asyncio
+async def test_control_bar_helper_warms_again_while_each_read_goes_stale(monkeypatch):
+    """Under ``taskpolicy -b`` the helper's second warm-up was not current
+    either, and it failed with a bare ``assert False`` (TASK-35660). Here the
+    settings change during the first two reads; the third is current."""
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    reads, rendered = [], []
+
+    def read():
+        revision = owner.revision
+        reads.append(revision)
+        if len(reads) < 3:
+            owner.revision += 1  # the settings changed while this read ran
+        return _read_result({"revision": revision})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: rendered.append(projection.value) or True
+    try:
+        await _sync_console_control_bar_now(screen)
+        assert reads == [1, 2, 3]
+        assert rendered == [{"revision": 3}]
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 def test_checked_config_source_tags_require_active_matching_operation():
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
     from tldw_chatbook.Backup_Recovery.config_participants import (

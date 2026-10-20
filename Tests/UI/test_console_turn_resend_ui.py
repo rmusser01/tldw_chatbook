@@ -311,8 +311,9 @@ async def test_console_resend_click_re_runs_a_failed_turn_in_place():
     assert [row.id for row in rows] == [user.id, failed.id]
 
 
-#: How long the holder thread keeps the config locks. The helper's sync runs
-#: at once, so this only has to outlast the gap between the two.
+#: How long the holder thread keeps the config locks. The helper is called as
+#: soon as the hold is taken, so this only has to outlast the gap between the
+#: two.
 _CONFIG_LOCK_HOLD_S = 1.0
 
 
@@ -381,6 +382,54 @@ async def test_select_llamacpp_console_enables_send_while_another_thread_holds_t
         finally:
             release.set()
             holder.join(10)
+
+
+@pytest.mark.asyncio
+async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_stale(
+    monkeypatch,
+):
+    """The helper still renders when its loop resumes it late.
+
+    Under ``taskpolicy -b`` the helper's sync deferred and the helper failed
+    with a bare ``assert False`` (TASK-35660). Its sync renders from the
+    readiness proof that its warm-up read, and that proof is good for one
+    second. This replays one order that makes the sync defer: the warm-up
+    returns current, the loop resumes the helper 1.1 s later, and a display
+    has started the next refresh in between.
+    """
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+    )
+
+    host = _console_app(FailThenRecoverGateway())
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        send = console.query_one("#console-send-message", Button)
+        assert send.disabled, "no mount-time block for the helper to lift"
+        warm = ConsoleReadinessConfigProjection.warm
+        late: list[bool] = []
+
+        async def warm_then_resume_late(projection) -> bool:
+            current = await warm(projection)
+            if current and not late:
+                await asyncio.sleep(1.1)  # past the proof's one second
+                projection.run(lambda: None)  # a display starts the next refresh
+                late.append(projection.pending)
+            return current
+
+        monkeypatch.setattr(
+            ConsoleReadinessConfigProjection, "warm", warm_then_resume_late
+        )
+        await _select_llamacpp_console(console)
+        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
+            "hello"
+        )
+        assert late == [True], (
+            "the warm-up never returned current, or no refresh started"
+        )
+        assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
 
 
 @pytest.mark.asyncio
