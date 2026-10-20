@@ -1,5 +1,5 @@
 ---
-id: TASK-35680
+id: TASK-35832
 title: Settings Discover models refuses koboldcpp's native endpoint that Switch model now lists
 status: To Do
 created_date: 2026-10-20 03:58
@@ -25,6 +25,6 @@ Found by the review of TASK-35010 (2026-10-20). Under the owner's ruling "All 5,
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Discover models for koboldcpp at its template endpoint lists the models the server serves at the root's /v1/models, the same listing Switch model shows
-- [ ] #2 Save selected then saves them to koboldcpp's list, and koboldcpp's send URL stays the native route
+- [ ] #2 Add to model list then saves them to koboldcpp's list, and koboldcpp's send URL stays the native route
 - [ ] #3 An endpoint with an API suffix before the native route is still refused as ambiguous
 <!-- AC:END -->
