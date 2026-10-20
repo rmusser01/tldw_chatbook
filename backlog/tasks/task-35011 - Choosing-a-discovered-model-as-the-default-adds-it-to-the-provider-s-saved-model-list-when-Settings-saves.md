@@ -135,11 +135,11 @@ Against the pre-fix code (the branch head cc3358bd88, in a scratch worktree) 14 
 
 **Review round 4** (range ebb4b25972..c76b8d1aa7): clean, no findings. The review over cc3358bd88..c76b8d1aa7 took four rounds (round 1 found the sample-id regression and the shard-2 lane time; rounds 2-3 found only Minors). Follow-ups filed for what is not this task's: TASK-35712 (Settings accepts a model id of any length that the combined save refuses over 120 characters, and blames config access) and, found on the way, TASK-35831 and TASK-35713 (Console test flakes on dev).
 
-**Live verification** (feat/s1-saved-models ac98be4a65 on dev 1bbc145ffc, 2026-10-20, sandboxed scratch profile).
-- **The pick.** On llama.cpp after Discover, picking an unsaved listed model (`fake-delta`; the plan's `fake-beta` was already saved by T1's steps) titled the list "· 1 joins on save" and left the file byte-identical.
+**Live verification** (feat/s1-saved-models ac98be4a65 on dev 1bbc145ffc, 2026-10-20, sandboxed scratch profile, 211x44 only).
+- **The pick.** On llama.cpp after Discover, picking an unsaved listed model (`fake-delta`; the plan's `fake-beta` was already saved by T1's steps) showed Model `fake-delta` "edited *", titled the list "· 1 joins on save", and left the file byte-identical.
 - **The save.** `s` wrote `chat_defaults`, `api_settings.llama_cpp.model` and `[providers].Llama_cpp` + `fake-delta` in one write. The toast ended "Added fake-delta to llama.cpp's model list."
 - **After a relaunch:** `fake-delta` ● CURRENT under Saved fallback, and its row reads "saved".
 - **Leaving and returning.** A pick kept through Console, Ctrl+Q and Keep editing joined on the next `s` (`fake-epsilon`).
-- **Quit-Discard.** In a fresh session, a pick then quit-Discard left the file byte-identical. In a session that had already saved, the quit rewrote the file and put back `api_key_env_var`. Plain dev does the same, so it is filed as TASK-35835.
+- **Quit-Discard.** In a fresh session, a pick (`fake-zeta`) then quit-Discard left the file byte-identical. In a session that had already saved, the quit rewrote the file and put back `api_key_env_var`. Plain dev does the same, so it is filed as TASK-35835.
 - **Keyboard and Inspector.** Tab goes Discover → the list → Add to model list → Clear, each with its own Inspector row; "applies immediately · no Save needed" sits beside Add.
 <!-- SECTION:NOTES:END -->

@@ -96,6 +96,7 @@ With Find empty, Switch model (Alt+M) and Chat settings' model picker (its pick 
 **Review round 4** (aeffadac66): clean, one cosmetic note (a short line in the guide's paragraph), reflowed with no word changed. The review over 1ca320e4bb..aeffadac66 took four rounds: round 1 the code (correct; three doc fixes), rounds 2-3 the guide's wording at the listing bound and for ADR-020, round 4 clean. Still open for the PR, not this task: D-b in the PR body, and the plan's live verification, run after S1 is rebased onto dev with #3169.
 
 **Live verification** (feat/s1-saved-models ac98be4a65 on dev 1bbc145ffc, 2026-10-20, sandboxed scratch profile, 211x44 and 235x52).
+- **The baseline.** On dev 1bbc145ffc's step-0 frame, a model saved last sat under "… 1 more" (vLLM's `vllm-model-a`).
 - **The chat.** Its current pair was Custom / stub-chat, through `chat_defaults`. No message was sent, which keeps to the owner's no-chat-send rule; the plan's sent message was only a way to give the chat that pair.
 - **The default.** llama.cpp's saved default was `fake-beta`, from its provider table and last in its saved list.
 - **Switch model before the probe answered** (stub A held 2 s): `fake-beta`, `m-one`, `m-two`, "… 1 more".

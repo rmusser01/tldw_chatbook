@@ -4326,12 +4326,17 @@ reached `issue_code` (the issue_code wrapper above logged nothing).
 `mktemp -d` returns `/var/folders/...`, and on macOS `/var` is a symlink to
 `/private/var`. Passing the resolved path instead
 (`os.path.realpath(tempfile.mkdtemp())`, `/private/var/folders/...`) started the
-app normally, with config and data under the scratch HOME. The likely
-mechanism, read from the code but not traced: `launcher.startup_preflight`
-reads the config through `_read_recovery_file`, whose parent walk opens with
-`O_NOFOLLOW`, so the symlinked `/var` raises before a missing file can read as
-missing. **Rule addition:** export HOME as the realpath of the `mktemp -d`
-directory.
+app normally, with config and data under the scratch HOME. The mechanism is
+not identified. It is not the private-path walk: that follows root-owned
+platform symlinks, and `Utils/private_paths.py::_trusted_symlink` names
+`/var -> private/var` as one. `launcher.startup_preflight` turns any
+`OSError`/`ValueError`/`RuntimeError` from `_read_recovery_file` (storage
+admission's `RecoveryRequired` included) into the fixed
+`configuration_unavailable` without calling `issue_code`, which is why the
+wrapper saw nothing. Storage admission's lexical-versus-resolved path checks are
+candidates, untraced. To find it, wrap `_read_recovery_file` inside
+`startup_preflight` the same way, and record the exception. **Rule addition:**
+export HOME as the realpath of the `mktemp -d` directory.
 
 PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
 
