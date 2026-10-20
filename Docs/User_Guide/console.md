@@ -830,10 +830,12 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **RECENT**, your recently used pairs, with **● CURRENT** on this chat's
   pair and when each was last used.
 - **READY PROVIDERS**, the first three models of each provider with no known
-  blocker: this chat's model first when it is that provider's, then that
-  provider's saved default for new chats, when its rows include it, then the
-  rest in list order. An "… N more" row counts the others (Enter on it puts
-  the provider's name in Find, and what you type next is added after it).
+  blocker, never repeating a pair PREVIOUS or RECENT already lists: this
+  chat's model first when it is that provider's and RECENT does not list it,
+  then that provider's saved default for new chats, when its rows include it,
+  then the rest in list order. An "… N more" row counts the others (Enter on
+  it puts the provider's name in Find, and what you type next is added after
+  it).
   Chat settings' model picker orders each provider's rows the same way, with
   its draft's model in place of this chat's. Find's matches are ranked by
   what you type; the saved default does not move them. A provider with its
@@ -888,7 +890,8 @@ answered (this check, or **Test connection** of the same connection), that
 server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
 longer offered. When the server listed the provider's saved default for new
-chats, that default still comes first among them, after this chat's model.
+chats, the default still leads those rows, after this chat's model when that
+is one of them; a pair PREVIOUS or RECENT lists is not repeated there.
 On llama.cpp, which sends to an endpoint set only on this chat, a pick keeps
 this chat's endpoint, so while a llama.cpp chat runs on a
 server other than the configured one, llama.cpp's readiness words and its
