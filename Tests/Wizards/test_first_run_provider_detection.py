@@ -198,6 +198,31 @@ async def test_a_server_started_mid_setup_appears_without_asking(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_server_started_mid_setup_appears_beside_ones_already_found(monkeypatch):
+    """Review v3r1, G6-BV3-04 (live: a llama-server started on :1337 while
+    :9099 and :1234 were already listed never appeared until Check again): the
+    quiet re-check ran only while nothing had been found. It now runs while
+    the step shows, and adds what it finds -- a scan that misses a server
+    already listed (a slow answer under load) never drops its row."""
+    jan = DiscoveredLocalServer("custom", "http://127.0.0.1:1337", ("m",), engine="Jan")
+    calls = _scan_returns(monkeypatch, (_LLAMA,), (_LLAMA, jan), ())
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard)
+        await wait_until(pilot, lambda: "found-0" in _ids(step))
+        assert "found-1" not in _ids(step)
+        step._quiet_recheck()  # what the timer does every RECHECK_SECONDS
+        await wait_until(pilot, lambda: "found-1" in _ids(step))
+        assert len(calls) == 2
+        assert "Jan on this computer · 127.0.0.1:1337" in _prompt(step, "found-1")
+        step._quiet_recheck()  # this scan answers nothing
+        await wait_until(pilot, lambda: len(calls) == 3)
+        await pilot.pause()
+        assert {"found-0", "found-1"} <= set(_ids(step)), "a quiet scan only adds"
+
+
+@pytest.mark.asyncio
 async def test_nothing_answering_names_the_address_and_the_engine(monkeypatch):
     """provider-14: the selected engine's own reason, never a bare 'couldn't'."""
 
@@ -290,6 +315,28 @@ async def test_use_a_popular_model_now_and_start_the_server_later(monkeypatch):
         await wait_for_step(pilot, wizard, STEP_MODEL)
         _c, model = current_step(wizard)
         assert model.query_one("#setup-model-custom", Input).value == "llama3.2"
+
+
+@pytest.mark.asyncio
+async def test_start_later_says_what_it_set_when_ollama_is_already_picked(monkeypatch):
+    """Review v3r1, G6-BV3-06 (live): with Ollama already selected, the
+    start-later button only took focus -- re-picking the shown provider is a
+    no-op -- so the first press looked dead until Next showed llama3.2."""
+    _scan_returns(monkeypatch, ())
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard)
+        await pick_provider(pilot, step, "ollama")
+        await wait_until(pilot, lambda: step.query_one("#setup-provider-no-server").display)
+        step.query_one("#setup-provider-no-server-help", Collapsible).collapsed = False
+        await pilot.pause()
+        step.query_one("#setup-provider-use-later", Button).press()
+        await pilot.pause()
+        assert static_text(step, "#setup-provider-probe-status") == (
+            "Ollama with llama3.2 is set — press Next, and start Ollama before "
+            "your first chat."
+        )
 
 
 @pytest.mark.asyncio

@@ -146,9 +146,11 @@ When nothing answers, the step says which addresses it checked, offers
 a pointer to this section, the set-it-up-now path (pick your engine, press
 Next, and type the model you'll run), and **Use llama3.2 with Ollama — I'll
 start it later**, which picks Ollama and starts the Model step with
-`llama3.2` typed in (`ollama pull llama3.2` fetches it). While the step is
-open and nothing was found, it quietly looks again every 15 seconds, so a
-server you start meanwhile appears on its own. If the engine you picked
+`llama3.2` typed in (`ollama pull llama3.2` fetches it); the status line
+says it is set and that Ollama needs starting before your first chat. While
+the step is open it quietly looks again every 15 seconds, so a server you
+start meanwhile appears on its own beside any already listed (a server that
+was found stays listed). If the engine you picked
 doesn't answer, the line under it names the address: "Nothing is answering
 at http://localhost:11434 — start Ollama, then Check again."
 
