@@ -5893,8 +5893,18 @@ class ConsoleAgentBridge:
         raises keeps the light surface (fail closed). Without a
         ``conversation_id`` (the meter, the Tools chip) the session's own is
         looked up, so they see the same fleet the send does.
+
+        A goal iteration is not plain chat either (review round 3, R3-1): its
+        reviewed launch selected its tools and runtime tools
+        (``run_skill_script``, the only path to a command-backed check's
+        evidence), and ``goal.narrow_config`` / ``permits_runtime`` govern it.
         """
         if self._light_tool_surface is None or turn_skill_bindings:
+            return False
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
             return False
         try:
             light = bool(self._light_tool_surface())
