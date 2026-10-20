@@ -13948,6 +13948,7 @@ class ChatScreen(BaseAppScreen):
         self._console_guidance_dismissed = True
         self._sync_console_transcript_guidance()
 
+    @spend.console_readiness_presentation  # TASK-35645: every caller reads owned config
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
         # These synchronous presentation helpers consume one result. Keep the
@@ -16915,7 +16916,6 @@ class ChatScreen(BaseAppScreen):
                 ``True`` -- the review-notes edit/delete reload otherwise
                 skips as a no-op until the user's next send.
         """
-        from ..Console_Modules import config_sync
         from ..Console_Modules.transcript import ConsoleChangeReviewProjection
 
         if type(self._change_review_projection) is ConsoleChangeReviewProjection:
@@ -17245,8 +17245,7 @@ class ChatScreen(BaseAppScreen):
                         ),
                     )
                 self._last_native_transcript_refresh_key = refresh_key
-            # TASK-35444: checked display config; a deferral replays the bar.
-            config_sync.run_console_presentation_sync(self, self._sync_console_transcript_guidance)
+            self._sync_console_transcript_guidance()  # TASK-35444: checked display config
             self._last_native_transcript_session_id = (
                 self._ensure_console_chat_store().active_session_id
             )
@@ -17570,7 +17569,7 @@ class ChatScreen(BaseAppScreen):
                 self._console_preparing_display_task = asyncio.current_task()
                 self._console_preparing_display_record = poll_record
             if poll_record is None:
-                self._sync_console_chat_core_state()
+                config_sync.sync_console_core_state(self)
             self._session._sync_console_session_draft()
             # AC10: publish current tabs before cold presentation reads can
             # defer the rest of FULL. The tab owner revalidates every await.

@@ -9,6 +9,7 @@ from Tests.UI.response_rules_fixtures import mounted_rules_console, seed_answer
 from Tests.UI.test_console_native_chat_flow import (
     _build_console_send_test_app,
     _configure_native_ready_console,
+    _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -554,17 +555,22 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sync", ["recovery", "full-ui"])
+@pytest.mark.parametrize("sync", ["recovery-and-resume", "full-ui", "full-ui-held"])
 async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
-    """TASK-35444: display syncs never reload config while a rebuild holds it.
+    """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
     The phase test above failed in CI when a sync during Stop rebuilt the
     provider selection with ``load_settings()`` on the UI loop while a config
     rebuild held its lock: first through the transcript's recovery
-    placeholder, then, once that was fixed, through the full UI sync's
-    transcript step and its rail visibility pass, both after the sync's first
-    await. Here the rebuild starts as the transcript step begins. The
-    watchdog records where the UI thread was waiting.
+    placeholder, then through the full UI sync's transcript step and its rail
+    visibility pass, then its core-state push and the transcript's row
+    reconcile, and the guidance the attach reconcile's screen resume
+    refreshes. Here the rebuild starts as the transcript step begins, which
+    then reconciles the seeded rows ("full-ui"), before the whole sync
+    ("full-ui-held"), or before the recovery sync and a screen resume
+    ("recovery-and-resume", one mount for both). Queued refreshes get loop
+    turns inside the hold too. The watchdog records where the UI thread was
+    waiting.
     """
     import sys
     import threading
@@ -598,17 +604,30 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         def start_rebuild():
             hold.set()
             assert held.wait(3)
+            started.append(time.monotonic())
             watchdog.start()
 
         holder = threading.Thread(target=hold_rebuild)
         watchdog = threading.Timer(2, expire)
+        started = []  # when the hold began
         holder.start()
         try:
-            started = time.monotonic()
-            if sync == "recovery":
+            if sync == "recovery-and-resume":
+                await settle(case.console)
                 start_rebuild()
                 region.sync_recovery()
+                case.console.on_screen_resume()
             else:
+                seed_answer(case)
+                transcript = case.console.query_one("#console-native-transcript")
+                reconcile_rows, reconciled = transcript._reconcile_rows, []
+
+                async def counted_reconcile(*args, **kwargs):
+                    if held.is_set():
+                        reconciled.append(True)
+                    return await reconcile_rows(*args, **kwargs)
+
+                monkeypatch.setattr(transcript, "_reconcile_rows", counted_reconcile)
                 transcript_sync = case.console._sync_native_console_transcript
                 test_task = asyncio.current_task()
 
@@ -616,24 +635,36 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                     # Only this test's sync: the app's own syncs pass through.
                     if asyncio.current_task() is not test_task:
                         return await transcript_sync(*args, **kwargs)
-                    start_rebuild()
-                    # Past the TASK-34958 tick gate: the whole pipeline runs.
+                    if sync == "full-ui":
+                        start_rebuild()
+                    # Past the TASK-34958 tick gate and the refresh key: the
+                    # whole pipeline runs, through the rows' reconcile.
+                    case.console._last_native_transcript_refresh_key = None
                     await transcript_sync(force=True)
 
                 monkeypatch.setattr(
                     case.console, "_sync_native_console_transcript", rebuild_then_transcript
                 )
-                # The app's own sync may be running: this call would then
-                # return at entry (two of the flags its entry guard checks).
-                # Nothing awaits between the check and entry.
-                async with asyncio.timeout(5):
-                    while case.console._console_sync_in_progress or getattr(
-                        case.console, "_console_control_bar_replay_whole_sync", False
-                    ):
-                        await asyncio.sleep(0.01)
-                await case.console._sync_native_console_chat_ui()
+                if sync == "full-ui-held":
+                    await settle(case.console)
+                    start_rebuild()
+                    await case.console._sync_native_console_chat_ui()
+                else:
+                    # Before the rebuild starts, an ordinary deferral (a cold
+                    # display projection, say) can still end the sync ahead
+                    # of its transcript step, under load on dev too; retry
+                    # until this test's own sync reaches it.
+                    for _ in range(5):
+                        await settle(case.console)
+                        await case.console._sync_native_console_chat_ui()
+                        if held.is_set():
+                            break
+                for _ in range(10):
+                    await asyncio.sleep(0.02)
                 assert held.is_set(), "the full sync never reached its transcript step"
-            elapsed = time.monotonic() - started
+                if sync == "full-ui":
+                    assert reconciled, "no transcript rows reconciled under the rebuild"
+            elapsed = time.monotonic() - started[0]
             assert not release.is_set(), (
                 f"{sync} sync waited {elapsed:.3f}s for the config rebuild:\n"
                 + "".join(blocked[-14:])
@@ -644,3 +675,28 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
             release.set()
             holder.join(3)
         assert not holder.is_alive()
+        if sync.startswith("full-ui"):
+            # Deferred, not dropped: any whole-sync replay finishes after release.
+            await settle(case.console)
+            await _wait_for_text(case.console, case.pilot, "Missing proof")
+
+
+async def settle(console):
+    """Wait out the app's own sync and replay, the attach reconcile and skill discovery.
+
+    The sync and replay are two of the flags the entry guard checks (nothing
+    awaits between this check and the next sync's entry). Skill discovery,
+    which the mount and the attach reconcile's resume start, still reads
+    config the first time, outside the syncs pinned here (TASK-35836).
+    """
+    async with asyncio.timeout(5):
+        while (
+            console._console_sync_in_progress
+            or getattr(console, "_console_control_bar_replay_whole_sync", False)
+            or not console._console_attach_reconciled
+            or any(
+                worker.group == "console-skill-discovery" and not worker.is_finished
+                for worker in console.workers
+            )
+        ):
+            await asyncio.sleep(0.01)

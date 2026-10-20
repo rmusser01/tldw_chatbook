@@ -92,7 +92,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ProprietaryThinkingBlock,
     ThinkingEnvelope,
 )
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import config_read_would_wait, get_cli_setting
 from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
@@ -3050,6 +3050,7 @@ class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
     can_focus = True
+    _turn_file_cards_shown: bool = True  # TASK-35645: last rendered switch (the default)
 
     class TranscriptTextSelected(Message):
         """Posted when a mouse drag finished with a non-empty text selection.
@@ -5047,14 +5048,13 @@ class ConsoleTranscript(VerticalScroll):
     def _turn_file_cards_enabled(self) -> bool:
         """Read the turn-file-card presentation switch once per render pass.
 
-        task-32804.6 ([W-console-2]): this was `get_cli_setting(...)` per row
-        (~5 ms each; a 20-card pass went 1.2 ms -> ~102 ms). Row-building
-        passes read it once here and thread the bool through
-        `_build_row_widget` / `_update_row_widget`; direct callers fall back to
-        this. Kept on the module-level `get_cli_setting` so the existing
-        patch-point pinning test stays valid.
+        task-32804.6: a per-row read cost ~5 ms, so row passes thread this bool;
+        `get_cli_setting` here is a test's patch point. TASK-35645: while another
+        thread's rebuild holds either cold config cache, keep the last value.
         """
-        return bool(get_cli_setting("console", "turn_file_cards", True))
+        if not config_read_would_wait():
+            self._turn_file_cards_shown = bool(get_cli_setting("console", "turn_file_cards", True))
+        return self._turn_file_cards_shown
 
     def _assistant_markdown_enabled(self) -> bool:
         """Return the ``[chat_defaults] assistant_markdown`` toggle (TASK-1990)."""
