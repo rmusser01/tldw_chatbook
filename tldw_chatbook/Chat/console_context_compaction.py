@@ -3444,16 +3444,15 @@ class ConsoleCompactionPreflight:
         retained_messages = list(projection.rows)
         memory_rows = projection.memory
 
-        tools: list[self.read_global_Mapping()[str, self.read_global_Any()]] = []
-        if agent_tools_enabled and self.read_controller__agent_bridge() is not None:
-            preview = getattr(
-                self.read_controller__agent_bridge(), "preview_tool_schemas", None
-            )
-            if callable(preview):
-                try:
-                    tools = list(preview(resolution, session_id=session_id))
-                except Exception:
-                    tools = []
+        from tldw_chatbook.Chat.console_tool_surface_preview import preflight_tool_rows
+
+        # TASK-34100.5.3 review round 2: the tools the send plans for THIS request.
+        tools = preflight_tool_rows(
+            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+            resolution,
+            session_id=session_id,
+            messages=[*retained_messages, *memory_rows],
+        )
         prepared_before = prepare(
             resolution,
             retained_messages,
@@ -4070,16 +4069,14 @@ class ConsoleCompactionPreflight:
     ) -> None:
         """Report a request's capacity verdict when there is no history yet."""
 
-        tools: list[self.read_global_Mapping()[str, self.read_global_Any()]] = []
-        if agent_tools_enabled and self.read_controller__agent_bridge() is not None:
-            preview = getattr(
-                self.read_controller__agent_bridge(), "preview_tool_schemas", None
-            )
-            if callable(preview):
-                try:
-                    tools = list(preview(resolution, session_id=session_id))
-                except Exception:
-                    tools = []
+        from tldw_chatbook.Chat.console_tool_surface_preview import preflight_tool_rows
+
+        tools = preflight_tool_rows(
+            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+            resolution,
+            session_id=session_id,
+            messages=provider_messages,
+        )
         prepared = prepare(
             resolution, list(provider_messages), tools=tools, apply_safety_window=False
         )

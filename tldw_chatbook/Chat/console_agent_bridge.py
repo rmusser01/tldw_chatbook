@@ -5125,10 +5125,9 @@ def build_console_first_request_plan(
     plain_prompt = (session_system_prompt or "").strip() or PLAIN_CHAT_SYSTEM_PROMPT
     # TASK-34100.5.3: the light surface's prompt is the plain one plus one
     # line, sent only when its tools are (a tool-less fallback gets the
-    # plain prompt alone). Live, gpt-4.1-nano called a tool for "Reply with
-    # just: hi" without it.
+    # plain prompt alone). The meter's re-plan builds the same pair.
     direct_prompt = (
-        f"{plain_prompt}\n\n{get_internal_prompt('agents.console_light_surface_hint')}"
+        surface.light_surface_prompts(session_system_prompt)[1]  # bound above
         if light_surface
         else compose_agent_system_prompt(session_system_prompt, offer_find_load=False)
     )
@@ -5975,7 +5974,11 @@ class ConsoleAgentBridge:
             )
 
     def preview_tool_schemas(
-        self, resolution: Any = None, *, session_id: str | None = None
+        self,
+        resolution: Any = None,
+        *,
+        session_id: str | None = None,
+        messages: Sequence[Mapping[str, Any]] = (),
     ) -> list[dict[str, Any]]:
         """Provider tool rows the next plain send discloses (the context meter).
 
@@ -5986,10 +5989,12 @@ class ConsoleAgentBridge:
         counted none.
 
         The rows are the send's own schema planner re-run against
-        ``resolution`` (``console_tool_surface_preview``), never a list
-        remembered from an earlier send: the same tools can be disclosed
-        directly on a 1M-token window and not at all on an 8,192-token one
-        (review round 1, F2).
+        ``resolution`` and the request in ``messages``
+        (``console_tool_surface_preview``), never a list remembered from an
+        earlier send: the same tools can be disclosed directly on a 1M-token
+        window and not at all on an 8,192-token one (review round 1, F2), and
+        directly beside a short conversation but not beside a long one
+        (review round 2, V2-1/R2-1).
 
         * Light surface: the light set read fresh from config, plus the tools
           from the user's own sources that ``session_id``'s last send
@@ -6002,6 +6007,9 @@ class ConsoleAgentBridge:
         Args:
             resolution: The send's provider resolution, when the caller has it.
             session_id: The Console session the send belongs to.
+            messages: The provider request being assessed, leading system
+                row (the session prompt) included; empty sizes the tools
+                against a one-row stand-in.
 
         Returns:
             One OpenAI-shaped ``{"type": "function", ...}`` row per tool.
@@ -6009,6 +6017,7 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Chat.console_tool_surface_preview import (
             light_surface_plan_inputs,
             shared_registry_plan_inputs,
+            split_session_prompt,
         )
 
         native = (
@@ -6016,17 +6025,21 @@ class ConsoleAgentBridge:
             if self._native_tools_enabled is None
             else bool(self._native_tools_enabled())
         )
+        session_prompt, conversation = split_session_prompt(messages)
         memory = self._surface_memory()
         if self.light_surface_for((), session_id=session_id):
             inputs = light_surface_plan_inputs(
                 memory.light_sources(session_id),
                 local_tools_available=self.light_surface_local_tools_available(),
+                session_system_prompt=session_prompt,
             )
         else:
             inputs = memory.full_inputs(session_id) or shared_registry_plan_inputs(
                 self._registry, self._allowed_tools, console_run_budget()
             )
-        return inputs.tool_rows(resolution, native_tools=native)
+        return inputs.tool_rows(
+            resolution, native_tools=native, messages=conversation
+        )
 
     def _preview_conversation_id(self, session_id: str | None) -> str | None:
         """The conversation a send for ``session_id`` keys its fleet by.

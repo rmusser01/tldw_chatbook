@@ -5,10 +5,13 @@ meter ask the agent bridge for ``preview_tool_schemas(resolution)``. The
 answer has to agree with what the send will disclose, so it is never a list
 remembered from an earlier send: it is the send's own first-request schema
 planner (``build_first_request_schema_plan``) re-run against the resolution
-the caller is asking about. A tool set that fits a 1M-token window directly
-can need progressive discovery, or no tools at all, on an 8,192-token one
-(review round 1, F2: the remembered 1M rows made the preflight refuse sends
-on a small model as unable to fit).
+and the request the caller is assessing (``preflight_tool_rows``). A tool set
+that fits a 1M-token window directly can need progressive discovery, or no
+tools at all, on an 8,192-token one (review round 1, F2: the remembered 1M
+rows made the preflight refuse sends on a small model as unable to fit); and
+one that fits beside a short conversation can be dropped beside a long one
+(review round 2, V2-1/R2-1: sized against a one-row stand-in, the meter held
+a chat for compaction over 3,351 tokens of tools the send never carried).
 
 What the planner is re-run over (``ToolSurfacePlanInputs``):
 
@@ -47,14 +50,69 @@ from tldw_chatbook.Agents.agent_models import (
 #: Sessions whose last send the meter remembers (oldest dropped first).
 MAX_REMEMBERED_SESSIONS = 32
 
-#: The one-row request the planner is re-run with. It needs an active user
-#: request to count a request at all: with a local reasoning-replay policy
-#: (every llama.cpp resolution carries one) the count projects history around
-#: it, and with no messages it raised "A Console provider request requires an
-#: active request" -- which the planner swallows into a tool-less plan, so the
-#: meter counted no tools for requests that carried the light set (live,
-#: review round 1).
+#: The one-row request the planner is re-run with when the caller has no
+#: request to size against. It needs an active user request to count a
+#: request at all: with a local reasoning-replay policy (every llama.cpp
+#: resolution carries one) the count projects history around it, and with no
+#: messages it raised "A Console provider request requires an active request"
+#: -- which the planner swallows into a tool-less plan, so the meter counted
+#: no tools for requests that carried the light set (live, review round 1).
 _PREVIEW_REQUEST: tuple[dict[str, str], ...] = ({"role": "user", "content": "."},)
+
+
+def split_session_prompt(
+    messages: Sequence[Mapping[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Split a provider request the way a send does before it plans.
+
+    ``ConsoleChatController._run_agent_reply`` takes a leading system row as
+    the session's prompt and hands the rest to the planner as the
+    conversation; the meter's re-plan does the same so both size one request.
+
+    Returns:
+        ``(session_system_prompt, conversation_rows)``.
+    """
+    rows = [dict(row) for row in messages]
+    if rows and rows[0].get("role") == "system":
+        return str(rows[0].get("content", "")), rows[1:]
+    return "", rows
+
+
+def preflight_tool_rows(
+    bridge: Any | None,
+    resolution: Any,
+    *,
+    session_id: str | None,
+    messages: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """The tool rows the send preflight counts for the request it assesses.
+
+    Review round 2 (V2-1, R2-1): re-planned against a one-row stand-in, the
+    meter counted the surface that fits an EMPTY conversation. Live on gpt-4
+    (8k) with Full agent tools on, it counted 3,351 tokens of discovery tools
+    and held a four-message chat for compaction, while the send -- planned
+    against the real conversation -- carried only ``read_agent_messages``;
+    and a long first message the send would have carried tool-less was
+    refused as unable to fit. The preflight now hands its own request over.
+
+    Args:
+        bridge: The Console agent bridge, or ``None`` when agent tools are
+            off for this send (no tools are counted).
+        resolution: The send's provider resolution.
+        session_id: The Console session the send belongs to.
+        messages: The provider-visible rows the preflight is assessing.
+
+    Returns:
+        The rows ``preview_tool_schemas`` gives, or ``[]`` when the bridge has
+        none or it fails (a meter never breaks a send).
+    """
+    preview = getattr(bridge, "preview_tool_schemas", None)
+    if not callable(preview):
+        return []
+    try:
+        return list(preview(resolution, session_id=session_id, messages=messages))
+    except Exception:  # noqa: BLE001 -- the preflight counts no tools then
+        return []
 
 
 class SchemaCatalog:
@@ -144,18 +202,28 @@ class ToolSurfacePlanInputs:
     config: AgentConfig
     schema_flags: Mapping[str, Any]
 
-    def tool_rows(self, resolution: Any, *, native_tools: bool) -> list[dict[str, Any]]:
+    def tool_rows(
+        self,
+        resolution: Any,
+        *,
+        native_tools: bool,
+        messages: Sequence[Mapping[str, Any]] = (),
+    ) -> list[dict[str, Any]]:
         """The provider tool rows the planner discloses for ``resolution``.
 
-        The planner is given a one-row stand-in request, not the
-        conversation: the meter asks what the tool surface is for this model
-        and window; whether the conversation then fits beside it is the
-        preflight's own question.
+        The planner sizes the tools against ``messages`` -- the request the
+        caller is assessing -- exactly as the send does: a conversation that
+        leaves no room for the direct set gets discovery or no tools, and the
+        meter must count that, not the set that fits an empty conversation
+        (review round 2, V2-1/R2-1). With no messages a one-row stand-in is
+        used.
 
         Args:
             resolution: The provider resolution to size against, or ``None``
                 to keep the remembered send's own model and window.
             native_tools: Whether the bridge prefers provider-native tools.
+            messages: The conversation rows the send would carry (no leading
+                system row; ``split_session_prompt`` removes it).
 
         Returns:
             One OpenAI-shaped ``{"type": "function", ...}`` row per tool.
@@ -193,33 +261,50 @@ class ToolSurfacePlanInputs:
             self.allowed_tools,
             config,
             endpoint,
-            [dict(row) for row in _PREVIEW_REQUEST],
+            [dict(row) for row in (messages or _PREVIEW_REQUEST)],
             context_window=context_window,
             **self.schema_flags,
         )
-        return schemas_to_openai_tools([*plan.runtime_schemas, *plan.active_schemas])
+        runtime = list(plan.runtime_schemas)
+        if self.schema_flags.get("progress_available"):
+            # AgentService.run adds the inbox reader whenever the run has a
+            # progress inbox, whatever the plan chose -- a full send whose
+            # conversation leaves no room for tools still carries it (live,
+            # review round 2 V2-1: gpt-4 8k sent only read_agent_messages).
+            from tldw_chatbook.Agents.fleet_message_tools import (
+                READ_AGENT_MESSAGES_SCHEMA,
+            )
+
+            if READ_AGENT_MESSAGES_SCHEMA not in runtime:
+                runtime.append(READ_AGENT_MESSAGES_SCHEMA)
+        return schemas_to_openai_tools([*runtime, *plan.active_schemas])
 
 
 def light_surface_plan_inputs(
     user_source_schemas: Sequence[ToolSchema] = (),
     *,
     local_tools_available: bool = True,
+    session_system_prompt: str = "",
 ) -> ToolSurfacePlanInputs:
     """Planner inputs for plain chat's light surface, read fresh from config.
 
-    The schema flags are the light plan's: no runtime tools, no run-log
-    tools and no discovery fallback (``build_console_first_request_plan``
-    with ``light_surface=True``).
+    The schema flags and prompts are the light plan's: no runtime tools, no
+    run-log tools, no discovery fallback, and the session's prompt with the
+    "answer directly" line (``build_console_first_request_plan`` with
+    ``light_surface=True``; both take the prompts from
+    ``light_surface_prompts``).
 
     Args:
         user_source_schemas: Tools from the user's own sources that this
             session's last send carried.
         local_tools_available: ``False`` while the MCP hub's kill switch
             keeps the send from composing local tools.
+        session_system_prompt: The session's own system prompt, as the
+            request being assessed carries it.
     """
-    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
     from tldw_chatbook.Agents.plain_chat_tool_surface import (
         light_surface_budget,
+        light_surface_prompts,
         light_surface_tool_schemas,
     )
 
@@ -228,12 +313,13 @@ def light_surface_plan_inputs(
     )
     catalog = SchemaCatalog.from_schemas(schemas, source="light_surface")
     names = catalog.names
+    plain_prompt, direct_prompt = light_surface_prompts(session_system_prompt)
     return ToolSurfacePlanInputs(
         catalog=catalog,
         allowed_tools=names,
         config=AgentConfig(
             model="",
-            system_prompt=PLAIN_CHAT_SYSTEM_PROMPT,
+            system_prompt=direct_prompt,
             allowed_tools=names,
             budget=light_surface_budget(RunBudget()),
         ),
@@ -242,7 +328,9 @@ def light_surface_plan_inputs(
             "install_skill_enabled": False,
             "run_skill_script_enabled": False,
             "run_log_active": False,
-            "plain_system_prompt": PLAIN_CHAT_SYSTEM_PROMPT,
+            "direct_system_prompt": direct_prompt,
+            "discovery_system_prompt": plain_prompt,
+            "plain_system_prompt": plain_prompt,
             "allow_discovery": False,
         },
     )

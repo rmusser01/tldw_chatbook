@@ -149,7 +149,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_chat_controller.py": 29055,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
-    "tldw_chatbook/Chat/console_context_compaction.py": 4185,
+    # TASK-34100.5.3 review round 2: both preflight tool previews moved into
+    # console_tool_surface_preview.preflight_tool_rows -> 4,182.
+    "tldw_chatbook/Chat/console_context_compaction.py": 4182,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,

@@ -69,12 +69,12 @@ async def test_compaction_reads_replaced_services_globals_and_accounting(
 
     previewed: list[tuple[object, object]] = []
 
-    def preview_call(resolution, *, session_id=None):
-        # TASK-34100.5.3: the preview is sized against the send's resolution,
-        # for the send's own session (recorded, not asserted here: the
-        # preflight swallows a raising preview).
+    def preview_call(resolution, *, session_id=None, messages=()):
+        # TASK-34100.5.3: the preview is sized against the send's resolution
+        # and request, for the send's own session (recorded, not asserted
+        # here: the preflight swallows a raising preview).
         calls.append("preview")
-        previewed.append((resolution is not None, session_id))
+        previewed.append((resolution is not None and bool(messages), session_id))
         if preview == "raises":
             raise ValueError("controlled optional preview failure")
         return []
