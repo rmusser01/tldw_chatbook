@@ -400,10 +400,16 @@ limits to continue". The composer still takes your message: a new
 profile's empty chat shows the word, its reason ("Replies reserve 200,000 of
 gpt-4o's 128,000-token context window…") and **Fix model limits** on one
 line instead of the Get started card, and your draft is kept while you lower
-Max tokens.
+Max tokens. Once a first reply has arrived on this profile, an empty chat
+(a new tab, or after a restart) shows only **Fix model limits** under "No
+messages yet."; the header word and the composer line still name the reason.
 In the model switcher, a row is judged with the Max tokens typed in its
 values strip, so the row turns "Not ready · window too small" as you type a
-value Enter would refuse. The same check runs before every
+value Enter would refuse. **Save as model default** and **Default for new
+chats** apply the pair to this chat too, so they refuse that value the same
+way: the switcher says "… lower Max tokens, then save it as a default.", and
+Chat settings dims both buttons and names the reason above the footer
+("Unavailable: Replies reserve 200,000 of gpt-4o's …"). The same check runs before every
 send, so this word appears before a send is refused, not after. When the
 model's window is only estimated (no catalog entry and no size reported by
 the server), the reply reservation never takes more than about half of that

@@ -2483,9 +2483,16 @@ class ConsoleModelPopover(
         ):
             # TASK-34100.2 review F6: never apply a pair whose replies would
             # leave no room for a message; the fix is in the strip below.
+            # Pass 3 review round 1 (F3): a refused save names the save, so it
+            # never repeats Enter's line and looks like nothing happened.
+            then = (
+                "Enter"
+                if action is ConsoleSettingsAction.APPLY_TO_CHAT
+                else "save it as a default"
+            )
             self._set_error(
                 f"Replies fill {draft.settings.model}'s context window: lower "
-                "Max tokens, then Enter.",
+                f"Max tokens, then {then}.",
                 focus=self._value_input("max_tokens"),
             )
             return

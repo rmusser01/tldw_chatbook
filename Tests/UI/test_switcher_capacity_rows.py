@@ -272,3 +272,80 @@ async def test_fix_model_limits_opens_settings_on_max_tokens() -> None:
 
     assert focused_id == "console-settings-max-tokens"
     assert connection.collapsed is True
+
+
+# --- One rule for saving a default whose replies fill the window (pass 3
+# review round 1, F3) -----------------------------------------------------------
+
+
+async def test_save_as_model_default_refuses_a_full_window_with_its_own_words() -> None:
+    """F3: after Enter's refusal, 'Save as model default' showed the very same
+    'then Enter' line, so the save looked like it did nothing. The refusal
+    now names the save, and nothing is submitted."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, _build(recorder, current="gpt-4o", session_max_tokens=4096)
+        )
+        await _settle(app, pilot)
+        max_tokens = switcher.query_one("#console-popover-max-tokens", Input)
+        max_tokens.focus()
+        max_tokens.value = "200000"
+        await pilot.pause()
+        switcher.query_one("#console-popover-find", Input).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        after_enter = str(switcher.query_one("#console-popover-error", Static).render())
+        switcher.query_one("#console-popover-save-model-default").press()
+        await pilot.pause()
+        after_save = str(switcher.query_one("#console-popover-error", Static).render())
+
+    assert recorder.submissions == []
+    assert after_enter.endswith("lower Max tokens, then Enter.")
+    assert "context window" in after_save
+    assert after_save.endswith("lower Max tokens, then save it as a default.")
+
+
+async def test_chat_settings_will_not_save_a_default_whose_replies_fill_the_window() -> None:
+    """F3: Chat settings' 'Default for new chats' (and 'Save as model default',
+    which both apply to this chat too) saved Max tokens 200,000 for gpt-4o and
+    applied it, while Apply and the switcher refused the same pair. Both
+    default actions are refused, with the capacity verdict's own words."""
+    from Tests.UI.test_console_session_settings import ModalHarness
+    from textual.widgets import Button
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="openai", model="gpt-4o", max_tokens=200_000
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4o"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 128_000, "10 / 128k"),
+                can_save=True,
+            )
+        )
+        for _ in range(6):
+            await pilot.pause()
+        screen = app.screen
+        make = screen.query_one("#console-settings-make-default", Button)
+        save = screen.query_one("#console-settings-save-default", Button)
+        apply = screen.query_one("#console-settings-save", Button)
+        block = str(
+            screen.query_one("#console-settings-new-chat-default-block", Static).render()
+        )
+
+    assert apply.disabled is True
+    assert make.disabled is True
+    assert save.disabled is True
+    assert block.startswith("Unavailable: Replies reserve 200,000 of gpt-4o's")

@@ -4198,6 +4198,32 @@ def _model_level_blocker_detail(
     )
 
 
+def default_save_refusal(
+    readiness: ConsoleSettingsReadiness,
+    default_readiness: ConsoleSettingsReadiness,
+) -> str:
+    """Why Chat settings' default actions are unavailable, or ``""``.
+
+    TASK-34100.2 pass 3 review round 1 (F3): 'Save as model default' and
+    'Make default for new chats' also apply the pair to this chat, so a draft
+    whose replies fill its model's window is refused as Apply and the
+    switcher refuse it, in the capacity verdict's own words; otherwise a
+    pair that cannot send natively is refused as before.
+
+    Args:
+        readiness: The open draft's verdict (its own Max tokens).
+        default_readiness: The future-chat verdict for the draft's pair.
+
+    Returns:
+        The 'Unavailable: ...' copy, or an empty string when saving is fine.
+    """
+    if readiness.blocker == "capacity_exhausted":
+        return f"Unavailable: {readiness.detail}"
+    if not default_readiness.native_send_supported:
+        return f"Unavailable: {default_readiness.detail}"
+    return ""
+
+
 def readiness_words_for_model(
     readiness: ConsoleSettingsReadiness,
     provider: str,

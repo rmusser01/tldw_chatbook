@@ -72,6 +72,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     build_console_settings_readiness,
     console_settings_warnings,
+    default_save_refusal,
     normalize_console_model_value,
     normalize_llamacpp_base_url,
     reasoning_effort_hint_for_model,
@@ -2885,10 +2886,8 @@ class ConsoleSettingsModal(
         completion_controls = {apply_button, save_button, make_button}
         if not settings.model:
             copy = "Unavailable: choose a model first."
-        elif not default_readiness.native_send_supported:
-            copy = f"Unavailable: {default_readiness.detail}"
-        else:
-            copy = ""
+        else:  # F3: a full window is refused as Apply refuses it
+            copy = default_save_refusal(readiness, default_readiness)
         needs_endpoint_persistence = readiness.blocker == "endpoint_not_saved"
         can_finish = (
             self._can_save
@@ -2926,7 +2925,9 @@ class ConsoleSettingsModal(
         )
         save_button.variant = "primary" if needs_endpoint_persistence else "default"
         save_button.display = show_defaults and not recovery_active
-        save_button.disabled = not settings.model or not can_finish
+        save_button.disabled = not settings.model or not can_finish or (
+            readiness.blocker == "capacity_exhausted"  # Save applies here too
+        )
         make_button.disabled = bool(copy) or not can_finish
         modal_width = self.query_one("#console-settings-modal", Vertical).size.width
         self._sync_action_copy((modal_width or self.size.width) < 100)
