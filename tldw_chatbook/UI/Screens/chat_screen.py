@@ -4083,6 +4083,7 @@ class ChatScreen(BaseAppScreen):
             transcript_style=self._console_transcript_style(),
         )
 
+    @spend.retry_after_config_rebuild
     def _sync_console_identity_surfaces(self) -> None:
         """Refresh mounted surfaces derived from active chat presentation."""
         self._sync_console_chat_core_state()
@@ -21517,15 +21518,15 @@ class ChatScreen(BaseAppScreen):
         self._request_console_context_allocation_reconcile()
 
     @on(Resize)
+    @spend.retry_after_config_rebuild
     def _adapt_console_workspace_to_width(self, event: Resize) -> None:
         """Re-evaluate the width-driven rail rules on live terminal resizes.
 
-        TASK-2154.1 (LY-08/LY-09): available_columns feeds
-        build_console_rail_state only when rail state is (re)built -- at
-        compose or on a console sync tick -- and a pure terminal resize
-        triggers neither, so without this hook crossing the 100/84-column
-        thresholds mid-session left the grid in its stale (possibly broken)
-        layout until some unrelated state change happened to rebuild it.
+        TASK-2154.1 (LY-08/LY-09): available_columns feeds build_console_rail_state
+        only when rail state is (re)built -- at compose or on a console sync tick --
+        and a pure terminal resize triggers neither, so without this hook crossing
+        the 100/84-column thresholds mid-session left the grid in its stale
+        (possibly broken) layout until some unrelated state change rebuilt it.
         Guarded on the width BAND so a resize drag does not rebuild the
         (store-reading) effective rail state on every event.
         """
