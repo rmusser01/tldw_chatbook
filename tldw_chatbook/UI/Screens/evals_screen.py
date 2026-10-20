@@ -43,6 +43,10 @@ from textual.css.query import QueryError
 from textual.widgets import Button, Select, Static
 
 from ..focus_ownership import focus_is_on_screen
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 from ...Chat.Chat_Functions import chat_api_call
 from ...config import get_user_data_dir
 from ...DB.Evals_DB import ConflictError, EvalsDB
@@ -826,14 +830,10 @@ class EvalsScreen(LabScreen):
         """Whether a resolved run-group row (``EvalsViewModel.run_group_
         by_id``) belongs to a CHARACTER bench rather than a word bench.
 
-        Shared by every place a ``"run_group"`` selection composes
-        something bench-type-specific: ``_compose_detail_pane`` (a neutral
-        placeholder instead of the word-bench-shaped ``ResultsGrid``) and
-        ``_register_grid_shortcuts`` below (so lens/baseline/sort/export
-        are never advertised in the footer for a run with no grid to act
-        on) -- see this task's own "the two bench types never share a
-        detail surface" constraint. Until task-1691 phase 2 Task 6 wired
-        Run for a character bench, this was unreachable: no character-
+        Shared by detail and inspector composition: character runs use a
+        neutral placeholder instead of the word-bench-shaped ResultsGrid.
+        Footer/help support follows the mounted grid, not a second type lookup.
+        Until task-1691 phase 2 Task 6 wired Run for a character bench, this was unreachable: no character-
         probe run group could ever exist to select.
 
         Args:
@@ -855,76 +855,82 @@ class EvalsScreen(LabScreen):
         The skill-eval sibling of ``_character_run_group`` just above --
         shared by the same two bench-type-specific sites (``_compose_detail_
         pane`` mounts ``SkillEvalDetail`` instead of ``ResultsGrid``; the
-        cell inspector and grid-shortcut registration are skipped for a run
-        with no word-bench grid to act on), classified the same way: by the
-        group's own ``task_id`` resolving through the view model's
+        cell inspector is skipped for a run with no word-bench grid to act on),
+        classified by the group's own ``task_id`` resolving through the view model's
         kind-specific bench lookup.
         """
         if group is None:
             return False
         return self._view_model.skill_eval_bench_by_id(group.get("task_id")) is not None
 
-    def _register_grid_shortcuts(self) -> None:
-        """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
-        ``results_grid.ResultsGrid.BINDINGS``) through the shared
-        ``ShortcutContext`` machinery only while a run group is selected --
-        the only selection kind that mounts a ``ResultsGrid`` at all -- so
-        the footer never advertises a grid shortcut with no grid on
-        screen. `e` (export) is Task 2's addition -- Task 1 deliberately
-        left it unbound and unadvertised so this task could claim it
-        without a collision.
+    def _grid_shortcut_context(self) -> tuple[tuple[str, str, bool], ...]:
+        """Project loaded grid support and actual keyboard reachability, without I/O.
 
-        Mirrors ``library_screen.py``'s ``_register_footer_shortcuts``: a
-        static hint set, re-registered on every selection change rather
-        than driven from inside the grid widget itself, since the grid
-        does not know when it stops being the active selection (its own
-        unmount does not fire a footer-clearing hook).
-
-        task-1691 phase 2 Task 6: a CHARACTER-probe run group selection
-        also clears these -- ``_compose_detail_pane`` renders a plain
-        placeholder for that case, never ``ResultsGrid``, so advertising
-        grid-only keys there would advertise controls with nothing
-        mounted to act on. Classified via a single targeted
-        ``list_runs(run_group_id=..., limit=1)`` row, deliberately NOT
-        ``EvalsViewModel.run_group_by_id`` (which pivots every run in the
-        database, via ``run_groups()``, just to answer this one
-        selection's bench type) -- this method already runs on every
-        selection change, so it must stay cheap even when nothing is
-        actually selected in the "run_group" kind. A SKILL-EVAL run group
-        clears them for the identical reason (``SkillEvalDetail`` mounts,
-        not ``ResultsGrid``), classified off the same single row.
+        The bindings own the vocabulary; Textual's active map accounts for
+        descendant bindings, printable text/search consumption and check_action.
+        Ignore the old grid while a selection replacement is still pending.
         """
-        is_non_grid_run = False
-        if (
-            self._selection.kind == "run_group"
-            and self._selection.id
-            and self._view_model.db is not None
-        ):
-            rows = self._view_model.db.list_runs(
-                run_group_id=self._selection.id, limit=1
+        if not self.is_mounted or self._selection.kind != "run_group":
+            return ()
+        try:
+            grid = self.query_one(ResultsGrid)
+        except QueryError:
+            return ()
+        if grid._run_group_id != self._selection.id:
+            return ()
+        active = self.active_bindings
+        return tuple(
+            (
+                binding.key,
+                binding.description,
+                binding.key in active
+                and active[binding.key].node is grid
+                and active[binding.key].enabled,
             )
-            if rows:
-                task_id = rows[0].get("task_id")
-                is_non_grid_run = (
-                    self._view_model.character_bench_by_id(task_id) is not None
-                    or self._view_model.skill_eval_bench_by_id(task_id) is not None
-                )
-        if (
-            self._selection.kind == "run_group"
-            and self._selection.id
-            and not is_non_grid_run
-        ):
-            self.register_footer_shortcuts(
-                source="evals-grid",
-                shortcuts=(
-                    ("l", "lens"),
-                    ("b", "baseline"),
-                    ("s", "sort"),
-                    ("e", "export"),
-                ),
-            )
+            for binding in grid.BINDINGS
+            if grid.check_action(binding.action, ()) is True
+        )
+
+    def _register_grid_shortcuts(self) -> None:
+        """Keep the footer on the same support projection F1 consumes."""
+        shortcuts = tuple(
+            (key, label)
+            for key, label, reachable in self._grid_shortcut_context()
+            if reachable
+        )
+        if shortcuts:
+            self.register_footer_shortcuts(source="evals-grid", shortcuts=shortcuts)
         else:
             self.clear_footer_shortcuts(source="evals-grid")
+
+    def on_lab_body_ready(self) -> None:
+        """Refresh support after the selected detail has finished mounting."""
+        self._register_grid_shortcuts()
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """Cycle available Evals panes through the existing global F6 delegate."""
+        body = self.query_one("#lab-body")
+        body_targets = (
+            "evals-grid-table",
+            *(
+                widget.id
+                for widget in self.focus_chain
+                if widget.id
+                and widget.id != "evals-grid-table"
+                and body in widget.ancestors
+            ),
+        )
+        target = focus_relative_workbench_pane(
+            self,
+            (
+                WorkbenchPaneTarget("lab-rail", ()),
+                WorkbenchPaneTarget("lab-body", body_targets),
+                WorkbenchPaneTarget("lab-inspector", ()),
+            ),
+            direction=1,
+        )
+        if target is not None:
+            target.scroll_visible(animate=False)
 
     @on(LibraryRail.EvalsSelectionChanged)
     def _on_library_selection_changed(
@@ -2518,11 +2524,18 @@ class EvalsScreen(LabScreen):
                 "containing SKILL.md) plus generator and judge models "
                 "('+ New target' in a bench editor, or 'Create sample "
                 "bench' once).",
+                "Results grid commands act on loaded word-bench results. "
+                "Use F6 to reach the detail pane; text fields and open "
+                "selectors keep printable keys for typing or search.",
             ),
             shortcuts=(
                 ("←/→ [ ]", "Move mode focus (Enter goes)"),
                 ("F6", "Next pane (rail / detail / inspector)"),
                 ("F1", "Toggle this help"),
+                *(
+                    (key, label if reachable else f"{label} (focus the results grid)")
+                    for key, label, reachable in self._grid_shortcut_context()
+                ),
             ),
         )
         self.app.push_screen(WorkbenchHelpPanel(state))
@@ -2537,6 +2550,9 @@ class EvalsScreen(LabScreen):
         for the same Mount event; a super call would run them twice (same
         note as ``LabScreen.on_mount``'s own docstring).
         """
+        self.bindings_updated_signal.subscribe(
+            self, lambda _screen: self._register_grid_shortcuts()
+        )
         self.run_worker(
             self._probe_store_skills_presence(),
             exclusive=False,

@@ -16,6 +16,20 @@ evaluation runs) are reached from within that screen.
   "Tab Navigation: Switch to Lab".
   There is no hotkey digit for Lab.
 
+## Word-bench results keys
+
+Select a word-bench run in the **Catalog** to open its results grid. While
+its table or closed selectors hold focus, **l** cycles the lens, **b** switches
+the row/column baseline, **s** cycles sorting, and **e** exports the results.
+These keys appear in the footer only where they work. They keep their normal
+text or search meaning in an editor or an open selector.
+
+Use **F6** to move between Catalog, detail and Inspector; collapsed panes are
+skipped. **Tab** moves between individual controls. **F1** lists the supported
+grid keys even when the narrow footer cannot fit them, and tells you to focus
+the results grid when you are in another pane. A run with no loadable results
+shows its explanation without advertising grid commands.
+
 ## Skill eval
 
 Skill eval answers "how good is this skill?" — it scores a skill as the

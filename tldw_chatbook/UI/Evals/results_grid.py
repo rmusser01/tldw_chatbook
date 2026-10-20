@@ -531,6 +531,12 @@ class ResultsGrid(NotifyMixin, Vertical):
         #: otherwise be unreachable from the grid entirely.
         self._probe_index: int = 0
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide inert grid commands when loading yielded no usable table."""
+        if any(binding.action == action for binding in self.BINDINGS):
+            return self._grid is not None
+        return super().check_action(action, parameters)
+
     # -- compose -----------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -747,12 +753,8 @@ class ResultsGrid(NotifyMixin, Vertical):
             return
         self._render_table()
         self._render_header()
-        # `l`/`b`/`s` are advertised in the footer the instant a run group
-        # is selected (see evals_screen.py's _register_grid_shortcuts),
-        # but Textual key bindings only resolve against the FOCUSED
-        # widget's ancestor chain -- nothing focuses the grid's DataTable
-        # by default, so those keys would be dead until the user tabs or
-        # clicks in, silently contradicting what the footer just promised.
+        # Start in the table so grid commands are immediately reachable.
+        # The screen projects this binding scope into its footer and F1 help.
         self.query_one("#evals-grid-table", DataTable).focus()
 
     # -- baseline option plumbing -------------------------------------
