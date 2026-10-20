@@ -60,6 +60,10 @@ _LIST_CHANGED = (
 )
 _CAPABILITY = "Capabilities unknown for models no catalog lists; text chat is assumed."
 _SAVES_NOTHING = "saves nothing · only Add to model list writes the list"
+_NOT_WRITTEN_PREFIX = (
+    "Provider settings not fully applied: the file was not written. Draft "
+    "retained; check config access and retry."
+)
 
 #: Case 1's providers: a local server, a cloud provider, and Custom 2, whose
 #: list key (Custom_2) is not an alias the setup owner knows.
@@ -467,18 +471,149 @@ async def test_a_pick_from_a_listing_the_endpoint_edit_dropped_joins_nothing(
     assert _file()["chat_defaults"]["model"] == "fake-beta"
 
 
-# --- Case 5: the list key no longer resolves ---------------------------------
+# --- Case 5: s saves the default and says why the pick did not simply join -
+
+
+def _listing_row(screen, model_id: str) -> list[str]:
+    listing = screen.query_one(_LIST, SelectionList)
+    for index in range(listing.option_count):
+        words = str(listing.get_option_at_index(index).prompt).split(" · ")
+        if words[1] == model_id:
+            return words[1:3]
+    raise AssertionError(f"{model_id} is not listed")
 
 
 @private_profile_test
-async def test_a_list_key_that_no_longer_resolves_still_saves_the_default(
+async def test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join(
     request, monkeypatch
 ):
-    """AC#8: after the pick another program adds a second llama.cpp list
-    (``llama_cpp`` beside the template's ``Llama_cpp``), so no single list
-    is the provider's. s saves the default anyway, writes neither list, and
-    the toast says why the model was not added."""
+    """AC#6, AC#8, one pick and s after another:
+    - already in the file (another program added it since): nothing more is
+      written, and the lists still follow the file, so the row reads
+      "saved" and the title counts it (review round 1);
+    - the read finds no list for the provider, or cannot read the file:
+      only the default is saved, and the toast says why;
+    - another program adds a second llama.cpp list (``llama_cpp`` beside
+      the template's ``Llama_cpp``), so no single list is the provider's.
+    Only the read before the lock is patched for the two read cases."""
+    from tldw_chatbook import config
+
     _write(_LLAMA)
+    app = _booted_app()
+    _route_discovery_to(
+        monkeypatch, _listing("fake-alpha", "fake-beta", "fake-gamma", "fake-delta")
+    )
+    host = _SettingsCssHarness(app, "settings")
+    real = config.get_atomic_config_snapshot
+
+    def no_list():
+        snapshot = real()
+        del snapshot.values["providers"]["Llama_cpp"]
+        return snapshot
+
+    def unreadable():
+        raise OSError("config.toml is locked")
+
+    seen = []
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        await _press_discover(host, pilot, screen)
+        for model_id, before_s in (
+            ("fake-alpha", "added-elsewhere"),
+            ("fake-beta", "no-list"),
+            ("fake-gamma", "unreadable"),
+            ("fake-delta", "ambiguous"),
+        ):
+            await _pick(host, pilot, screen, model_id)
+            if before_s == "added-elsewhere":
+                _write({"providers": {"Llama_cpp": ["None", "m-one", model_id]}})
+            elif before_s == "ambiguous":
+                _write({"providers": {"llama_cpp": ["other"]}})
+            else:
+                read = no_list if before_s == "no-list" else unreadable
+                monkeypatch.setattr(config, "get_atomic_config_snapshot", read)
+            await _save_with_s(host, pilot, screen)
+            monkeypatch.setattr(config, "get_atomic_config_snapshot", real)
+            toast = _saved_toast(host)
+            seen.append(
+                (
+                    _file(),
+                    toast.message,
+                    toast.markup,
+                    _listing_row(screen, model_id),
+                    _title(screen),
+                )
+            )
+
+    added, no_list_seen, unreadable_seen, ambiguous = seen
+    data, toast, _markup, row, title = added
+    assert data["chat_defaults"]["model"] == "fake-alpha"
+    assert data["providers"]["Llama_cpp"] == ["None", "m-one", "fake-alpha"]
+    assert row == ["fake-alpha", "saved"], row
+    assert title.startswith("Saved model list · 2 saved in config"), title
+    assert "joins on save" not in title and "model list." not in toast, toast
+    for (data, toast, markup, _row, _title_), model_id, why in (
+        (no_list_seen, "fake-beta", "[providers] has no list for it"),
+        (unreadable_seen, "fake-gamma", "the config file could not be read"),
+        (ambiguous, "fake-delta", "more than one [providers] list matches it"),
+    ):
+        assert data["chat_defaults"]["model"] == model_id
+        assert data["providers"]["Llama_cpp"] == ["None", "m-one", "fake-alpha"]
+        assert toast.endswith(
+            f" {model_id} was not added to llama.cpp's model list: {why}."
+        ), toast
+        assert markup is False
+    assert ambiguous[0]["providers"]["llama_cpp"] == ["other"]
+
+
+@private_profile_test
+async def test_a_discovered_id_that_is_a_shipped_sample_id_is_saved_as_the_default_only(
+    request, monkeypatch
+):
+    """Review round 1 (a regression): a server can serve an id equal to one
+    of the 13 shipped sample ids (OD-1's known limit), which no saved list
+    keeps. Chosen, it is staged as the default and never pends: the title
+    does not say it joins, and s saves the default alone instead of
+    refusing the whole save."""
+    _write(_LLAMA)
+    app = _booted_app()
+    _route_discovery_to(monkeypatch, _listing("fake-alpha", "tabby-model"))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        await _press_discover(host, pilot, screen)
+        await _pick(host, pilot, screen, "tabby-model")
+        title = _title(screen)
+        await _save_with_s(host, pilot, screen)
+        result = screen._provider_save_result
+        toast = _saved_toast(host).message if result != _NOT_WRITTEN_PREFIX else ""
+
+    data = _file()
+    assert "joins on save" not in title, title
+    assert data["chat_defaults"]["model"] == "tabby-model", result
+    assert data["providers"]["Llama_cpp"] == ["None", "m-one"]
+    assert toast and "model list." not in toast, toast
+
+
+@private_profile_test
+async def test_a_saved_list_holding_an_id_settings_cannot_write_still_saves_the_default(
+    request, monkeypatch
+):
+    """Review round 1: the combined save only writes a list every id of
+    which passes its safe-model check. A list hand-edited to hold an id
+    over 120 characters would refuse the whole save; the join checks first,
+    so s saves the default alone and the toast says why the pick was not
+    added. The file's list is left as it is."""
+    long_id = "x" * 121
+    _write(
+        {
+            "chat_defaults": {"provider": "llama_cpp", "model": "m-one"},
+            "providers": {"Llama_cpp": ["None", "m-one", long_id]},
+        }
+    )
     app = _booted_app()
     _route_discovery_to(monkeypatch, _listing("fake-beta"))
     host = _SettingsCssHarness(app, "settings")
@@ -488,19 +623,17 @@ async def test_a_list_key_that_no_longer_resolves_still_saves_the_default(
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
         await _pick(host, pilot, screen, "fake-beta")
-        _write({"providers": {"llama_cpp": ["other"]}})
         await _save_with_s(host, pilot, screen)
-        toast = _saved_toast(host)
+        result = screen._provider_save_result
+        toast = _saved_toast(host) if result != _NOT_WRITTEN_PREFIX else None
 
     data = _file()
-    assert data["chat_defaults"]["model"] == "fake-beta"
-    assert data["providers"]["Llama_cpp"] == ["None", "m-one"]
-    assert data["providers"]["llama_cpp"] == ["other"]
-    assert toast.message.endswith(
-        " fake-beta was not added to its model list: more than one [providers] "
-        "list matches llama.cpp."
-    ), toast.message
-    assert toast.markup is False
+    assert data["chat_defaults"]["model"] == "fake-beta", result
+    assert data["providers"]["Llama_cpp"] == ["None", "m-one", long_id]
+    assert toast is not None and toast.message.endswith(
+        " fake-beta was not added to llama.cpp's model list: the list holds an "
+        "id Settings cannot write (over 120 characters, or not plain text)."
+    ), toast
 
 
 # --- Case 6: the list moved between the read and the locked write ------------

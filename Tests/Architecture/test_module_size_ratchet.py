@@ -308,8 +308,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-35011 (S1 T2): the Saved model list block, its receipts and the
     # discovered pick that joins the list on s, pinned at birth (the
     # TASK-33007.8 precedent). No PR lane runs this row's node: NO-2 (b),
-    # PR #3036 touches derived-artifacts.yml.
-    "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 487,
+    # PR #3036 touches derived-artifacts.yml. Its review round 1: a pick the
+    # combined save would refuse (a sample id, an unwritable saved id) saves
+    # the default alone, and the lists refresh whenever a pick was pending:
+    # 505.
+    "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 505,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

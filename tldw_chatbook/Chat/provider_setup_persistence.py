@@ -1582,12 +1582,9 @@ def _validate_combined_provider_settings_mutation(
             # spell the template's Custom_2.
             list_key, models = next(iter(values.items()))
             if (
-                not model
-                or len(values) != 1
+                len(values) != 1
                 or normalize_provider_config_key(list_key) != ownership.provider_key
-                or type(models) is not list
-                or model not in models
-                or any(_safe_model(item) is None for item in models)
+                or not saved_model_list_admits(models, model)
             ):
                 raise error
         elif extra_keys:
@@ -1890,6 +1887,28 @@ def _configured_section_key(
         if configured_ownership.provider_key == ownership.provider_key:
             return str(configured_provider)
     return ownership.config_section
+
+
+def saved_model_list_admits(models: object, model: str) -> bool:
+    """Say whether a combined save may write ``models`` as a saved list.
+
+    The list must hold ``model`` and only ids that pass the safe-model check
+    (TASK-35011); Settings checks it before adding a list to a save, so a
+    list it may not write leaves the default to save alone.
+
+    Args:
+        models: The saved list to write.
+        model: The model the save makes the default.
+
+    Returns:
+        True when the combined save's validator admits the list.
+    """
+    return (
+        bool(model)
+        and type(models) is list
+        and model in models
+        and all(_safe_model(item) is not None for item in models)
+    )
 
 
 def _safe_model(value: object) -> str | None:

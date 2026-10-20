@@ -23,9 +23,10 @@ from typing import TYPE_CHECKING
 
 from textual.containers import Horizontal
 from textual.css.query import QueryError
-from textual.widgets import Button, SelectionList, Static
+from textual.widgets import Button, Input, SelectionList, Static
 
 from ...Chat.provider_readiness import provider_config_key
+from ...config import SHIPPED_SAMPLE_MODEL_IDS
 from ..Screens.provider_model_resolution import MODEL_CAPABILITY_UNKNOWN_WARNING
 from ..Screens.settings_screen import INSTANT_APPLY_BEHAVIOR_COPY
 
@@ -134,7 +135,9 @@ def note_pick(screen: SettingsScreen, model_id: str, *, custom: bool = False) ->
 
     A pick is remembered only when the current listing holds it and the
     saved list does not (the ruling's "choosing a discovered model"); a
-    Custom ID or any other pick forgets the earlier one.
+    Custom ID or any other pick forgets the earlier one. A shipped sample
+    id is never remembered: no saved list keeps one (TASK-35010, OD-1), so
+    it is saved as the default alone (review round 1).
 
     Args:
         screen: The Settings screen.
@@ -145,7 +148,8 @@ def note_pick(screen: SettingsScreen, model_id: str, *, custom: bool = False) ->
     provider = screen._provider_widget_value()
     saved = screen._provider_saved_model_ids(provider)
     listed = (m for m in screen._model_discovery_models if _model_id(m) == model_id)
-    model = None if custom or not model_id else next(listed, None)
+    skip = custom or not model_id or model_id in SHIPPED_SAMPLE_MODEL_IDS
+    model = None if skip else next(listed, None)
     screen._discovered_pick = (
         (provider_config_key(provider), model_id)
         if model is not None and not screen._discovered_model_is_saved(model, saved)
@@ -158,7 +162,7 @@ def pending_pick(screen: SettingsScreen) -> str:
 
     Only while the draft still stages exactly that provider and model.
     """
-    pick = getattr(screen, "_discovered_pick", None)
+    pick = screen._discovered_pick
     draft = screen._provider_draft()
     if pick is None or draft is None or "model" not in draft.dirty_keys:
         return ""
@@ -172,8 +176,7 @@ def pending_pick(screen: SettingsScreen) -> str:
 
 def kept_pick(screen: SettingsScreen) -> tuple[str, str] | None:
     """The pending addition ``save_state`` keeps, while it still counts."""
-    pick = getattr(screen, "_discovered_pick", None)
-    return tuple(pick) if pick is not None and pending_pick(screen) else None
+    return screen._discovered_pick if pending_pick(screen) else None
 
 
 def restore_pick(screen: SettingsScreen, state: Mapping[str, object]) -> None:
@@ -341,7 +344,7 @@ def fill_default(screen: SettingsScreen, added: tuple[str, ...]) -> str:
         The id staged as an unsaved draft, or "" when the field was set.
     """
     try:
-        model_input = screen.query_one("#settings-model-value")
+        model_input = screen.query_one("#settings-model-value", Input)
     except QueryError:
         return ""
     next_value = screen._model_to_activate_after_save(model_input.value, added)
@@ -381,11 +384,13 @@ class ListJoin:
     """What one ``s`` save adds to the saved list, and what it says.
 
     Attributes:
+        pending: A pick was pending for this save.
         list_key: The exact ``[providers]`` key written, or "" for none.
         read: That list as read before the write.
         receipt: The toast's sentence about the list ("" when silent).
     """
 
+    pending: bool = False
     list_key: str = ""
     read: object = None
     receipt: str = ""
@@ -408,9 +413,13 @@ class ListJoin:
         return unchanged
 
     def applied(self, screen: SettingsScreen, provider: str) -> None:
-        """After a save that fully applied: the lists follow the file."""
+        """After a save that fully applied: the lists follow the file.
+
+        Whenever a pick was pending, also when nothing was written for it:
+        the file may have gained the model elsewhere (review round 1).
+        """
         screen._discovered_pick = None
-        if not self.list_key:
+        if not self.pending:
             return
         from ...LLM_Provider_Catalog.model_discovery_persistence import (
             refresh_providers_models,
@@ -446,6 +455,7 @@ def join_pick(
     if not model or pending_pick(screen) != model:
         return ListJoin()
     from ... import config
+    from ...Chat.provider_setup_persistence import saved_model_list_admits
     from ...LLM_Provider_Catalog.model_discovery_persistence import (
         append_models_to_provider_list,
     )
@@ -454,33 +464,41 @@ def join_pick(
     )
 
     label = screen._provider_display_label(provider)
+
+    def not_added(why: str) -> ListJoin:
+        return ListJoin(
+            pending=True,
+            receipt=f" {model} was not added to {label}'s model list: {why}.",
+        )
+
     try:
         providers = config.get_atomic_config_snapshot().values.get("providers")
     except Exception:  # noqa: BLE001 - any read failure: save the default alone
         providers = None
     if not isinstance(providers, Mapping):
-        return ListJoin(
-            receipt=f" {model} was not added to {label}'s model list: the "
-            "config file could not be read."
-        )
+        return not_added("the config file could not be read")
     resolution = resolve_provider_list_key(provider, providers)
+    if resolution.status == "ambiguous":
+        return not_added("more than one [providers] list matches it")
     if resolution.status != "resolved":
-        why = (
-            f"more than one [providers] list matches {label}"
-            if resolution.status == "ambiguous"
-            else f"[providers] has no list for {label}"
-        )
-        return ListJoin(receipt=f" {model} was not added to its model list: {why}.")
+        return not_added("[providers] has no list for it")
     list_key = str(resolution.provider_list_key)
     read = providers[list_key]
     if isinstance(read, list) and model in read:
-        return ListJoin()  # added elsewhere since: nothing to write
+        return ListJoin(pending=True)  # added elsewhere since: nothing to write
     updated = append_models_to_provider_list({list_key: read}, list_key, [model])
-    # ponytail: a list already holding an id the combined validator refuses
-    # (over 120 characters) refuses the whole save; drop the join there if
-    # that ever shows up.
+    # The combined save's own check: a list it would refuse would refuse the
+    # default with it (review round 1).
+    if not saved_model_list_admits(updated[list_key], model):
+        return not_added(
+            "it is a sample id older versions shipped, which saved lists ignore"
+            if model in SHIPPED_SAMPLE_MODEL_IDS
+            else "the list holds an id Settings cannot write (over 120 "
+            "characters, or not plain text)"
+        )
     section_values["providers"] = {list_key: updated[list_key]}
     return ListJoin(
+        pending=True,
         list_key=list_key,
         read=read,
         receipt=f" Added {model} to {label}'s model list.",
