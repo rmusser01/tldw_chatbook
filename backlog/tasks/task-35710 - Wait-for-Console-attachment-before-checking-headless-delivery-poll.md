@@ -1,7 +1,7 @@
 ---
 id: TASK-35710
 title: Wait for Console attachment before checking headless delivery poll
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-20'
@@ -24,7 +24,7 @@ PR #3176's admission-sensitive job failed on unchanged Console paths with `recon
 
 - [x] #1 The test observes successful current-visit attachment before checking both the idle no-poll control and active-delivery poll, including the initial fixture visit.
 - [x] #2 Attachment that never completes and a completed active-delivery visit that never arms its poll still fail; the original poll assertions, navigation, wake precondition, profile guard and timeout limits remain intact.
-- [ ] #3 Targeted Console attachment/poll checks and static checks pass, independent review assesses the correction, and the original CI failure plus qualification limits are recorded.
+- [x] #3 Targeted Console attachment/poll checks and static checks pass, independent review assesses the correction, and the original CI failure plus qualification limits are recorded.
 
 ## Implementation Plan
 
@@ -42,4 +42,4 @@ The navigation test now waits for the existing attachment-complete flag and curr
 
 The original hosted failure is recorded in [TASK-35680 qualification](../../Docs/superpowers/qa/2026-10-19-task-35680-qualification.md). Eight targeted ownership checks passed in 93.02 s. Disposable negative controls failed at the intended assertions: incomplete attachment in 56.52 s, and completed attachment with poll arming disabled in 53.19 s (the latter reported reconciled=True). These controls were not committed. Ruff lint and formatting of the modified function pass; inherited whole-file formatter differences are unchanged. Both Backlog guards and diff whitespace checks pass. The missing Backlog CLI required direct task Markdown updates, as in the preceding PR tasks.
 
-Modified the ownership test, this task, the qualification note and the testing-evidence lesson. Review and new-head CI are recorded separately before publication/completion; no local reproduction of the hosted early-assertion red or particular native deferral cause is claimed.
+Modified the ownership test, this task, the qualification note and the testing-evidence lesson. Independent delta review found no Critical, Important or Minor issue requiring changes and verified that both negative controls retain meaningful failures. New-head remote CI is reported on PR #3176, separately from these targeted results; no local reproduction of the hosted early-assertion red or particular native deferral cause is claimed.

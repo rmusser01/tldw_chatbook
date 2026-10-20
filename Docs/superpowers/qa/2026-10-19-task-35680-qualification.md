@@ -113,3 +113,10 @@ formatting pass; whole-file formatter debt is identical to the pre-change
 head. The first comparison attempt used Windows' legacy subprocess encoding;
 explicit UTF-8 completed the comparison. Backlog ID/readability guards and
 diff whitespace checks pass. No full suite ran.
+
+Independent read-only delta review of df4e73c908..8313dab824 found no
+Critical, Important or Minor issue requiring changes. It inspected the
+attachment lifecycle, neighboring startup pattern and both negative-control
+receipts, and confirmed the wait establishes a legitimate precondition
+without manufacturing readiness or weakening the polling oracle. New-head
+CI remains a separate publication check; no hosted green result is inferred.
