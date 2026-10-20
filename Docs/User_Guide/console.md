@@ -892,8 +892,8 @@ listing there found), and saved or cached models it did not list are no
 longer offered; this chat's own model stays listed even when the server did
 not list it. The provider's saved default for new chats still leads those
 rows when it is one of them, after this chat's model on its own provider,
-unless RECENT lists it;
-a pair PREVIOUS or RECENT lists is not repeated there.
+unless RECENT lists it; a pair PREVIOUS or RECENT lists is not repeated
+there.
 On llama.cpp, which sends to an endpoint set only on this chat, a pick keeps
 this chat's endpoint, so while a llama.cpp chat runs on a
 server other than the configured one, llama.cpp's readiness words and its

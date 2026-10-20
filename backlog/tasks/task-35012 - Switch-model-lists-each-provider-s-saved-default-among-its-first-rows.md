@@ -1,11 +1,11 @@
 ---
 id: TASK-35012
 title: Switch model lists each provider's saved default among its first rows
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-14 17:10
-updated_date: 2026-10-20 11:35
+updated_date: 2026-10-20 11:36
 labels:
 - console
 - model-switcher
@@ -92,4 +92,6 @@ With Find empty, Switch model (Alt+M) and Chat settings' model picker (its pick 
 **Review round 2** (range 6436d01ea6..c000a4d55e, "With fixes": two guide sentences and one test). (1) The listing-bound sentence said the saved and cached models stay after the listed ones and this chat's model stays first. At the bound, `_with_known` puts the saved models after the listing in `models`, so a saved default past the 100 the probe reads (the stub lists it 121st of 150) is in `visible` and T3 lifts it ahead of the whole listing (the reviewer's scratch test: m000-m149 listed, 100 read, default m120 -> ["m120", "m000", "m001"], "… 98 more"). The sentence now names that exception, and this chat's model comes first unless RECENT lists it. (2) The listing paragraph tied the lift to the server listing the default, and its rows were "the models it listed" with no word of ADR-020's exception. It now says this chat's own model stays listed even when the server did not list it, and the default leads the rows when it is one of them (no listing condition), after this chat's model unless RECENT lists it. Re-read beside the READY PROVIDERS bullet, the two now agree. (3) `test_a_local_servers_listing_orders_the_default_and_never_adds_it[past-the-bound]`, a third case on the probe function, so no new census node and no floor change: 150 listed, 100 read, saved list m-one, m-two, m-three, m120 with default m120. Before the probe answers the default leads the saved rows. After it answers, `_models_for` is the 100 read then the saved ones, m120 last, and the group is m120, m000, m001 with "… 101 more Ollama models". It passes at the head (15/15 in the file). It pins T3's own behaviour at the bound, so a base red would only show that there is no lift at all, as for every lift case; the evidence for the bound rule is the control. Lifting only an id the server's listing holds turned just that case red, on its assertion. The add-unlisted and reorder-_models_for controls were re-run on the reshaped function and still go red where they did (reorder-_models_for now also turns the new case red). Lane: the probe function 7.2 s junit, 3 of 3 serial in the lane's install set; its shard group (shard 5 at today's tail) 29.9-30.0 s junit and 31.5-31.8 s session, 3 of 3, inside the comment's stated ranges. The census comment's per-function figures are now 2.4-7.2 s and 39.2 s, and its "its heaviest on the lightest" now reads "its two heaviest on the two lightest". Checks: Tests/CI 1015 passed, 1 skipped; ruff check and format clean on the test file; preflight passes under a scratch HOME.
 
 **Review round 3** (range c000a4d55e..1a7dd20ef5, "Yes" with two wording nits and one timing note; fixed by the coordinator): the [past-the-bound] docstring and the round-2 paragraph say the default is past the 100 the probe reads (the stub lists m120 121st of 150), not one the server never listed; console.md's listing paragraph says the default follows this chat's model on its own provider. Shard group index 4 (the S1 entries the lane's --shard 4 10 deals, including the probe function), re-timed 3 of 3 serially in the lane's install set: 29.6-30.8 s junit, 31.2-32.7 s session, inside the census comment's ranges (one review run on a loaded machine had read 34.7 s session).
+
+**Review round 4** (aeffadac66): clean, one cosmetic note (a short line in the guide's paragraph), reflowed with no word changed. The review over 1ca320e4bb..aeffadac66 took four rounds: round 1 the code (correct; three doc fixes), rounds 2-3 the guide's wording at the listing bound and for ADR-020, round 4 clean. Still open for the PR, not this task: D-b in the PR body, and the plan's live verification, run after S1 is rebased onto dev with #3169.
 <!-- SECTION:NOTES:END -->
