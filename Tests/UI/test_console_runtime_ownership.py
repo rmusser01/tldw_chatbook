@@ -2454,11 +2454,27 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
+
+        async def wait_for_attachment(screen):
+            await _wait_for_selector(screen, pilot, "#console-native-composer")
+            # TASK-35710: the composer mounts before a deferred full sync
+            # finishes. A message-pump pause is not attachment completion.
+            for _ in range(50):
+                if screen._console_attach_reconciled:
+                    break
+                await pilot.pause(0.1)
+            assert app.screen is screen and screen._console_attach_reconciled, (
+                "Console attachment did not complete before the poll check: "
+                f"sync_complete={screen._console_attach_sync_complete}, "
+                f"view_started={screen._console_attach_view_started}, "
+                f"retry_exhausted={screen._console_attach_reconcile_retry_exhausted}"
+            )
+
         chat = ChatScreen(app)
         await app.push_screen(chat)
         app.current_tab = "chat"
         await pilot.pause()
-        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        await wait_for_attachment(chat)
 
         controller = chat._ensure_console_chat_controller()
         store = chat._ensure_console_chat_store()
@@ -2472,8 +2488,7 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
         await app.handle_screen_navigation(NavigateToScreen("chat"))
         await pilot.pause()
         control = app.screen
-        await _wait_for_selector(control, pilot, "#console-native-composer")
-        await pilot.pause()
+        await wait_for_attachment(control)
         assert control._console_transcript_sync_timer is None, (
             "returning to Console with nothing in flight armed the poll "
             "anyway -- the delivery leg below would prove nothing"
@@ -2494,8 +2509,7 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
             await pilot.pause()
             reopened = app.screen
             assert isinstance(reopened, ChatScreen), type(reopened).__name__
-            await _wait_for_selector(reopened, pilot, "#console-native-composer")
-            await pilot.pause()
+            await wait_for_attachment(reopened)
 
             assert reopened._console_transcript_sync_timer is not None, (
                 "Console opened during a wake delivery with no transcript "

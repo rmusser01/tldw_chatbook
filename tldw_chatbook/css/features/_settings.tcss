@@ -1382,6 +1382,7 @@ Button.settings-category-group-toggle:focus {
 /* Its prose lines -- detail rows, help copy and the unclassed help Statics
    alike -- start where the section headers' text does. */
 #settings-console-behavior-card > Static,
+#settings-console-paste-panel > Static,
 #settings-console-behavior-card .settings-instant-apply-group > Static {
     padding: $ds-space-0 $ds-space-1;
 }

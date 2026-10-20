@@ -501,6 +501,7 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
+    from ...Widgets.Settings_Widgets.composer_paste_panel import ComposerPasteSettingsPanel
     from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.model_search_picker import ModelSearchPicker
@@ -3772,40 +3773,57 @@ class SettingsScreen(BaseAppScreen):
         ("t", "test category"),
     )
 
-    def _category_footer_shortcuts(
-        self, category: SettingsCategoryId
-    ) -> tuple[tuple[str, str], ...]:
-        """Advertised footer hints for ONE category (task-1340, ADR-031).
+    @staticmethod
+    def _category_action_supported(category: SettingsCategoryId, action: str) -> bool:
+        """Read category capability without I/O, focus or transient safety checks.
 
-        Only working keys are advertised: s/r where the guided save/revert
-        path exists, t only where a test action is implemented -- and with
-        the same per-category verb the live footer uses (task-1714), so the
-        F1 help panel and the footer never disagree. The keys stay bound
-        screen-wide (they respond with guidance everywhere), but only what
-        the active category actually supports is taught. Instance method
-        because the TOOLS branch reads the mounted hub pane's live mode.
+        Guidance-only bindings remain active. Action bodies and category-owned
+        panels retain validation, busy-state and confirmation checks.
         """
+        if action == "save":
+            return (
+                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+                or category is SettingsCategoryId.NETWORK
+            )
+        if action == "revert":
+            return (
+                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+                or category is SettingsCategoryId.ADVANCED_CONFIG
+            )
+        if action == "test":
+            return category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
+        if action in {"set_active", "clone", "backfill"}:
+            return category is SettingsCategoryId.LIBRARY_RAG
+        if action in {"add_record", "edit_record", "delete_record", "export_profile"}:
+            return category is SettingsCategoryId.PERSONAL_CONTEXT
+        return False
+
+    def _category_footer_shortcuts(
+        self, category: SettingsCategoryId, *, include_owned_actions: bool = True
+    ) -> tuple[tuple[str, str], ...]:
+        """Describe supported actions; owned widgets filter their live hints."""
+        supports = SettingsScreen._category_action_supported
         shortcuts: list[tuple[str, str]] = []
-        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+        if supports(category, "save"):
             shortcuts.append(("s", "save category"))
-            shortcuts.append(("r", "revert category"))
-        elif category is SettingsCategoryId.NETWORK:
-            # Network saves through its own branch in
-            # action_settings_save_category (no SettingsDraft), so `s`
-            # works; `r` has no draft to revert and stays unadvertised.
-            shortcuts.append(("s", "save category"))
-        if category is SettingsCategoryId.ADVANCED_CONFIG:
-            shortcuts.append(("r", "revert raw draft"))
-        if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
+        if supports(category, "revert"):
+            label = (
+                "revert raw draft"
+                if category is SettingsCategoryId.ADVANCED_CONFIG
+                else "revert category"
+            )
+            shortcuts.append(("r", label))
+        if supports(category, "test"):
             shortcuts.append(
                 ("t", SettingsScreen.TEST_ACTION_LABELS.get(category, "test category"))
             )
-        if category is SettingsCategoryId.PERSONAL_CONTEXT:
-            shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
-        if category is SettingsCategoryId.THEME:
-            shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
-        if category is SettingsCategoryId.TOOLS:
-            shortcuts.extend(tools_footer_hints(self._tools_hub_pane()))
+        if include_owned_actions:
+            if supports(category, "add_record"):
+                shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
+            if category is SettingsCategoryId.THEME:
+                shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
+            if category is SettingsCategoryId.TOOLS:
+                shortcuts.extend(tools_footer_hints(self._tools_hub_pane()))
         return tuple(shortcuts)
 
     #: task-1564: categories whose `t` binding performs a real test action --
@@ -4060,12 +4078,9 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
-        self._syncing_console_threshold = False
-        self._syncing_console_max_parallel_runs = False
         self._syncing_console_agent_budget = False
         self._syncing_console_tool_result_display_chars = False
         self._syncing_console_sidechat = False
-        self._syncing_console_paste_toggle = False
         self._syncing_console_thinking_visibility = False
         toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
         if toggle_writes is None:
@@ -4675,21 +4690,8 @@ class SettingsScreen(BaseAppScreen):
         and prefixes keys with "Esc, " while a text-entry widget owns focus
         (printable keys feed the field until Esc).
         """
-        shortcuts = self.SETTINGS_SHORTCUTS
         active = self._active_category_id()
-        if active not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
-            dropped = "r" if active is SettingsCategoryId.NETWORK else {"s", "r"}
-            shortcuts = tuple(entry for entry in shortcuts if entry[0] not in dropped)
-        if active not in self.TESTABLE_SETTINGS_CATEGORIES:
-            shortcuts = tuple(entry for entry in shortcuts if entry[0] != "t")
-        else:
-            test_label = self.TEST_ACTION_LABELS.get(active, "test category")
-            shortcuts = tuple(
-                (key, test_label if key == "t" else description)
-                for key, description in shortcuts
-            )
-        if active is SettingsCategoryId.ADVANCED_CONFIG:
-            shortcuts = shortcuts + (("r", "revert raw draft"),)
+        shortcuts = self._category_footer_shortcuts(active, include_owned_actions=False)
         text_entry_focused = self._text_entry_focused()
         if text_entry_focused:
             # task-1560: s/r/t are real bindings and therefore inert while an
@@ -4699,7 +4701,7 @@ class SettingsScreen(BaseAppScreen):
             shortcuts = tuple(
                 (f"Esc, {key}", description) for key, description in shortcuts
             )
-        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+        if self._category_action_supported(active, "set_active"):
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
         if (
             self._active_category_id() is SettingsCategoryId.THEME
@@ -5026,7 +5028,7 @@ class SettingsScreen(BaseAppScreen):
         shortcuts = self._category_footer_shortcuts(category)
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             shortcuts = self._active_personal_context_shortcuts()
-        if category is SettingsCategoryId.LIBRARY_RAG:
+        if self._category_action_supported(category, "set_active"):
             # Same gating the footer applies: a/c/b only act in LIBRARY_RAG.
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
         return WorkbenchHelpState(
@@ -10094,7 +10096,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.STORAGE:
             return self._storage_save_enabled()
         return (
-            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+            self._category_action_supported(category, "save")
             and self._category_has_unsaved_changes(category)
         )
 
@@ -19720,29 +19722,14 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-status-row-position-help",
                 classes="settings-help-copy",
             )
-            yield Static("Composer paste handling", classes="destination-section")
-            yield Static(
-                "Collapse large pasted chunks only when they exceed the threshold.",
-                id="settings-console-collapse-large-pastes-label",
+            from ...Widgets.Settings_Widgets.composer_paste_panel import (
+                ComposerPasteSettingsPanel,
             )
-            yield StateCheckbox(
-                "Collapse large pastes",
-                value=self._collapse_large_pastes_enabled(),
-                id="settings-console-collapse-large-pastes-toggle",
-                tooltip="Toggle compact display for large pasted Console chunks.",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Threshold (chars)", classes="settings-input-label")
-                yield Input(
-                    value=str(self._paste_collapse_threshold_value()),
-                    id="settings-console-paste-collapse-threshold",
-                    classes="settings-compact-input",
-                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
-                    restrict=r"^[0-9]*$",
-                )
-            yield Static(
-                "Normal typing stays literal. The canonical message payload is preserved.",
-                id="settings-console-collapse-large-pastes-help",
+
+            yield ComposerPasteSettingsPanel(
+                enabled=self._collapse_large_pastes_enabled(),
+                threshold=str(self._paste_collapse_threshold_value()),
+                default_threshold=DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
             )
             yield Static("Chat images", classes="destination-section")
             yield Static(
@@ -23650,7 +23637,10 @@ class SettingsScreen(BaseAppScreen):
         # previously read-only categories showed it permanently disabled
         # (dim-on-dim noise) while five own-persistence categories omitted
         # it, with no stated rule. Mirrors the task-1580 footer gating.
-        if summary.category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+        if (
+            self._category_action_supported(summary.category, "save")
+            and self._category_action_supported(summary.category, "revert")
+        ):
             dirty = self._category_has_unsaved_changes(summary.category)
             save_button = Button(
                 self._guided_action_label("Save (s)", dirty=dirty),
@@ -28617,14 +28607,22 @@ class SettingsScreen(BaseAppScreen):
         self._console_capture_status = message
         self._set_static_text("#settings-console-exchange-capture-status", message)
 
-    @on(Checkbox.Changed, "#settings-console-collapse-large-pastes-toggle")
-    def handle_console_collapse_large_pastes_changed(
-        self, event: Checkbox.Changed
+    def on_composer_paste_settings_panel_edited(
+        self, event: "ComposerPasteSettingsPanel.Edited"
     ) -> None:
+        """Stage local widget edits through the category's existing draft owner."""
         event.stop()
-        if self._syncing_console_paste_toggle:
-            return
-        self._stage_console_large_paste_value(bool(event.value))
+        self._apply_console_paste_edit(event.key, event.value)
+
+    def _apply_console_paste_edit(self, key: str, value: object) -> None:
+        if key == "collapse_large_pastes":
+            self._stage_console_large_paste_value(bool(value))
+        else:
+            self._stage_console_paste_threshold_value(value)
+            self._console_behavior_result = "Console behavior settings staged."
+            self._set_static_text(
+                "#settings-console-behavior-result", self._console_behavior_result_text()
+            )
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
@@ -28776,17 +28774,9 @@ class SettingsScreen(BaseAppScreen):
         if event.value != self._status_row_position_value():
             self._toggle_status_row_position()
 
-    @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
-        if self._syncing_console_threshold:
-            return
-        self._stage_console_paste_threshold_value(event.value)
-        self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text(
-            "#settings-console-behavior-result", self._console_behavior_result_text()
-        )
-        self._update_console_paste_summary()
-        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        """Compatibility entry for callers outside the widget message path."""
+        self._apply_console_paste_edit("paste_collapse_threshold", event.value)
 
     @on(Input.Changed, f".{AGENT_BUDGET_INPUT_CLASS}")
     def handle_console_agent_budget_changed(self, event: Input.Changed) -> None:
@@ -28837,7 +28827,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-console-max-parallel-runs")
     def handle_console_max_parallel_runs_changed(self, event: Input.Changed) -> None:
-        if self._syncing_console_max_parallel_runs:
+        # Mount-time initialization and stale queued values are not new edits.
+        if (
+            event.value != event.input.value
+            or event.value == str(self._console_max_parallel_runs_value())
+        ):
             return
         self._stage_console_max_parallel_runs_value(event.value)
         self._console_behavior_result = "Console behavior settings staged."
@@ -33149,7 +33143,7 @@ class SettingsScreen(BaseAppScreen):
                 exclusive=False,
             )
             return
-        if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+        if not self._category_action_supported(category, "save"):
             self.app.notify(
                 self._guided_action_message(category), severity="information"
             )
@@ -34136,7 +34130,10 @@ class SettingsScreen(BaseAppScreen):
                 "Return to the active profile to revert.", severity="warning"
             )
             return
-        if not self._category_has_unsaved_changes(category):
+        if (
+            not self._category_action_supported(category, "revert")
+            or not self._category_has_unsaved_changes(category)
+        ):
             self.app.notify("No Settings changes to revert.", severity="information")
             return
         # ADR-031 rule 3 (task-1340): revert discards every staged edit in
@@ -34311,6 +34308,12 @@ class SettingsScreen(BaseAppScreen):
             if pane:
                 pane.test_selected_tool()
             return
+        if not self._category_action_supported(self._active_category_id(), "test"):
+            self.app.notify(
+                "No test action is available for this Settings category yet.",
+                severity="warning",
+            )
+            return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
             detail, summary, passed = self._provider_readiness_test_report()
@@ -34477,10 +34480,10 @@ class SettingsScreen(BaseAppScreen):
             if pane:
                 pane.add_server()
             return
-        if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
+        if self._category_action_supported(self._active_category_id(), "add_record"):
             self._dispatch_personal_context_action("add_record")
             return
-        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+        if not self._category_action_supported(self._active_category_id(), "set_active"):
             return
         self._trigger_library_rag_profile_set_active()
 
@@ -34492,7 +34495,7 @@ class SettingsScreen(BaseAppScreen):
     def _dispatch_personal_context_action(self, action_name: str) -> None:
         """Route a category-scoped shortcut to the mounted profile panel."""
 
-        if self._active_category_id() is not SettingsCategoryId.PERSONAL_CONTEXT:
+        if not self._category_action_supported(self._active_category_id(), action_name):
             return
         panel_class = _personal_context_settings_panel_class()
         try:
@@ -34530,7 +34533,7 @@ class SettingsScreen(BaseAppScreen):
         """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
-        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+        if not self._category_action_supported(self._active_category_id(), "clone"):
             return
         self._trigger_library_rag_profile_clone()
 
@@ -34546,7 +34549,7 @@ class SettingsScreen(BaseAppScreen):
         """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
-        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+        if not self._category_action_supported(self._active_category_id(), "backfill"):
             return
         self._trigger_library_rag_index_backfill()
 
@@ -35299,33 +35302,16 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         try:
-            self._syncing_console_paste_toggle = True
-            try:
-                self.query_one(
-                    "#settings-console-collapse-large-pastes-toggle", Checkbox
-                ).value = self._collapse_large_pastes_enabled()
-            finally:
-                self._syncing_console_paste_toggle = False
+            self.query_one("#settings-console-paste-panel").sync_values(
+                enabled=self._collapse_large_pastes_enabled(),
+                threshold=str(self._paste_collapse_threshold_value()),
+            )
         except QueryError:
             pass
         try:
-            self._syncing_console_threshold = True
-            try:
-                self.query_one(
-                    "#settings-console-paste-collapse-threshold", Input
-                ).value = str(self._paste_collapse_threshold_value())
-            finally:
-                self._syncing_console_threshold = False
-        except QueryError:
-            pass
-        try:
-            self._syncing_console_max_parallel_runs = True
-            try:
-                self.query_one(
-                    "#settings-console-max-parallel-runs", Input
-                ).value = str(self._console_max_parallel_runs_value())
-            finally:
-                self._syncing_console_max_parallel_runs = False
+            control = self.query_one("#settings-console-max-parallel-runs", Input)
+            with control.prevent(Input.Changed):
+                control.value = str(self._console_max_parallel_runs_value())
         except QueryError:
             pass
         for budget_field in AGENT_BUDGET_FIELDS:

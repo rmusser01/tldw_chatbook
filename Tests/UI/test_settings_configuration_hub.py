@@ -6580,7 +6580,8 @@ async def test_settings_overview_paste_summary_updates_after_toggle(
 
 
 @pytest.mark.asyncio
-async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
+@private_profile_test
+async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(request, monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
@@ -6615,7 +6616,8 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_clean_state_does_not_show_staged_feedback():
+@private_profile_test
+async def test_settings_console_behavior_clean_state_does_not_show_staged_feedback(request):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     host = DestinationHarness(app, "settings")
@@ -6689,7 +6691,8 @@ async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_w
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_stages_save_and_revert(request, monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     saved = []
@@ -6720,7 +6723,8 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_saves_paste_threshold(request, monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {
         "collapse_large_pastes": True,
@@ -6758,7 +6762,8 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
+@private_profile_test
+async def test_settings_console_behavior_saves_max_parallel_runs(request, monkeypatch):
     app = _build_test_app()
     saved = []
 

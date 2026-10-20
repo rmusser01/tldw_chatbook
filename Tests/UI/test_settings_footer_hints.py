@@ -28,6 +28,7 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -162,7 +163,8 @@ async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> 
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_follow_the_active_category():
+@private_profile_test
+async def test_footer_hints_follow_the_active_category(request):
     """The live footer re-registers its hint set on every category switch."""
     app = _build_test_app()
     app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
@@ -193,7 +195,8 @@ async def test_footer_hints_follow_the_active_category():
 
 
 @pytest.mark.asyncio
-async def test_printable_shortcut_keys_type_into_focused_text_fields():
+@private_profile_test
+async def test_printable_shortcut_keys_type_into_focused_text_fields(request):
     """Real key behavior (task-1367): Textual Input consumes printable keys,
     so s/r/t with a text field focused legitimately type into the field --
     the field IS the feedback. No action fires, no dialog, no crash."""
@@ -234,7 +237,8 @@ async def test_printable_shortcut_keys_type_into_focused_text_fields():
 
 
 @pytest.mark.asyncio
-async def test_shortcut_keys_fire_actions_outside_text_entry():
+@private_profile_test
+async def test_shortcut_keys_fire_actions_outside_text_entry(request):
     """With focus outside text entry, s/r/t reach the screen bindings:
     s -> save notice, r -> revert confirmation dialog, t -> test stub toast."""
     app = _build_test_app()
@@ -248,6 +252,9 @@ async def test_shortcut_keys_fire_actions_outside_text_entry():
 
         # t on a category without a test action -> honest stub toast.
         await _click_settings_category(pilot, "theme")
+        # ThemeOptionList owns `t` for Try; exercise the SCREEN binding.
+        _active_destination_screen(host).set_focus(None)
+        await pilot.pause()
         await pilot.press("t")
         await pilot.pause()
         assert any("No test action is available" in toast for toast in toasts), (
@@ -284,7 +291,8 @@ async def test_shortcut_keys_fire_actions_outside_text_entry():
 
 
 @pytest.mark.asyncio
-async def test_revert_with_unsaved_changes_requires_confirmation():
+@private_profile_test
+async def test_revert_with_unsaved_changes_requires_confirmation(request):
     """Dirty-category revert asks first; confirm discards, cancel keeps."""
     app = _build_test_app()
     app.app_config["web_server"] = {"font_size": 12}
@@ -329,7 +337,8 @@ async def test_revert_with_unsaved_changes_requires_confirmation():
 
 
 @pytest.mark.asyncio
-async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
+@private_profile_test
+async def test_revert_without_changes_keeps_the_nothing_to_revert_path(request):
     """A clean category never sees the confirmation dialog."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -352,7 +361,8 @@ async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
 
 
 @pytest.mark.asyncio
-async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
+@private_profile_test
+async def test_narrow_footer_collapses_but_f1_help_stays_truthful(request):
     """The screen's own hints outrank the global cluster (task-2860/LIB-18).
 
     The ladder compacts the globals first, then retains the highest-priority

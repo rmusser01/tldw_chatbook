@@ -1,5 +1,25 @@
 # Lessons: what counts as evidence a change works
 
+## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
+
+**Incident.** PR #3176's admission-sensitive job failed the headless-delivery
+poll assertion with `reconciled=False`, an active wake and the same controller.
+The test had waited for a composer selector and a message-pump pause. Those
+can complete while the full attachment sync remains deferred; production
+starts the view's poll after reconciliation. The Console paths were unchanged
+against dev, and the unchanged exact test passed locally. This was a distinct
+signature from TASK-34789's earlier WaitForScreenTimeout reports; it does not
+identify the particular native deferral in that hosted run.
+
+**What to do.** A post-attachment assertion first witnesses the existing
+attachment-complete state for the current screen, as the neighboring public
+startup journey already does. Retain the idle no-poll and active poll
+assertions and bounded test budget. Here eight targeted controls passed;
+deliberately incomplete attachment still failed the setup assertion, and
+disabling poll arming still failed the original assertion with
+`reconciled=True`. This barrier does not witness retirement of later queued
+refreshes; that remains the separate lesson below.
+
 ## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
 **Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.
@@ -20903,3 +20923,33 @@ failed drafts were valid or that any product input behavior was fixed.
 ## Worker failure injection must leave unrelated work running
 
 **PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.
+
+## Writing a diagnostic can change the private test parent's ACL
+
+**TASK-35676/35677/35678, 2026-10-19.** Windows Settings regressions initially
+passed, then later private-profile children refused config import with
+`shared_writable_parent`, before reaching their test bodies. A sandbox file-tool
+write beneath the isolated worktree's `.test-tmp` had added explicit sandbox
+Modify ACEs to that parent; the native filesystem adapter reported mode 0766.
+Restoring only that exact owned temp directory to 0700 through the adapter's
+native chmod made the eight contract tests and Settings size checks pass.
+Product security checks stayed enabled. Keep diagnostic file-tool writes outside
+private fixture ancestry, use native writes for helpers inside it, and inspect
+the actual ACL when an established fixture suddenly fails storage admission.
+Retain the rejected runs separately from behavior evidence.
+
+
+## Repeated file names can corrupt per-file timing replay (PR #3176, 2026-10-20)
+
+**Incident.** While diagnosing UI shard 9's job-budget cancellation in run
+39447290920, the replay helper reported -28.36 s for the model-default rows.
+Two nonconsecutive Theme node entries share a file name; the helper's final
+per-file timestamp was reused for its earlier occurrence, charging the middle
+file to Theme and subtracting it again. Raw consecutive progress lines measured
+the model-row occurrence at 380.89 s. The upstream passing run and the candidate
+picker file were checked the same way before changing test placement.
+
+**What to do.** When a census splits one file into separated node entries,
+profile each occurrence in order. Check for negative costs before trusting a
+replay aggregate. This incident used raw per-occurrence intervals; it does not
+claim to fix the helper.
