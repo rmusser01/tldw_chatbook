@@ -88,5 +88,38 @@ Generated stylesheet sync, worker-contract and Backlog guards pass. The new
 regressions are appended to the existing PR UI census without moving earlier
 entries. Full-suite verification was not requested and was not run.
 
-The broader governance run and updated-dev integration results are recorded
-below before PR creation.
+The broader governance selection finished with 81 passes and 16 failures:
+seven size violations in unchanged modules; existing dimension/Python-style/
+Library-sheet violations; Windows path-separator and text-decoding assumptions
+in guard self-tests; and the inherited boot-CSS byte ceiling breach
+(624,809 / 608,090 bytes in this Windows checkout). Eighteen relevant guard
+sources/subjects, including all five boot-parsed CSS sources, were compared
+with dev `8136af6f6f` and are unchanged by this PR. The added selector is in the
+lazy Settings sheet. No existing ceiling or allowance was raised. The screen
+pre-import payload guard passed; Settings' own size ratchet passed both checks
+and was tightened to the measured 35,805 lines.
+
+Eleven derived-artifact preflight guards passed: generated stylesheets,
+profile paths, persistent diagnostics, Backlog IDs/files, schema allowlist,
+index pins, worker contract, timestamp writers, markup interpolation and UI
+census. Canvas Mermaid reproduction requires the exact pinned Python 3.12.11;
+the installed interpreters do not match that version, so this unrelated check
+could not qualify locally. It was not bypassed or regenerated.
+
+## Updated-dev integration
+
+Rebased onto `8136af6f6f`, preserving its new Tools & MCP category. Its Test,
+Revert and Add action branches remain before generic Settings guards, and its
+live mode-specific footer/F1 projection stays instance-owned (ADR-240).
+Independent review confirmed these branches are AST-identical to dev and
+all 327 pre-existing UI census entries remain in order, followed by six new
+entries (floor 333).
+
+The first post-rebase rerun passed six cases before later child processes
+refused the test root's newly broadened ACL. Writing a diagnostic helper with
+the sandbox file tool had made that disposable parent group-writable. The
+failure occurred during config import, before the test body. Restored the
+exact owned `.test-tmp` directory to private mode using the application's
+native Windows filesystem API, leaving all product guards enabled. Subsequent
+diagnostic writes use the native command runner and do not widen that ACL.
+The rejected runs are retained; they are not counted as behavioral passes.

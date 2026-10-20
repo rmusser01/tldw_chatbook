@@ -39,6 +39,8 @@ def _assert_category_support(screen, category):
             category is SettingsCategoryId.PERSONAL_CONTEXT
         )
     assert not supports(category, "unknown")
-    hints = dict(screen._category_footer_shortcuts(category, include_owned_actions=False))
+    hints = dict(
+        screen._category_footer_shortcuts(category, include_owned_actions=False)
+    )
     for key, action in (("s", "save"), ("r", "revert"), ("t", "test")):
         assert (key in hints) == supports(category, action)

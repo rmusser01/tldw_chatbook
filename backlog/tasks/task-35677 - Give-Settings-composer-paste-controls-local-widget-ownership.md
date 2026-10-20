@@ -73,3 +73,13 @@ Reason: bounded changes under the existing Settings and approved screen-decompos
 3. Preserve IDs and token-backed layout, use targeted sync, and prove Input identity/focus/cursor survive updates.
 4. Run affected Settings tests, size/import/token checks and private-profile keyboard journeys.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added ComposerPasteSettingsPanel as the sole owner of paste-control composition, displayed state and local Changed messages. The screen receives Edited and retains its existing draft, validation and writer; no config proxy or second save path was introduced. Sync updates existing child instances under prevent(...), preserving equal-value selection and focus. Field IDs, search integration, copy and CSS classes remain; a scoped token-backed selector preserves the original Static inset. The widget imports only when the category renders.
+
+The caller/field census and compact/wide mounted typing, selection, search and category-return evidence are in [qualification](../../Docs/superpowers/qa/2026-10-19-textual-settings-patterns.md). Architecture/app-shell.md records the owner/message flow. SettingsScreen is 35,805 lines and its size ratchet was tightened; pre-import payload and generated CSS checks pass. Existing global governance failures and the unavailable pinned Mermaid interpreter are disclosed rather than changing their limits. No TASK-35017 layout work or other section extraction was included.
+
+ADR required: no new ADR; existing [ADR-033](../decisions/033-settings-commit-models-three-honestly-labeled.md), [ADR-161](../decisions/161-component-pattern-library.md) and the approved screen-decomposition design apply. Modified files: the new widget/component tests, screen, source/generated Settings CSS, size ratchet, PR UI census and architecture documentation.
+<!-- SECTION:NOTES:END -->

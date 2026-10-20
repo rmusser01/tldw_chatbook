@@ -20903,3 +20903,17 @@ failed drafts were valid or that any product input behavior was fixed.
 ## Worker failure injection must leave unrelated work running
 
 **PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.
+
+## Writing a diagnostic can change the private test parent's ACL
+
+**TASK-35676/35677/35678, 2026-10-19.** Windows Settings regressions initially
+passed, then later private-profile children refused config import with
+`shared_writable_parent`, before reaching their test bodies. A sandbox file-tool
+write beneath the isolated worktree's `.test-tmp` had added explicit sandbox
+Modify ACEs to that parent; the native filesystem adapter reported mode 0766.
+Restoring only that exact owned temp directory to 0700 through the adapter's
+native chmod made the eight contract tests and Settings size checks pass.
+Product security checks stayed enabled. Keep diagnostic file-tool writes outside
+private fixture ancestry, use native writes for helpers inside it, and inspect
+the actual ACL when an established fixture suddenly fails storage admission.
+Retain the rejected runs separately from behavior evidence.

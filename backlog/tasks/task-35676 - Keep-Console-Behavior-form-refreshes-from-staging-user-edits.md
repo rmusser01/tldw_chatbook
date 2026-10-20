@@ -64,3 +64,13 @@ Reason: bounded changes under the existing Settings and approved screen-decompos
 2. Prevent only the two paste-control programmatic Changed messages, preserving actual edits and mount semantics.
 3. Verify affected load/save/revert/category-return paths with private-profile targeted tests.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Reproduced both queued-event failures on the original source: with an unrelated max_parallel_runs draft, a value-changing refresh added an untouched paste field to draft.values. A clean draft alone masked this failure. Textual prevent(...) fixed both regressions; the extracted panel now applies that prevention and rejects stale/equal queued events while emitting genuine local edits to the existing screen staging helpers. No provider/RAG/image/video suppression queues changed.
+
+Targeted private-profile tests cover programmatic origin, the next genuine edit, clean mount, Save/Revert, threshold persistence and category return. The live full-app keyboard journey saved the toggle and confirmed Revert after typing a threshold; the private TOML and clean state matched, with zero unhandled exceptions. Original failures, corrected fixture setup, validation limits and current-dev integration are recorded in [qualification](../../Docs/superpowers/qa/2026-10-19-textual-settings-patterns.md).
+
+ADR required: no new ADR; existing [ADR-033](../decisions/033-settings-commit-models-three-honestly-labeled.md) governs unchanged validation/draft/save ownership. Code is in composer_paste_panel.py and settings_screen.py; regressions are in test_settings_paste_event_origin.py and affected existing Settings tests. The unavailable Backlog CLI required direct Markdown updates; task identity and readability were checked with the repository guards.
+<!-- SECTION:NOTES:END -->

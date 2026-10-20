@@ -41,8 +41,7 @@ Other recommendations from this book review already have owners and are explicit
 - [TASK-2834](../tasks/task-2834%20-%20Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md): existing owner or precedent described above.
 - [TASK-32804](../tasks/task-32804%20-%20Work-stream-synchronous-work-on-the-Textual-event-loop.md): existing owner or precedent described above.
 - [TASK-32800.4](../tasks/task-32800.4%20-%20Add-a-guard-for-the-Textual-worker-and-post-await-DOM-contract.md): existing owner or precedent described above.
-- [TASK-35614](../tasks/task-35614%20-%20Keep-Console-return-input-responsive-during-reconciliation.md): existing owner or precedent described above.
-- [TASK-35645](../tasks/task-35645%20-%20Reduce-measured-native-Console-attachment-waits.md): existing owner or precedent described above.
+- [TASK-35614 / TASK-35645 — PR #3166](https://github.com/rmusser01/tldw_chatbook/pull/3166): existing keyboard-responsiveness fix and measured native-attachment follow-up. Their task files exist in the primary checkout but are not on this branch's dev base; link their existing PR without copying unrelated work.
 - [TASK-34563.33](../tasks/task-34563.33%20-%20Plan-Console-polling-and-full-state-reconciliation.md): existing owner or precedent described above.
 - [TASK-34563.34](../tasks/task-34563.34%20-%20Verify-Console-polling-reconciliation-boundaries.md): existing owner or precedent described above.
 - [031-tui-keybinding-and-footer-hint-conventions](../decisions/031-tui-keybinding-and-footer-hint-conventions.md)
@@ -73,3 +72,13 @@ Reason: bounded changes under the existing Settings and approved screen-decompos
 3. Preserve guidance-only and focused-text semantics and mutation-time safety gates.
 4. Verify matrix, keyboard/button flows, narrow layouts and scoped static checks.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shared pure category support across Save/Revert/Test dispatch, guided buttons, footer/F1 and RAG/Personal Context action guards. Guidance-only bindings remain active; native check_action was deliberately not added because it would suppress the existing explanatory paths. The screen and category-owned widgets retain mutation-time validation, dirty/busy checks, text-focus behavior and confirmation ownership. Theme and Personal Context keep their context-specific hints. Current dev's new Tools & MCP live-mode footer and verb branches remain before generic guards, unchanged under ADR-240.
+
+The before/after category/focus matrix and targeted mounted/keyboard evidence are in [qualification](../../Docs/superpowers/qa/2026-10-19-textual-settings-patterns.md). An existing Theme screen-binding test failed on the original source because focus remained in ThemeOptionList, whose t means Try; its setup now explicitly releases that focus, preserving all assertions. Affected mounted tests use the required private-profile process. Independent initial and post-rebase reviews found no remaining defects. New regression entries were appended to the PR UI census without moving earlier entries.
+
+ADR required: no new ADR; [ADR-031](../decisions/031-tui-keybinding-and-footer-hint-conventions.md) and [ADR-033](../decisions/033-settings-commit-models-three-honestly-labeled.md) remain governing. Modified the Settings screen, action-availability and affected footer tests, architecture docs and test census. No worker, polling, global bindings or screen-wide recomposition changes were included. Existing performance and polling owners remain linked above.
+<!-- SECTION:NOTES:END -->
