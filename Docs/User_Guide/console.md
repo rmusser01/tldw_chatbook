@@ -830,10 +830,15 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **RECENT**, your recently used pairs, with **● CURRENT** on this chat's
   pair and when each was last used.
 - **READY PROVIDERS**, the first three models of each provider with no known
-  blocker, then an "… N more" row (Enter on it puts the provider's name in
-  Find, and what you type next is added after it). A provider with its key
-  saved and no model chosen is listed here too once its cached catalog lists
-  a model: it is checked again with the first one.
+  blocker: this chat's model first when it is that provider's, then that
+  provider's saved default for new chats, when its rows include it, then the
+  rest in list order. An "… N more" row counts the others (Enter on it puts
+  the provider's name in Find, and what you type next is added after it).
+  Chat settings' model picker orders each provider's rows the same way, with
+  its draft's model in place of this chat's. Find's matches are ranked by
+  what you type; the saved default does not move them. A provider with its
+  key saved and no model chosen is listed here too once its cached catalog
+  lists a model: it is checked again with the first one.
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key, endpoint or model
@@ -882,8 +887,10 @@ status at once, under the open list. Once a server's model listing has
 answered (this check, or **Test connection** of the same connection), that
 server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
-longer offered. On llama.cpp, which sends to an endpoint set only on this
-chat, a pick keeps this chat's endpoint, so while a llama.cpp chat runs on a
+longer offered. When the server listed the provider's saved default for new
+chats, that default still comes first among them, after this chat's model.
+On llama.cpp, which sends to an endpoint set only on this chat, a pick keeps
+this chat's endpoint, so while a llama.cpp chat runs on a
 server other than the configured one, llama.cpp's readiness words and its
 rows are this chat's endpoint's, not the configured server's: a configured
 server that is down does not put llama.cpp under NEEDS SETUP, and its
