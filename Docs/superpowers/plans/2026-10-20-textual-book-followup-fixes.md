@@ -57,11 +57,11 @@ ADR required: no; existing Accepted ADR-018; Proposed ADR-099/116 are context on
 **Files:** modify `tldw_chatbook/UI/Screens/scheduling/results_tab.py`; extend `Tests/UI/test_schedules_results_tab.py`; update Schedules documentation.
 **Interfaces:** existing ResultsHostScreen actions and `review_automation_result`/outbox primitives remain. Refuse overlaps visibly while busy; do not add a command queue.
 ADR required: no; existing ADR-018; ADR-116 remains Proposed context.
-- [ ] Add a real-keyboard/SQLite `test_mark_all_read_survives_overlapping_dismiss`: hold the first result read, press a then d, release and settle; expect three read rows and an explicit busy refusal, then a subsequent deliberate d works. Pin captured target/scope and single-row/solved/failure controls.
-- [ ] Record expected cancellation failure on original code.
-- [ ] Admit Results mutations synchronously in the existing host, retain the accepted target/scope, refuse later competing actions and release pending state on all outcomes. Preserve per-row errors/counts and transaction semantics.
-- [ ] Run the affected hosted Results tests and relevant service/outbox cases, scoped static checks and whitespace; record exact evidence.
-- [ ] Update docs, self-review and commit owned files; leave Backlog completion to controller.
+- [x] Add a real-keyboard/SQLite `test_mark_all_read_survives_overlapping_dismiss`: hold the first result read, press a then d, release and settle; expect three read rows and an explicit busy refusal, then a subsequent deliberate d works. Pin captured target/scope and single-row/solved/failure controls.
+- [x] Record expected cancellation failure on original code.
+- [x] Admit Results mutations synchronously in the existing host, retain the accepted target/scope, refuse later competing actions and release pending state on all outcomes. Preserve per-row errors/counts and transaction semantics.
+- [x] Run the affected hosted Results tests and relevant service/outbox cases, scoped static checks and whitespace; record exact evidence.
+- [x] Update docs, self-review and commit owned files; leave Backlog completion to controller.
 
 ### Task 3: TASK-35867 - remaining Console input event origins
 

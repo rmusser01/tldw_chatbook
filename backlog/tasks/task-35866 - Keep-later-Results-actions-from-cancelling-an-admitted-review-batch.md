@@ -1,7 +1,7 @@
 ---
 id: TASK-35866
 title: Keep later Results actions from cancelling an admitted review batch
-status: In Progress
+status: Done
 created_date: 2026-10-20 19:24
 labels:
 - scheduling
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-20 19:59
+updated_date: 2026-10-20 20:23
 ---
 
 ## Description
@@ -41,11 +41,11 @@ Reason: No new ADR is expected if the repair stays within existing UI mutation a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With the first review read/write held, a later Read, Dismiss or Mark solved gesture cannot silently cancel an admitted Mark all read batch.
-- [ ] #2 Overlapping gestures are explicitly refused while busy or safely serialized; accepted actions retain their intended result IDs and scope and publish truthful success/failure counts.
-- [ ] #3 Per-row failures remain visible and retryable; ordinary single-row Read/Dismiss, Mark solved eligibility and global/per-definition bulk scopes keep their behavior.
-- [ ] #4 Existing local/server owner checks and review-plus-outbox transaction semantics are preserved without a bulk schema primitive or new sync/conflict policy.
-- [ ] #5 Deterministic actual-keyboard/private-profile SQLite tests cover a-then-d overlap, related action overlap, physical settlement and ordinary/failure controls.
+- [x] #1 With the first review read/write held, a later Read, Dismiss or Mark solved gesture cannot silently cancel an admitted Mark all read batch.
+- [x] #2 Overlapping gestures are explicitly refused while busy or safely serialized; accepted actions retain their intended result IDs and scope and publish truthful success/failure counts.
+- [x] #3 Per-row failures remain visible and retryable; ordinary single-row Read/Dismiss, Mark solved eligibility and global/per-definition bulk scopes keep their behavior.
+- [x] #4 Existing local/server owner checks and review-plus-outbox transaction semantics are preserved without a bulk schema primitive or new sync/conflict policy.
+- [x] #5 Deterministic actual-keyboard/private-profile SQLite tests cover a-then-d overlap, related action overlap, physical settlement and ordinary/failure controls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,3 +62,15 @@ Reason: bounded Results mutation admission; preserve owner checks, per-row revie
 
 Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 2).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+ResultsHostScreen now admits each review/solve mutation synchronously, captures its result row/definition mapping or unread-ID scope, visibly refuses overlaps and releases admission after settlement or submission failure. Later gestures cannot cancel or retarget the admitted operation. Existing per-row service/outbox writers and truthful counts remain unchanged; no command queue or schema/sync change. Updated results_tab.py, focused private-profile regressions in test_schedules_results_tab.py, and Schedules architecture/user docs.
+
+Evidence: commit 17122d75d1. RED: all eight initial regressions failed, including a-then-d ending unread/unread/dismissed. GREEN: 14 distinct new private-profile keyboard/SQLite cases plus 29 targeted service/outbox controls passed. Scoped Ruff, format and whitespace checks passed. Superpowers independent review: spec compliant, quality Approved, no actionable findings.
+
+Verification limit: 35 unchanged legacy Results nodes fail before their bodies at existing RecoveryRequired(raw_source_selection_changed) setup; unchanged setup files and original test ASTs verified. Guard preserved; new real-UI ordinary/failure controls and service ownership/transaction/rollback/replay tests provide scoped evidence. Inherited Pydantic/asyncio warnings disclosed, no filters; no full suite run.
+
+ADR required: no; backlog/decisions/018-local-server-hybrid-scheduled-tasks.md applies; ADR-116 remains Proposed context. Integration tracked by Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md. Existing cancellation/private-profile lessons apply, no new generalized incident.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

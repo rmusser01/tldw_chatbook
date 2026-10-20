@@ -1,7 +1,7 @@
 ---
 id: TASK-35867
 title: Keep remaining Console input refreshes out of user drafts
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:24
 labels:
 - settings
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 20:23
 ---
 
 ## Description
@@ -44,3 +47,19 @@ Reason: No new ADR is expected: the screen keeps draft, validation and Save/Reve
 - [ ] #4 Ordinary updates preserve the mounted Input instances, active focus, cursor and selection without recomposing the enclosing detail pane.
 - [ ] #5 Existing budget ceilings/normalization, display limits, side-chat strings, real-writer Save/Revert and validation behavior remain intact; compact/wide private-profile tests cover refresh, actual typing and persistence.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; backlog/decisions/161-component-pattern-library.md
+Reason: Preserve the current Settings draft, validation and Save/Revert writer ownership; no new runtime or persistent boundary.
+
+- Add mounted private-profile tests matching the audit: only paste threshold 120 staged, first eight backing values changed, then changed again; expect draft exactly `{'paste_collapse_threshold': 120}` and every untouched display follows the second refresh. Add queued-stale/genuine typing, mount/return and compact/wide real-writer Save/Revert coverage.
+- Record expected draft pollution/stale display failures before product changes.
+- Use native publication prevention for programmatic assignments and correct stale/no-op event handling for initialization; remove obsolete temporary sync flags. Preserve invalid text and the first genuine edit after refresh, including a previous display value.
+- Run new regressions, affected budget/side-chat tests and existing paste/parallel origin regressions; test Input identity/focus/selection, size/import guards and scoped static checks.
+- Update owner documentation, self-review and commit owned files; do not extract another section or alter runtime budgets.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 3).
+<!-- SECTION:PLAN:END -->
