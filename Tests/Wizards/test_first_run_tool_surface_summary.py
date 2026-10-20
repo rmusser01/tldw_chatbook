@@ -37,7 +37,7 @@ def test_a_fresh_profile_summary_names_the_light_set_without_hedging():
     assert row.detail == (
         "on: date and time, calculator and ask you a question, plus tools from "
         "MCP servers you add and Library tools in chats you allow. Sub-agents, "
-        "skills, web, Watchlists, workspace files and characters stay off "
+        "skills, web, Watchlists, workspace tools and characters stay off "
         f"until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}. "
         "A model with a small or not-yet-known context window gets no tools."
     )
@@ -72,7 +72,7 @@ def test_full_agent_tools_on_names_the_agent_groups():
 
     assert row.state == ROW_CONFIGURED
     assert row.detail.startswith(
-        "full agent tools (sub-agents, skills, web, Watchlists, workspace files, "
+        "full agent tools (sub-agents, skills, web, Watchlists, workspace tools, "
         "chat forks, Canvas, character cards and chatbook's own MCP tools), plus "
         "date and time, calculator and ask you a question."
     )

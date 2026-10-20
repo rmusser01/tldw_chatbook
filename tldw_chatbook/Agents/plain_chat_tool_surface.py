@@ -70,12 +70,12 @@ FULL_AGENT_TOOLS_TITLE = "Full agent tools"
 #: One line for setup's Tools step, whose rows fit one line of description
 #: (live 120x40: the full description was clipped after three lines).
 FULL_AGENT_TOOLS_BLURB = (
-    "Adds sub-agents, skills, web, Watchlists, workspace files, characters, "
+    "Adds sub-agents, skills, web, Watchlists, workspace tools, characters, "
     "Canvas and chatbook's own MCP tools."
 )
 FULL_AGENT_TOOLS_DESCRIPTION = (
     "Lets the Console assistant use sub-agents, skills, web search and fetch, "
-    "Watchlists, workspace files, character cards, Canvas, chat forks and "
+    "Watchlists, workspace tools, character cards, Canvas, chat forks and "
     "chatbook's own MCP tools. Off by default: plain chat keeps date and time, "
     "calculator and ask-you-a-question, plus any tool you switch on one by "
     "one. Applies on the next send."
@@ -488,7 +488,7 @@ def full_agent_tool_groups(summary: ToolSurfaceSummary) -> tuple[str, ...]:
     """The tool groups the full agent surface adds, as plain words."""
     groups = ["sub-agents", "skills", "chat forks", "Canvas", "chatbook's own MCP tools"]
     if summary.local_group_on:
-        groups[2:2] = ["web", "Watchlists", "workspace files"]
+        groups[2:2] = ["web", "Watchlists", "workspace tools"]
     if summary.character_tools_on:
         groups.insert(-1, "character cards")
     return tuple(groups)
@@ -510,7 +510,7 @@ def _stays_off(summary: ToolSurfaceSummary) -> str:
     names the web tools that stay off instead of "web" (review round 1, F4).
     """
     web = "web search and fetch" if summary.web_research_on else "web"
-    return f"Sub-agents, skills, {web}, Watchlists, workspace files and characters"
+    return f"Sub-agents, skills, {web}, Watchlists, workspace tools and characters"
 
 
 def tool_surface_detail(summary: ToolSurfaceSummary) -> str:
