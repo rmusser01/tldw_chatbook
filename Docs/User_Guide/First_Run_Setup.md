@@ -329,8 +329,7 @@ A second computer does not need setup again. There are three routes:
 carry your config.toml, export the same environment keys, or restore a
 backup. The first two carry settings only; to bring your chats, notes and
 documents with them, also copy the data folder (below). A backup can carry
-both, but Create backup does not yet work on every profile; see "Restore a
-backup" below before relying on it.
+both; see "Restore a backup" below for what restoring one needs today.
 
 ### Carry your config.toml
 
@@ -382,7 +381,7 @@ To bring them, quit chatbook on both machines and copy that whole folder,
 every file in it, to the same place on the new machine. If chatbook has
 already run there, move its folder aside first rather than copying into it;
 the copy replaces anything chatbook saved there. A backup (below) carries
-them too, once Create backup works on your profile. Paths written in the
+them too. Paths written in the
 file are used as written: `~/...` paths follow the new machine's home
 folder, while an absolute path (a notes sync folder, a custom database
 location) must exist there. `--config` and `TLDW_CONFIG_PATH` choose the
@@ -423,11 +422,14 @@ marked `unsupported` (on some profiles that includes the config and the main
 databases) is not in the archive. Until the Review shows what you need as
 included, carry config.toml and the data folder as described above.
 
-**Known problem:** on some profiles Create backup currently stops with
-"Failed: capturing …" (ending in `backup_operation_failed` or
-`admission_timeout`) and writes no file, even after a successful Review. If
-that happens, carry config.toml and the data folder as described above
-instead.
+**Known problem:** Create backup writes a verified archive on a fresh
+profile and on one that has chatted, but restoring an archive from a profile
+that has chatted as an isolated profile on a new machine can stop at
+**Review restore** with
+"Choose a folder beneath a separate private restore directory, outside
+recovery control storage." (`isolated_destination_parent_overlaps_control`),
+whichever folder you choose. If that happens, carry config.toml and the data
+folder as described above instead.
 
 In the Create backup form, the line just above the buttons says why
 **Create backup** is disabled: "Create backup unlocks after a successful
