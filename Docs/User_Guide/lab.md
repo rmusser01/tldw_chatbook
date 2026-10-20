@@ -10,6 +10,18 @@ lands on a screen titled **"Models"** ("Manage providers, models, and
 endpoints.") — its default sub-area; the other sub-areas (speech,
 evaluation runs) are reached from within that screen.
 
+### Installing a managed model
+
+Install review and progress are shared with the first-run wizard. The review
+leads with the download size, where the model installs and the free space
+there, and each component's licence; source, pinned revision, provenance,
+staging figures and file hashes are under **Details**. If an earlier download
+of the same model was interrupted, the review says how far it got ("A
+previous download stopped at X of Y MiB") and its button reads **Resume
+download**. The progress line shows the bytes received, the speed and the
+time left. Only one model downloads at a time: an install started while
+another is running says which model is still downloading.
+
 ## Getting there
 
 - Press **F2**, click **F2 Lab** in the nav bar, or press **Ctrl+P** →
