@@ -29,6 +29,14 @@ This document describes the unified scheduler (reminders, watchlist checks, brie
 3. **Execute**: emergency-stop check → run-ledger row (reminder/briefing types) → optional handler preflight (bounded 10 s) → the handler awaited inline under `wait_for` with the effective timeout (row override > 300 s default; ≤ 0 disables). Long handlers (briefings, automations) spawn `asyncio.Task`s held in strong-ref sets so a multi-minute LLM call cannot stall the serial tick; an overlap guard degrades too-frequent intervals to back-to-back runs, never concurrent. For detached jobs, this timeout bounds the awaited handler dispatch, not the spawned job's execution lifetime.
 4. **Record reminders**: `mark_reminder_dispatched` advances the schedule from **now** (missed slots skipped), records `missed_at`/`missed_count` past the grace window with an attributed cause (`away`/`busy`/`stalled`), closes the ledger row, and dispatches notifications. Startup reconciliation fails `running` ledger rows left by a prior process.
 
+The automation definition form admits Save synchronously before starting its
+`automation-form-save` worker. While the admitted save is pending, its button
+shows **Saving…** and is disabled; repeated button or direct Save actions retain
+the original operation instead of cancelling a waiter whose SQLite thread may
+still commit. Validation errors, server refusals and failed writes keep the draft
+open and restore Save for retry. Successful local saves and offline server saves
+retain the service's `saved` and `queued` outcomes respectively (ADR-018).
+
 ## What can be scheduled
 
 - **Reminders** — one-time or cron-recurring; notification dispatch.

@@ -641,7 +641,10 @@ preset, whether to be notified, and an optional provider/model pin.
 **Preview** runs the same validation the save itself will run and shows
 the next few scheduled occurrences without saving anything; a rejected
 preview highlights the specific field that needs fixing. **Save** always
-previews first — an invalid definition is never written. Only the
+previews first — an invalid definition is never written. While saving, the
+button shows **Saving…** and repeated Save actions cannot start another
+save. Validation errors, server refusals and failed writes keep your draft
+open so you can correct it or retry. Only the
 `recurring_question` family can be authored here; agent-task automations
 are not yet supported from this form.
 
