@@ -314,12 +314,16 @@ async def test_empty_find_with_no_previous_or_current_row_highlights_the_lifted_
     assert (settings.provider, settings.model) == ("anthropic", DEFAULT)
 
 
-#: Ollama's saved list, its saved default last of four.
-OLLAMA_SAVED = ["m-one", "m-two", "m-three", "fake-beta"]
+#: Ollama's saved list starts with these; its saved default is saved last.
+OLLAMA_SAVED = ["m-one", "m-two", "m-three"]
+#: A listing the probe reads only up to its bound (MODEL_IDS_MAX_COUNT, 100).
+PAST_THE_BOUND = [f"m{index:03d}" for index in range(150)]
 
 
 @private_profile_test
-@pytest.mark.parametrize("listing", ["lists-the-default-4th", "leaves-it-out"])
+@pytest.mark.parametrize(
+    "listing", ["lists-the-default-4th", "leaves-it-out", "past-the-bound"]
+)
 async def test_a_local_servers_listing_orders_the_default_and_never_adds_it(
     servers,  # noqa: F811 - the probe fixture, imported above
     request,
@@ -329,20 +333,25 @@ async def test_a_local_servers_listing_orders_the_default_and_never_adds_it(
     probe answers, Ollama's rows are its saved models and the default leads
     them; once the server's listing answers, the rows are what it listed, so
     a default it lists 4th leads within the listing, and one it does not list
-    is gone, not added back."""
+    is gone, not added back. A listing that reaches the probe's bound (100 of
+    150 read) keeps the saved models after the listed ones, so a default the
+    server never listed is one of the rows and leads them all."""
+    default = "m120" if listing == "past-the-bound" else "fake-beta"
     listed = ["fake-alpha", "fake-gamma", "fake-delta"]
     listed.append("fake-beta" if listing == "lists-the-default-4th" else "fake-eps")
+    if listing == "past-the-bound":
+        listed = PAST_THE_BOUND
     servers.up = {OLLAMA}
     servers.listing = {OLLAMA: listed}
     servers.hold = threading.Event()
     config = deepcopy(CONFIG)
-    config["api_settings"]["ollama"]["model"] = "fake-beta"
+    config["api_settings"]["ollama"]["model"] = default
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
             app,
             config=config,
-            providers_models={**PROVIDERS_MODELS, "ollama": OLLAMA_SAVED},
+            providers_models={**PROVIDERS_MODELS, "ollama": [*OLLAMA_SAVED, default]},
             pair=("llama_cpp", "model-a"),
         )
         await app.push_screen(switcher)
@@ -354,10 +363,14 @@ async def test_a_local_servers_listing_orders_the_default_and_never_adds_it(
         after = _ready(switcher, "ollama")
         models = switcher._models_for("ollama")
 
-    assert before == (["fake-beta", "m-one", "m-two"], "… 1 more Ollama model")
+    assert before == ([default, "m-one", "m-two"], "… 1 more Ollama model")
     if listing == "lists-the-default-4th":
-        assert after == (["fake-beta", *listed[:2]], "… 1 more Ollama model")
+        assert after == ([default, *listed[:2]], "… 1 more Ollama model")
         assert models == tuple(listed)
-    else:
+    elif listing == "leaves-it-out":
         assert after == (listed[:3], "… 1 more Ollama model")
-        assert "fake-beta" not in models
+        assert default not in models
+    else:
+        assert default not in listed[:100]
+        assert models == (*listed[:100], *OLLAMA_SAVED, default)
+        assert after == ([default, *listed[:2]], "… 101 more Ollama models")
