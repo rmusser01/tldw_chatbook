@@ -251,7 +251,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33005.15's PR review: one write covers every Overview row (-1): 35,771.
     # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint is -1: 35,770.
     # Rebased onto dev 88fe3108e5, whose task-35150 Tools & MCP category is +1: 35,771.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
+    # TASK-35010: the saved lists are re-read from the file, not appended to in
+    # memory, so the 20-line in-memory append goes (-4 net): 35,766.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35767,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

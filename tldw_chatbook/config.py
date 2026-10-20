@@ -4062,11 +4062,12 @@ LOCAL_PROVIDERS = {
         "devstral:24b",
         "deepseek-r1:671b",
     ],
-    "vLLM": ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"],
-    "TabbyAPI": ["tabby-model", "tabby-model-2", "tabby-model-3"],
-    "Aphrodite": ["aphrodite-engine", "aphrodite-engine-2"],
-    "Custom": ["custom-model-alpha", "custom-model-beta"],
-    "Custom-2": ["custom-model-gamma", "custom-model-delta"],
+    # TASK-35010: these fill through Discover models (the template below too).
+    "vLLM": [],
+    "TabbyAPI": [],
+    "Aphrodite": [],
+    "Custom": [],
+    "Custom-2": [],
 }
 
 #######################################################################################################################
@@ -4715,11 +4716,12 @@ Llama_cpp = ["None"]
 koboldcpp = ["None"]
 Oobabooga = ["None"]
 Ollama = ["gemma3:12b", "gemma3:4b", "gemma3:27b", "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b", "qwen3:32b", "qwen3:235b", "devstral:24b", "deepseek-r1:671b"]
-vLLM = ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"]
-Custom = ["custom-model-alpha", "custom-model-beta"]
-Custom_2 = ["custom-model-gamma", "custom-model-delta"]
-TabbyAPI = ["tabby-model", "tabby-model-2", "tabby-model-3"]
-Aphrodite = ["aphrodite-engine", "aphrodite-engine-2"]
+# These five fill via Discover models (Settings > Providers & Models).
+vLLM = []
+Custom = []
+Custom_2 = []
+TabbyAPI = []
+Aphrodite = []
 local-llm = ["None"] # Add if you have a specific local-llm provider entry
 local_llamacpp = ["None"]
 local_llamafile = ["None"]
@@ -9996,7 +9998,31 @@ def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
 
 
 # --- CLI Providers and Models Getter ---
+#: TASK-35010 (OD-1 (a)): the sample ids older templates wrote into the vLLM,
+#: TabbyAPI, Aphrodite, Custom and Custom 2 lists. No server serves them, so
+#: the saved-list loader and Settings' default choice ignore them, and a
+#: Settings write drops them from the list it rewrites; nothing rewrites the
+#: file at startup. Frozen: the template no longer ships them.
+# ponytail: matched by value, so a server that really serves one of these
+# exact ids cannot have it listed; a template marker cannot reach files that
+# older versions wrote without one.
+SHIPPED_SAMPLE_MODEL_IDS: frozenset[str] = frozenset(
+    {
+        *("vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"),
+        *("tabby-model", "tabby-model-2", "tabby-model-3"),
+        *("aphrodite-engine", "aphrodite-engine-2"),
+        *("custom-model-alpha", "custom-model-beta"),
+        *("custom-model-gamma", "custom-model-delta"),
+    }
+)
+
+
 def get_cli_providers_and_models() -> Dict[str, List[str]]:
+    """Return each ``[providers]`` list, minus ``SHIPPED_SAMPLE_MODEL_IDS``.
+
+    Every key stays, an emptied list included, so discovery and list-key
+    resolution see the same keys as before.
+    """
     config = load_settings()
     providers_data = config.get(
         "providers", {}
@@ -10005,7 +10031,9 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
     if isinstance(providers_data, dict):
         for provider, models in providers_data.items():
             if isinstance(models, list) and all(isinstance(m, str) for m in models):
-                valid_providers[provider] = models
+                valid_providers[provider] = [
+                    model for model in models if model not in SHIPPED_SAMPLE_MODEL_IDS
+                ]
             else:
                 logger.warning(
                     f"Invalid model list for provider '{provider}' in CLI config [providers]. Models: {models}. Skipping."

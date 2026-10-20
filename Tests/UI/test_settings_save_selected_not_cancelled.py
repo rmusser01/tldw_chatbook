@@ -27,6 +27,7 @@ from Tests.UI.test_settings_discovery_listing_dropped import (
     _discover,
 )
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from tldw_chatbook.config import get_cli_providers_and_models
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     PersistenceResult,
 )
@@ -170,7 +171,9 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
     )
 
     assert scope.saved == (_SERVED,)
-    assert _SERVED in app.providers_models["OpenAI"]
+    # TASK-35010, rewritten on purpose: the saved lists follow the file once
+    # the save lands; this held fake writes nothing to it.
+    assert app.providers_models == get_cli_providers_and_models()
     # Capture fix 3 round 1, finding 4, rewritten on purpose: the line
     # belongs to the Discover or Clear pressed since, so the toast is the
     # one report and says what the line would have said.

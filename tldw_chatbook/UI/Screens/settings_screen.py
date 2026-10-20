@@ -13132,7 +13132,7 @@ class SettingsScreen(BaseAppScreen):
         loaded_config: dict | None,
     ) -> None:
         if loaded_config is not None:
-            self.app_instance.app_config = loaded_config
+            self._adopt_config(loaded_config, force=True)
         self._diagnostics_validation_result = validation_result
         self._diagnostics_reload_result = reload_result
         self._set_static_text(
@@ -13182,7 +13182,7 @@ class SettingsScreen(BaseAppScreen):
         except Exception as exc:
             return f"Config reload: failed - {redact_secret_text(str(exc))}"
         if isinstance(loaded, dict):
-            self.app_instance.app_config = loaded
+            self._adopt_config(loaded, force=True)
             return "Config reload: loaded"
         return "Config reload: failed - loaded config was not a table"
 
@@ -13191,14 +13191,27 @@ class SettingsScreen(BaseAppScreen):
 
         if self._advanced_config_settings is None:
             self._advanced_config_settings = AdvancedConfigSettings(
-                self._raw_config_changed,
-                lambda loaded: setattr(self.app_instance, "app_config", loaded),
+                self._raw_config_changed, self._adopt_config
             )
         self._advanced_config_settings.changed = self._raw_config_changed
-        self._advanced_config_settings.applied = (
-            lambda loaded, owner=self.app_instance: setattr(owner, "app_config", loaded)
-        )
+        self._advanced_config_settings.applied = self._adopt_config
         return self._advanced_config_settings
+
+    def _adopt_config(self, loaded: dict, *, force: bool = False) -> None:
+        """Install a saved or reloaded config, with the model lists it holds.
+
+        TASK-35010: the lists are updated in place, so the Default model
+        picker and the Saved model list read the file's lists without a
+        rebuild. ``force`` (Config reload) re-reads an in-place edit.
+        """
+        from ...LLM_Provider_Catalog.model_discovery_persistence import (
+            refresh_providers_models,
+        )
+
+        self.app_instance.app_config = loaded
+        refresh_providers_models(self.app_instance, force=force)
+        self._sync_model_picker(self._provider_widget_value() or None, reload=True)
+        self._refresh_advanced()
 
     def _raw_config_changed(self) -> None:
         if not self.is_mounted:
@@ -14223,7 +14236,7 @@ class SettingsScreen(BaseAppScreen):
             else:
                 model = (
                     resolve_remembered_provider_model(
-                        self._app_config_mapping(), provider
+                        self._app_config_mapping(), provider, skip_samples=True
                     )
                     or ""
                 )
@@ -15603,7 +15616,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_model_default(self, provider: str) -> str:
         try:
             configured_model = resolve_remembered_provider_model(
-                self._app_config_mapping(), provider
+                self._app_config_mapping(), provider, skip_samples=True
             )
         except ValueError:
             configured_model = None
@@ -16504,27 +16517,6 @@ class SettingsScreen(BaseAppScreen):
             pass
         self._refresh_advanced()
 
-    def _append_saved_discovered_models(
-        self,
-        provider_list_key: str | None,
-        model_ids: tuple[str, ...],
-    ) -> None:
-        if not provider_list_key or not model_ids:
-            return
-        providers_models = getattr(self.app_instance, "providers_models", None)
-        if not isinstance(providers_models, dict):
-            providers_models = {}
-            self.app_instance.providers_models = providers_models
-        current = providers_models.get(provider_list_key, [])
-        if not isinstance(current, list):
-            current = list(current) if isinstance(current, tuple) else []
-        seen = {model for model in current if isinstance(model, str)}
-        for model_id in model_ids:
-            if model_id not in seen:
-                current.append(model_id)
-                seen.add(model_id)
-        providers_models[provider_list_key] = current
-
     @work(exclusive=True, group="settings-model-discovery")
     async def _discover_provider_models_worker(self) -> None:
         await self._discover_provider_models()
@@ -16814,8 +16806,12 @@ class SettingsScreen(BaseAppScreen):
             if str(model_id).strip()
         )
         if status == "saved":
-            provider_list_key = getattr(result, "provider_list_key", None)
-            self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            from ...LLM_Provider_Catalog.model_discovery_persistence import (
+                refresh_providers_models,
+            )
+
+            # TASK-35010: the lists follow the file the save just wrote.
+            refresh_providers_models(self.app_instance)
             count, label = len(saved_model_ids), self._provider_display_label(provider)
             receipt = (
                 f"Saved {count} discovered model{'' if count == 1 else 's'} to {label}."

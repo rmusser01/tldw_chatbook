@@ -20,6 +20,7 @@ from weakref import ReferenceType, ref
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
+    SHIPPED_SAMPLE_MODEL_IDS,
     AtomicConfigSnapshot,
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
@@ -783,10 +784,24 @@ def project_provider_setup_expected_state(
 def resolve_remembered_provider_model(
     app_config: object,
     provider: object,
+    *,
+    skip_samples: bool = False,
 ) -> str | None:
-    """Resolve a provider's remembered model without cross-provider borrowing."""
+    """Resolve a provider's remembered model without cross-provider borrowing.
+
+    Args:
+        app_config: The configuration to read.
+        provider: The provider whose model is wanted.
+        skip_samples: Treat a template sample id
+            (``SHIPPED_SAMPLE_MODEL_IDS``) as no remembered model. Only
+            Settings' default choice passes it (TASK-35010); sends keep the
+            table's model.
+    """
 
     ownership = _ownership_for(provider)
+    if skip_samples:
+        model = resolve_remembered_provider_model(app_config, provider)
+        return None if model in SHIPPED_SAMPLE_MODEL_IDS else model
     if not isinstance(app_config, Mapping):
         return None
     chat_defaults = app_config.get("chat_defaults")

@@ -11685,7 +11685,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
             "model_ids": ["gpt-4o-mini"],
         },
     ]
-    assert app.providers_models["openai"] == ["gpt-4.1", "gpt-4o-mini"]
+    # TASK-35010, rewritten on purpose: after Save selected the saved lists
+    # are the file's; this fake persist writes nothing to it.
+    assert app.providers_models == config_module.get_cli_providers_and_models()
 
 
 @pytest.mark.asyncio

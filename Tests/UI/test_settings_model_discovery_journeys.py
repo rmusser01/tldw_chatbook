@@ -19,6 +19,7 @@ from Tests.UI.test_settings_provider_keyboard_journeys import (
     _settle,
     _tab_to,
 )
+from tldw_chatbook.config import get_cli_providers_and_models
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 MODELS = ("model-alpha", "model-beta")
@@ -161,7 +162,9 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, siz
         assert scope.persist_calls == [
             {"mode": "local", "provider": "openai", "model_ids": [MODELS[1]]}
         ]
-        assert app.providers_models == {"OpenAI": [MODELS[1]], "llama_cpp": []}
+        # TASK-35010, rewritten on purpose: the saved lists follow the file
+        # after Save selected; this fake persist writes nothing to it.
+        assert app.providers_models == get_cli_providers_and_models()
         assert screen.query_one("#settings-model-value", Input).value == MODELS[1]
         assert screen._category_has_unsaved_changes(CATEGORY)
         assert app.app_config["chat_defaults"]["model"] == ""
@@ -173,7 +176,7 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, siz
         # TASK-33007.3, rewritten on purpose: the typeahead is gone; Clear
         # drops the unsaved discovered id from the Default model picker.
         assert MODELS[0] not in await _picker_rows(host, pilot, screen)
-        assert app.providers_models["OpenAI"] == [MODELS[1]]
+        assert app.providers_models == get_cli_providers_and_models()
         assert "cleared" in _status(screen)
 
 
@@ -256,8 +259,13 @@ async def test_late_save_keeps_receipt_and_activation_out_of_a_changed_form(
         await _settle(host, pilot)
         assert screen.query_one("#settings-model-value", Input).value == expected_model
         assert _status(screen) == expected_status
-        assert app.providers_models["OpenAI"] == ([] if failure else [MODELS[1]])
-        assert app.providers_models["llama_cpp"] == []
+        # TASK-35010, rewritten on purpose: a save that landed re-reads the
+        # file (the fake wrote nothing); a failed one leaves the lists alone.
+        assert app.providers_models == (
+            {"OpenAI": [], "llama_cpp": []}
+            if failure
+            else get_cli_providers_and_models()
+        )
 
 
 @pytest.mark.asyncio
@@ -294,7 +302,8 @@ async def test_discovery_operations_report_failure_and_allow_retry(operation):
             == "existing-active-model"
         )
         if operation == "save":
-            assert app.providers_models["OpenAI"] == [MODELS[1]]
+            # TASK-35010, rewritten on purpose: the lists follow the file.
+            assert app.providers_models == get_cli_providers_and_models()
         elif operation == "clear":
             assert _list(screen).option_count == 0
             # TASK-33007.3, rewritten on purpose: no typeahead; the cleared
