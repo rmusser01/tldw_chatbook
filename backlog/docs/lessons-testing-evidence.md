@@ -21049,6 +21049,20 @@ the replay's own guard (`[True, True] == [True]`). Worse, the worker's call coul
 the helper undelayed, so the test would pass without testing anything. Scope an injected delay to the caller under
 test. Here that meant checking `asyncio.current_task()` against the test's own task.
 
+**A retry raising the same exception type turns fast-failure tests into slow passes (TASK-35660, 2026-10-20).** Once
+the helper retried for 15 s and then raised `AssertionError`, the existing
+`pytest.raises(AssertionError)` around its "closing Console" refusal stopped testing that refusal. With both fast
+refusals deleted from the helper (scratch mutation), that test still passed, after 15.0 s, on the retry's own
+timeout message. It now matches the refusal's message, and a disposed-runtime twin does the same; both fail under the
+mutation. When you add a bounded retry, grep the tests that expect the call to fail and give each a `match=`.
+
+**An end state the product also reaches cannot show the helper reached it.** The stale-proof replay asserted that Send
+was enabled after the helper returned. During its 1.1 s stall the product's own delayed control-bar replay lifts the
+mount-time block, so with the helper changed to return after one deferred sync, the replay still passed. It now records
+the helper's own syncs (those made from the test's task) and requires a deferral followed by a render; under the same
+mutation it fails with `[False]`. Before trusting an outcome assertion, ask what else in the app could produce it while
+the code under test does nothing.
+
 
 ## Loaded controller data does not give a newly shown button mouse geometry
 

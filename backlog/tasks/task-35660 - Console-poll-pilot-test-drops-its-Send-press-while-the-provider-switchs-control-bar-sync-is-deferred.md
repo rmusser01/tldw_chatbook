@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 17:58'
-updated_date: '2026-10-20 05:45'
+updated_date: '2026-10-20 11:05'
 labels:
   - console
   - tests
@@ -43,6 +43,7 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
 5. (2026-10-19, on resume) Rebase onto dev. Drop the uncommitted helper rewrite in favour of dev's TASK-34789 helper. Keep the poll test's diagnostics. Turn the lock-hold harness into a kept regression test of the helper. Re-run the evidence on the rebased head.
 6. (2026-10-19, second resume) Rebase onto ce4aa4a231 and re-run the evidence there. Background-QoS runs failed inside dev's helper at its one-shot asserts: log why each sync deferred, replay each order deterministically, and make the helper retry within a bound and name the reason.
 7. (2026-10-19, third resume) Rebase onto 8136af6f6f, then 0fef489ece. Re-run the red/green, both changed test files on the branch and on dev, and repeats of the three tests on the branch. File anything the whole-file runs surface.
+8. (2026-10-20, fourth resume) Check the interrupted session's uncommitted review pass against the committed helper and by mutation, keep what holds, and re-run the changed files and a sample of the helper's callers on the branch and on dev.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -106,5 +107,17 @@ The send was not slow: neither failure logs the ChatScreen Send handler (local p
 - `test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation` is red on dev because its stub screen has no rate reading: TASK-35662.
 - `test_resend_poll_survives_initial_hook_admission_read` asserts a streamed paint after a fixed 0.65 s pause: TASK-35743.
 
-**Files:** `Tests/UI/test_console_turn_resend_ui.py`, `Tests/UI/test_console_native_chat_flow.py` (the shared helper), `Tests/UI/test_console_readiness_config_projection.py`, `backlog/docs/lessons-testing-evidence.md` (addenda to TASK-34789's entry), this task, TASK-35661, TASK-35662 and TASK-35743.
+**Files:** `Tests/UI/test_console_turn_resend_ui.py`, `Tests/UI/test_console_native_chat_flow.py` (the shared helper), `Tests/UI/test_console_readiness_config_projection.py`, `backlog/docs/lessons-testing-evidence.md` (addenda to TASK-34789's entry), this task, TASK-35661, TASK-35662, TASK-35743 and TASK-35850.
+
+**Review pass (2026-10-20, fourth resume; on 0fef489ece, then rebased onto 250159834c).** The interrupted session had left an uncommitted review pass on the three test files. Each change was checked against the committed helper (26be55f1f9) in a scratch tree and kept; one assertion was tightened. Tests only:
+- **The helper's bound now covers its warm-up.** Before, a warm-up that never settled made the helper wait until pytest's own timeout, outside its 15 s bound. The warm-up now runs under `asyncio.timeout` for the time left. `asyncio.timeout` is used rather than `wait_for` so the warm-up stays in the helper's task, which the stale-proof replay's task check relies on. The helper also resolves the projection on each attempt. The new `test_control_bar_helper_bounds_a_warm_up_that_never_settles` sets the bound to 0.3 s and blocks the read. It fails on 26be55f1f9's helper with the test's own 5 s `TimeoutError`, and passes now with "last: the readiness warm-up did not settle".
+- **The fast refusals are pinned by message.** `test_control_bar_helper_still_refuses_an_unavailable_owner` now matches "the Console is closing". The new `test_control_bar_helper_refuses_a_disposed_runtime_at_once` matches "the Console runtime is disposed". With both refusals deleted from the helper (scratch mutation), 26be55f1f9's closing test still passed after 15.0 s, because the retry bound's own AssertionError satisfied its bare `pytest.raises(AssertionError)`. Both new forms fail under that mutation.
+- **The stale-proof replay checks the helper's own syncs.** It records the syncs made from the test's task, snapshots them when the helper returns, and requires a deferral followed by a render. The snapshot is this pass's tightening. If a display refreshed during a stall and left nothing pending, the replay stalls again, up to three times. Scratch mutation: the helper returns after one deferred sync. Under it, 26be55f1f9's replay passed, because the product's delayed control-bar replay had enabled Send during the 1.1 s stall. The final replay fails with `[False]`.
+- On dev's helper (the branch's projection test file copied into a detached tree of 0fef489ece), both refusal tests fail on the regex (input `'assert False'`), and `test_control_bar_helper_warms_again_while_each_read_goes_stale` fails at line 4878. The bound test fails at setup, because dev has no `_CONTROL_BAR_RENDER_TIMEOUT_S`. Only the 26be55f1f9 comparison is meaningful for that test.
+- Whole files (macOS, plain command, one run per tree, host load 34-72 from other sessions):
+  - Tests/UI/test_console_readiness_config_projection.py: branch 29 of 30, dev 26 of 27. The one red on both is TASK-35662's.
+  - Tests/UI/test_console_turn_resend_ui.py: branch 17 of 17 (250 s), dev 15 of 15 (193 s).
+  - Tests/UI/test_console_send_disabled_state.py (one helper caller): branch 9 of 10, dev 8 of 10. `test_enter_hotkey_still_sends_when_send_is_enabled` is red on both. It does not call the helper, and TASK-32819 had listed it as a baseline red; filed as TASK-35850. On dev only, the helper caller `test_enter_hotkey_queues_draft_behind_accepted_run` failed at its 4 s wait for the first streamed chunk. Its press had reached Send's handler, so this was not a dropped press.
+  - The four tests in Tests/UI/test_console_internals_decomposition.py that call `_sync_console_control_bar_now` directly fail at setup on both trees with the environmental `RecoveryRequired: raw_source_selection_changed`.
+- **Rebased onto dev 250159834c** (PR #3177, tab-click handling) with no conflicts. Dev's change does not touch the three test files or the control-bar sync. On the rebased head: Tests/UI/test_console_readiness_config_projection.py 29 of 30 (TASK-35662's red), Tests/UI/test_console_turn_resend_ui.py 17 of 17 (276 s, load 60-70), and the bound test still fails at its 5 s guard on the rebased pre-pass helper (464434106a). `./scripts/preflight.sh` passes on the rebased head.
 <!-- SECTION:NOTES:END -->
