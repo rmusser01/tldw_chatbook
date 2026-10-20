@@ -456,16 +456,17 @@ def refreeze_long_lived_heap(reason: str) -> int:
     The idle re-freeze (ADR-198 amendment). The full collection reclaims
     cyclic garbage already in the old generation instead of freezing it for
     good; frozen objects are never scanned, so it costs what the next
-    automatic pass would have cost on the UI loop. It does not walk the
-    permanent generation to size it (40-60 ms at ~850K objects, live under
-    load), so it returns what it froze: an upper bound on the growth.
+    automatic pass would have cost on the UI loop.
 
     Args:
         reason: What asked for the re-freeze, for the DEBUG log line.
 
     Returns:
-        How many objects it moved into the permanent generation. A full
-        collection leaves every unfrozen survivor in generation 2.
+        How many objects the old generation held after the collection (a full
+        collection leaves every unfrozen survivor there), for the DEBUG line.
+        The freeze can move more: other threads can allocate between that
+        count and the freeze, so the refreezer walks the permanent generation
+        to size it instead.
 
     Raises:
         CollectorBusy: Another pass kept the collection from running; nothing
@@ -566,13 +567,15 @@ class IdleHeapRefreezer:
     :meth:`note_stranded`, and the next idle maintenance compacts whatever
     the budget says, meeting about one transcript of garbage.
 
-    Growth is tracked cheaply and checked exactly: re-freezes add what they
-    froze to an upper bound, and only when that bound reaches the budget is
-    the permanent generation walked to size it. Frozen objects freed by
-    reference counting (most replaced render strips: live, ~70K frozen per
-    send for ~20K of real growth) leave it by themselves, so only real growth
-    makes a compaction due. The collector is never disabled and its
-    thresholds are never touched.
+    Growth is measured, not estimated: the permanent generation is walked
+    once after each re-freeze, at the next maintenance (a few ms per million
+    objects). Live (2026-10-19), a running total of what re-freezes counted
+    missed what other threads allocated between each count and its freeze:
+    the frozen set grew 372K objects against a 244K budget and no compaction
+    ran. Frozen objects freed by reference counting (most replaced render
+    strips: live, ~70K frozen per send for ~20K of real growth) leave it by
+    themselves, so only real growth makes a compaction due. The collector is
+    never disabled and its thresholds are never touched.
 
     CPython skips ``gc.collect()`` while another thread's pass is in
     progress. A maintenance that meets one (after a few short retries) reports
@@ -623,10 +626,10 @@ class IdleHeapRefreezer:
         self._generation = 0
         #: Permanent generation's size after the last compaction (or first look).
         self._baseline: int | None = None
-        #: Its size when last walked, plus what re-freezes froze since.
+        #: Its size when last walked.
         self._frozen = 0
-        #: Whether ``_frozen`` includes re-freezes made since the last walk.
-        self._estimated = False
+        #: Whether a re-freeze ran since that walk, so ``_frozen`` is stale.
+        self._stale = False
         #: Whether frozen objects became garbage since the last compaction.
         self._stranded = False
         #: ``(action, reason)`` of each maintenance run, newest last.
@@ -668,19 +671,17 @@ class IdleHeapRefreezer:
     def compaction_due(self) -> bool:
         """Whether stranded garbage or growth since the last compaction calls for one.
 
-        Walks the permanent generation only when the cheap upper bound has
-        reached the budget.
+        Walks the permanent generation once after each re-freeze: its size is
+        measured, never estimated from what re-freezes counted.
         """
         if self._stranded:
             return True
         if self._baseline is None:
             return False
-        budget = max(self._min_growth, self._growth_ratio * self._baseline)
-        if self._frozen - self._baseline < budget:
-            return False
-        if self._estimated:
+        if self._stale:
             self._frozen = self._freeze_count()
-            self._estimated = False
+            self._stale = False
+        budget = max(self._min_growth, self._growth_ratio * self._baseline)
         return self._frozen - self._baseline >= budget
 
     def maintain(self, reason: str) -> str:
@@ -694,12 +695,12 @@ class IdleHeapRefreezer:
         try:
             if self.compaction_due():
                 self._baseline = self._frozen = self._compact(f"compact:{reason}")
-                self._estimated = False
+                self._stale = False
                 self._stranded = False
                 action = "compact"
             else:
-                self._frozen += self._refreeze(reason)
-                self._estimated = True
+                self._refreeze(reason)
+                self._stale = True
                 action = "refreeze"
         except CollectorBusy:
             action = "busy"

@@ -67,21 +67,28 @@ class Ops:
     """Fake collector operations with a permanent generation of ``frozen`` objects.
 
     ``freed`` of each re-freeze's ``added`` objects are freed by reference
-    counting right after it, as replaced render strips are.
+    counting right after it, as replaced render strips are. ``uncounted``
+    more are frozen without being counted, as objects other threads allocate
+    between a re-freeze's count and its freeze are.
     """
 
     def __init__(
-        self, frozen: int = 1_000_000, added: int = 10_000, freed: int = 0
+        self,
+        frozen: int = 1_000_000,
+        added: int = 10_000,
+        freed: int = 0,
+        uncounted: int = 0,
     ) -> None:
         self.frozen = frozen
         self.added = added
         self.freed = freed
+        self.uncounted = uncounted
         self.calls: list[str] = []
         self.walks = 0
 
     def refreeze(self, reason: str) -> int:
         self.calls.append(f"refreeze:{reason}")
-        self.frozen += self.added - self.freed
+        self.frozen += self.added + self.uncounted - self.freed
         return self.added
 
     def compact(self, reason: str) -> int:
@@ -444,8 +451,7 @@ def test_only_real_growth_of_the_frozen_set_makes_a_compaction_due() -> None:
     Live (2026-10-10), each send's re-freeze froze ~70K objects for ~20K of
     real growth: most were render strips the next paint replaced and
     reference counting freed. Budgeting on what re-freezes ADD compacted
-    every third send, so the upper bound only decides when to walk the
-    permanent generation, and the walk decides.
+    every third send, so the walk of the permanent generation decides.
     """
     clock = Clock()
     ops, owner = Ops(frozen=800_000, added=70_000, freed=66_000), Owner()
@@ -456,11 +462,33 @@ def test_only_real_growth_of_the_frozen_set_makes_a_compaction_due() -> None:
         owner.fire_last()
     assert not any(call.startswith("compact:") for call in ops.calls)
     assert not refreezer.compaction_due()  # 20 x 4,000 = 80,000 < 200,000
-    assert 1 < ops.walks <= 8, ops.walks  # a walk per ~3 re-freezes, not per one
+    assert ops.walks >= 20, ops.walks  # measured after every re-freeze
 
     ops.added, ops.freed = 200_000, 0
     refreezer.maintain("conversation_painted")
     assert refreezer.compaction_due()
+
+
+def test_growth_a_refreeze_did_not_count_still_makes_a_compaction_due() -> None:
+    """The frozen set is measured, never estimated from what re-freezes counted.
+
+    Live (2026-10-19, round 6), the frozen set grew 372K objects over 15
+    run-phase re-freezes against a 244K budget, and no compaction ran: each
+    re-freeze counts the old generation after its collection, and other
+    threads can allocate between that count and the freeze. A running total
+    of those counts never reached the budget, so the permanent generation was
+    never walked.
+    """
+    clock = Clock()
+    ops, owner = Ops(frozen=800_000, added=5_000, uncounted=40_000), Owner()
+    refreezer = make(clock, ops, quiet_seconds=2.0, min_growth=1_000)
+    for _ in range(5):  # 5 x 45,000 = 225,000 >= 0.25 x 800,000
+        refreezer.request("run_settled", owner, owner_busy)
+        clock.now += 2.0
+        owner.fire_last()
+    assert refreezer.compaction_due(), (
+        f"the frozen set grew {ops.frozen - 800_000} against a 200,000 budget"
+    )
 
 
 def test_stranded_garbage_makes_the_next_idle_moment_compact() -> None:
