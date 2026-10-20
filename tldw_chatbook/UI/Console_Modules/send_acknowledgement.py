@@ -350,16 +350,13 @@ def _request_resync(screen: Any) -> None:
 
 
 def _resync(screen: Any) -> None:
+    from tldw_chatbook.UI.Console_Modules.session import request_console_repaint
+
     if _torn_down(screen):
         return
     screen._last_native_transcript_refresh_key = None
-    if screen._console_sync_in_progress:
-        # The running sync re-arms itself for this request when it settles.
-        screen._console_sync_requested = True
-        return
-    screen.run_worker(
-        screen._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
-    )
+    # Re-arms the running sync pass for this request, or starts one.
+    request_console_repaint(screen)
 
 
 def _acknowledged_text(screen: Any, stash: Any, session_id: str) -> str | None:

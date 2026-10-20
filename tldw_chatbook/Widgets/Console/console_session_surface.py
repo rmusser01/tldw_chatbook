@@ -15,6 +15,7 @@ from textual._context import active_message_pump
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -164,14 +165,17 @@ class ConsoleSessionTabButton(Button):
         self,
         *args: Any,
         session_id: str,
-        on_click_started: Callable[[str], None] | None = None,
+        capture_click_record: Callable[[str], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._session_id = session_id
         #: TASK-33622.7: called with this tab's session id when a left click
-        #: lands, before the Pressed message starts its way to the screen.
-        self._on_click_started = on_click_started
+        #: lands, before its Pressed message starts its way to the screen.
+        self._capture_click_record = capture_click_record
+        #: TASK-35640: the record a click took, until that click posts its
+        #: own Pressed (see ``post_message``).
+        self._click_record_in_flight: Any = None
 
     async def _on_click(self, event) -> None:
         # TASK-33621.15: both branches prevent the default, because Textual
@@ -190,10 +194,43 @@ class ConsoleSessionTabButton(Button):
                 return
             close_button.press()
             return
-        if self._on_click_started is not None:
-            self._on_click_started(self._session_id)
-        await super()._on_click(event)
+        if self._capture_click_record is not None:
+            self._click_record_in_flight = self._capture_click_record(self._session_id)
+        try:
+            await super()._on_click(event)
+        finally:
+            self._click_record_in_flight = None
         event.prevent_default()
+
+    def post_message(self, message: Message) -> bool:
+        """Attach the in-flight click record to the Pressed that click posts.
+
+        TASK-35640: the record rides on the message itself, so only the
+        handling of that one press can use it; a click that never becomes a
+        press (or a press from the keyboard) carries nothing anywhere.
+        """
+        record = self._click_record_in_flight
+        if record is not None and isinstance(message, Button.Pressed):
+            self._click_record_in_flight = None
+            setattr(message, _CLICK_RECORD_ATTRIBUTE, record)
+        return super().post_message(message)
+
+
+#: The attribute a session tab's ``Button.Pressed`` carries its click record in.
+_CLICK_RECORD_ATTRIBUTE = "_console_session_tab_click_record"
+
+
+def session_tab_click_record(pressed: Button.Pressed) -> Any:
+    """The record the click behind ``pressed`` took, or None (TASK-35640).
+
+    Args:
+        pressed: A session tab's ``Button.Pressed`` message.
+
+    Returns:
+        What ``capture_click_record`` returned for that click, or None when
+        the press did not come from a recorded click.
+    """
+    return getattr(pressed, _CLICK_RECORD_ATTRIBUTE, None)
 
 
 class ConsoleSessionTabStrip(HorizontalScroll):
@@ -269,13 +306,13 @@ class ConsoleSessionSurface(Vertical):
         app_instance: Any,
         *,
         background_effect_settings: ConsoleBackgroundEffectSettings | None = None,
-        on_session_tab_click: Callable[[str], None] | None = None,
+        capture_session_tab_click: Callable[[str], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        #: TASK-33622.7: told which session tab a click landed on, at once.
-        self._on_session_tab_click = on_session_tab_click
+        #: TASK-33622.7: records the composer when a session tab is clicked.
+        self._capture_session_tab_click = capture_session_tab_click
         self.background_effect_settings = (
             background_effect_settings or ConsoleBackgroundEffectSettings()
         )
@@ -562,7 +599,7 @@ class ConsoleSessionSurface(Vertical):
             classes=classes,
             compact=True,
             session_id=session.id,
-            on_click_started=self._on_session_tab_click,
+            capture_click_record=self._capture_session_tab_click,
         )
         button.tooltip = _session_tab_tooltip(
             session,

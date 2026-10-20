@@ -7452,8 +7452,8 @@ class ChatScreen(BaseAppScreen):
             self.console_session_surface = ConsoleSessionSurface(
                 self.app_instance,
                 background_effect_settings=settings,
-                on_session_tab_click=lambda sid: self._session.note_session_tab_click(
-                    sid
+                capture_session_tab_click=(
+                    lambda sid: self._session.capture_session_tab_click(sid)
                 ),
                 id="console-session-surface",
                 classes="console-region",
@@ -24199,7 +24199,7 @@ class ChatScreen(BaseAppScreen):
                 # though -- see the fallback below.
                 was_active = controller.store.active_session_id == session_id
                 if not was_active:
-                    await self._session._activate_native_console_session(session_id)
+                    await self._session._handle_console_session_tab_press(event)
                 # Qodo #5: the ◆ marker covers every interrupt kind, so the
                 # route below now finds skill/question cards too -- but a
                 # marker can still outlive its card. When nothing is
@@ -24209,11 +24209,9 @@ class ChatScreen(BaseAppScreen):
                 # the normal thing for a non-viewed one.
                 if not self._route_console_pending_approval_focus(notify_missing=False):
                     if was_active:
-                        await self._session._handle_console_session_tab_press(
-                            session_id
-                        )
+                        await self._session._handle_console_session_tab_press(event)
                 return
-            await self._session._handle_console_session_tab_press(session_id)
+            await self._session._handle_console_session_tab_press(event)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

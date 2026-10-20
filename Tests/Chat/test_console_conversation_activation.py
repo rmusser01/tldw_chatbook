@@ -176,6 +176,7 @@ async def test_production_prior_restore_reports_swallowed_errors_to_coordinator(
     controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
     controller._screen = SimpleNamespace()
     controller._chat_store_accessor = lambda: store
+    controller._bind_composer_after_switch_fn = lambda: None
     controller._set_active_workspace_for_console_session = lambda _id: None
     controller._sync_chat_core_state_fn = lambda: None
     controller._sync_temporary_chip_fn = lambda: None

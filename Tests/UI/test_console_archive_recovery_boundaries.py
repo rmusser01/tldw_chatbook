@@ -14,6 +14,11 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 
+# TASK-35640: Tests/UI's autouse model-catalog fixture imports the app, which
+# raised RecoveryRequired (raw_source_selection_changed) under the per-test
+# profile sandbox, so no test here ran on a developer machine.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def recovery_app():
     row = {
@@ -169,8 +174,10 @@ async def test_existing_activation_stops_after_losing_authority(boundary):
         _read_claimed_visit=AsyncMock(return_value=None),
         _bind_composer_to_active_session=Mock(),
         complete_manual_read_visit=Mock(),
-        _screen=SimpleNamespace(_console_sync_requested=False),
-        _console_tab_click_snapshot=None,
+        # A pass is running, so a stopped activation asks it to re-arm.
+        _screen=SimpleNamespace(
+            _console_sync_requested=False, _console_sync_in_progress=True
+        ),
         _ensure_console_chat_controller=lambda: controller,
         _hide_console_activity_notice=Mock(),
         _capture_console_draft_switch_snapshot=Mock(),

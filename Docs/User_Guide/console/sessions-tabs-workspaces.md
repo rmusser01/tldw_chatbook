@@ -134,7 +134,12 @@ Once a tab starts closing, pending requests to create another chat are declined,
 Each tab keeps its own unsent draft: switch tabs mid-thought and the
 half-typed message is still in the composer when you come back. Keys you
 type straight after clicking a tab go into that tab's draft, even if the
-click is still being handled. Clicking a tab, its "✕", "New tab" or
+click is still being handled, and never stay behind in the tab you were on
+before you clicked. If you click two tabs in quick succession while the
+Console is still busy switching, text typed after the first of those clicks
+can land in either of the two tabs you clicked, even text typed after the
+second click; it never stays in the tab you started from, it is never lost,
+and each tab keeps its own draft. Clicking a tab, its "✕", "New tab" or
 "Temporary" leaves the keyboard in the composer, so a letter typed next is
 text, not a shortcut. A message is only ever sent to the tab on screen. If
 you press Enter while the composer has not yet caught up with a switch,

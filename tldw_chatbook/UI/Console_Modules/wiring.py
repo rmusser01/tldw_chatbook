@@ -1410,6 +1410,9 @@ def build_console_controllers(
         capture_draft_switch_snapshot=(
             lambda: screen._session._capture_console_draft_switch_snapshot()
         ),
+        bind_composer_after_switch=(
+            lambda: screen._session._bind_composer_to_active_session(focus=False)
+        ),
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),

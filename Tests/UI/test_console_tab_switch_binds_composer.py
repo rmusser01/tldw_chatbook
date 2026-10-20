@@ -775,12 +775,17 @@ async def test_pressing_tab_strip_buttons_leaves_the_keyboard_in_the_composer(
 
 
 @pytest.mark.asyncio
-async def test_an_activation_that_loses_authority_after_switching_asks_for_a_repaint():
-    """MINOR #7: the switch and bind happen before the read-visit await.
+@pytest.mark.parametrize("pass_running", [True, False])
+async def test_an_activation_that_loses_authority_after_switching_asks_for_a_repaint(
+    pass_running,
+):
+    """The switch and bind happen before the read-visit await.
 
     An archive resume that loses its claim during that await stops, but the
-    store has switched and the composer is bound, so the next sync pass must
-    repaint the tabs and transcript instead of leaving the old chat shown.
+    store has switched and the composer is bound, so the tabs and transcript
+    must be repainted: by the running sync pass when there is one, else by a
+    pass started for it (TASK-35640; a flag alone waited for a pass that
+    might never come).
     """
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
@@ -801,12 +806,18 @@ async def test_an_activation_that_loses_authority_after_switching_asks_for_a_rep
         await asyncio.sleep(0)
         allowed = False
 
+    screen = SimpleNamespace(
+        _console_sync_requested=False,
+        _console_sync_in_progress=pass_running,
+        _sync_native_console_chat_ui=Mock(return_value="sync pass"),
+        run_worker=Mock(),
+    )
     fake = SimpleNamespace(
         _claim_manual_read_visit=Mock(return_value=None),
         _read_claimed_visit=AsyncMock(side_effect=visit),
         _bind_composer_to_active_session=Mock(),
         complete_manual_read_visit=Mock(),
-        _screen=SimpleNamespace(_console_sync_requested=False),
+        _screen=screen,
         _ensure_console_chat_controller=lambda: controller,
         _hide_console_activity_notice=Mock(),
         _capture_console_draft_switch_snapshot=Mock(),
@@ -815,19 +826,254 @@ async def test_an_activation_that_loses_authority_after_switching_asks_for_a_rep
         _refresh_console_effective_scope_and_sync=AsyncMock(),
         _sync_native_console_chat_ui=AsyncMock(),
         _focus_console_composer_if_needed=Mock(),
-        _console_tab_click_snapshot=None,
     )
     await ConsoleSessionController._activate_native_console_session(
         fake, "session-a", activate_if=lambda: allowed
     )
+    started = [(call.args, call.kwargs) for call in screen.run_worker.call_args_list]
     assert {
         "switched": store.active_session_id,
         "bound": fake._bind_composer_to_active_session.call_count,
         "synced inline": fake._sync_native_console_chat_ui.await_count,
-        "repaint requested": fake._screen._console_sync_requested,
+        "running pass asked to re-arm": screen._console_sync_requested,
+        "pass started": started,
     } == {
         "switched": "session-a",
         "bound": 1,
         "synced inline": 0,
-        "repaint requested": True,
+        "running pass asked to re-arm": pass_running,
+        "pass started": (
+            []
+            if pass_running
+            else [(("sync pass",), {"exclusive": True, "group": "console-sync"})]
+        ),
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("opened_by", ["activation", "keyboard_press"])
+async def test_a_click_whose_press_never_arrives_carries_nothing_into_a_later_switch(
+    opened_by,
+):
+    """TASK-35640: a click record belongs to its own press, nothing else.
+
+    A click on A that never becomes a press (here: the button is still in its
+    pressed animation, so Textual skips the press) must not move what is
+    typed in B afterwards into A when A is later opened another way: by the
+    activation Alt+1..9 and Ctrl+K share, or by a keyboard press of A's own
+    tab (Tab to it, Enter), which posts a Pressed from the very button the
+    lost click left its record on unless that click cleared it.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, store, a, b = (
+            chats.console,
+            chats.composer,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        tab = console.query_one(f"#console-session-tab-{a.id}")
+        tab.add_class("-active")
+        _click(host, tab)
+        await pilot.pause()
+        assert store.active_session_id == b.id
+        await pilot.press("z", "z")
+        assert composer.draft_text() == B_LEFTOVER + "zz"
+
+        if opened_by == "activation":
+            await console._session._activate_native_console_session(a.id)
+        else:
+            tab.remove_class("-active")
+            tab.action_press()
+            await until(lambda: store.active_session_id == a.id)
+        await _sync_idle(console)
+        assert {
+            "composer": composer.draft_text(),
+            "B stored draft": store.session_draft(b.id),
+        } == {"composer": A_OWN, "B stored draft": B_LEFTOVER + "zz"}
+
+
+@pytest.mark.asyncio
+async def test_a_click_record_rides_only_on_the_pressed_message_its_click_posts():
+    """TASK-35640: another message the tab posts mid-click never takes the record.
+
+    The tab can post other messages while its click is in flight (here one
+    posted as the press starts its active styling). Only the click's own
+    ``Button.Pressed`` may carry the record; anything else that took it would
+    leave that press, and so the switch, without one.
+    """
+    from textual.app import App
+    from textual.message import Message
+
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        ConsoleSessionTabButton,
+        session_tab_click_record,
+    )
+
+    class _Other(Message):
+        pass
+
+    pressed: list[Button.Pressed] = []
+
+    class _TabApp(App):
+        def compose(self):
+            yield ConsoleSessionTabButton(
+                "A",
+                session_id="a",
+                capture_click_record=lambda session_id: f"record:{session_id}",
+            )
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            pressed.append(event)
+
+    other = _Other()
+    async with _TabApp().run_test() as pilot:
+        tab = pilot.app.query_one(ConsoleSessionTabButton)
+        start_active = tab._start_active_affect
+
+        def _post_other_then_start_active() -> None:
+            tab.post_message(other)
+            start_active()
+
+        tab._start_active_affect = _post_other_then_start_active
+        await pilot.click(tab)
+        await until(lambda: len(pressed) == 1)
+
+    assert {
+        "pressed": session_tab_click_record(pressed[0]),
+        "other": session_tab_click_record(other),
+    } == {"pressed": "record:a", "other": None}
+
+
+@pytest.mark.asyncio
+async def test_keys_typed_while_two_tab_clicks_wait_stay_out_of_the_chat_being_left():
+    """TASK-35640 AC#2: two clicks queued behind a busy screen keep their records.
+
+    A's activation is held (the screen is busy). C is clicked and "x" typed,
+    then D is clicked and "y" typed, while both presses wait. Typing reaches
+    the composer through the screen too, so the keys and the presses queue
+    there. Injected back to back, the keys can get there first and land in
+    A's composer before either press is handled; C's press carries its own
+    record, which moves them out of A into C. D's record was taken before
+    any key was applied, so it cannot tell "x" from "y" and both stay with
+    C. Live on a loaded host, runs differed: usually every queued press came
+    first and both keys landed in D, once both landed in C. Whatever the order,
+    no key may stay in A or be lost, and they keep their order (the old
+    controller-wide slot lost C's record to D's, and A kept "xy").
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, store, a, b = chats.console, chats.store, chats.a, chats.b
+        c = _add_chat(store, b, "Chat C", "c-own:")
+        d = _add_chat(store, b, "Chat D", "d-own:")
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{d.id}")
+        await pilot.pause()
+        held = _hold_activation(console)
+        _click(host, console.query_one(f"#console-session-tab-{a.id}"))
+        await until(held.entered.is_set)
+        _click(host, console.query_one(f"#console-session-tab-{c.id}"))
+        press(host, "x", "x")
+        _click(host, console.query_one(f"#console-session-tab-{d.id}"))
+        press(host, "y", "y")
+        await asyncio.sleep(0.2)
+
+        held.release.set()
+        await until(lambda: store.active_session_id == d.id)
+        await _sync_idle(console)
+        await pilot.pause()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        c_draft, d_draft = store.session_draft(c.id), composer.draft_text()
+        assert {
+            "A stored draft": store.session_draft(a.id),
+            "B stored draft": store.session_draft(b.id),
+            "C and D keep their own drafts": (
+                c_draft.startswith("c-own:") and d_draft.startswith("d-own:")
+            ),
+            "typed into C then D": c_draft.removeprefix("c-own:")
+            + d_draft.removeprefix("d-own:"),
+        } == {
+            "A stored draft": A_OWN,
+            "B stored draft": B_LEFTOVER,
+            "C and D keep their own drafts": True,
+            "typed into C then D": "xy",
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    ["workspace_switch", "workspace_new_session", "failed_open_restore", "resume"],
+)
+async def test_workspace_switch_paths_bind_the_composer_during_a_sync_pass(
+    path, monkeypatch
+):
+    """TASK-35640 AC#4: the other workspace switch paths bind at once too.
+
+    ``_activate_console_session_for_workspace`` (switching to a workspace's
+    chat, or creating one there), ``_restore_console_session_after_failed_open``
+    and ``_resume_console_workspace_conversation`` all switch the store; with
+    a sync pass in flight the composer kept B's draft under the new chat.
+    (The browser open path is covered above.) The resume path loads its
+    saved conversation through a stand-in loader and hydrator: what is under
+    test is the switch after them.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, store, a, b = (
+            chats.console,
+            chats.composer,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        workspace = console._workspace
+        held_pass = _hold_sync_pass(console)
+        console.run_worker(
+            console._sync_native_console_chat_ui(),
+            exclusive=True,
+            group="console-sync",
+        )
+        await until(held_pass.entered.is_set)
+        target, own = a.id, A_OWN
+        if path == "workspace_switch":
+            a.workspace_id = "ws-task-35640"
+            workspace._activate_console_session_for_workspace("ws-task-35640")
+        elif path == "workspace_new_session":
+            workspace._activate_console_session_for_workspace("ws-task-35640-new")
+            target, own = store.active_session_id, ""
+            assert target not in (a.id, b.id)
+        elif path == "resume":
+            from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
+
+            saved = _add_chat(store, b, "Saved chat", "saved-own:")
+
+            async def load(_app, conversation_id):
+                return {"conversation": {"id": conversation_id}, "messages": []}
+
+            async def hydrate(**_kwargs):
+                return saved
+
+            monkeypatch.setattr(
+                workspace_module, "load_console_conversation_tree", load
+            )
+            monkeypatch.setattr(workspace_module, "hydrate_console_session", hydrate)
+            resumed = await workspace._resume_console_workspace_conversation(
+                "conv-task-35640"
+            )
+            assert resumed is True
+            target, own = saved.id, "saved-own:"
+        else:
+            await workspace._restore_console_session_after_failed_open(store, a.id)
+        assert store.active_session_id == target
+        assert {
+            "draft owner": console._console_visible_draft_session_id == target,
+            "composer": composer.draft_text(),
+            "B stored draft": store.session_draft(b.id),
+        } == {"draft owner": True, "composer": own, "B stored draft": B_LEFTOVER}
+        held_pass.release.set()
+        await _sync_idle(console)
