@@ -350,8 +350,10 @@ def compose_key_entry() -> ComposeResult:
     with Horizontal(id="setup-provider-key-hint", classes="setup-key-hint hidden"):
         yield Static("", id="setup-provider-key-hint-text")
         yield Button("Switch", id="setup-provider-key-switch")
-    yield Static("", id="setup-provider-key-note", classes="setup-probe-status hidden")
-    yield Static("", id="setup-provider-key-status", classes="setup-probe-status")
+    yield Static(  # literal text, never markup (review v3r1, R1-10)
+        "", id="setup-provider-key-note", classes="setup-probe-status hidden", markup=False
+    )
+    yield Static("", id="setup-provider-key-status", classes="setup-probe-status", markup=False)
     with Horizontal(id="setup-provider-key-actions", classes="hidden"):
         yield Button("Keep current", id="setup-provider-key-keep")
         yield Button("Replace", id="setup-provider-key-replace")
