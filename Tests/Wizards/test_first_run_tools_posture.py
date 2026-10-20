@@ -98,14 +98,48 @@ async def test_rerun_posture_counts_the_switches_that_are_on_from_the_full_toml(
 
 
 @pytest.mark.asyncio
-async def test_master_switch_off_drops_web_and_watchlists_from_the_line() -> None:
+async def test_master_switch_off_names_no_local_tool_as_available() -> None:
+    """Review F3 (TASK-34100.13): with ``[console] local_tools_enabled`` off the
+    Console composes no LocalToolProvider at all, so ask_user and the
+    character tools are gone with web search and Watchlists. The line used to
+    keep promising "character cards and questions for you" (and this test
+    pinned that)."""
     raw = {"console": {"local_tools_enabled": False}}
     _wizard, step = _tools_step({"COMPREHENSIVE_CONFIG_RAW": raw})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         also = str(step.query_one("#setup-tools-also-available", Static).render())
-    assert "web search" not in also
-    assert "character cards" in also
+    for name in ("web search", "character cards", "questions for you"):
+        assert name not in also.replace("Web search", "")
+    assert not also.startswith("Also available")
+    assert "switched off" in also
+
+
+def test_master_switch_off_leaves_no_local_group_in_the_posture() -> None:
+    gates = all_tool_gates(
+        config={"tools": {}, "console": {"local_tools_enabled": False}}
+    )
+    posture = posture_mod.tools_posture(gates)
+    assert posture.also_available == ()
+    note = posture_mod.quick_defaults_note(posture, auto_retrieve=False)
+    assert "character cards" not in note and "questions for you" not in note
+
+
+@pytest.mark.asyncio
+async def test_the_posture_sentence_follows_the_switches() -> None:
+    """Review F4 (TASK-34100.13): the sentence was computed once at compose,
+    so after turning a switch on it still said "All 8 are off"."""
+    _wizard, step = _tools_step({})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-tool-read_file", Switch).value = True
+        await pilot.pause()
+        on_one = str(step.query_one("#setup-tools-posture", Static).render())
+        step.query_one("#setup-tool-read_file", Switch).value = False
+        await pilot.pause()
+        off_again = str(step.query_one("#setup-tools-posture", Static).render())
+    assert on_one.startswith(f"1 of {len(_GATEABLE_BUILTINS)} ")
+    assert f"All {len(_GATEABLE_BUILTINS)} are off" in off_again
 
 
 def test_posture_is_derived_from_all_tool_gates() -> None:
@@ -185,9 +219,22 @@ def test_file_tool_blurbs_name_workspace_folders_and_the_scratch_area(entry) -> 
 
 
 def test_mcp_gate_pane_gets_the_same_blurbs() -> None:
+    """A parity pin: base already shared the blurbs (review-tests F8), so the
+    file-tool copy the pane shows is asserted on its own below."""
     gates = {gate.key: gate for gate in all_tool_gates(config={"tools": {}, "console": {}})}
     for entry in _GATEABLE_BUILTINS:
         assert gates[entry.gate_key].description == entry.blurb
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [e for e in _GATEABLE_BUILTINS if e.tool_name in posture_mod.FILE_TOOL_NAMES],
+    ids=lambda e: e.tool_name,
+)
+def test_the_mcp_gate_pane_says_where_file_tools_reach(entry) -> None:
+    gates = {gate.key: gate for gate in all_tool_gates(config={"tools": {}, "console": {}})}
+    assert "Workspace folders" in gates[entry.gate_key].description
+    assert "chat scratch area" in gates[entry.gate_key].description
 
 
 @pytest.mark.asyncio
@@ -210,12 +257,14 @@ async def test_one_static_workspace_hint_sits_under_the_file_rows() -> None:
 # -- AC#3: the built-in MCP server's twins of gated-off tools -------------------
 
 
-def _compose_catalog(monkeypatch, tools_cfg):
+def _compose_catalog(monkeypatch, tools_cfg, console_cfg=None):
     from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _compose, _tool_dict
     from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 
     monkeypatch.setattr(
-        builtin_tool_gate, "_gate_config_snapshot", lambda: (dict(tools_cfg), {})
+        builtin_tool_gate,
+        "_gate_config_snapshot",
+        lambda: (dict(tools_cfg), dict(console_cfg or {})),
     )
     service = FakeMCPService(
         inventory={
@@ -253,6 +302,33 @@ def test_character_writes_are_absent_while_character_tools_are_off(monkeypatch) 
     assert "mcp__tldw_chatbook__create_character" not in names
     assert "mcp__tldw_chatbook__update_character" not in names
     assert "mcp__tldw_chatbook__list_characters" in names
+
+
+def test_character_writes_are_absent_while_the_local_master_is_off(monkeypatch) -> None:
+    """Review F3: the master switch drops the native character tools with the
+    whole local group, so their MCP twins must go too."""
+    names = _compose_catalog(
+        monkeypatch, {}, console_cfg={"local_tools_enabled": False}
+    )
+    assert "mcp__tldw_chatbook__create_character" not in names
+    assert "mcp__tldw_chatbook__update_character" not in names
+    assert "mcp__tldw_chatbook__create_note" not in names
+    assert "mcp__tldw_chatbook__list_characters" in names
+
+
+def test_unreadable_gates_fall_back_to_their_defaults(monkeypatch) -> None:
+    """review-tests F13: the fallback hides create_note (default off) and keeps
+    the character writes (default on) -- never everything, never a crash."""
+
+    def unreadable():
+        raise OSError("config unreadable")
+
+    names = _compose_catalog(monkeypatch, {})
+    monkeypatch.setattr(builtin_tool_gate, "_gate_config_snapshot", unreadable)
+    from tldw_chatbook.Agents import mcp_tool_provider
+
+    assert mcp_tool_provider._gated_off_builtin_twins() == frozenset({"create_note"})
+    assert "mcp__tldw_chatbook__create_character" in names
 
 
 # -- AC#3 on dev's stock run start (TASK-34100.13 rebase) -----------------------

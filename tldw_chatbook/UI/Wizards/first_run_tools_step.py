@@ -17,6 +17,9 @@ from typing import (
     Dict,
 )
 
+from dataclasses import replace
+
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import (
     Horizontal,
@@ -79,7 +82,7 @@ class ToolsStep(SetupStep):
             for (section, key), scope in gate_effect_scopes().items()
             if section == "tools"
         }
-        gates = self._gates()
+        gates = self._composed_gates = self._gates()
         # Re-run prefill: resurface whatever gates are already on, read from
         # the full TOML -- load_settings() carries no [tools] table, so the
         # old read showed every switch off after a restart.
@@ -155,6 +158,18 @@ class ToolsStep(SetupStep):
                         classes="setup-step-note",
                         markup=False,
                     )
+
+    @on(Switch.Changed)
+    def _on_switch_changed(self, _event: Switch.Changed) -> None:
+        """Review F4: the posture sentence follows the switches as they move."""
+        on_screen = {self.gate_key_for(sw): bool(sw.value) for sw in self.query(Switch)}
+        gates = [
+            replace(gate, enabled=on_screen[gate.key]) if gate.key in on_screen else gate
+            for gate in getattr(self, "_composed_gates", ())
+        ]
+        sentence = posture_mod.posture_sentence(posture_mod.tools_posture(gates))
+        for widget in self.query("#setup-tools-posture").results(Static):
+            widget.update(sentence)
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")

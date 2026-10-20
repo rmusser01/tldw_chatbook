@@ -88,12 +88,14 @@ def tools_posture(gates: Sequence[ToolGate]) -> ToolsPosture:
     local = {gate.key: gate for gate in gates if gate.group == "local"}
     master = local.get(LOCAL_TOOLS_MASTER_KEY)
     also: list[str] = []
+    # Review F3: with the master off the Console composes no local tool
+    # provider at all -- ask_user and the character tools go with web search
+    # and Watchlists -- so the whole group is off whatever its own gates say.
+    if master is not None and not master.enabled:
+        local = {}
     for key, name in _LOCAL_GROUP_NAMES.items():
         gate = local.get(key)
         if gate is None or not gate.enabled:
-            continue
-        # web_deep_search is mastered by the local switch: off with it.
-        if key == "web_deep_search_enabled" and master is not None and not master.enabled:
             continue
         also.append(name)
     for key, gate in local.items():
