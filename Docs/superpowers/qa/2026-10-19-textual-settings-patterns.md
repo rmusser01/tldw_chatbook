@@ -224,3 +224,47 @@ The existing [TASK-35834](../../../backlog/tasks/task-35834%20-%20UI-Fast-Lane-j
 owns broader shard headroom, function-level distribution and three-run
 confirmation. This placement-only qualification does not close that task or
 claim its three-minute margin. It applies existing ADR-103; no new ADR.
+
+
+## Full-run placement correction after 916ea4e565 qualification
+
+The final 17 selected Settings cases passed in 565.87 s on the rebased
+product source. [Run 39455910928](https://github.com/rmusser01/tldw_chatbook/actions/runs/39455910928)
+then passed jobs 1/2/3/5/7/9, both admission-sensitive lanes, Console P0,
+Dreams and Perf Guard, but UI jobs 4/6/8/10 reached their 20-minute cap.
+Each check annotation explicitly names that maximum. No failing-test
+progress appears in their logs; job 10 printed `176 passed` before its job
+was canceled. This exposed inadequate headroom in the first placement;
+it is not evidence of an assertion defect in those cases.
+
+The next placement uses measured whole-file intervals from all ten jobs in
+this run, rather than carrying just the base's pair costs forward. Initial
+wall seconds by job 1..10 were 853, 801, 912, 1219, 999, 1219, 1022, 1216,
+1065, 1205. For the incomplete jobs, explicit estimated remaining-work
+reserves are added: job 4 +120 s, job 6 +90 s, job 8 +120 s; job 10 gets
+30 s for its shutdown/cleanup. These reserves are estimates, not measured
+completion times. Only whole files measured in that job are moved; S1's
+36 nodes and the nine new regressions remain fixed.
+
+Six further whole-file pairs exchange existing slots:
+
+| Slots (zero-based) | Files | Measured seconds |
+| --- | --- | --- |
+| 231 / 203 | `Tests/UI/test_settings_console_fallback_rows.py` / `Tests/UI/test_settings_advanced_disclosures.py` | 231.49 / 426.50 |
+| 160 / 47 | `Tests/UI/test_approval_batch_geometry.py` / `Tests/UI/test_console_session_tab_close.py` | 27.74 / 232.40 |
+| 202 / 205 | `Tests/UI/test_settings_provider_save_scope.py` / `Tests/UI/test_settings_save_reach.py` | 31.42 / 214.57 |
+| 61 / 219 | `Tests/UI/test_console_settings_disclosures.py` / `Tests/UI/test_settings_session_summary_save.py` | 48.76 / 163.71 |
+| 193 / 64 | `Tests/UI/test_settings_console_behavior_grammar.py` / `Tests/UI/test_console_settings_saved_defaults.py` | 106.49 / 31.20 |
+| 216 / 187 | `Tests/UI/test_settings_api_key_row_env_var.py` / `Tests/UI/test_library_dreams_reader.py` | 41.92 / 105.97 |
+
+Applying these measured deltas to the reserved wall budgets projects
+17m38s..18m46s per job. This is a scheduling estimate; fresh hosted CI must
+confirm it. It does not claim TASK-35834's three-minute margin or three-run
+acceptance. Exactly twelve positions change from 916ea4e565, for nineteen
+older positions changed in total against dev ccf99a59c4. The same 408
+unique entries, S1 block, regression tail, test assertions, product source,
+ten-shard matrix, 20-minute job limit and census floor are preserved.
+
+No new ADR: this remains the reorder-first policy under ADR-103. The
+broader headroom task stays open. Current product behavior is already
+qualified by the 17-case run; no repeat is needed for a placement-only edit.

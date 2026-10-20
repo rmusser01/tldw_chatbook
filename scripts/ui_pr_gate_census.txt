@@ -46,7 +46,8 @@ Tests/UI/test_console_rail_section_layout.py
 Tests/UI/test_console_retrieval_controller.py
 Tests/UI/test_console_run_inspector_worldbooks.py
 Tests/UI/test_console_selection_core.py
-Tests/UI/test_console_session_tab_close.py
+# TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
+Tests/UI/test_approval_batch_geometry.py
 
 # TASK-33621.27: the Console review's P0 regression tests, by node id -- their
 # files are over the lane's per-file rule (under load: Choose folder 148 s,
@@ -85,10 +86,13 @@ Tests/UI/test_console_composer_run_controls.py::test_palette_stop_command_stops_
 Tests/UI/test_console_composer_run_controls.py::test_enter_on_each_idle_composer_button_runs_its_own_action
 
 Tests/UI/test_console_settings_core_first.py
-Tests/UI/test_console_settings_disclosures.py
+# R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
+Tests/UI/test_settings_session_summary_save.py
 Tests/UI/test_console_settings_hidden_fields.py
 Tests/UI/test_console_settings_model_change.py
-Tests/UI/test_console_settings_saved_defaults.py
+# Capture review items 9-11: Console Behavior's one frame, one control column,
+# its labels and its prose inset.
+Tests/UI/test_settings_console_behavior_grammar.py
 Tests/UI/test_console_system_prompt_chip.py
 Tests/UI/test_console_temporary_capture_admission.py
 Tests/UI/test_console_toast_clears_header.py
@@ -185,8 +189,7 @@ Tests/UI/test_speech_settings_completeness.py
 Tests/UI/test_speech_settings_model.py
 Tests/UI/test_speech_settings_save_equivalence.py
 
-# TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
-Tests/UI/test_approval_batch_geometry.py
+Tests/UI/test_console_session_tab_close.py
 
 # TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
 # out. Appended, so no other file changes shard.
@@ -266,7 +269,8 @@ Tests/UI/test_settings_personal_context.py::test_canonical_settings_pending_prov
 Tests/UI/test_settings_personal_context.py::test_production_settings_inspects_private_and_deleted_metadata[size0]
 Tests/UI/test_console_conversation_inspector.py::test_detail_worker_creation_can_be_cancelled_before_coroutine_exists
 Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
-Tests/UI/test_library_dreams_reader.py
+# R1 #10 (C4): the API key row follows an unsaved Env var edit.
+Tests/UI/test_settings_api_key_row_env_var.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
@@ -292,9 +296,7 @@ Tests/UI/test_settings_connect_paint.py
 Tests/UI/test_settings_key_check_env_var_draft.py
 # TASK-33007.7 AC#7: a memory save refuses an invalid trigger/target pair (15-28 s).
 Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair
-# Capture review items 9-11: Console Behavior's one frame, one control column,
-# its labels and its prose inset.
-Tests/UI/test_settings_console_behavior_grammar.py
+Tests/UI/test_console_settings_saved_defaults.py
 # Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
 Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
 # TASK-33007.1: the card's controls stay hit-testable after the
@@ -312,16 +314,16 @@ Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged
 Tests/UI/test_settings_api_key_clear_reset.py
 # Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft
+# TASK-33007.4: who a save reaches -- the real D1 reach save and Ctrl+T in Console.
+Tests/UI/test_settings_save_reach.py
+# TASK-33007.7: Console Behavior's global fallbacks in the shared rows, the
+# On/Off streaming Select, and a real save a new chat follows.
+Tests/UI/test_settings_console_fallback_rows.py
+# Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
+Tests/UI/test_settings_save_commit_models.py::test_model_catalog_fields_document_instant_apply_in_the_inspector
 # Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
 # TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
 Tests/UI/test_settings_provider_save_scope.py
-# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
-# state, state words on every row, one frame level, '/' opening its disclosure.
-Tests/UI/test_settings_advanced_disclosures.py
-# Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
-Tests/UI/test_settings_save_commit_models.py::test_model_catalog_fields_document_instant_apply_in_the_inspector
-# TASK-33007.4: who a save reaches -- the real D1 reach save and Ctrl+T in Console.
-Tests/UI/test_settings_save_reach.py
 # TASK-33007.2 and .9: Connect one row per fact; the Provider control's name
 # after a choice or Revert, and its open list drawn whole at both sizes.
 Tests/UI/test_settings_connect_rows.py
@@ -344,14 +346,12 @@ Tests/UI/test_settings_console_side_chat_field_width.py
 Tests/UI/test_settings_plain_provider_names.py
 # R2 F4 and F5: the Key check and Endpoint key rows refresh as they were composed.
 Tests/UI/test_settings_inspector_rows_refresh.py
-# R1 #10 (C4): the API key row follows an unsaved Env var edit.
-Tests/UI/test_settings_api_key_row_env_var.py
+Tests/UI/test_library_dreams_reader.py
 # R2 F6: a staged Context window Reset reads as an edit.
 Tests/UI/test_settings_context_window_staged_reset.py
 # R3 #1 and #2: Down walks the open model list; Enter picks the id typed in full.
 Tests/UI/test_settings_default_model_list_keys.py
-# R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
-Tests/UI/test_settings_session_summary_save.py
+Tests/UI/test_console_settings_disclosures.py
 # Capture round 1, finding 1: an unknown window reads "unknown", not "tokens".
 Tests/UI/test_console_context_controls.py::test_unknown_model_window_reads_unknown_not_unknown_tokens
 # Capture finding 6: Catalog refresh says nothing until a choice is saved.
@@ -375,9 +375,9 @@ Tests/UI/test_settings_theme_picker_screen.py::test_quit_asks_about_staged_chang
 Tests/UI/test_console_context_controls.py::test_memory_action_buttons_are_separated
 # R1 #11: the API key row's fixed sentences fit its one line.
 Tests/UI/test_settings_api_key_row_fits.py
-# TASK-33007.7: Console Behavior's global fallbacks in the shared rows, the
-# On/Off streaming Select, and a real save a new chat follows.
-Tests/UI/test_settings_console_fallback_rows.py
+# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
+# state, state words on every row, one frame level, '/' opening its disclosure.
+Tests/UI/test_settings_advanced_disclosures.py
 # Capture round 1, findings 2 and 7: Chat settings holds the provider's range.
 Tests/UI/test_console_session_settings.py::test_console_settings_modal_holds_anthropic_temperature_to_its_own_range
 # TASK-33007.4 AC#6: the catalog rows read from the Inspector's closed
@@ -710,8 +710,8 @@ Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_kept_through_leavin
 Tests/UI/test_console_switcher_saved_default.py::test_a_lifted_default_lists_the_same_models_and_the_more_count
 
 # PR #3176 on dev ccf99a59c4: preserve S1's 36-node block and its slots.
-# This nine-entry tail starts at 399 (jobs 10, 1..8); the eight older entries
-# exchanged above balance measured loads without changing the gate limits.
+# This nine-entry tail starts at 399 (jobs 10, 1..8). Full-run timing
+# adjustments exchange older whole-file slots without changing gate limits.
 # TASK-35676/35677/35678: local paste events, retained editing state and shared
 # action support. Split the mounted journeys by parameter to bound each entry.
 Tests/UI/test_composer_paste_settings_panel.py

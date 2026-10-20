@@ -27,6 +27,9 @@ Found by the S1 rebase review (2026-10-20). The S1 PR keeps its own entries ligh
 
 
 Additional evidence from [PR #3176](https://github.com/rmusser01/tldw_chatbook/pull/3176): [UI job 9 in run 39447290920](https://github.com/rmusser01/tldw_chatbook/actions/runs/39447290920/job/118712469761) exhausted its 20-minute limit on head 3c2b0e5601 while the final added paste journey was running. GitHub's check annotation explicitly names the 20m0s maximum; there was no assertion failure. That PR applies interim measured slot swaps and retains every entry and all limits. This does not distribute the heavy file by function, establish a three-minute margin, or supply three post-change runs; all criteria here remain open. Its qualification report records raw per-occurrence timings because repeated file names produced a negative cost in the stock replay helper.
+
+
+Further qualification: [run 39455910928](https://github.com/rmusser01/tldw_chatbook/actions/runs/39455910928) at 916ea4e565 passed job 9 but jobs 4/6/8/10 exhausted the same 20-minute limit. Job 10 printed 176 passed before cancellation; no failing-test progress appears in these four logs. PR #3176 therefore profiles the full ten-job run and applies additional whole-file slot swaps with documented estimates for incomplete work. This is still interim qualification: it leaves the node-distribution, three-minute margin and three-run acceptance here open.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

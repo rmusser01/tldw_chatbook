@@ -88,4 +88,7 @@ Current-dev qualification (2026-10-20): a fresh requested Superpowers review fou
 
 
 Latest-base integration: S1 merged while CI was running, so the PR was rebased again onto ccf99a59c4. The base contributes 399 entries and this PR keeps its nine regressions (408 total/floor). S1's 36-node block stays exactly in place; eight older entries exchange measured slots to retain the fixed job budgets. Settings measures 35,733 lines. Eighty census/count/size checks pass; selected Settings behavior is being requalified, and hosted CI remains required before a current-head green claim. Existing ADR-103 applies; the qualification report links the already-created broader capacity owner rather than duplicating it.
+
+
+The final rebased product's 17 selected Settings cases passed (565.87 s). CI run 39455910928 still exhausted the fixed job budget on UI jobs 4/6/8/10, despite passing jobs 1/2/3/5/7/9 and the other completed test lanes. The qualification correction uses all ten jobs' measured whole-file costs and explicitly estimated remaining-work reserves to exchange six further file pairs. Exactly twelve positions change from 916ea4e565; all 408 entries, S1 block, regression tail, assertions, product code and CI limits remain unchanged. The qualification report distinguishes projected budgets from fresh hosted confirmation; the separate broader capacity acceptance remains open.
 <!-- SECTION:NOTES:END -->
