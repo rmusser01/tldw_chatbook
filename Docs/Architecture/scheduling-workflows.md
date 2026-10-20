@@ -37,6 +37,15 @@ still commit. Validation errors, server refusals and failed writes keep the draf
 open and restore Save for retry. Successful local saves and offline server saves
 retain the service's `saved` and `queued` outcomes respectively (ADR-018).
 
+Hosted Results review actions (`r`/`d`/`o`/`a`) admit one mutation
+synchronously before worker dispatch. Further review gestures show a busy refusal
+until the mutation and repaint settle, so they cannot cancel an admitted per-row
+Mark all read batch. Admission captures the selected result and its definition,
+or the scope's current unread IDs; cursor movement, refreshed definition lookups,
+and later arrivals cannot retarget it. A batch retains the existing per-row
+success/failure count and failed rows remain unread for retry. Review-plus-outbox
+transactions and each row's owner still belong to `SchedulingService` (ADR-018).
+
 ## What can be scheduled
 
 - **Reminders** — one-time or cron-recurring; notification dispatch.
