@@ -2346,7 +2346,6 @@ class TldwCli(
         no_splash = getattr(self, "_cli_no_splash", False)  # --no-splash (TASK-34100.16)
         splash = None if no_splash else splash_policy.splash_options(
             {
-                "first_run": self.app_config.get("first_run", {}),
                 "splash_screen": {
                     key: get_cli_setting("splash_screen", key, default)
                     for key, default in splash_policy.SPLASH_SETTING_DEFAULTS
@@ -2354,7 +2353,9 @@ class TldwCli(
                 "appearance": {
                     "reduce_motion": get_cli_setting("appearance", "reduce_motion", False)
                 },
-            }
+            },
+            # This launch created the profile (first_profile_created_this_session).
+            first_launch=bool(getattr(self, "library_new_profile_admission", False)),
         )
         logging.info(f"Splash screen: {splash}")
         if splash is not None:
