@@ -109,6 +109,9 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
             )
             self._pin(function)
         assert chat_screen.load_settings is config.load_settings
+        recorder = inspect.getattr_static(type(self), "_record_branch")
+        self._pin(recorder)
+        self.slots.append((type(self), "_record_branch", recorder))
         self.sources = {record[1]: record[-1] for record in self.modules.values()}
         self.module_files = {
             name: record[0].__file__ for name, record in self.modules.items()
@@ -117,6 +120,7 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
         self.operation, self.leases, self.thread = None, (), None
         self.expected_source = None
         self.rows = []
+        self._branch_rows = {}
         self.owned_tool = False
         self.retired = False
         self.retirement = {}
@@ -185,6 +189,36 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
         except (AttributeError, KeyError, OSError, TypeError, ValueError):
             return False
 
+    def _record_branch(self, row):
+        # Match the sibling observer: repeats retain counts; the original
+        # bound still refuses a 65th distinct scalar observation.
+        row_type = type(row)
+        if row_type is not dict:
+            self.invalid.append("nonplain_branch_receipt")
+            return
+        for key, value in row.items():
+            key_type, value_type = type(key), type(value)
+            if key_type is not str or not (
+                value_type is str
+                or value_type is bool
+                or value_type is int
+                or value is None
+            ):
+                self.invalid.append("nonplain_branch_receipt")
+                return
+        key = tuple(row.items())
+        existing = self._branch_rows.get(key)
+        if existing is not None:
+            existing["observations"] += 1
+            return
+        if len(self.rows) >= 64:
+            self.invalid.append("bounded_branch_receipt_overflow")
+            return
+        recorded = dict(row)
+        recorded["observations"] = 1
+        self._branch_rows[key] = recorded
+        self.rows.append(recorded)
+
     def _returned(self, code, _offset, value):
         if not self.active:
             return
@@ -217,7 +251,7 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
                 self.operation, self.leases = active, tuple(state.leases)
             self.thread = threading.current_thread()
             assert self.thread is not threading.main_thread()
-            self.rows.append(
+            self._record_branch(
                 {"site": "checked_worker_return", "live_leases": len(self.leases)}
             )
             # No selected frame or caller frame remains in this callback during
@@ -229,7 +263,7 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
             return
         if code is self.functions[1].__code__:
             if frame.f_locals.get("self") is self.projection:
-                self.rows.append(
+                self._record_branch(
                     {
                         "site": "projection_run",
                         "result": value is True,
@@ -239,11 +273,11 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
                 )
         elif code is self.functions[2].__code__:
             if frame.f_locals.get("projection") is self.projection:
-                self.rows.append({"site": "checked_status", "result": value})
+                self._record_branch({"site": "checked_status", "result": value})
         elif (code is self.functions[3].__code__) and (
             frame.f_locals.get("checked_projection") is self.projection
         ):
-            self.rows.append(
+            self._record_branch(
                 {
                     "site": "native_config_sync",
                     "result": value is True,
@@ -252,8 +286,6 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
                     is True,
                 }
             )
-        if len(self.rows) > 64:
-            self.invalid.append("bounded_branch_receipt_overflow")
 
     def start(self):
         assert self._current(source_bytes=True)
@@ -611,7 +643,9 @@ async def test_original_direct_control_pending_facts_paint_before_cold_config_re
                 if not inspector.state.has_pending_approval:
                     violations.append("live Review affordance state remained false")
 
-                assert projection.pending, "the held original checked reader retired too early"
+                assert (
+                    projection.pending
+                ), "the held original checked reader retired too early"
                 assert all(
                     lease in storage_admission._live_leases for lease in gate.leases
                 )

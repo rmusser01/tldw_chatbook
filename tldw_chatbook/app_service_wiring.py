@@ -854,9 +854,10 @@ class ServiceWiringMixin(
         Moved out of ``__init__`` so `Notes/notes_sync_runtime` and
         `Notes/notes_sync_legacy` leave the app import closure; the body is
         the one this app has always run, including the TASK-21112 start gate.
-        Construction performs no I/O: ``NotesDeviceStateStore`` only records
-        the path, and the gate's ``Path.exists()`` neither opens nor creates
-        the database.
+        Construction resolves paths through checked configuration reads;
+        callers preparing a screen must keep that work off the UI loop.
+        ``NotesDeviceStateStore`` only records the path here; construction
+        does not open or create its database.
 
         Returns:
             NotesSyncRuntimeOwner: The unstarted runtime owner.
@@ -1053,20 +1054,28 @@ class ServiceWiringMixin(
             The built (or substituted) owner, or None when the property is
             absent, unbuildable, or previously failed to build.
         """
-        if self.__dict__.get("_notes_sync_runtime_build_failure") is not None:
-            return None
-        descriptor = getattr(type(self), "notes_sync_runtime_owner", None)
-        if not isinstance(descriptor, property):
-            return getattr(self, "notes_sync_runtime_owner", None)
-        try:
-            return self.notes_sync_runtime_owner
-        except Exception as error:  # noqa: BLE001 - UI read must not crash
-            self._notes_sync_runtime_build_failure = error
-            logger.opt(exception=True).error(
-                "notes-sync runtime construction failed; the Library screen "
-                "will report a runtime error rather than feature-unavailable."
-            )
-            return None
+        # Screen preparation and Notes attention may arrive together. Keep the
+        # failure check and publication serialized as well as construction;
+        # otherwise a waiter can retry a failed build and leave a live owner
+        # shadowed by the first caller's sticky failure.
+        read_lock = self.__dict__.setdefault(
+            "_notes_sync_runtime_safe_read_lock", threading.Lock()
+        )
+        with read_lock:
+            if self.__dict__.get("_notes_sync_runtime_build_failure") is not None:
+                return None
+            descriptor = getattr(type(self), "notes_sync_runtime_owner", None)
+            if not isinstance(descriptor, property):
+                return getattr(self, "notes_sync_runtime_owner", None)
+            try:
+                return self.notes_sync_runtime_owner
+            except Exception as error:  # noqa: BLE001 - UI read must not crash
+                self._notes_sync_runtime_build_failure = error
+                logger.opt(exception=True).error(
+                    "notes-sync runtime construction failed; the Library screen "
+                    "will report a runtime error rather than feature-unavailable."
+                )
+                return None
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -2020,8 +2029,10 @@ class ServiceWiringMixin(
         )
         runtime = getattr(self, "console_runtime", None)
         recompute_attention = getattr(
-            runtime, "recompute_console_attention", None
+            runtime, "request_console_attention_refresh", None
         )
+        if not callable(recompute_attention):
+            recompute_attention = getattr(runtime, "recompute_console_attention", None)
         if callable(recompute_attention):
             recompute_attention(force_projection=True)
         self.server_chat_conversation_service = (

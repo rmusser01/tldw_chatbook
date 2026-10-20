@@ -729,6 +729,8 @@ class LibraryNotesSyncController:
 
     def _unavailable_copy(self) -> str:
         runtime = self._runtime.snapshot()
+        if runtime.status == "starting":
+            return "Preparing folder sync…"
         if runtime.next_action == "close_other_process_and_restart":
             return (
                 "Close the other Chatbook process and restart before activating "
@@ -741,6 +743,11 @@ class LibraryNotesSyncController:
     @property
     def snapshot(self) -> LibraryNotesLastingSyncSnapshot:
         return self._state
+
+    def attach_prepared_runtime(self, runtime: LastingSyncRuntimePort) -> None:
+        """Bind the app-owned runtime after initial preparation on a worker."""
+        self._runtime = runtime
+        self.refresh_roots()
 
     def _publish(self) -> None:
         if callable(self._publish_snapshot):

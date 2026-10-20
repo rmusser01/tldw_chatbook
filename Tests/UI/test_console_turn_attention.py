@@ -727,13 +727,15 @@ def test_real_terminal_receipt_reopens_with_authoritative_notice_severity(
 
 
 @pytest.mark.parametrize("media", ["image", "video"])
+@pytest.mark.parametrize(
+    "refresh_api", ["recompute_console_attention", "request_console_attention_refresh"]
+)
 def test_direct_media_commit_recomputes_attention_once_after_atomic_persistence(
     media: str,
+    refresh_api: str,
 ) -> None:
     events: list[str] = []
-    runtime = SimpleNamespace(
-        recompute_console_attention=lambda: events.append("recompute")
-    )
+    runtime = SimpleNamespace(**{refresh_api: lambda: events.append("recompute")})
     app = SimpleNamespace(console_runtime=runtime)
 
     class _Store:
@@ -808,6 +810,7 @@ def test_failed_direct_media_persistence_does_not_recompute_attention(media: str
     with pytest.raises(RuntimeError, match="atomic .* persistence failed"):
         invoke()
     runtime.recompute_console_attention.assert_not_called()
+    runtime.request_console_attention_refresh.assert_not_called()
 
 
 def test_failed_or_stale_exact_ack_keeps_durable_attention() -> None:
@@ -922,6 +925,8 @@ def _sync_harness(*, refresh_raises: bool = False):
         _console_presentation_context=lambda: MagicMock(),
         _console_change_review_provider=lambda: None,
         _sync_console_citation_count_discovery=lambda _messages: None,
+        _sync_console_rate_chip=lambda _messages: None,
+        _console_chat_store=store,
         _console_chat_controller=None,
         _console_original_attempt_previews={},
         _pending_console_swipe_selection=None,
@@ -1031,11 +1036,25 @@ async def test_outgoing_refresh_cannot_ack_after_successor_claims_runtime() -> N
     screen._console_runtime = lambda: runtime
 
     refresh = asyncio.create_task(ChatScreen._sync_native_console_transcript(screen))
-    await entered_refresh.wait()
-    successor = SimpleNamespace(console_view_hooks=lambda: {})
-    successor_generation = runtime.attach_view(successor)
-    release_refresh.set()
-    await refresh
+    entered = asyncio.create_task(entered_refresh.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            (entered, refresh), timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        if refresh in done:
+            await refresh  # Surface an early fixture/render failure immediately.
+            pytest.fail("transcript refresh finished before entering the render hold")
+        assert entered in done, "transcript refresh never reached the render hold"
+        successor = SimpleNamespace(console_view_hooks=lambda: {})
+        successor_generation = runtime.attach_view(successor)
+        release_refresh.set()
+        await asyncio.wait_for(refresh, timeout=5)
+    finally:
+        release_refresh.set()
+        for task in (entered, refresh):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(entered, refresh, return_exceptions=True)
 
     assert successor_generation is not None
     assert runtime.view is successor
@@ -1107,8 +1126,20 @@ def test_media_receipts_require_their_exact_hydrated_card_rows() -> None:
     )
 
 
+@pytest.fixture
+def _mounted_transcript_config_source(monkeypatch):
+    """Bind this mounted widget to the test's selected real config source."""
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook.Widgets.Console import console_transcript
+
+    source = install_config_source(monkeypatch)
+    monkeypatch.setattr(console_transcript, "get_cli_setting", source.get_cli_setting)
+
+
 @pytest.mark.asyncio
-async def test_transcript_reports_real_nested_ordinary_image_and_video_mounts() -> None:
+async def test_transcript_reports_real_nested_ordinary_image_and_video_mounts(
+    _mounted_transcript_config_source,
+) -> None:
     ordinary, image, video, image_spec, video_spec = _mounted_media_messages()
     app = _TranscriptHarness()
 
@@ -1134,7 +1165,9 @@ async def test_transcript_reports_real_nested_ordinary_image_and_video_mounts() 
 
 
 @pytest.mark.asyncio
-async def test_transcript_media_evidence_requires_successful_nested_card_mount() -> None:
+async def test_transcript_media_evidence_requires_successful_nested_card_mount(
+    _mounted_transcript_config_source,
+) -> None:
     ordinary, image, video, image_spec, video_spec = _mounted_media_messages()
     app = _TranscriptHarness()
 

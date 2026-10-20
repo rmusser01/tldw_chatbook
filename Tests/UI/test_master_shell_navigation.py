@@ -172,7 +172,10 @@ async def test_console_attention_glyph_is_accessible_and_geometry_stable(size):
 
 
 @pytest.mark.asyncio
-async def test_fresh_navigation_mount_recomputes_durable_console_attention():
+@pytest.mark.parametrize(
+    "refresh_api", ["recompute_console_attention", "request_console_attention_refresh"]
+)
+async def test_fresh_navigation_mount_recomputes_durable_console_attention(refresh_api):
     calls: list[dict[str, bool]] = []
 
     class TestApp(ConsolidatedCSSApp):
@@ -183,7 +186,7 @@ async def test_fresh_navigation_mount_recomputes_durable_console_attention():
 
     app = TestApp()
     app.console_runtime = SimpleNamespace(
-        recompute_console_attention=lambda **kwargs: calls.append(kwargs)
+        **{refresh_api: lambda **kwargs: calls.append(kwargs)}
     )
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()

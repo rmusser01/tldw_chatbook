@@ -1,0 +1,12 @@
+{
+  "tag": "control1",
+  "original": true,
+  "checkout_revision": "191fb7d7a3368062d8c4adea2f053ba4588d4f45",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "c44add0accf7230c0cab8b4c8d830a935ffcabeb238c9fb812c4a668994550bd",
+    "tldw_chatbook/UI/Console_Modules/view_workers.py": "ed76f39f31ffbb21448a145a30e8a75bcdb69eca3fd2d3dbe68145d9dd85c3cb",
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": "0e0fcf95f2c68e57c8bc2cf9bee0d97a90e276469972cdeecea79848360ed242"
+  },
+  "exit_code": 0,
+  "seconds": 45.030999999988126
+}

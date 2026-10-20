@@ -201,9 +201,7 @@ def test_safe_reader_does_not_swallow_failure_as_feature_unavailable():
     app = _ExplodingOwnerApp()
     app._read_notes_sync_runtime_owner_safe()
 
-    build_failed = (
-        getattr(app, "_notes_sync_runtime_build_failure", None) is not None
-    )
+    build_failed = getattr(app, "_notes_sync_runtime_build_failure", None) is not None
     inert = (
         InertLastingSyncRuntime(status="failed", next_action="review_settings")
         if build_failed
@@ -229,6 +227,52 @@ def test_safe_reader_is_memoized_until_a_double_is_installed():
     double = object()
     app.notes_sync_runtime_owner = double  # type: ignore[assignment]
     assert app._read_notes_sync_runtime_owner_safe() is double
+
+
+def test_concurrent_safe_readers_share_a_failed_construction():
+    from concurrent.futures import ThreadPoolExecutor
+
+    entered, release, second_lock_attempt = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    native_lock = threading.Lock()
+    attempts = []
+
+    class ObservedLock:
+        def __enter__(self):
+            if native_lock.locked():
+                second_lock_attempt.set()
+            native_lock.acquire()
+
+        def __exit__(self, *_):
+            native_lock.release()
+
+    class App(_ExplodingOwnerApp):
+        def _construct_notes_sync_runtime_owner(self):
+            attempts.append(1)
+            entered.set()
+            assert release.wait(3)
+            if len(attempts) == 1:
+                raise ValueError("first construction failed")
+            return object()
+
+    app = App()
+    app._notes_sync_runtime_owner_lock = ObservedLock()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(app._read_notes_sync_runtime_owner_safe)
+        try:
+            assert entered.wait(3)
+            second = executor.submit(app._read_notes_sync_runtime_owner_safe)
+            # The old reader passes the failure check before waiting here.
+            # A serialized reader instead waits outside the property.
+            second_lock_attempt.wait(0.2)
+        finally:
+            release.set()
+        assert first.result(timeout=3) is None
+        assert second.result(timeout=3) is None
+    assert len(attempts) == 1
 
 
 # --- TASK-21249(a): the construction read point ---------------------------------

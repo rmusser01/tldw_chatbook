@@ -3835,31 +3835,28 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.import_snapshot: LibraryNoteImportSnapshot = (
             self._library_note_import_controller.presentation_snapshot
         )
-        # TASK-19010 is presentation-only. The app owns runtime lifecycle;
-        # harnesses without it receive an honest inert structural adapter.
-        # TASK-21249: a runtime that FAILED to build is not
-        # "feature-unavailable" -- read through the app's safe reader so a
-        # build failure surfaces as a distinct failed status (and is logged
-        # at ERROR by the reader) instead of the cutover pair.
-        safe_runtime_reader = getattr(
-            app_instance, "_read_notes_sync_runtime_owner_safe", None
+        # Reuse an already-built owner without invoking its lazy property.
+        # First construction includes checked config reads and belongs in the
+        # finite service worker after mount, never on the navigation path.
+        app_lasting_runtime = vars(app_instance).get(
+            "_notes_sync_runtime_owner",
+            vars(app_instance).get("notes_sync_runtime_owner"),
         )
-        if callable(safe_runtime_reader):
-            app_lasting_runtime = safe_runtime_reader()
-        else:
-            app_lasting_runtime = getattr(
-                app_instance, "notes_sync_runtime_owner", None
-            )
+        self._notes_sync_runtime_prepared = app_lasting_runtime is not None
+        self._notes_sync_runtime_preparing = False
         if app_lasting_runtime is not None:
             lasting_runtime = app_lasting_runtime
-        elif getattr(
-            app_instance, "_notes_sync_runtime_build_failure", None
-        ) is not None:
+        elif (
+            getattr(app_instance, "_notes_sync_runtime_build_failure", None) is not None
+        ):
             lasting_runtime = InertLastingSyncRuntime(
                 status="failed", next_action="review_settings"
             )
+            self._notes_sync_runtime_prepared = True
         else:
-            lasting_runtime = InertLastingSyncRuntime()
+            lasting_runtime = InertLastingSyncRuntime(
+                status="starting", next_action="wait"
+            )
         self._library_notes_sync_controller = LibraryNotesSyncController(
             runtime=lasting_runtime,
             import_controller=self._library_note_import_controller,
@@ -9382,6 +9379,15 @@ class LibraryScreen(BaseAppScreen):
     def refresh_notes_sync_runtime(self) -> None:
         """Project the app-owned runtime after detached startup settles."""
 
+        if not self._notes_sync_runtime_prepared:
+            if self.is_mounted and not self._notes_sync_runtime_preparing:
+                self._notes_sync_runtime_preparing = True
+                self.run_worker(
+                    self._prepare_notes_sync_runtime(),
+                    exclusive=True,
+                    group="library_notes_sync_prepare",
+                )
+            return
         self._library_notes_sync_controller.refresh_roots()
         if (
             self.is_mounted
@@ -9396,6 +9402,42 @@ class LibraryScreen(BaseAppScreen):
             # to a whole-screen recompose here tears down the just-mounted
             # shell and races that reconciliation.
             _sync_library_canvas(self, "notes", allow_screen_fallback=False)
+
+    async def _prepare_notes_sync_runtime(self) -> None:
+        """Resolve the app's original safe reader without blocking the UI loop."""
+        from ..Library_Modules.library_notes_sync_controller import (
+            InertLastingSyncRuntime,
+        )
+
+        app_owner = self.app_instance
+
+        def read_runtime():
+            reader = getattr(app_owner, "_read_notes_sync_runtime_owner_safe", None)
+            runtime = (
+                reader()
+                if callable(reader)
+                else getattr(app_owner, "notes_sync_runtime_owner", None)
+            )
+            if runtime is not None:
+                return runtime
+            if (
+                getattr(app_owner, "_notes_sync_runtime_build_failure", None)
+                is not None
+            ):
+                return InertLastingSyncRuntime(
+                    status="failed", next_action="review_settings"
+                )
+            return InertLastingSyncRuntime()
+
+        try:
+            runtime = await self._run_library_service_call(read_runtime)
+            if not self.is_attached or self.app_instance is not app_owner:
+                return
+            self._library_notes_sync_controller.attach_prepared_runtime(runtime)
+            self._notes_sync_runtime_prepared = True
+            self.refresh_notes_sync_runtime()
+        finally:
+            self._notes_sync_runtime_preparing = False
 
     def on_screen_suspend(self) -> None:
         """Quiesce visit-scoped work while this screen is covered.

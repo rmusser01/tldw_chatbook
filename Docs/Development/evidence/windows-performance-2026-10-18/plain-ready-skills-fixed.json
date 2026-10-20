@@ -1,0 +1,75 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-x9rawl_8",
+  "import_ms": 2947.5632999965455,
+  "construct_ms": 13495.650800003204,
+  "mount_ready_ms": 21740.216000005603,
+  "startup_phases": {
+    "basic_init": 1.0429120999906445,
+    "attribute_init": 9.60000033956021e-06,
+    "parallel_init": 5.9329042000026675,
+    "total_init": 13.495105399997556
+  },
+  "skill_context": [
+    {
+      "iteration": 0,
+      "elapsed_ms": 570.2005999919493,
+      "input_observed_after_fetch_ms": 570.2082999923732,
+      "max_loop_overshoot_ms": 176.6191000008257,
+      "available": 1,
+      "blocked": 0
+    },
+    {
+      "iteration": 1,
+      "elapsed_ms": 200.0205999938771,
+      "input_observed_after_fetch_ms": 200.03100000030827,
+      "max_loop_overshoot_ms": 14.141299989423715,
+      "available": 1,
+      "blocked": 0
+    },
+    {
+      "iteration": 2,
+      "elapsed_ms": 160.75580001052003,
+      "input_observed_after_fetch_ms": 160.76330000942107,
+      "max_loop_overshoot_ms": 6.982800007099286,
+      "available": 1,
+      "blocked": 0
+    },
+    {
+      "iteration": 3,
+      "elapsed_ms": 166.49309999775141,
+      "input_observed_after_fetch_ms": 166.50039999512956,
+      "max_loop_overshoot_ms": 11.860300010303035,
+      "available": 1,
+      "blocked": 0
+    },
+    {
+      "iteration": 4,
+      "elapsed_ms": 210.62840000377037,
+      "input_observed_after_fetch_ms": 210.64459999615792,
+      "max_loop_overshoot_ms": 14.780400010058656,
+      "available": 1,
+      "blocked": 0
+    },
+    {
+      "iteration": 5,
+      "elapsed_ms": 178.2666000071913,
+      "input_observed_after_fetch_ms": 178.27289999695495,
+      "max_loop_overshoot_ms": 14.837300006765872,
+      "available": 1,
+      "blocked": 0
+    }
+  ],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

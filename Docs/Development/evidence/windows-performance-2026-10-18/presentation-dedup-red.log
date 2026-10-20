@@ -1,0 +1,142 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FF.FF                                                                    [100%]
+================================== FAILURES ===================================
+_____ test_absent_appearance_ids_share_the_existing_display_ttl[missing] ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000017DD5075220>
+absent_id = 'missing'
+
+    @pytest.mark.parametrize("absent_id", ["missing", "deleted"])
+    def test_absent_appearance_ids_share_the_existing_display_ttl(monkeypatch, absent_id):
+        controller, _app, calls, _values, _clock = _appearances(monkeypatch)
+        for _ in range(3):
+            assert controller._console_conversation_appearance_map(
+                ["known", absent_id]
+            ) == {"known": ("icon", "color")}
+>       assert calls == [tuple(sorted((absent_id, "known")))]
+E       AssertionError: assert [('known', 'm...', 'missing')] == [('known', 'missing')]
+E
+E         Left contains 2 more items, first extra item: ('known', 'missing')
+E         Use -v to get more diff
+
+Tests\UI\test_console_presentation_deduplication.py:42: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 10:40:40.177 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 10:40:40.205 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 10:40:40.206 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 10:40:40.207 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_____ test_absent_appearance_ids_share_the_existing_display_ttl[deleted] ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000017DCB97DC70>
+absent_id = 'deleted'
+
+    @pytest.mark.parametrize("absent_id", ["missing", "deleted"])
+    def test_absent_appearance_ids_share_the_existing_display_ttl(monkeypatch, absent_id):
+        controller, _app, calls, _values, _clock = _appearances(monkeypatch)
+        for _ in range(3):
+            assert controller._console_conversation_appearance_map(
+                ["known", absent_id]
+            ) == {"known": ("icon", "color")}
+>       assert calls == [tuple(sorted((absent_id, "known")))]
+E       AssertionError: assert [('deleted', ...ed', 'known')] == [('deleted', 'known')]
+E
+E         Left contains 2 more items, first extra item: ('deleted', 'known')
+E         Use -v to get more diff
+
+Tests\UI\test_console_presentation_deduplication.py:42: AssertionError
+______ test_replacing_appearance_service_drops_the_previous_display_map _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000017DD5075400>
+
+    def test_replacing_appearance_service_drops_the_previous_display_map(monkeypatch):
+        controller, app, calls, _values, _clock = _appearances(monkeypatch)
+        assert controller._console_conversation_appearance_map(["known"])
+        replacement_calls = []
+
+        def replacement(ids):
+            replacement_calls.append(tuple(ids))
+            return {}
+
+        app.local_chat_conversation_service = SimpleNamespace(
+            get_conversation_appearances=replacement
+        )
+>       assert controller._console_conversation_appearance_map(["known"]) == {}
+E       AssertionError: assert {'known': ('icon', 'color')} == {}
+E
+E         Left contains 1 more item:
+E         {'known': ('icon', 'color')}
+E         Use -v to get more diff
+
+Tests\UI\test_console_presentation_deduplication.py:76: AssertionError
+_______ test_original_rail_controls_build_only_the_consumed_inspectors ________
+
+    @pytest.mark.asyncio
+    async def test_original_rail_controls_build_only_the_consumed_inspectors():
+>       _app, host = _ready_host()
+
+Tests\UI\test_console_presentation_deduplication.py:82:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-74/test_original_rail_controls_bu0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+============================== warnings summary ===============================
+.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(15 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_presentation_deduplication.py::test_absent_appearance_ids_share_the_existing_display_ttl[missing]
+FAILED Tests/UI/test_console_presentation_deduplication.py::test_absent_appearance_ids_share_the_existing_display_ttl[deleted]
+FAILED Tests/UI/test_console_presentation_deduplication.py::test_replacing_appearance_service_drops_the_previous_display_map
+FAILED Tests/UI/test_console_presentation_deduplication.py::test_original_rail_controls_build_only_the_consumed_inspectors
+4 failed, 1 passed, 2 warnings in 7.92s

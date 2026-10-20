@@ -120,7 +120,9 @@ class ConsoleVideoController:
         message = store.append_video_message(session_id, persist=True, **kwargs)
         app_instance = getattr(self, "app_instance", None)
         runtime = getattr(app_instance, "console_runtime", None)
-        recompute = getattr(runtime, "recompute_console_attention", None)
+        recompute = getattr(runtime, "request_console_attention_refresh", None)
+        if not callable(recompute):
+            recompute = getattr(runtime, "recompute_console_attention", None)
         if callable(recompute):
             try:
                 recompute()

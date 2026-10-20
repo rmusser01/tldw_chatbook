@@ -1,10 +1,87 @@
 # Lessons: what counts as evidence a change works
 
+## Validate monitoring event masks before booting the app (TASK-35645, 2026-10-19)
+
+**Incident.** A review correctly noticed missing unwind accounting in a Windows
+native-read observer, but adding `PY_UNWIND` to `set_local_events` failed before
+app construction with `ValueError: invalid local event set 0x100f`. A tiny
+Python 3.12 reproduction confirmed that unwind is a global-only event. A
+filtered `set_events` callback then observed the original exception correctly.
+
+**What to do.** Validate the actual runtime's monitoring API with a small
+raising function before another app boot. Filter global callbacks by exact code
+objects, clear their masks on finish, and retain failed diagnostic setup exits
+separately from product failures and plain timing comparisons.
+
+## A performance warmup pause does not establish quiet background work (TASK-35644, 2026-10-19)
+
+**Incident.** After a focused CSS optimization, a Windows Console return
+comparison became slower overall. The old sampler grouped everything from
+navigation through attachment, so it could not place a stack before the key.
+Separate identity-preserving phase observations then measured 98–135 ms full
+styling spans and 388–1,332 ms configuration preparation waits. A further worker
+trace caught a real config read starting while leaving Console and finishing
+during the next return, after 5.71 seconds. The probe's three-second initial
+pause and half-second away interval had not established a settled workload.
+
+**What to do.** Distinguish input, styling and completed attachment; observe
+original callback entry and retirement before blaming a component optimization
+for overall variance. Keep protocol and guards identical in comparison arms,
+retain every outlier, and label instrumented discovery separately from plain
+timing. Do not treat a fixed pause as proof that background work has retired or
+freeze freshness checks to manufacture a quiet run. The earlier runs' exact
+cause remains unproved by this later observation.
+
+## An idle event loop can still have blocked keyboard dispatch (TASK-35614, 2026-10-19)
+
+**Incident.** A Windows Console return took 2.29 seconds while 152 of 178
+main-thread samples were in the event-loop poll. Textual 8.2 awaited the async
+attach callback in `Screen._invoke_and_clear_callbacks`, so the screen message
+pump could not process a typed key during the native-read await. A mounted test
+holding reconciliation reproduced the missing key despite continuing loop
+progress; dispatching through a retained finite view worker let the key through
+without acknowledging runtime attachment early.
+
+**What to do.** Measure a real posted key separately from loop heartbeat and
+attachment completion. Inspect the callback's awaiting message pump when CPU
+samples are mostly idle. Moving work off the UI thread alone does not establish
+input responsiveness; retain native retirement and visit fences when changing
+the async caller.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
 
 **What to do.** Before investigating a CI flake, read the log to the first exception rather than the summary line, then check whether dev has changed that code since, with `git merge-base --is-ancestor <fix> <failing head>` for each failing run. If the heads predate the fix, the work left is counting the runs since it.
+
+## Separate worker SQL from UI-thread SQL in performance counters (TASK-35610, 2026-10-19)
+
+The Windows CSS/presentation follow-up's settled-tick test counted two registry
+reads on the updated code and zero on an original-code control. Repeating the
+updated test reproduced the assertion. Thread/stack observation located both
+reads in the existing finite workspace-availability worker, outside the UI loop.
+The class-level counter's method wrappers also selected the conservative custom
+reader route, which legitimately calls both folder and runtime-binding readers.
+The counter had been interpreting all-thread traffic as UI blocking work.
+
+Keep UI and background read/connection/SQL counts separately, retain the actual
+native calls, and prove both counters with positive controls. Do not silence a
+worker, freeze its TTL, or weaken admission to make a timing window green. Also
+avoid unconditional `asyncio.current_task()` in a thread observer: the first
+diagnostic raised without an event loop and was discarded; the corrected observer
+preserved the original call and supplied the usable evidence.
+
+## A render-entry wait must also observe its producer's failure (TASK-35592, 2026-10-19)
+
+The Windows attention regression run reached two stale transcript fixtures,
+then timed out after 180 seconds in a third test. Its refresh task had already
+raised because the harness lacked `_console_chat_store`, but the test waited
+only for an event the failed task would never set. Both assertion failures
+reproduced on pre-change `efb71994`. Supplying the existing store/rate-chip seams
+and racing the entry event against producer completion made all three tests
+pass. Observe early producer errors, bound the entry wait, and retire both tasks
+in `finally`; an event-only wait hides the useful failure until Windows kills
+the entire pytest process.
 
 ## A held-lock test's blocked stack names the product read to fix (TASK-35444, 2026-10-18)
 
@@ -20387,3 +20464,22 @@ failed drafts were valid or that any product input behavior was fixed.
 ## Worker failure injection must leave unrelated work running
 
 **PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.
+
+
+## Sub-resolution async polling can manufacture Windows stalls (TASK-35595, 2026-10-19)
+
+**Incident.** The Console profiling probe added a second 5 ms observer alongside
+a 5 ms input poll and 10 ms heartbeat. Python 3.12 Windows used GetTickCount64
+with 15.625 ms event-loop clock resolution. A standalone reproduction, importing
+no application code, made 261,448 loop iterations in two seconds, every selector
+call with zero timeout, consuming nearly one CPU core and starving ctypes work.
+Stacks looked like native-storage initialization stalls while the main loop was
+inside its I/O poll. Both original and updated app code timed out; both completed
+all six returns when diagnostic polling was raised above the clock resolution.
+
+**What to do.** Measure the event loop's clock resolution, not only the stopwatch
+resolution. Keep diagnostic polling above it, or observe existing events. Record
+poll/heartbeat intervals with results and rerun both versions after correcting
+the probe. Do not credit removal of an observer-induced timeout as a product fix.
+Evidence: `Docs/Development/evidence/windows-performance-2026-10-18/STORAGE_RESULTS.md`
+and `asyncio_polling_probe.py` in the same directory.

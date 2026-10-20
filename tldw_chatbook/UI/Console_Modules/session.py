@@ -3198,6 +3198,10 @@ class ConsoleSessionController:
             visit = await self.begin_manual_read_visit(
                 store.active_session_id, allow_current=True
             )
+            # Ordinary attachment already owns FULL. With no captured reminder,
+            # an acknowledgement-only pass just queues a duplicate behind it.
+            if visit is None or visit.token is None:
+                return
             await self._sync_native_console_chat_ui()
             self.complete_manual_read_visit(visit)
 

@@ -182,7 +182,7 @@ async def test_mounted_original_refresh_replays_before_runtime_attachment(monkey
         original_after_refresh = screen.call_after_refresh
 
         def observe_reconcile(callback, *args, **kwargs):
-            if callback == screen._reconcile_console_after_attach:
+            if callback == screen._start_console_attach_reconciliation:
                 queued.append(callback)
                 return True
             return original_after_refresh(callback, *args, **kwargs)
@@ -241,23 +241,24 @@ async def test_mounted_suspend_resume_rearms_after_old_reconcile_retires(monkeyp
             # Resume really queued an attempt, but the old await still owns
             # the running flag. This is the lost-wake window.
             retries = [
-                cb for cb in queued if cb == screen._reconcile_console_after_attach
+                cb for cb in queued if cb == screen._start_console_attach_reconciliation
             ]
             assert retries
             queued.clear()
-            await retries[-1]()
+            retries[-1]()
             assert not screen._console_attach_reconciled
             release.set()
             await pending
             assert not screen._console_attach_reconciled
             retries = [
-                cb for cb in queued if cb == screen._reconcile_console_after_attach
+                cb for cb in queued if cb == screen._start_console_attach_reconciliation
             ]
             assert len(retries) == 1
             # A queued retry must also recheck visibility when it actually runs.
             await host.push_screen(Screen())
             await pilot.pause()
-            await retries[0]()
+            retries[0]()
+            await pilot.pause()
             assert not screen._console_attach_reconciled
             assert calls == 1
             await host.pop_screen()

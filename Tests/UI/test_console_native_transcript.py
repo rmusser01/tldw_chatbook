@@ -3025,7 +3025,9 @@ async def test_console_mounts_native_transcript_region():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_console_sync_replaces_effective_memory_banner_without_stacking(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -3110,7 +3112,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
             ),
         )
 
-        await console._sync_native_console_chat_ui()
+        await console._sync_native_console_transcript(force=True)
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.memory_banner_presentation is not None
         await _wait_for_selector(
@@ -3131,7 +3133,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await console._sync_native_console_transcript(force=True)
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
         assert transcript.selected_message_id == messages[-1].id
         assert transcript.to_plain_text(width=80) == plain_before
@@ -3142,18 +3144,18 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await console._sync_native_console_transcript(force=True)
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
         second_session = store.create_session(title="Second branch")
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await console._sync_native_console_transcript(force=True)
         assert store.active_session_id == second_session.id
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
 
         store.switch_session(session.id)
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await console._sync_native_console_transcript(force=True)
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
 

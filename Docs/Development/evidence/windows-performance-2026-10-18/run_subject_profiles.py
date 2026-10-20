@@ -1,0 +1,95 @@
+"""Serial ABBA return profiles with exact subprocess exit receipts."""
+
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+OUT = Path(__file__).resolve().parent
+ROOT = OUT.parents[3]
+sources = [
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/Utils/textual_css_fastpath.py",
+    "tldw_chatbook/UI/Console_Modules/session.py",
+]
+runs = (
+    ("benchmark", False),
+    ("control1", True),
+    ("after1", False),
+    ("after2", False),
+    ("control2", True),
+)
+if "--final" in sys.argv:
+    runs = (("final", False),)
+if "--final-control" in sys.argv:
+    runs = (("final-control", True),)
+confirm = "--confirm" in sys.argv
+matcher = "--return-matcher" in sys.argv
+integrated = "--integrated" in sys.argv
+if integrated:
+    if not matcher or any(
+        arg in sys.argv for arg in ("--confirm", "--final", "--final-control")
+    ):
+        raise ValueError("Integrated comparison requires the full return-matcher run")
+    runs = tuple((f"integrated-{tag}", original) for tag, original in runs[1:])
+if matcher and confirm:
+    raise ValueError("Select one comparison")
+prefix = "return-matcher" if matcher else "subject"
+for tag, original in runs:
+    if confirm:
+        tag = "verify-" + tag
+    command = [
+        sys.executable,
+        str(OUT / "probe.py"),
+        "--ready",
+        "--resume-only",
+        "--attach-poll",
+        "--clock-safe",
+        "--tag",
+        f"{prefix}-{tag}",
+    ]
+    if tag in ("benchmark", "verify-benchmark"):
+        command.append(
+            "--return-matcher-benchmark" if matcher else "--subject-benchmark"
+        )
+    if original:
+        command.append(
+            "--return-matcher-baseline"
+            if matcher
+            else "--subject-scoped-baseline"
+            if confirm
+            else "--subject-baseline"
+        )
+        if integrated:
+            command.append("--with-attachment-baseline")
+    receipt = {
+        "tag": tag,
+        "original": original,
+        "checkout_revision": subprocess.check_output(
+            ["git", "-c", f"safe.directory={ROOT.as_posix()}", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+        ).strip(),
+        "source_sha256": {
+            name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+            for name in sources
+        },
+    }
+    started = time.monotonic()
+    with (OUT / f"{prefix}-{tag}.log").open("wb") as log:
+        try:
+            result = subprocess.run(
+                command, cwd=ROOT, stdout=log, stderr=log, timeout=300
+            )
+            receipt["exit_code"] = result.returncode
+        except subprocess.TimeoutExpired:
+            receipt["timeout_seconds"] = 300
+    receipt["seconds"] = time.monotonic() - started
+    (OUT / f"{prefix}-{tag}-exit.json").write_text(
+        json.dumps(receipt, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(receipt), flush=True)
+    if receipt.get("exit_code") != 0:
+        raise SystemExit(1)

@@ -1474,7 +1474,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             return
         controls = self.query(selector)
         if controls:
-            controls.first().focus()
+            # Callers already run after mount/recompose. Complete that focus
+            # handoff now rather than queueing it behind another app refresh.
+            self.screen.set_focus(controls.first())
 
     @on(Input.Changed)
     def _setup_changed(self, event: Input.Changed) -> None:

@@ -38,7 +38,7 @@ from textual.screen import ModalScreen
 from textual.selection import Selection
 from textual.strip import Strip
 from textual.validation import ValidationResult, Validator
-from textual.worker import get_current_worker
+from textual.worker import Worker, get_current_worker
 from textual.widgets import (
     Button,
     Checkbox,
@@ -239,6 +239,7 @@ from ...config import (
     coerce_bool_setting,
     coerce_float_setting,
     coerce_int_setting,
+    current_config_identity,
     get_cli_config_path,
     get_cli_setting,
     get_runtime_config_generation,
@@ -4405,21 +4406,13 @@ class SettingsScreen(BaseAppScreen):
         ) = None
         self._advanced_config_settings: AdvancedConfigSettings | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
-        # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
-        # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
-        # prompt Save/Reset, and authoring.customized_count() iterates all
-        # CATALOG entries with a config read each (~2.5ms). A recompose=True
-        # reactive here would (a) unmount/remount the whole detail pane on
-        # every save, wiping the panel's search text and scroll -- defeating
-        # its own targeted _refresh_row design -- and (b) get recomputed live
-        # on every Settings sidebar category-search keystroke via
-        # _category_summaries(). Initialized to None and computed on first
-        # DISPLAY (never in __init__): the count reads config, and reading
-        # config during construction can force a config-file load/creation
-        # before the app is ready (breaking storage-readiness checks). Kept
-        # fresh afterward by _on_internal_prompts_modified via the panel's own
-        # computed count (no extra live call).
+        # Display only: the checked read runs after mount on a worker. Updating
+        # existing rows preserves the prompt editor's search and scroll state.
         self._internal_prompts_customized_count: int | None = None
+        self._internal_prompts_count_identity: tuple[int, str] | None = None
+        self._internal_prompts_count_revision = 0
+        self._internal_prompts_count_pending = False
+        self._internal_prompts_count_failed = False
         # None = not yet synced; _sync_responsive_workbench() applies the
         # compact classes on first call (on_mount) and on every resize.
         self._workbench_compact: bool | None = None
@@ -5125,6 +5118,7 @@ class SettingsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
+        self._request_internal_prompts_count()
         self._subscription_readiness_timer = self.set_interval(
             0.25, self._poll_subscription_readiness
         )
@@ -5206,6 +5200,7 @@ class SettingsScreen(BaseAppScreen):
         """Refresh only the current mounted projection after completion or expiry."""
         if not self.is_attached or not self.is_current:
             return
+        self._request_internal_prompts_count()
         category = self._active_category_id()
         if category is SettingsCategoryId.TOOL_PROFILES:
             self._sync_tool_profile_operations()
@@ -5334,6 +5329,8 @@ class SettingsScreen(BaseAppScreen):
         # have moved while Settings was suspended).
         mount_already_refreshed = self._settings_mount_visit_refreshed
         self._settings_mount_visit_refreshed = False
+        if not mount_already_refreshed:
+            self._request_internal_prompts_count(force=True)
         under_theme_dialog = self._suspended_under_theme_dialog
         self._suspended_under_theme_dialog = False
         if self._manual_sync_run_in_flight:
@@ -5751,30 +5748,81 @@ class SettingsScreen(BaseAppScreen):
             ),
         )
 
-    def _get_internal_prompts_customized_count(self) -> int:
-        """Memoized customized-prompt count for display.
-
-        Computes the live count (authoring.customized_count(), ~2.5ms over all
-        CATALOG entries with a config read each) only on the FIRST call, then
-        caches it. Deferred to first display (never __init__) so it never
-        forces a config load/creation during construction; recomputed at most
-        once per screen since _on_internal_prompts_modified refreshes the cache
-        directly from the panel's own event. Safe on a per-keystroke path
-        (_category_summaries()) because every call after the first is a plain
-        attribute read (task-P3 review Fix 2).
-        """
-        if self._internal_prompts_customized_count is None:
-            try:
-                self._internal_prompts_customized_count = (
-                    internal_prompts_authoring.customized_count()
-                )
-            except Exception:
-                self._internal_prompts_customized_count = 0
+    def _get_internal_prompts_customized_count(self) -> int | None:
+        """Return the display snapshot without touching storage during rendering."""
         return self._internal_prompts_customized_count
 
     def _internal_prompts_status(self) -> str:
         n = self._get_internal_prompts_customized_count()
+        if n is None:
+            return "Unavailable" if self._internal_prompts_count_failed else "Loading…"
         return f"{n} customized" if n else "Defaults"
+
+    def _request_internal_prompts_count(self, *, force: bool = False) -> None:
+        """Prepare a checked display read, coalescing requests for one identity."""
+        identity = current_config_identity()
+        if not self.is_attached:
+            return
+        if identity == self._internal_prompts_count_identity and (
+            self._internal_prompts_count_pending or not force
+        ):
+            return
+        self._internal_prompts_count_identity = identity
+        self._internal_prompts_count_revision += 1
+        self._internal_prompts_count_pending = True
+        self._internal_prompts_count_failed = False
+        self._internal_prompts_customized_count = None
+        self._refresh_internal_prompts_customized_widgets()
+        # Let the initial frame finish before competing with mount-time reads
+        # for the same configuration lock.
+        self.call_after_refresh(
+            self._prepare_internal_prompts_count,
+            identity,
+            self._internal_prompts_count_revision,
+        )
+
+    @work(thread=True, exclusive=True, group="settings-prompt-summary")
+    def _prepare_internal_prompts_count(
+        self, identity: tuple[int, str], revision: int
+    ) -> None:
+        # Keep the entire original native admission/lifetime inside the worker.
+        # The identity below fences presentation; it never authorizes storage.
+        worker = get_current_worker()
+        if (
+            worker.is_cancelled
+            or not self.is_attached
+            or revision != self._internal_prompts_count_revision
+        ):
+            return
+        try:
+            count = internal_prompts_authoring.customized_count()
+        except Exception:
+            count = None
+        if not worker.is_cancelled and self.is_attached:
+            self.app.call_from_thread(
+                self._apply_internal_prompts_count, identity, revision, count, worker
+            )
+
+    def _apply_internal_prompts_count(
+        self,
+        identity: tuple[int, str],
+        revision: int,
+        count: int | None,
+        worker: Worker,
+    ) -> None:
+        if (
+            worker.is_cancelled
+            or not self.is_attached
+            or revision != self._internal_prompts_count_revision
+        ):
+            return
+        if identity != current_config_identity():
+            self._request_internal_prompts_count()
+            return
+        self._internal_prompts_count_pending = False
+        self._internal_prompts_count_failed = count is None
+        self._internal_prompts_customized_count = count
+        self._refresh_internal_prompts_customized_widgets()
 
     def _request_tool_profiles_listing(self) -> None:
         """Refresh Tool Profiles from the app-owned service off the UI thread."""
@@ -24010,7 +24058,7 @@ class SettingsScreen(BaseAppScreen):
             )
             yield self._detail_row(
                 "Customized prompts",
-                str(self._get_internal_prompts_customized_count()),
+                self._internal_prompts_status(),
                 identifier="settings-internal-prompts-customized-count",
             )
         elif summary.category is SettingsCategoryId.STORAGE:
@@ -26519,6 +26567,10 @@ class SettingsScreen(BaseAppScreen):
         # whichever widgets currently show it. A recompose here would
         # unmount/remount the panel on every save/reset, wiping its search
         # text and scroll position.
+        self._internal_prompts_count_revision += 1
+        self._internal_prompts_count_identity = current_config_identity()
+        self._internal_prompts_count_pending = False
+        self._internal_prompts_count_failed = False
         self._internal_prompts_customized_count = event.customized_count
         self._refresh_internal_prompts_customized_widgets()
 
@@ -26535,7 +26587,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
-            row.update(f"Customized prompts: {self._internal_prompts_customized_count}")
+            row.update(f"Customized prompts: {self._internal_prompts_status()}")
 
     @on(Button.Pressed, "#settings-appearance-open-theme")
     def handle_appearance_open_theme(self, event: Button.Pressed) -> None:

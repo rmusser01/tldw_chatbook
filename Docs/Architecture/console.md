@@ -21,9 +21,95 @@ This document describes the Console (`chat` destination): the screen layout, the
 
 Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_coordinator.py` (bounded prompt queue, ADR-098), `console_fleet_wake.py`, `console_interrupt_rounds.py`, `console_dispatch_checkpoint.py` (crash recovery).
 
+Console skill discovery (`UI/Console_Modules/skill.py`) prepares cold trust with its existing App worker, then recaptures the current stock source before reading context. The original decorated `SkillsScopeService.get_context(mode="local")` runs through `run_preparation_read`, including local-content admission, policy enforcement and catalog/trust checks. Runtime preparation-read tracking retains the physical call through cancellation and shutdown; source and view attachment checks gate publication afterward. Custom context, catalog, policy, disabled-builtins and trust-status callbacks retain the direct path. This changes scheduling only: no catalog cache, permission verdict reuse, or display proof is used as execution authority (ADR-126/230/231; TASK-35590).
+
+Cold context and cost estimates share tokenizer preparation with `ConsoleReadinessConfigProjection` (TASK-35591). The selected stock model/provider's original custom-tokenizer manager admission and encoding load run as finite, runtime-observed preparation reads, outside the config operation. Display estimates remain unavailable until their own request completes; model, manager, mapping, source and view changes invalidate readiness. Recorded provider usage still supplies Current spend while preparation is unavailable, provided every contributing history row has usage; mixed estimated history stays unavailable rather than reporting a partial total. Fingerprint, cache-break and Next-send estimates wait for readiness, and readiness participates in the settled display-cache key. The original token arithmetic and live action counters are unchanged. Custom callbacks and heuristic custom-tokenizer directory selection retain their direct path; this optimization covers cold stock backends and exact custom mappings, not long-text counting CPU or arbitrary extension callbacks. Backend loading errors remain unavailable and retry on the existing bounded display cadence.
+
+Console attention event callbacks use `ConsoleRuntime.request_console_attention_refresh` (TASK-35592). Stock file-backed unseen-mark queries are coalesced through finite runtime preparation reads with operation-owned connections. Existing read revisions invalidate results after newer refreshes or exact receipt acknowledgements; source, store, runtime and disposal checks gate publication. Visibility, receipt-outcome classification, notifications and projection still run on the caller loop. Explicit `recompute_console_attention` and custom readers retain their synchronous contract; no durable mark or permission cache is added.
+
+Ordinary resume prepares the original active-workspace registry read after successful FULL sync and before restoring runtime answerability (TASK-35593). `prepare_console_workspace_reconciliation` supplies a single-use result to the original synchronous reconciler in that resume stack. Native admission, current registry generation, source/session/view checks and physical retirement remain intact; workspace repair and subsequent resume actions retain their order. Explicit saved-chat resume and custom callbacks keep their original routes. The prepared result is discarded at the end of the stack and is not a reusable display or authority cache.
+
+FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection.warm()` before synchronous rail/control presentation (TASK-35594). This avoids entering native config admission on the UI thread when the display projection expires. The await is outside the workspace build scope and config operation; source/session ownership is checked by the existing projection, and the screen rechecks its attach visit and maintenance state before rendering. Refusal retains whole-FULL replay without declaring attach complete. Direct/custom presentation keeps its original fallback, live actions keep their checks, and cancellation retains the finite native read until physical retirement. No display lifetime is extended and general narrow polling remains Proposed (ADR-231).
+
 Character presentation uses `UI/Console_Modules/character_context.py`. Stock active displays carry the original current-owner closure through the one-second run scope check into the same finite inner batch as idle display; direct/custom actions retain fresh no-argument dispatch. A stock display whose previous exact scope fingerprint names a different open conversation can skip the preliminary change-detection read: the existing stock reader selector must qualify first, and the unchanged refresh still validates fresh pair/groups/pair metadata and current ownership before publication. Missing/invalidated fingerprints, unchanged conversations, forced/direct and custom routes keep their original change detection. The existing two-second display memo, invalidation, source checks and physical callback retirement remain separate contracts (ADR126/230).
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
+
+Console presentation avoids an unused leading inspector/rail build before the
+control pass (TASK-35610). Controls supply their freshly built inspector to the
+existing rail projection; hidden inspector updates and the fresh post-await FULL
+projection remain. Conversation appearance display caching records the last
+successfully queried IDs, including absent rows, under its existing short TTL
+and service identity. New IDs, expiry and writes require another original read;
+failed reads do not renew the cache. Deleted appearances are removed on successful
+refresh. These are disposable icon/color values, never storage or action authority.
+
+An inspector build shares provider/config derivation through the existing synchronous
+memo, discarded when that build ends (TASK-35612). A subsequent build, including
+FULL's post-await projection, starts fresh. Checked-display coordinator contention
+requests the existing repaint retry without entering its body or a nested metadata
+fallback. A qualified expired display also defers to the existing finite checked
+refresh, even when that direct call started the refresh (TASK-35646). The original
+coalesced retry renders only after a fresh check; refused worker submission stays
+retryable. Unknown/custom and unscoped callers retain their native route. If such
+an entry later refuses display, retry waits for physical retirement and cleanup
+errors still propagate. No source, pause, ownership, lifetime or action fence is
+relaxed.
+
+Independent provider-label and readiness builds also open that existing synchronous
+scope (TASK-35613). Each loads current config once, reuses an enclosing scope when
+present, and drops the memo on return or failure. The next independent call reads
+again; config path posture checks and native action admission remain unchanged.
+
+The transcript memory banner shares the controls' existing disposable context
+inputs for qualified stock readers (TASK-35679). Cold preparation hides only
+the banner while message painting continues. Effective-memory publication joins
+the transcript tick gate, so a finite read can repaint an otherwise unchanged
+transcript. The memo key retains reader binding/code/default identities, refusing
+custom results after a stock reader is restored. Custom callbacks keep their
+original synchronous post-gate path and call cadence. Branch-memory validation,
+finite native retirement, freshness deadlines and live action reads are unchanged.
+
+Attach/resume reconciliation launches from a synchronous after-refresh callback
+into the finite `console-attach-reconciliation` view worker (TASK-35614).
+Textual awaits async after-refresh callbacks inside the screen message pump;
+holding that pump through native preparation prevented even draft typing.
+The launcher deduplicates without cancelling an older visit's physical read.
+Existing visit fences, bounded retries, runtime answerability and original
+native-read retirement remain in the reconciler. The group participates in the
+same exact-worker capture and view/App shutdown drain as other finite workers.
+Typing remains session-owned while the reconciliation awaits; Send retains its
+existing Preparing, fresh configuration and admission checks.
+The resume-triggered hook indicator refresh is scheduled after reconciliation,
+avoiding a duplicate read/repaint during the FULL await. Session-change and Send
+refreshes remain independent. A failed attach can retain the previous indicator
+count until reconciliation or explicit Hooks/Send refresh; permission checks still
+read fresh state on the action path.
+
+Explicit return acknowledgement (TASK-35615) captures its original current
+unread token before deciding whether it needs an acknowledgement-only FULL pass.
+An absent visit, refused read or absent token needs no acknowledgement; ordinary
+attachment reconciliation still owns FULL. A real unread token retains the
+existing FULL, after-paint scheduling, current-owner checks and compare-and-clear.
+This avoids queuing a second FULL behind attachment for unsaved/already-read chats.
+
+CSS application retains upstream Textual style resolution. A bounded 1024-entry
+candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
+it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
+theme changes and virtual component styles still pass through upstream matching.
+The static filter (TASK-35611) requires all known type/class/id names in each
+selector alternative, separating its final subject compound from ancestor names.
+Types follow Textual's CSS inheritance, including its opt-out. A rule is rejected
+only if every comma alternative is impossible. Presence alone never establishes
+a match: upstream still checks compound co-location and child/descendant order.
+At the stylesheet matcher seam, a false final pseudo-state is rejected using
+Textual's live `Selector.check(subject)` before its ancestor scan (TASK-35613).
+Candidates remain present for refresh-flag computation; successful prechecks still
+delegate the full match. No pseudo-state result is cached, and DOM query matching
+is unchanged. Upstream-comparison tests restore both application and matcher seams.
+Composer Send/Stop class changes use Textual's native `update_classes` batch,
+avoiding intermediate style refreshes while preserving unrelated classes and the
+final disabled, tooltip, queue and setup states (TASK-35614).
 
 ## Screen layout
 

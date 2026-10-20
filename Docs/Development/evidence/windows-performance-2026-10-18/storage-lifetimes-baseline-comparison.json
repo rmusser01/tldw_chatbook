@@ -1,0 +1,112 @@
+{
+  "baseline_revision": "579de70851ca4c655947f9962671be774296c80f",
+  "candidate": {
+    "failed": 12,
+    "passed": 51,
+    "seconds": 62.99,
+    "failures": [
+      "Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[pending]",
+      "Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[alias]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[EventStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[SyncStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_constructor_close_cannot_retire_admission_before_constructor_returns",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_ordinary_factory_exception_retains_a_real_native_handle",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_cancels_actual_pending_native_acquisition",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[authority]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[startup]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[EventStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[SyncStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_transaction_rolls_back_and_closes_native_file[EventStateRepository]"
+    ]
+  },
+  "baseline": {
+    "failed": 11,
+    "passed": 52,
+    "seconds": 69.84,
+    "failures": [
+      "Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[alias]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[EventStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[SyncStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_constructor_close_cannot_retire_admission_before_constructor_returns",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_ordinary_factory_exception_retains_a_real_native_handle",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_cancels_actual_pending_native_acquisition",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[authority]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[startup]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[EventStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[SyncStateRepository]",
+      "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_transaction_rolls_back_and_closes_native_file[EventStateRepository]"
+    ]
+  },
+  "common_failures": [
+    "Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[alias]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[EventStateRepository]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[SyncStateRepository]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_constructor_close_cannot_retire_admission_before_constructor_returns",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_ordinary_factory_exception_retains_a_real_native_handle",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_cancels_actual_pending_native_acquisition",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[authority]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[startup]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[EventStateRepository]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[SyncStateRepository]",
+    "Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_transaction_rolls_back_and_closes_native_file[EventStateRepository]"
+  ],
+  "candidate_only": [
+    "Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[pending]"
+  ],
+  "baseline_only": [],
+  "mechanism": "Evidence storage_baseline_tests.py (originally temporary storage_lifetime_baseline_audit.py outside tracked product) installed storage_baseline.py meta-path finder before pytest/fixture imports; subprocess.Popen diagnostic wrapper prepended the same finder installation to Python -c child scripts containing tldw_chatbook before their first product import. Loader asserted original 0.01 constant and wrote PID/source SHA256 receipts. No native guards or storage ownership checks changed.",
+  "harness": "Docs/Development/evidence/windows-performance-2026-10-18/storage_baseline_tests.py",
+  "baseline_module_sha256": "1ea88d2c2836356f66a2ef3a1cd20f8863bfc00b79dad35bc29079ef95c8f719",
+  "pending_isolated": {
+    "candidate_passes": 2,
+    "baseline_passes": 2,
+    "observations": [
+      {
+        "baseline": false,
+        "elapsed_ms": 62.000000005355105,
+        "pending": true,
+        "initializing_waits": []
+      },
+      {
+        "baseline": true,
+        "elapsed_ms": 78.00000000861473,
+        "pending": true,
+        "initializing_waits": []
+      },
+      {
+        "baseline": false,
+        "elapsed_ms": 61.99999999080319,
+        "pending": true,
+        "initializing_waits": []
+      },
+      {
+        "baseline": true,
+        "elapsed_ms": 78.00000000861473,
+        "pending": true,
+        "initializing_waits": []
+      }
+    ],
+    "diagnostic": "Temporary pytest plugin observed actual registry JSON after original 10ms remap timeout and profiled original Condition.wait from original _Acquisition.initializing; no native guards changed. All four passed with durable pending present and no initialization wait invocation. Pre-publication timeout is source-supported explanation for original mismatch, not directly captured in these four runs."
+  },
+  "causal_findings": [
+    "Schema fixtures observe _get_connection, but EventStateRepository and SyncStateRepository schema initialization now uses _open_connection.",
+    "EventStateRepository intentionally retains per-thread connections; transaction fixtures expect immediate native connection closure. Subsequent drain failures may inherit leaked owners when earlier fixture assertions skip repository.close; contamination is an inference, not separately isolated.",
+    "Two native handle fixtures hit Windows select non-socket error 10038 on both candidate and baseline.",
+    "Alias fixture requires symlink privilege; Windows error 1314 reproduced on candidate and baseline.",
+    "Pending fixture used 10ms wall-clock timeout without witnessing durable publication. Admission.remap can time out acquiring registry before pending is written; isolated executions never entered modified initializer wait."
+  ],
+  "original_temporary_harness": "C:/Users/GDesktop-1/.codex/visualizations/2026/10/19/01a154d9-9d8a-7d93-a807-2abd02231fba/storage_lifetime_baseline_audit.py",
+  "pending_repaired": {
+    "candidate": {
+      "passed": 1,
+      "seconds": 2.57,
+      "log": "storage-pending-repaired-candidate.log"
+    },
+    "baseline": {
+      "passed": 1,
+      "seconds": 2.64,
+      "log": "storage-pending-repaired-baseline.log"
+    },
+    "fixture": "Original Admission._write completes before setting public remap cancellation Event. Five-second guard deadline, original writer restored in finally, original guarded registry read confirms durable pending before unchanged config-read refusal."
+  }
+}

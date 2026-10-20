@@ -91,20 +91,23 @@ def _enrollment(authority: Admission, *, session=None, names=()):
 
 def _require_settled_ancestry(root: Path) -> None:
     """Refuse surviving creation intents without writing unchanged ancestors."""
-    for child in (root, *root.parents):
-        if child == Path(root.anchor):
-            break
+    if root == Path(root.anchor):
+        return
+
+    def require_settled(parent: int) -> None:
         try:
-            with pinned_directory(child.parent) as parent:
-                try:
-                    os.stat(
-                        _DIRECTORY_CREATION_INTENT, dir_fd=parent, follow_symlinks=False
-                    )
-                except FileNotFoundError:
-                    continue
-                raise RecoveryRequired("bootstrap_creation_unsettled")
+            os.stat(_DIRECTORY_CREATION_INTENT, dir_fd=parent, follow_symlinks=False)
         except FileNotFoundError:
-            continue  # A missing parent has not yet been created.
+            return
+        raise RecoveryRequired("bootstrap_creation_unsettled")
+
+    try:
+        # Check every existing ancestor in one nofollow walk, rather than
+        # repeatedly reopening the entire chain for each successive parent.
+        with pinned_directory(root.parent, _visit=require_settled):
+            pass
+    except FileNotFoundError:
+        pass  # Existing ancestors were checked before a missing descendant.
 
 
 def _ensure(root: Path) -> None:

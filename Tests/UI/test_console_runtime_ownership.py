@@ -1510,6 +1510,8 @@ async def test_persistent_modal_mount_failure_exhausts_until_session_rederivatio
 
 
 def _attach_reconciliation_screen(sync, *, start=None, resume_pending=False):
+    from contextlib import nullcontext
+
     scheduled: list[tuple[float, object]] = []
     # TASK-32873: reconciliation now also reaches the runtime's
     # chat_controller (screen._console_chat_controller property); give the
@@ -1536,6 +1538,12 @@ def _attach_reconciliation_screen(sync, *, start=None, resume_pending=False):
     screen._sync_native_console_chat_ui = sync
     screen._console_runtime = lambda: runtime
     screen._start_console_view_after_reconciliation = start or (lambda: None)
+    screen._workspace = SimpleNamespace(
+        prepare_console_workspace_reconciliation=nullcontext,
+    )
+    # These isolated phase/retry tests await the body directly. Mounted tests
+    # cover the real synchronous launcher and its managed worker custody.
+    screen._start_console_attach_reconciliation = screen._reconcile_console_after_attach
     screen.set_timer = lambda delay, callback: scheduled.append((delay, callback))
     return screen, runtime, scheduled
 

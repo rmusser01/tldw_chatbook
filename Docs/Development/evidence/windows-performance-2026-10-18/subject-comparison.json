@@ -1,0 +1,164 @@
+{
+  "control1": {
+    "input_ms": [
+      1682.3699999949895,
+      587.7464000077453,
+      884.2641999945045,
+      553.614699980244,
+      721.3769000081811,
+      565.263500000583
+    ],
+    "median_input_ms": 654.5616500079632,
+    "worst_input_ms": 1682.3699999949895,
+    "median_attach_ms": 663.8951000059023,
+    "median_max_heartbeat_ms": 117.86690000735689,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 14,
+      "_check_subject_pseudo_classes": 0,
+      "_config_file_posture": 11,
+      "_build_console_inspector_state": 6,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "after1": {
+    "input_ms": [
+      1567.2123999975156,
+      703.1032999802846,
+      717.5241000077222,
+      610.6603000080213,
+      600.2413000096567,
+      649.5783000136726
+    ],
+    "median_input_ms": 676.3407999969786,
+    "worst_input_ms": 1567.2123999975156,
+    "median_attach_ms": 681.5040999936173,
+    "median_max_heartbeat_ms": 90.7980000047246,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 3,
+      "_check_subject_pseudo_classes": 5,
+      "_config_file_posture": 5,
+      "_build_console_inspector_state": 7,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "after2": {
+    "input_ms": [
+      1277.0950999984052,
+      532.8841999871656,
+      616.459400014719,
+      669.532200001413,
+      672.6136000070255,
+      815.4393000004347
+    ],
+    "median_input_ms": 671.0729000042193,
+    "worst_input_ms": 1277.0950999984052,
+    "median_attach_ms": 673.4324999997625,
+    "median_max_heartbeat_ms": 98.11349998926744,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 7,
+      "_check_subject_pseudo_classes": 7,
+      "_config_file_posture": 12,
+      "_build_console_inspector_state": 6,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "control2": {
+    "input_ms": [
+      1481.9182000064757,
+      952.2052999818698,
+      592.6600999955554,
+      777.8175999992527,
+      516.2676000036299,
+      414.34049999224953
+    ],
+    "median_input_ms": 685.238849997404,
+    "worst_input_ms": 1481.9182000064757,
+    "median_attach_ms": 832.9907000006642,
+    "median_max_heartbeat_ms": 139.80964999063872,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 6,
+      "_check_subject_pseudo_classes": 0,
+      "_config_file_posture": 10,
+      "_build_console_inspector_state": 5,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "final": {
+    "input_ms": [
+      2285.6028999958653,
+      1102.0912999811117,
+      841.1333999829367,
+      538.4423999930732,
+      930.5761999858078,
+      693.5841999948025
+    ],
+    "median_input_ms": 885.8547999843722,
+    "worst_input_ms": 2285.6028999958653,
+    "median_attach_ms": 1079.2405499960296,
+    "median_max_heartbeat_ms": 143.81320000393316,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 6,
+      "_check_subject_pseudo_classes": 5,
+      "_config_file_posture": 13,
+      "_build_console_inspector_state": 12,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 3
+    }
+  },
+  "final-control": {
+    "input_ms": [
+      1471.6191999905277,
+      947.6104000059422,
+      201.484299992444,
+      871.6447000042535,
+      217.74030002416112,
+      988.3479999843985
+    ],
+    "median_input_ms": 909.6275500050979,
+    "worst_input_ms": 1471.6191999905277,
+    "median_attach_ms": 970.7556500070496,
+    "median_max_heartbeat_ms": 237.5912999996217,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 13,
+      "_check_subject_pseudo_classes": 0,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 2,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  }
+}

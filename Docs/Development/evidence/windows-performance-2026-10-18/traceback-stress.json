@@ -1,0 +1,41 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "runs": [
+    {
+      "mode": "timer",
+      "repeat": 0,
+      "exit_code": 0,
+      "log_bytes": 494134
+    },
+    {
+      "mode": "synchronous",
+      "repeat": 0,
+      "exit_code": 0,
+      "log_bytes": 119539
+    },
+    {
+      "mode": "timer",
+      "repeat": 1,
+      "exit_code": 0,
+      "log_bytes": 510094
+    },
+    {
+      "mode": "synchronous",
+      "repeat": 1,
+      "exit_code": 0,
+      "log_bytes": 115577
+    },
+    {
+      "mode": "timer",
+      "repeat": 2,
+      "exit_code": 0,
+      "log_bytes": 521801
+    },
+    {
+      "mode": "synchronous",
+      "repeat": 2,
+      "exit_code": 0,
+      "log_bytes": 140155
+    }
+  ]
+}

@@ -1650,3 +1650,24 @@ That single execution scope still freshly admits every actual source before the
 run body starts; it avoids re-admitting the same profile/config/database sources
 in a nested scope. Qualification never imports or calls an optional source before
 admission. Missing or custom source objects keep the admitted global fallback.
+
+### TASK-35595 — Check creation intents during one native ancestry walk (2026-10-19)
+
+Same-process initialization waits use the existing owner/pause notifications;
+they do not poll native path checks while the owner is unchanged. Every admission
+still validates its original source, path, provenance and native scope.
+
+The native `pinned_directory` traversal may invoke an internal visitor on each
+directory after its original owner/mode validation, including the anchor and final
+directory. The visitor borrows the descriptor only during that call: it must not
+close, retain or grant authority from it. Nofollow opens, current native metadata
+and cleanup remain the traversal's responsibility; visitor errors propagate.
+Creation-intent verification uses this visitor for the bootstrap root's parent,
+checking the same intent filename at every existing ancestor. Missing descendants
+end the walk only after the existing ancestors have been checked. No filesystem
+decision or descriptor survives the traversal.
+
+This replaces repeated root-to-parent traversals, whose native opens grow
+quadratically with path depth. Reject skipping ancestor intent checks, caching a
+settled verdict, or bypassing admission when a process already owns a live lease:
+surviving creation intent and changed path/security evidence must still refuse.
