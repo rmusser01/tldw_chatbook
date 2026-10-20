@@ -436,6 +436,53 @@ def test_cancel_while_queued_leaves_the_running_download_alone(tmp_path: Path) -
     assert second_ref not in _installed_refs(core)
 
 
+def test_cancelling_the_running_download_lets_the_queued_one_start(
+    tmp_path: Path,
+) -> None:
+    """The holder's cancel releases the session, and the waiter goes next.
+
+    The holder's stage is removed before the lease is released, so the
+    queued install never sees (or reconciles) the cancelled partial.
+    """
+    gate = threading.Event()
+    with FixtureArtifactServer() as srv:
+        (first_ref, first_service, first_consent), (
+            second_ref,
+            second_service,
+            second_consent,
+        ), catalog, core = _two_artifacts(tmp_path, srv, gate)
+        holder = _download_control("OmniVoice voice model", wait_if_busy=True)
+        first = _ThreadedProvision(
+            first_service, first_ref, first_consent, catalog, control=holder
+        )
+        second = _ThreadedProvision(
+            second_service,
+            second_ref,
+            second_consent,
+            catalog,
+            control=_download_control("Parakeet v2 (English, INT8)", wait_if_busy=True),
+        )
+        try:
+            first.start().wait_fetching()
+            second.start().wait_queued()
+            holder.cancel()
+            first.join(timeout=3.0)
+            second.join()
+        finally:
+            gate.set()
+
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionCancelledError
+
+    assert isinstance(first.error, AcquisitionCancelledError), first.error
+    assert second.error is None, second.error
+    installed = _installed_refs(core)
+    assert second_ref in installed
+    assert first_ref not in installed
+    assert not any(core.staging_path.glob("download-*"))
+    phases = [event.phase for event in second.events]
+    assert phases.index("queued") < phases.index("fetch")
+
+
 # ---------------------------------------------------------------------------
 # [voice-speech-11] A large file resumes from a mid-file checkpoint.
 # ---------------------------------------------------------------------------
