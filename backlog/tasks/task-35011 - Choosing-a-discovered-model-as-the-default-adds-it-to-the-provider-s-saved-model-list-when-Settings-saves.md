@@ -1,11 +1,11 @@
 ---
 id: TASK-35011
 title: Choosing a discovered model as the default adds it to the provider's saved model list when Settings saves
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-14 17:10
-updated_date: 2026-10-20 09:26
+updated_date: 2026-10-20 09:31
 labels:
 - settings
 - providers
@@ -130,4 +130,6 @@ Against the pre-fix code (the branch head cc3358bd88, in a scratch worktree) 14 
 - **Checks:** the new file 19/19; the size ratchets serially only the 7 base-red rows; Tests/CI 1015 passed, 1 skipped; preflight passes under a scratch HOME; ruff adds no finding on the touched .py files, and ruff format is clean on the new files.
 
 **Files.** tldw_chatbook/UI/Settings_Modules/saved_model_list.py (new), scripts/markup_interpolation_census.tsv (one stale row deleted), tldw_chatbook/UI/Settings_Modules/providers_models_card.py, tldw_chatbook/UI/Screens/settings_screen.py, tldw_chatbook/UI/Screens/provider_model_resolution.py, tldw_chatbook/Chat/provider_setup_persistence.py, tldw_chatbook/Backup_Recovery/unsaved_editors.py; Tests/UI/test_settings_pick_joins_saved_list.py (new) and the rewritten test files above; Tests/Architecture/test_module_size_ratchet.py; scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py; Docs/User_Guide/settings.md; backlog/decisions/002-openai-compatible-model-discovery.md.
+
+**Review round 4** (range ebb4b25972..c76b8d1aa7): clean, no findings. The review over cc3358bd88..c76b8d1aa7 took four rounds (round 1 found the sample-id regression and the shard-2 lane time; rounds 2-3 found only Minors). Follow-ups filed for what is not this task's: TASK-35712 (Settings accepts a model id of any length that the combined save refuses over 120 characters, and blames config access) and, found on the way, TASK-35711 and TASK-35713 (Console test flakes on dev).
 <!-- SECTION:NOTES:END -->
