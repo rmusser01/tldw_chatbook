@@ -725,3 +725,7 @@ Tests/UI/test_settings_action_availability.py
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_refresh_preserves_unrelated_draft_and_delivers_next_edit
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_keyboard_save_revert_and_category_return_use_real_writer[size0]
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_keyboard_save_revert_and_category_return_use_real_writer[size1]
+# TASK-35836: a Console mount never waits for a config rebuild started at on_mount, the view start or the first roleplay refresh (about 4.5 s each).
+Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[mount]
+Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[view-start]
+Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]

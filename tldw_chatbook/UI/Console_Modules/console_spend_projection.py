@@ -867,6 +867,38 @@ def _native_config_locks_held() -> bool:
     return config._settings_rebuild_lock()._is_owned() and config._config_file_lock()._is_owned()
 
 
+def retry_after_config_rebuild(function: Callable) -> Callable:
+    """Retry a screen refresh shortly while a config rebuild holds a cold cache.
+
+    TASK-35836: refreshes the Console mount schedules (the identity surfaces a
+    roleplay refresh syncs, the width rail rules) read config live on the UI
+    loop. While ``config_read_would_wait()`` the call runs 0.2 s later instead,
+    once per refresh; the latest call's arguments win.
+    """
+
+    @wraps(function)
+    def wrapped(screen, *args, **kwargs):
+        from tldw_chatbook.config import config_read_would_wait
+
+        if not config_read_would_wait():
+            return function(screen, *args, **kwargs)
+        pending = getattr(screen, "_console_config_retries", None)
+        if pending is None:
+            pending = screen._console_config_retries = {}
+        first = function.__name__ not in pending
+        pending[function.__name__] = (args, kwargs)
+        if first:
+
+            def retry() -> None:
+                retry_args, retry_kwargs = pending.pop(function.__name__)
+                wrapped(screen, *retry_args, **retry_kwargs)
+
+            screen.set_timer(0.2, retry)
+        return None
+
+    return wrapped
+
+
 def console_readiness_presentation(function: Callable) -> Callable:
     """Limit disposable configuration data to named synchronous UI refreshes."""
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-35836
 title: Console mount and resume refreshes on the UI loop wait out a config rebuild
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:16
 dependencies:
 - TASK-35645
@@ -10,6 +10,7 @@ labels:
 - performance
 - flaky
 priority: medium
+updated_date: 2026-10-20 23:34
 ---
 
 ## Description
@@ -24,6 +25,16 @@ While a config rebuild holds the config locks, a Console refresh that runs at mo
 - [ ] #2 No listed refresh waits for a config rebuild, shown by a test that holds the rebuild lock from the start of the Console mount
 - [ ] #3 Action reads stay live, as TASK-35645 decided
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run the TASK-35645 recording-lock diagnostic with its window opened at the start of ChatScreen.on_mount and held until the screen settles, then again across a real screen resume (push and pop a screen), listing every UI-thread config wait by site.
+2. Record each refresh the mount and resume schedule with whether it read config on the UI loop.
+3. Move each waiting read onto owned display data or a deferral, as TASK-35645 did; action reads stay live.
+4. Pin it: a test that holds the rebuild lock from the start of on_mount and across a resume, failing on dev and when each fix is reverted.
+5. Re-run the TASK-35645 pin without its skill-discovery settle, and drop that wait if it passes.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

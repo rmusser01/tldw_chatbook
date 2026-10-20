@@ -450,7 +450,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # reserves guide six further whole-file pairs; S1's 36-node block and the
 # nine new entries stay in place at the 399-entry boundary. Coverage,
 # shard count, timeout and the inherited floor are preserved.
-MINIMUM_FILES = 408
+# TASK-35836 appends its mount pin as three node ids (one per rebuild start),
+# landing one case each on jobs 9, 10 and 1: 411.
+MINIMUM_FILES = 411
 
 
 def read_census(path: Path) -> list[str]:
