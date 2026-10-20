@@ -1228,7 +1228,7 @@ MODEL_DISCOVERY_IDLE_COPY = (
 )
 #: Whole-S1 review: the file loaded, but the caches the lists come from did not.
 RELOAD_LISTS_NOT_REFRESHED = (
-    "Config reload: loaded, but the saved model lists were not refreshed; "
+    "Config reload: loaded, but the saved model lists may not have been refreshed; "
     "reload again. Details are in Logs (F3)."
 )
 MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY = (

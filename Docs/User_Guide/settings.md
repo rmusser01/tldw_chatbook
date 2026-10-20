@@ -293,8 +293,8 @@ moment; to make one of them the default, choose it in Model. A model added to th
 adds one, an **Advanced Config** save or a **Config reload**, Model, the **Saved
 model list** and Switch model show the file's lists without a restart. If a
 **Config reload** reads the file but cannot refresh what the lists are read
-from, its line says "Config reload: loaded, but the saved model lists were not
-refreshed; reload again." and the lists stay as they were.
+from, its line says "Config reload: loaded, but the saved model lists may not have
+been refreshed; reload again." and the lists may still be the old ones.
 **Add to model list** reports once, on the line above **Discover models**: "Added gpt-4.1 and o3-mini to OpenAI's model list.",
 "The selected models are already in OpenAI's model list. To make one the default, choose it in Default model." when none was new, or why nothing was
 added ("Select discovered models to add." with none checked). If Model is empty, the first newly

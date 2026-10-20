@@ -311,7 +311,7 @@ async def test_config_reload_reads_an_in_place_edit_into_the_saved_lists(
     edit the config cache did not see; the picker and the Saved model list
     count follow. Whole-S1 review: when that re-read cannot republish the
     caches, the lists are still the old ones, so the reload line says they
-    were not refreshed instead of "loaded" (only the republish is stubbed)."""
+    may not have been refreshed instead of "loaded" (only the republish is stubbed)."""
     from tldw_chatbook import config
     from tldw_chatbook.UI.Screens import settings_screen
 
@@ -356,7 +356,7 @@ async def test_config_reload_reads_an_in_place_edit_into_the_saved_lists(
     assert "2 saved in config" in title, title
     assert loaded.startswith("Config reload: loaded"), loaded
     assert stale.startswith(
-        "Config reload: loaded, but the saved model lists were not refreshed; "
+        "Config reload: loaded, but the saved model lists may not have been refreshed; "
         "reload again. Details are in Logs (F3)."
     ), stale
     assert app.providers_models["Llama_cpp"] == ["None", "m-one", "m-four"]
