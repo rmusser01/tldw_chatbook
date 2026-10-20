@@ -1,7 +1,7 @@
 ---
 id: TASK-35868
 title: Preserve unsaved Watchlists rule fields across refresh and section return
-status: In Progress
+status: Done
 created_date: 2026-10-20 19:25
 labels:
 - watchlists
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-20 21:08
+updated_date: 2026-10-20 21:29
 ---
 
 ## Description
@@ -41,11 +41,11 @@ Reason: No new ADR is expected for a Watchlists-local view-state correction with
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A changed Rules-list refresh preserves unsaved Name, Condition, Threshold, Severity and Enabled values in both New and Edit forms, with the same target rule identity.
-- [ ] #2 A settled focused editable control retains its instance, focus, cursor and selection during list-only refresh; tests establish these preconditions before refreshing.
-- [ ] #3 Switching Rules to another Watchlists section and back restores the unsaved new/edit draft and its original target without an implicit save.
-- [ ] #4 Explicit Save and Cancel retire only the appropriate draft; validation failure retains it, and existing condition-guidance, backend eligibility and mutation behavior remain intact.
-- [ ] #5 Mounted tests type real changes before both triggers, cover New/Edit and Save/Cancel, and retain the completed visibility/seeding/guidance regressions.
+- [x] #1 A changed Rules-list refresh preserves unsaved Name, Condition, Threshold, Severity and Enabled values in both New and Edit forms, with the same target rule identity.
+- [x] #2 A settled focused editable control retains its instance, focus, cursor and selection during list-only refresh; tests establish these preconditions before refreshing.
+- [x] #3 Switching Rules to another Watchlists section and back restores the unsaved new/edit draft and its original target without an implicit save.
+- [x] #4 Explicit Save and Cancel retire only the appropriate draft; validation failure retains it, and existing condition-guidance, backend eligibility and mutation behavior remain intact.
+- [x] #5 Mounted tests type real changes before both triggers, cover New/Edit and Save/Cancel, and retain the completed visibility/seeding/guidance regressions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,3 +63,15 @@ Reason: Retain raw Rule draft as ephemeral Watchlists-local view state under exi
 
 Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 4).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Rules-list refresh now updates table presentation without reconstructing form controls. Raw Name, Condition, Threshold, Severity and Enabled values travel through the existing pane/screen visibility-state message and remain ephemeral at the existing owner. Section return restores New/Edit drafts; original editing identity stays independent of browsed selection. Save/Cancel retire the appropriate state and field-validation failure keeps it. Updated RulesPane, four narrow Watchlists screen methods, mounted regressions, architecture docs, exact size ratchet and the native Input replacement-key lesson.
+
+Evidence: commit 3e2327eb3c. RED demonstrated New/Edit value loss and original-target drift after real typed preconditions. Final GREEN: 8 new keyboard/private-profile cases, 12 existing Rules cases, 2 exact size/slack guards, 1 import guard and 6 design checks pass. Pane/test Ruff and format, scoped screen comparison, UTF-8 compile/396 unchanged method ASTs and whitespace pass. Watchlists budget tightened from 14,324 (14,301 actual before fix) to exact 14,283; Settings row remains 35,732.
+
+Superpowers independent review: spec compliant, quality Approved, no introduced Critical/Important issue. Limits retained: 5 legacy scoped/destination tests stop before pane behavior at unchanged profile bootstrap; 1 Windows-only unchanged design regex mismatches path separators after correctly detecting its injected hex. Existing screen 3 E721 and 2 formatter hunks reproduce at BASE outside changed methods. Inherited warnings remain visible, no filters or broad migration. Mounted production-screen keyboard journeys cover both section paths; no native terminal UAT or full suite.
+
+ADR required: no; existing backlog/decisions/033-application-session-state-ownership.md, 042-watchlists-reader-first-ia.md and 161-component-pattern-library.md apply. Backend writer/eligibility is unchanged. Plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md. Added an incident lesson: Edit precondition exposed Ctrl+A moving Home; explicit replacement keys establish the typed value before testing preservation.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

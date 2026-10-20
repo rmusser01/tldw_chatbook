@@ -1,7 +1,7 @@
 ---
 id: TASK-35869
 title: Make Evals grid footer and F1 help follow active keyboard scope
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:25
 labels:
 - evals
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 21:29
 ---
 
 ## Description
@@ -44,3 +47,19 @@ Reason: No new ADR is expected for truthful presentation of existing widget-owne
 - [ ] #4 Availability/help projection adds no configuration or database reads to key dispatch or ordinary focus changes and does not duplicate category/action lists.
 - [ ] #5 A mounted Evals test exercises real run-group selection, F6/Tab focus changes, command dispatch and compact/wide footer/F1 behavior; existing base-help tests remain valid.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/152-roleplay-mode-keys-single-letters-nav-layer-reserved.md
+Reason: Project truthful scope for existing widget-owned Evals actions, preserving global keys and ownership.
+
+- Add mounted actual-Evals tests selecting a real run group, moving focus via F6/Tab among grid/rail/inspector/text controls and exercising the real grid actions. Cover compact/wide footer/F1 and action dispatch/typing.
+- Record expected stale hints/missing-help failures on original code.
+- Derive supported grid hints from mounted/focused/readiness context; cache only existing selection classification if needed to avoid focus-time DB calls. Project the same facts into F1 with honest scope requirements, preserving widget binding ownership.
+- Run new tests and affected existing Evals help/grid/export checks plus relevant static/performance guards; record exact evidence.
+- Update docs, self-review and commit owned files; no global registry or new shell binding.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 5).
+<!-- SECTION:PLAN:END -->

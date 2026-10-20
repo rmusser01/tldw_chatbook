@@ -81,11 +81,11 @@ ADR required: no; Settings ADR-033 and ADR-161.
 **Files:** modify `tldw_chatbook/UI/Watchlists_Modules/rules_pane.py`, `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`; create `Tests/UI/test_watchlists_rule_drafts.py`; update Watchlists architecture documentation.
 **Interfaces:** retain current pane-to-screen form-state ownership/message flow and save/cancel mutation APIs; draft remains ephemeral view state, never a new persistent owner.
 ADR required: no; exact `033-application-session-state-ownership.md`, ADR-042 and ADR-161.
-- [ ] Add New/Edit tests that actually type changed fields before a changed Rules snapshot; establish settled focus/cursor/selection first. Include raw invalid threshold text and original target identity. Add a mounted screen Rules -> another section -> Rules return plus Save/Cancel/validation cases.
-- [ ] Record expected value/identity/section-return failures on original code.
-- [ ] Update only list presentation on list changes; retain raw form draft at the existing narrow owner and carry it across section reconstruction. Preserve condition guidance and selection/initial-seeding contracts.
-- [ ] Run new tests plus existing Rules pane/scoped-rebuild/seeding tests and measured size/import/static guards; record exact evidence.
-- [ ] Update docs, self-review and commit owned files; no storage/sync policy or broad workbench rewrite.
+- [x] Add New/Edit tests that actually type changed fields before a changed Rules snapshot; establish settled focus/cursor/selection first. Include raw invalid threshold text and original target identity. Add a mounted screen Rules -> another section -> Rules return plus Save/Cancel/validation cases.
+- [x] Record expected value/identity/section-return failures on original code.
+- [x] Update only list presentation on list changes; retain raw form draft at the existing narrow owner and carry it across section reconstruction. Preserve condition guidance and selection/initial-seeding contracts.
+- [x] Run new tests plus existing Rules pane/scoped-rebuild/seeding tests and measured size/import/static guards; record exact evidence.
+- [x] Update docs, self-review and commit owned files; no storage/sync policy or broad workbench rewrite.
 
 ### Task 5: TASK-35869 - Evals action scope
 
