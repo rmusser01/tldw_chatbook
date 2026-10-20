@@ -432,6 +432,15 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
         assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
 
 
+#: Bound for the poll pilot's waits after its press. Under ``taskpolicy -b`` on
+#: a quiet host the send reached the stalled start in about 4 s. With a 5 s
+#: precapture delay on a host at load average ~100 it took up to ~30 s, and
+#: one poll tick (a full paint) took several seconds, so bounds of 30 s and
+#: 20 s failed there, with the shared helper before and after TASK-35660's
+#: change alike.
+_LOADED_HOST_WAIT_S = 60.0
+
+
 @pytest.mark.asyncio
 async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
     monkeypatch,
@@ -454,9 +463,9 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
     out with no send begun (UI Fast Lane, TASK-35660). The shared helper now
     renders before it returns (TASK-34789), and the press asserts Send is
     enabled so a dropped press fails here, naming Send's blocked reason.
-    Under ``taskpolicy -b`` the send reached the stalled start in about 4 s,
-    so that wait's bound is generous and its failure names the stage the send
-    reached.
+    Both waits after the press are bounded by ``_LOADED_HOST_WAIT_S`` and end
+    as soon as their condition holds, and the first names the stage the send
+    reached if it times out.
     """
     host = _console_app(FailThenRecoverGateway())
 
@@ -494,12 +503,13 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
         assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
         send.press()
         try:
-            await asyncio.wait_for(entered.wait(), 30)
+            await asyncio.wait_for(entered.wait(), _LOADED_HOST_WAIT_S)
         except TimeoutError:
             raise AssertionError(_unstarted_send_stage(console)) from None
         assert console._console_runtime().has_custodied_turns()
         held = len(decisions)
-        deadline = time.monotonic() + 20  # three poll decisions while it is held
+        # Three poll decisions while the start is held.
+        deadline = time.monotonic() + _LOADED_HOST_WAIT_S
         while (
             len(decisions) < held + 3
             and console._console_transcript_sync_timer is not None
