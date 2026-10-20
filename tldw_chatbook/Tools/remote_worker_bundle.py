@@ -739,10 +739,10 @@ more directories, for the same reason: the effective config directory
 ``config.toml``'s own ``.bak``/``.tmp`` backup sidecars plus
 ``runtime_policy.json``/``ui_state.toml``, none of which is enumerated by
 name here either); the ChromaDB vector-store persist directory
-(``RAG_Search.simplified.config.default_chroma_persist_directory()``,
+(``RAG_Search.storage_paths.default_chroma_persist_directory()``,
 which holds ``chroma.sqlite3`` -- plaintext chunks of the same
 conversations and notes ``ChaChaNotes.db`` protects); and the RAG-profile
-store (``RAG_Search.config_profiles.default_rag_profiles_dir()``, plaintext
+store (``RAG_Search.storage_paths.default_rag_profiles_dir()``, plaintext
 per-profile RAG/embedding-provider config). Existing DIRECTORIES nested
 directly under any of these four are excluded from the rule and stay fully
 reachable -- most importantly the default file-tool sandbox root,
@@ -978,19 +978,18 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
           isn't: an enumeration permanently trails whatever gets written
           there next.
         * The ChromaDB vector-store persist directory
-          (``RAG_Search.simplified.config.default_chroma_persist_directory()``),
+          (``RAG_Search.storage_paths.default_chroma_persist_directory()``),
           which holds ``chroma.sqlite3`` -- plaintext chunks of the same
           conversations and notes ``ChaChaNotes.db`` protects.
         * The RAG-profile store directory
-          (``RAG_Search.config_profiles.default_rag_profiles_dir()``),
+          (``RAG_Search.storage_paths.default_rag_profiles_dir()``),
           plaintext per-profile RAG/embedding-provider config.
 
         An accessor that raises is skipped rather than failing the whole
         check, as elsewhere in this module.
     """
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
-    raise ImportError("'..RAG_Search.config_profiles' (importing default_rag_profiles_dir) is not available inside the remote worker bundle")
-    raise ImportError("'..RAG_Search.simplified.config' (importing default_chroma_persist_directory) is not available inside the remote worker bundle")
+    raise ImportError("'..RAG_Search.storage_paths' (importing default_chroma_persist_directory, default_rag_profiles_dir) is not available inside the remote worker bundle")
     resolved: list[Path] = []
     try:
         resolved.append(_config.get_user_data_dir())
@@ -1139,6 +1138,7 @@ def resolve_sensitive_context() -> SensitivePathContext:
     user_data_dir = _resolved(str(raw_user_dir)) if raw_user_dir is not None else None
     dynamic_dirs = (skill_trust_dir,) if skill_trust_dir is not None else ()
     return SensitivePathContext(files=tuple((p for p in (_resolved(str(raw)) for raw in single_files) if p is not None)), dirs=tuple((p for p in (_resolved(str(entry)) for entry in _SENSITIVE_DIRS + dynamic_dirs) if p is not None)), db_paths=tuple((p for p in (_resolved(str(raw)) for raw in db_paths) if p is not None)), user_data_dir=user_data_dir, direct_child_denied_dirs=tuple((p for p in (_resolved(str(raw)) for raw in containers) if p is not None)))
+_RESOLVE_SENSITIVE_CONTEXT_ORIGINAL = (resolve_sensitive_context, resolve_sensitive_context.__code__, resolve_sensitive_context.__defaults__)
 
 def merge_sensitive_context(base: SensitivePathContext, *, extra_files: Iterable[Path]=(), extra_dirs: Iterable[Path]=()) -> SensitivePathContext:
     """Fold per-workspace user exclusions into a per-call context snapshot.
@@ -1312,6 +1312,7 @@ def is_sensitive_path(candidate: Path, context: SensitivePathContext | None=None
         if _same_path(resolved.parent, denied_parent) and (not resolved.is_dir()):
             return True
     return False
+_IS_SENSITIVE_PATH_ORIGINAL = (is_sensitive_path, is_sensitive_path.__code__, is_sensitive_path.__defaults__)
 
 class SensitiveExclusion(NamedTuple):
     """One denial of :func:`is_sensitive_path`, expressed relative to a root.
@@ -5694,4 +5695,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("9a21d1919a1d84cbd90441422fa795fa9b9046c654dd45509c546026a1e95aa1")
+BUNDLE_SHA256 = _enter_worker_exchange("3bf6793cbf5f5e86822c054b1d52d78ead004f22f39f49c240040b12e5e5b279")

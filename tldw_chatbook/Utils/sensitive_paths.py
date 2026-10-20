@@ -169,10 +169,10 @@ more directories, for the same reason: the effective config directory
 ``config.toml``'s own ``.bak``/``.tmp`` backup sidecars plus
 ``runtime_policy.json``/``ui_state.toml``, none of which is enumerated by
 name here either); the ChromaDB vector-store persist directory
-(``RAG_Search.simplified.config.default_chroma_persist_directory()``,
+(``RAG_Search.storage_paths.default_chroma_persist_directory()``,
 which holds ``chroma.sqlite3`` -- plaintext chunks of the same
 conversations and notes ``ChaChaNotes.db`` protects); and the RAG-profile
-store (``RAG_Search.config_profiles.default_rag_profiles_dir()``, plaintext
+store (``RAG_Search.storage_paths.default_rag_profiles_dir()``, plaintext
 per-profile RAG/embedding-provider config). Existing DIRECTORIES nested
 directly under any of these four are excluded from the rule and stay fully
 reachable -- most importantly the default file-tool sandbox root,
@@ -524,19 +524,21 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
           isn't: an enumeration permanently trails whatever gets written
           there next.
         * The ChromaDB vector-store persist directory
-          (``RAG_Search.simplified.config.default_chroma_persist_directory()``),
+          (``RAG_Search.storage_paths.default_chroma_persist_directory()``),
           which holds ``chroma.sqlite3`` -- plaintext chunks of the same
           conversations and notes ``ChaChaNotes.db`` protects.
         * The RAG-profile store directory
-          (``RAG_Search.config_profiles.default_rag_profiles_dir()``),
+          (``RAG_Search.storage_paths.default_rag_profiles_dir()``),
           plaintext per-profile RAG/embedding-provider config.
 
         An accessor that raises is skipped rather than failing the whole
         check, as elsewhere in this module.
     """
     from .. import config as _config
-    from ..RAG_Search.config_profiles import default_rag_profiles_dir
-    from ..RAG_Search.simplified.config import default_chroma_persist_directory
+    from ..RAG_Search.storage_paths import (
+        default_chroma_persist_directory,
+        default_rag_profiles_dir,
+    )
 
     resolved: list[Path] = []
 

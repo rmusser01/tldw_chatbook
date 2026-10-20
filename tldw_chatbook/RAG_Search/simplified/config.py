@@ -24,6 +24,11 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 # the vector leg); the RRF constant k does NOT keep the server's 60 -- see
 # `DEFAULT_HYBRID_RRF_K` below.
 from ..fusion import DEFAULT_HYBRID_ALPHA
+from ..storage_paths import (
+    _chroma_directory,
+    _cleaned_path_setting,
+    _read_rag_setting,
+)
 
 
 # Canonical vector store type values used by the selection logic below.
@@ -112,27 +117,8 @@ def _embeddings_rag_available() -> bool:
 
 
 def _explicit_rag_setting(section: str, key: str) -> Optional[Any]:
-    """Read an explicit `[AppRAGSearchConfig.rag.<section>].<key>` user setting.
-
-    Args:
-        section: Subsection name within the rag config (e.g. 'vector_store').
-        key: Setting name within that subsection (e.g. 'type').
-
-    Returns:
-        The configured value, or None when not explicitly set (or on any
-        config read failure).
-    """
-    try:
-        rag_section = get_cli_setting("AppRAGSearchConfig", "rag", {}) or {}
-        if not isinstance(rag_section, dict):
-            return None
-        subsection = rag_section.get(section, {})
-        if not isinstance(subsection, dict):
-            return None
-        return subsection.get(key)
-    except Exception as e:
-        logger.debug(f"Could not read rag.{section}.{key} from user config: {e}")
-        return None
+    """Read explicit RAG settings through this module's live config accessor."""
+    return _read_rag_setting(section, key, get_cli_setting)
 
 
 def _normalized_type_setting(value: Any) -> Optional[str]:
@@ -151,21 +137,6 @@ def _normalized_type_setting(value: Any) -> Optional[str]:
     if not normalized or normalized == VECTOR_STORE_TYPE_AUTO:
         return None
     return normalized
-
-
-def _cleaned_path_setting(value: Any) -> Optional[str]:
-    """Strip an explicit path setting, treating blank values as unset.
-
-    Args:
-        value: Raw setting value from env/config.
-
-    Returns:
-        Stripped path string, or None when unset or whitespace-only.
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def default_vector_store_type() -> str:
@@ -207,18 +178,9 @@ def default_chroma_persist_directory() -> Path:
     Returns:
         Path to the ChromaDB persist directory.
     """
-    explicit = (
-        _cleaned_path_setting(os.getenv("RAG_PERSIST_DIR"))
-        or _cleaned_path_setting(
-            _explicit_rag_setting("vector_store", "persist_directory")
-        )
-        or _cleaned_path_setting(
-            _explicit_rag_setting("chroma", "persist_directory")
-        )  # Legacy location
+    return _chroma_directory(
+        _explicit_rag_setting, get_user_data_dir, _cleaned_path_setting
     )
-    if explicit:
-        return Path(explicit).expanduser()
-    return get_user_data_dir() / "chromadb"
 
 
 def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Path:
