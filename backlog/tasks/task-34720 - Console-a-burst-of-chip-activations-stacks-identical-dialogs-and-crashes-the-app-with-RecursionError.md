@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-10 16:10'
-updated_date: '2026-10-10 18:56'
+updated_date: '2026-10-19 12:40'
 labels:
   - console
   - crash
@@ -26,17 +26,19 @@ priority: high
 **The other dialog chips stack the same way.** The Provider and Model chips (Switch model), System Prompt chip (system prompt editor), Assistant chip (character picker), Scope chip (retrieval scope picker) and Cost chip (Conversation Inspector) also open their dialog once per Enter/Space/click. A burst stacks identical dialogs: live on dev, sixteen keys typed on the focused Model chip needed fifteen Esc presses to get back to the Console. (Whether a longer burst on these chips also reaches the RecursionError was not measured; the stacking is the defect either way.)
 
 **Scope.** The duplicate-dialog guard for every status-strip chip that opens a dialog (TASK-33622.3 AC #5 and its siblings) and the crash it causes. The Sources, Tools and Run chips only reveal the Inspector rail, the Approvals chip only moves focus and the Temporary chip runs an exclusive save worker, so none of them pushes a dialog. Type-to-compose, the bare 'y' Trace key and focus return stay with TASK-33622.3.
+
+**On dev after TASK-35160 (rebased onto 4de437a5c5, 2026-10-19).** The status strip is now one focusable text line of segments: Enter or Space activates the cursored segment, and closing a dialog hands focus back to the line with its cursor still on that segment. The Library chip left the line; its dialog opens from the composer menu's "Library access..." entry. The crash path is unchanged for the segments whose dialog openers had no guard: on 4de437a5c5 a sentence typed on the focused line with the cursor on System prompt stacks 21 system prompt editors, and a burst on System prompt, Assistant, Scope or Cost stacks one dialog per activation. Switch model (Provider and Model segments) gained the same stack check in TASK-33008.3. The acceptance criteria below were re-worded from chips to segments and to Library access requests; the outcomes they require are unchanged.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 However many Library chip activations arrive together, at most one Library access dialog is open at a time
-- [x] #2 Typing a sentence while the Library chip has focus no longer crashes the app
+- [x] #1 However many Library access requests arrive together, at most one Library access dialog is open at a time
+- [x] #2 Typing a sentence while the status line has focus no longer crashes the app
 - [x] #3 Closing the Library access dialog (Cancel, or Esc when clean) returns to the Console, with no second dialog left beneath it
-- [x] #4 Activating the Library chip again after the dialog closes still opens the dialog
-- [x] #5 Pilot tests on the real ChatScreen send a burst of activations and a typed sentence to the focused chip, and fail on the pre-fix code by stacking dialogs
-- [x] #6 However many activations of the Provider, Model, System Prompt, Assistant, Scope or Cost chip arrive together, at most one of that chip's dialogs opens, and the chip opens it again once it closes
-- [x] #7 A parametrized Pilot test on the real ChatScreen covers every dialog-opening status chip and fails on the pre-fix code by stacking dialogs
+- [x] #4 Requesting Library access again after the dialog closes still opens the dialog
+- [x] #5 Pilot tests on the real ChatScreen send a burst of Library access requests and a typed sentence to the focused status line, and fail on the pre-fix code by stacking dialogs
+- [x] #6 However many activations of the Provider, Model, System prompt, Assistant, Scope or Cost segment arrive together, at most one of that segment's dialogs opens, and the segment opens it again once it closes
+- [x] #7 A parametrized Pilot test on the real ChatScreen covers every dialog-opening status-line segment and fails on the pre-fix code by stacking dialogs
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,6 +50,7 @@ priority: high
 4. Guard ConsoleLibraryPolicyController.open_access so it opens only while the Console owns the top of the screen stack.
 5. Extend to every dialog-opening status chip: a parametrized burst test (red on dev), then the same rule checked at each dialog's single push site.
 6. Green tests, compare touched-area test files with dev by test id, preflight, live re-verification (Library and Model chips), rebase onto origin/dev.
+7. Rebase onto dev after TASK-35160 (one status line, Library access in the composer menu): retarget the tests at the status-line segments and the composer-menu route, re-prove them red on dev, re-run the gates and one live check.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -71,5 +74,19 @@ Two unit tests drive these openers with a SimpleNamespace screen (test_console_m
 
 Out of scope, still with TASK-33622.3: typed text landing on the chip instead of the composer, and the bare 'y' Trace key. This task delivers 33622.3's AC #5 and extends it to the sibling chips. Console Buttons (header actions, rail buttons) bind only Enter, so typed text does not press them repeatedly; they were not changed.
 
-Files: tldw_chatbook/UI/Console_Modules/library_policy.py, tldw_chatbook/UI/Console_Modules/wiring.py, tldw_chatbook/UI/Console_Modules/model_switcher.py, tldw_chatbook/UI/Console_Modules/prompts.py, tldw_chatbook/UI/Screens/chat_screen.py, Tests/UI/test_console_library_controls_workflow.py, Tests/UI/test_console_library_policy_controller.py.
+**Rebase onto dev 4de437a5c5 (2026-10-19, about 1,500 commits).** Conflicts, resolved by keeping dev's content plus this branch's: the workflow test's imports (dev had added a module-level bootstrap_profile pytestmark, which replaces this branch's per-test markers); model_switcher.py, where dev's TASK-33008.3 final fix wave had already put the same stack check at the top of `_open_switcher`, which `open_model_switcher` calls (dev's check kept; this branch's copy also called `_console_setup_modal_blocking()`, which would have shut the Get started card's switcher there, so it was dropped and only a comment line remains); prompts.py, where dev made the modal import lazy (the check now sits before it); test_console_model_apply_chips.py, whose fake dev had already given `_owns_console_screen_stack` (dev's taken, so commit 080ee8de89, "two screen fakes", now changes only one). The two original test commits (91d802f2b4, 3332607787) import `ConsoleLibraryChip`, which TASK-35160 removed, so they no longer collect on their own; ed4e6ca3e7 retargets them.
+
+**Re-rebase onto dev ce4aa4a231 (2026-10-19 17:00).** Four new dev commits (private SQLite write-only imports, backlog status hygiene), none touching this branch's files: clean, no conflicts. Commit ids in these notes are the rebased ones.
+
+TASK-35160 changed the surface under this task (see the Description addendum): one focusable status line whose Enter/Space activate the cursored segment, and Library access in the composer menu. The tests were retargeted to it (Tests/UI/test_console_library_controls_workflow.py): four Library access requests through the composer-menu route (`_handle_console_composer_menu_choice(ACTION_LIBRARY_ACCESS)`), Cancel, and one more request; the sentence typed as one key burst on the focused line with its cursor moved onto System prompt, plus Enter; and, per dialog-opening segment, four requests posted from the line (`ConsoleStatusText.SEGMENT_MESSAGES`), a pop, then one more request. Plain command (`pytest <file> -q`, no plugin), dev 4de437a5c5 with the new file copied in: 6 failed for the right reason -- 4 Library access dialogs; 21 ConsoleSystemPromptModal from the sentence; 4 each for system-prompt, assistant, scope, cost -- and provider/model passed, because dev's Switch model opener already refuses a covered Console. Negative control for those two: with dev's check in `_open_switcher` replaced by `if False:`, both stacked 4 ConsoleModelPopover (restored by edit afterwards). Head: the 8 new cases pass under the plain command. The file's 4 `test_four_policy_states_render_exactly_and_open_independent_axes` cases fail identically on dev's own copy of the file (NoMatches '#console-status-chips': dev's `_ChipApp` composes ConsoleStatusChips without that id, since d102ce9cb5) and are not this task's. Re-run after the re-rebase, plain command: ce4aa4a231 with the new file copied in, 10 failed (the same 6 with the same counts, plus those 4) and 3 passed; head 6e0df05b66, 9 passed and only those 4 failed, with the same NoMatches. The file is not in scripts/ui_pr_gate_census.txt and takes about 80 s, too slow to add, so CI runs it only in the full UI shards.
+
+Comments and docs: the guard comments and `open_access`'s docstring now name the status line and the composer menu's Library access entry; the expanded `_owns_console_screen_stack` docstring went back to dev's one line. Docs/User_Guide/console.md's "Status chips" section gained one paragraph: an entry that opens a dialog opens one however fast it is pressed, and opens it again once the dialog closes.
+
+Ratchets: chat_screen.py grows by six lines (three two-line guards). Tests/Architecture/test_screen_size_ratchet.py's chat_screen row rises 24369 -> 24375 with a dated owner-decision comment; dev 4de437a5c5 already measured 24378 (+9) before this change, so the row fails on head with exactly dev's +9 message, the overage recorded and not absorbed. Unchanged after the re-rebase: ce4aa4a231 measures 24378 against 24369, head 24384 against 24375, both +9. Dev has been over this ceiling since 8d58322b51 (the single-line status strip's review round 1, 2026-10-16), the day after the row was lowered to 24369. test_module_size_ratchet.py: 7 failures, identical on dev, none on a touched file. test_console_wave6_inventory.py: the same 3 failures on dev and head (chat_screen.py line counts already about 2,200 over those wave-6 limits on dev; the messages differ only by this fix's six lines, 24378 -> 24384). No module or CSS added, so the ADR-097 boot ratchets were not re-measured.
+
+Live (R67, 2026-10-19, 160x45, isolated profile and null keyring via launch.sh, real Anthropic claude-haiku-4-5 through the review proxy). Both builds: dismiss the model-list consent dialog, click the System Prompt segment (editor opens), Esc (focus back on the line, cursor on Provider), Right twice (cursor on System Prompt), then the sentence plus a carriage return as one `send-keys -l` burst. Fix (this branch at dd5d02f8cb, pre-rebase; now 6102719897): one system prompt editor, its text area empty, app alive; one Esc returned to the Console; no RecursionError or unhandled_exception in the app log. Composer Menu -> Library access... opened the dialog and one Esc returned. Dev 4de437a5c5: the same burst stacked 21 editors and took 21 Esc presses to clear; this run did not reach RecursionError. Both builds also showed the bare 'y' Trace key's toast ("no persisted trace yet"), which stays with TASK-33622.3. Evidence: scratchpad uxrev/evidence/bd5/R67/ (README.txt, 01-25).
+
+Live re-check on the rebased head (6e0df05b66, 2026-10-19 17:05, same harness and steps, launch r67fix). Before the burst the line's cursor sat on "System Prompt: off" (reverse video in the SGR capture). The burst left one system prompt editor with an empty text area, and the app stayed alive. One Esc closed it and showed the Console's ready line. The app log has no RecursionError or unhandled_exception. Evidence: uxrev/evidence/bd5/R67/final/ (README.txt, 01-07).
+
+Files: tldw_chatbook/UI/Console_Modules/library_policy.py, tldw_chatbook/UI/Console_Modules/wiring.py, tldw_chatbook/UI/Console_Modules/model_switcher.py (comment only; dev holds the check), tldw_chatbook/UI/Console_Modules/prompts.py, tldw_chatbook/UI/Screens/chat_screen.py, Tests/UI/test_console_library_controls_workflow.py, Tests/UI/test_console_library_policy_controller.py, Tests/UI/test_chat_screen_console_inspector_loader.py, Tests/Architecture/test_screen_size_ratchet.py, Docs/User_Guide/console.md.
 <!-- SECTION:NOTES:END -->
