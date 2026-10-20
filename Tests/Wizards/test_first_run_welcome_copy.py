@@ -155,3 +155,40 @@ def test_the_welcome_rows_keep_their_handlers_on_a_message_pump() -> None:
         for handler, _selectors in handlers
     }
     assert {"open_backup_restore", "_on_reduce_motion"} <= registered
+
+
+@pytest.mark.asyncio
+async def test_a_replaced_welcome_takes_its_rows_with_it() -> None:
+    """Review F11 (TASK-34100.13): the rows live in the wizard container, not
+    the step. Replacing a failed Welcome (``_retry_failed_step``) orphaned
+    them, and the new step's rows collided with the old ids."""
+    wizard, _app_instance = _wizard()
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = app.screen.query_one(SetupWizardContainer)
+        old = app.screen.query_one(WelcomeStep)
+        await old.remove()
+        await pilot.pause()
+        orphaned = len(app.screen.query("#setup-welcome-footer"))
+        replacement = WelcomeStep(wizard=container, config=old.config)
+        await container.mount(replacement, before=0)
+        await pilot.pause(0.2)
+        rows = len(app.screen.query("#setup-welcome-footer"))
+    assert orphaned == 0
+    assert rows == 1
+
+
+@pytest.mark.asyncio
+async def test_reduce_motion_is_not_offered_where_it_cannot_apply_live() -> None:
+    """review-tests F12: with no in-memory settings to change, the checkbox is
+    left out and Restore is still there."""
+    wizard, app_instance = _wizard()
+    app_instance.app_config = None
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        boxes = list(app.screen.query("#setup-welcome-reduce-motion"))
+        restore = list(app.screen.query("#setup-backup-restore"))
+    assert boxes == []
+    assert len(restore) == 1
