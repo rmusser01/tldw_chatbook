@@ -104,6 +104,31 @@ def make(clock: Clock, ops: Ops, **kwargs) -> IdleHeapRefreezer:
     )
 
 
+def counting_collector(monkeypatch: pytest.MonkeyPatch, calls: list[tuple]) -> None:
+    """Fake ``gc.collect``; each call completes a pass ``gc.get_stats`` counts.
+
+    The re-freeze and the compaction freeze only after a full pass really
+    ran, which they read from the generation-2 pass count.
+
+    Args:
+        monkeypatch: Installs the fakes.
+        calls: Receives ``("collect", generation)`` per call.
+    """
+    passes = [0]
+
+    def collect(generation: int = 2) -> int:
+        calls.append(("collect", generation))
+        passes[0] += 1
+        return 0
+
+    monkeypatch.setattr(ui_responsiveness.gc, "collect", collect)
+    monkeypatch.setattr(
+        ui_responsiveness.gc,
+        "get_stats",
+        lambda: [{}, {}, {"collections": passes[0]}],
+    )
+
+
 def test_the_idle_refreeze_collects_every_unfrozen_generation_then_freezes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -113,11 +138,7 @@ def test_the_idle_refreeze_collects_every_unfrozen_generation_then_freezes(
         monkeypatch: Records the collector calls instead of running them.
     """
     calls: list[tuple] = []
-    monkeypatch.setattr(
-        ui_responsiveness.gc,
-        "collect",
-        lambda generation=2: calls.append(("collect", generation)) or 0,
-    )
+    counting_collector(monkeypatch, calls)
     monkeypatch.setattr(
         ui_responsiveness.gc,
         "get_objects",
@@ -143,11 +164,7 @@ def test_a_compaction_unfreezes_then_collects_everything_then_freezes(
     monkeypatch.setattr(
         ui_responsiveness.gc, "unfreeze", lambda: calls.append(("unfreeze",))
     )
-    monkeypatch.setattr(
-        ui_responsiveness.gc,
-        "collect",
-        lambda generation=2: calls.append(("collect", generation)) or 0,
-    )
+    counting_collector(monkeypatch, calls)
     monkeypatch.setattr(
         ui_responsiveness.gc, "freeze", lambda: calls.append(("freeze",))
     )
@@ -195,6 +212,97 @@ def test_a_refreeze_reclaims_old_generation_cycles_instead_of_freezing_them() ->
         reclaimed = old_garbage()
         ui_responsiveness.refreeze_long_lived_heap("unit-test")
         assert reclaimed() is None, "the re-freeze froze old-generation garbage"
+    finally:
+        gc.unfreeze()
+
+
+def during_another_collection(action: Callable[[], object]) -> list[object]:
+    """Run ``action`` while a collection is in progress, as a worker's pass can be.
+
+    CPython skips ``gc.collect()`` while another pass is in progress: it
+    returns 0 at once, having collected nothing. A worker thread's pass can
+    hand the GIL to the UI loop from its finalizers or ``gc.callbacks``. A
+    start hook is the deterministic stand-in: the outer pass has begun and
+    collected nothing yet.
+
+    Args:
+        action: What the UI loop runs at that moment.
+
+    Returns:
+        What ``action`` returned, or the exception it raised.
+    """
+    results: list[object] = []
+
+    def during(phase: str, info: dict) -> None:
+        if phase == "start" and not results:
+            try:
+                results.append(action())
+            except Exception as error:  # noqa: BLE001 - surfaced to the test
+                results.append(error)
+
+    gc.callbacks.append(during)
+    try:
+        gc.collect(0)
+    finally:
+        gc.callbacks.remove(during)
+    return results
+
+
+def test_a_refreeze_freezes_nothing_while_another_collection_runs() -> None:
+    """A skipped collection is never followed by a freeze (live, 2026-10-19).
+
+    In the round-5 memory run, a compaction ran while the probe's own
+    collection was in progress on another thread. CPython skipped its
+    collection, so it froze the heap again, garbage included, and the
+    refreezer booked it as done. A re-freeze in that state reports
+    ``busy`` and freezes nothing, so the garbage stays collectable.
+    """
+    gc.unfreeze()
+    gc.collect()
+    try:
+        garbage = old_garbage()
+        refreezer = IdleHeapRefreezer(enabled=lambda: True)
+        # Not 0: CPython 3.12 parks immortal objects in the permanent
+        # generation during every collection.
+        frozen = gc.get_freeze_count()
+        outcome = during_another_collection(lambda: refreezer.maintain("run_settled"))
+        assert outcome == ["busy"], outcome
+        assert gc.get_freeze_count() == frozen, "a skipped collection was followed by a freeze"
+        gc.collect()
+        assert garbage() is None
+    finally:
+        gc.unfreeze()
+
+
+def test_a_compaction_another_collection_blocks_refreezes_and_stays_owed() -> None:
+    """A blocked compaction restores the freeze and is retried, not booked.
+
+    Negative control for the bookkeeping: on the blocked attempt the frozen
+    garbage survives and a compaction is still due; the next maintenance
+    compacts and frees it. The heap is frozen again meanwhile, so the
+    automatic passes do not rescan it.
+    """
+    gc.unfreeze()
+    gc.collect()
+    try:
+        cycle = Cycle()
+        garbage = weakref.ref(cycle)
+        gc.freeze()  # frozen while live, as a shown transcript is
+        del cycle
+        frozen = gc.get_freeze_count()
+        refreezer = IdleHeapRefreezer(enabled=lambda: True)
+        refreezer.note_stranded()
+
+        outcome = during_another_collection(
+            lambda: refreezer.maintain("conversation_painted")
+        )
+        assert outcome == ["busy"], outcome
+        assert gc.get_freeze_count() >= frozen, "the blocked compaction left the heap unfrozen"
+        assert garbage() is not None
+        assert refreezer.compaction_due(), "a blocked compaction was booked as done"
+
+        assert refreezer.maintain("conversation_painted") == "compact"
+        assert garbage() is None
     finally:
         gc.unfreeze()
 
@@ -425,8 +533,9 @@ def test_every_freeze_advances_the_freeze_epoch(
     Args:
         monkeypatch: Stubs the collector so nothing is really frozen.
     """
-    for name in ("collect", "freeze", "unfreeze"):
+    for name in ("freeze", "unfreeze"):
         monkeypatch.setattr(ui_responsiveness.gc, name, lambda *args: 0)
+    counting_collector(monkeypatch, [])
     monkeypatch.setattr(ui_responsiveness.gc, "get_objects", lambda generation=None: [])
     monkeypatch.setattr(ui_responsiveness.gc, "get_freeze_count", lambda: 0)
     start = ui_responsiveness.heap_freeze_epoch()

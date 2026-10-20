@@ -385,7 +385,41 @@ def heap_freeze_epoch() -> int:
     return _freeze_epoch
 
 
-def freeze_long_lived_heap(reason: str, *, generation: int = 1) -> int:
+#: Tries a re-freeze or compaction gives a full collection that CPython
+#: skipped because another pass was in progress, and the sleep between tries
+#: (it releases the GIL so that pass can finish).
+_COLLECT_ATTEMPTS = 5
+_COLLECT_RETRY_SECONDS = 0.002
+
+
+class CollectorBusy(RuntimeError):
+    """Another thread's collection kept a full collection from running."""
+
+
+def _collect_in_full() -> None:
+    """Run a full collection, or raise :class:`CollectorBusy` (TASK-33620.15.3).
+
+    ``gc.collect()`` returns 0 at once, collecting nothing, while another
+    pass is in progress, and a worker thread's pass can hand the GIL to the
+    UI loop from its finalizers or callbacks. Live (2026-10-19), a compaction
+    that met one froze the heap again, garbage included, and was booked as
+    done. A freeze must follow a full collection that really ran, so the
+    generation-2 pass count has to move.
+
+    Raises:
+        CollectorBusy: No full collection ran in ``_COLLECT_ATTEMPTS`` tries.
+    """
+    for attempt in range(_COLLECT_ATTEMPTS):
+        if attempt:
+            time.sleep(_COLLECT_RETRY_SECONDS)
+        before = gc.get_stats()[2]["collections"]
+        gc.collect(2)
+        if gc.get_stats()[2]["collections"] != before:
+            return
+    raise CollectorBusy("another collection is in progress")
+
+
+def freeze_long_lived_heap(reason: str, *, generation: int | None = 1) -> int:
     """Move the objects alive now into CPython's permanent GC generation.
 
     ADR-198 (PERF-11, TASK-33270): with nothing frozen, every automatic
@@ -395,18 +429,20 @@ def freeze_long_lived_heap(reason: str, *, generation: int = 1) -> int:
     boot cycles cheaply; a full collection is deliberately NOT run there (a
     one-time 130-270 ms loop stall right as the user starts interacting).
     Thresholds stay at CPython's defaults and the collector is never disabled
-    (see the ADR). A compaction (ADR-198 amendment, TASK-33620.15.3) passes
-    ``generation=2`` after unfreezing the heap.
+    (see the ADR). A compaction (ADR-198 amendment, TASK-33620.15.3) collects
+    in full itself and passes ``generation=None``.
 
     Args:
         reason: What froze the heap, for the DEBUG log line.
-        generation: The oldest generation collected before the freeze.
+        generation: The oldest generation collected before the freeze, or
+            None when the caller has just collected.
 
     Returns:
         The permanent generation's size after the freeze.
     """
     global _freeze_epoch
-    gc.collect(generation)
+    if generation is not None:
+        gc.collect(generation)
     gc.freeze()
     _freeze_epoch += 1
     frozen = gc.get_freeze_count()
@@ -430,9 +466,13 @@ def refreeze_long_lived_heap(reason: str) -> int:
     Returns:
         How many objects it moved into the permanent generation. A full
         collection leaves every unfrozen survivor in generation 2.
+
+    Raises:
+        CollectorBusy: Another pass kept the collection from running; nothing
+            was frozen.
     """
     global _freeze_epoch
-    gc.collect()
+    _collect_in_full()
     added = len(gc.get_objects(generation=2))
     gc.freeze()
     _freeze_epoch += 1
@@ -454,9 +494,21 @@ def compact_long_lived_heap(reason: str) -> int:
 
     Returns:
         The permanent generation's size after the freeze.
+
+    Raises:
+        CollectorBusy: Another pass kept the collection from running. The
+            heap is frozen again first, so the automatic passes do not
+            rescan it, and nothing was reclaimed.
     """
+    global _freeze_epoch
     gc.unfreeze()
-    return freeze_long_lived_heap(reason, generation=2)
+    try:
+        _collect_in_full()
+    except CollectorBusy:
+        gc.freeze()
+        _freeze_epoch += 1
+        raise
+    return freeze_long_lived_heap(reason, generation=None)
 
 
 #: Quiet time an idle re-freeze waits for after its request and after the
@@ -521,6 +573,10 @@ class IdleHeapRefreezer:
     send for ~20K of real growth) leave it by themselves, so only real growth
     makes a compaction due. The collector is never disabled and its
     thresholds are never touched.
+
+    CPython skips ``gc.collect()`` while another thread's pass is in
+    progress. A maintenance that meets one (after a few short retries) reports
+    ``"busy"``: it freezes nothing new, and a compaction it owed stays owed.
     """
 
     def __init__(
@@ -628,17 +684,25 @@ class IdleHeapRefreezer:
         return self._frozen - self._baseline >= budget
 
     def maintain(self, reason: str) -> str:
-        """Re-freeze or, when one is due, compact now. Returns which ran."""
+        """Re-freeze or, when one is due, compact now. Returns which ran.
+
+        ``"busy"`` means another thread's collection kept the full collection
+        from running: nothing new was frozen or reclaimed, and a compaction
+        that was due stays due for the next request.
+        """
         self._look()
-        if self.compaction_due():
-            self._baseline = self._frozen = self._compact(f"compact:{reason}")
-            self._estimated = False
-            self._stranded = False
-            action = "compact"
-        else:
-            self._frozen += self._refreeze(reason)
-            self._estimated = True
-            action = "refreeze"
+        try:
+            if self.compaction_due():
+                self._baseline = self._frozen = self._compact(f"compact:{reason}")
+                self._estimated = False
+                self._stranded = False
+                action = "compact"
+            else:
+                self._frozen += self._refreeze(reason)
+                self._estimated = True
+                action = "refreeze"
+        except CollectorBusy:
+            action = "busy"
         self.actions.append((action, reason))
         return action
 
