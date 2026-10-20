@@ -342,7 +342,11 @@ with scratch only. Built-in file tools can use private scratch plus the
 Workspace's live bound folders. Local `fs_*` and Git tools use private scratch
 unless project instructions explicitly select one binding; that selected
 binding then remains their single working root and keeps its read-only or
-read-write guard.
+read-write guard. In plain chat both are off until you turn them on: the
+local `fs_*` and Git tools come with **Full agent tools**, and each built-in
+file tool has its own switch, under **MCP ▸ Servers ▸ built-in row ▸ Tool
+gates** (see
+[Agent runs and tools](agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)).
 
 Project instructions are local per-session state. A new session starts
 enabled and asks you to choose when more than one eligible local-filesystem

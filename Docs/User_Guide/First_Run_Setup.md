@@ -149,7 +149,7 @@ OpenAI-compatible**.
 Plain Console chat starts with a **light tool set**: date and time,
 calculator, and ask-you-a-question (the last one follows its own
 `[tools] ask_user_enabled` switch). It offers no sub-agents, skills, web
-search, Watchlists, workspace-file, character or other autonomous or costly
+search, Watchlists, workspace, character or other autonomous or costly
 tools until you turn them on. The Tools step says so up front — "Chat starts
 with date and time, calculator and ask you a question; a model with a small
 or not-yet-known context window gets no tools. Everything below is off until
@@ -158,7 +158,7 @@ you switch it on; tools that read or change your files ask before they run."
 
 - **Full agent tools** (`[tools] full_agent_tools_enabled`, off by default)
   gives chat the whole agent surface: sub-agents, skills, web search and
-  fetch, Watchlists, workspace files, character cards, Canvas, chat forks
+  fetch, Watchlists, workspace tools, character cards, Canvas, chat forks
   and chatbook's own MCP tools. The local workspace, web and Watchlists
   master and the character switch still decide those groups within it.
 - Each **built-in** row (Read file, List directory, Write file, Create note,
@@ -172,7 +172,7 @@ you switch it on; tools that read or change your files ask before they run."
 The Summary's **Tools** row then names exactly what chat is offered. With
 nothing switched on it reads "on: date and time, calculator and ask you a
 question, plus tools from MCP servers you add and Library tools in chats you
-allow. Sub-agents, skills, web, Watchlists, workspace files and characters
+allow. Sub-agents, skills, web, Watchlists, workspace tools and characters
 stay off until you turn on Full agent tools under Settings ▸ Tools & MCP ▸
 Servers ▸ built-in row ▸ Tool gates. A model with a small or not-yet-known
 context window gets no tools." With tools switched on it lists them (with Deep

@@ -32,7 +32,7 @@ Out of the box, Console's assistant gets a **light, safe tool set**: date
 and time (`get_current_datetime`), `calculator`, and ask-you-a-question
 (`ask_user`, which follows its own `[tools] ask_user_enabled` switch). A
 plain message such as "Reply with just: hi" is answered directly; there are
-no sub-agents, skills, web search, Watchlists, workspace-file, character,
+no sub-agents, skills, web search, Watchlists, workspace, character,
 Canvas, chat-fork or run-log tools, and none of chatbook's own MCP tools,
 until you turn them on. The system prompt is your session prompt, or "You
 are a helpful assistant." when it is off — not the agent operating prompt.
@@ -67,10 +67,13 @@ The tools a send carries count toward the context meter: the status strip's
 memory**, which names the tool share — for example "Request overhead 499
 tokens (tool schemas 489)". The figure comes from the last request the app
 prepared for the conversation, with its tools planned for that request's
-model and window — a model with a small window counts the smaller set it
-gets, or none. With Full agent tools on, the meter learns the local, MCP and
-skill tools a conversation composes from its first full send; the send
-itself is sized correctly either way.
+model, window and conversation, as the send plans them — a model with a
+small window, or a conversation that leaves no room, counts the smaller set
+the send gets, or none. With Full agent tools on, the meter learns the local,
+MCP and skill tools a conversation composes from its first full send, so the
+first send after you switch it on is counted with only the built-in tools
+and the next one with everything; the send itself is sized correctly either
+way.
 
 ## Getting there
 
