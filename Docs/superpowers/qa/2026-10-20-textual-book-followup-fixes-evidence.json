@@ -166,7 +166,7 @@
     "task_files": 5589,
     "duplicate_ids": 0,
     "unreadable": 0,
-    "relative_links_checked": 48,
+    "relative_links_checked": 49,
     "broken_relative_links": 0
   },
   "execution_rulings": [
@@ -324,5 +324,87 @@
       "Settings": 35732,
       "Watchlists": 14283
     }
+  },
+  "integration_rebase": {
+    "pre_rebase_base": "1ffc1ef0d63a1a1d594c7c8dcae7f216f59493d5",
+    "pre_rebase_head": "a2bd0fb09737aa7ea83ea647e128d89be8433884",
+    "rebased_base": "02ab8bc89b597f31b6ae8c41956631f3a318fef7",
+    "rebased_head": "0499d2d21c6e3da278d104041b7545932c8054fd",
+    "changed_tree_paths": [
+      "backlog/tasks/task-34915 - The-UI-ready-module-census-fails-under-load-because-a-Console-module-can-load-before-UI-ready.md"
+    ],
+    "all_product_test_and_qualification_bytes_identical": true,
+    "commit_map": [
+      {
+        "execution_commit": "d7bdba861bab80fef0fc9b00b0d447fd72e5aa56",
+        "rebased_commit": "2f0991c7f4be21a9c592dc1c7498ef1cc79a999b",
+        "subject": "docs: record post-merge Textual follow-up backlog"
+      },
+      {
+        "execution_commit": "b719113f878fa104b66f3b02e7a9bbf33ea0bd5a",
+        "rebased_commit": "d45ce4f3c4b8c77b96fb2bed0f2a84bd7732ec0d",
+        "subject": "docs: plan six Textual follow-up fixes"
+      },
+      {
+        "execution_commit": "7d00f8490d81242a1db8a046eaed41ab3f22f738",
+        "rebased_commit": "2b79288bba398be811cdf538cb0660954b215222",
+        "subject": "fix(scheduling): admit automation Save once while pending"
+      },
+      {
+        "execution_commit": "902f8c534a7be49f5f7201ef15efb69be47fefeb",
+        "rebased_commit": "c66e889ad0ec0ac04fa0cff0df9e2acf88e7e3c9",
+        "subject": "docs: close Save admission task and start Results admission"
+      },
+      {
+        "execution_commit": "17122d75d1b57f9817822c9dfef920b6346b7208",
+        "rebased_commit": "eaee220ce59e9cbf08c1d47875a3e806181002d1",
+        "subject": "fix(scheduling): retain admitted Results review mutations"
+      },
+      {
+        "execution_commit": "26de383f6ecdff425fec1b1faaef7ed272f10015",
+        "rebased_commit": "18718279cc9ac1e568a6d660855e00366e044cc8",
+        "subject": "docs: close Results admission task and start Settings origin fix"
+      },
+      {
+        "execution_commit": "8989b69f0f13d2a81d166bff516b6b7c4012d889",
+        "rebased_commit": "5f0d51074726881793de714377ac96cf9c4d4d46",
+        "subject": "fix(settings): preserve remaining Console input edit origins"
+      },
+      {
+        "execution_commit": "3e5b8315ed94381ca882a86e76916f2a44bf0dbc",
+        "rebased_commit": "96bae8947276732cef3fe1671fc7eab0868cde87",
+        "subject": "docs: close Settings origin fix and start Rule draft preservation"
+      },
+      {
+        "execution_commit": "3e2327eb3cffe0f2a0138fd4f603e3cd9ec4179e",
+        "rebased_commit": "67b78e96a7dbfa0f7a41dd2b76cc3d2995712597",
+        "subject": "fix(watchlists): preserve raw rule editor drafts"
+      },
+      {
+        "execution_commit": "da702d67f3c70efb83015fcd981bd4b8c0e5c378",
+        "rebased_commit": "c0ffc975de717d44518dc4e2c6698c0891ae6fb3",
+        "subject": "docs: close Rule draft task and start Evals shortcut scope"
+      },
+      {
+        "execution_commit": "e40cbe6d10eeb3c96e05a05dead5e77ebb3912d0",
+        "rebased_commit": "79c94d6ddbce964a6142fe26d13172fa5ff3321d",
+        "subject": "fix(evals): scope grid shortcuts and help to active keyboard context"
+      },
+      {
+        "execution_commit": "8a553f668a25a64a8e0a56e8abd8e2c0fcd1a111",
+        "rebased_commit": "a3c2b5b62c45ec7bdeac798ea75c2778dfd3ace9",
+        "subject": "docs: close Evals scope task and start Chunking Lab follow-up"
+      },
+      {
+        "execution_commit": "615956f69a58d319a602d277a507683ef1c9f2e3",
+        "rebased_commit": "93853ca14d6ceabc7ef83f307df9293266bf4a30",
+        "subject": "fix: keep Chunking Lab shortcuts and help in sync"
+      },
+      {
+        "execution_commit": "a2bd0fb09737aa7ea83ea647e128d89be8433884",
+        "rebased_commit": "0499d2d21c6e3da278d104041b7545932c8054fd",
+        "subject": "test: admit Textual follow-up regressions and close six-task backlog"
+      }
+    ]
   }
 }
