@@ -1173,6 +1173,31 @@ import -- module import runs before the Tests/conftest.py config sandbox and
 dies on the real profile's `RecoveryRequired` instead of red-proofing
 anything.
 
+## A RED arm that fails for a different reason than its design stated is a design error, not evidence (TASK-34000.24, 2026-10-19)
+
+The brief's arm 5 said: with no active workspace, the Media reader's "Use in
+Console" refuses with "Select an active workspace before using this item in
+Console." -- base: a toast, nothing staged. The arm WAS red on base, and a
+"7 failed" summary would have passed as RED evidence. Reading the one failure
+line showed the opposite reason: `open_chat_with_handoff` had been CALLED.
+`build_library_workspace_depth_state` treats no active workspace as the
+global scope (task-15120, an owner ruling in
+`registry_service.clear_active_workspace`'s docstring) and returns the
+"Local Default" snapshot with every row eligible, so the `no_active_workspace`
+reason code the design assumed never reaches the row model on any tree.
+Implementing to the brief would have turned a deliberate global-scope stage
+into a refusal. The arm was rewritten (a failed link write refuses; no active
+workspace stages unlinked, pinned as such) and the AC sharpened in the task
+file before the fix went in.
+
+- **Read every RED failure's reason, not the count.** A red arm proves only
+  that the assertion is not met on base; the design is right only if it is
+  not met for the reason the design named.
+- **A refusal sentence existing in the code is not evidence the path that
+  shows it is reachable.** Trace the producer (`eligibility.py`) to its
+  consumer (`display_state.py`) before pinning a refusal that nobody has
+  seen live.
+
 ## That plugin's shared profile turns config-writing tests red together
 
 **TASK-33007.6 fix round 1, 2026-10-04.** The plugin above marks every node

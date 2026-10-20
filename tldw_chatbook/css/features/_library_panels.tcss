@@ -1826,6 +1826,44 @@
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
+/* TASK-34000.24: the "Use in Console" workspace-link receipt row under the
+   Reader's primary toolbar ("Linked to Local Default · staged in Console" +
+   "Undo link"). One row at every width: the receipt text ellipsises, the
+   Undo keeps its own label-sized cells (the conversation reader stacks its
+   receipt and Undo on two rows; the Media Reader at 80x24 has no second row
+   to give). Library-prefixed tokens only, so the block lands on the lazily
+   loaded Library sheet (ADR-097). */
+#library-media-viewer #library-media-link-receipt-row {
+    width: $ds-width-full;
+    height: $ds-home-control-button-height;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+/* Id-scoped on purpose: `#library-media-viewer Static { width: 100% }`
+   (specificity 1,0,1) beat a bare class here and gave the receipt the whole
+   row, pushing "Undo link" off the pane -- found live at 160x45 while the
+   button's `.display` was True (the separator in the viewer's DEFAULT_CSS
+   lost its width the same way). */
+#library-media-viewer #library-media-link-receipt {
+    width: 1fr;
+    height: $ds-home-control-button-height;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    /* Left gutter only, and no Undo margin: measured at 160x45 the Reader
+       pane gives this row 56 cells, and "Linked to Local Default · staged
+       in Console" (44) + gutter (1) + the compact Undo (11) is exactly 56.
+       The right padding and the canvas-action margin clipped it to
+       "…staged in Con…". */
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+#library-media-viewer #library-media-link-undo {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+}
+
 #library-media-title {
     width: $ds-width-full;
     min-width: $ds-size-0;

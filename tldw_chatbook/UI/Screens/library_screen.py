@@ -385,6 +385,10 @@ from ...Workspaces.eligibility import (
     LIBRARY_GENERIC_WORKSPACE_BLOCK,
     linkable_ineligibility_label,
 )
+from ...Workspaces.link_on_use import (
+    link_item_to_active_workspace,
+    unlink_item_from_workspace,
+)
 from ...Workspaces.registry_service import WorkspaceRegistryServiceError
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -513,6 +517,7 @@ from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_media_state import (
+    LibraryMediaLinkReceipt,
     LibraryMediaState,
 )
 from ..Library_Modules.library_notes_state import LibraryNotesState
@@ -2714,6 +2719,12 @@ class LibraryScreen(BaseAppScreen):
             rag_search_state_accessor=lambda: self._rag_search_state,
             active_library_rail=lambda: self._active_library_rail(),
             console_setup_would_block=lambda: self._console_setup_would_block(),
+            library_workspace_depth_state=(
+                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
+            ),
+            invalidate_library_workspace_depth_state=(
+                lambda: self._invalidate_library_workspace_depth_state()
+            ),
             open_library_item_by_id=(
                 lambda *a, **k: self._open_library_item_by_id(*a, **k)
             ),
@@ -36719,49 +36730,198 @@ class LibraryScreen(BaseAppScreen):
         self.open_chunking_lab(use_selected=True)
 
     def _open_selected_media_handoff(self) -> None:
-        """Stage the media item open in the viewer into Console via the shared handoff.
+        """Stage the media item open in the viewer into Console, linking it on use.
 
-        Mirrors ``_open_selected_conversation_handoff``: builds the payload,
-        then guards on having an open media item, the workspace
-        context-handoff gate, and the app exposing ``open_chat_with_handoff``
-        at all. The workspace gate is not conversation-specific --
-        ``build_library_workspace_depth_state`` computes
-        ``context_handoff_enabled`` across every visible Library source
-        (notes, media, and conversations together) -- so media handoff
-        eligibility follows the identical workspace-staging policy as
-        conversations.
+        TASK-34000.24: the per-item workspace gate used to refuse every
+        media item on a fresh profile with a sentence naming an action that
+        does not exist for media ("Copy or link this media into workspace
+        workspace-default …"). Notes (task-32536) and conversations
+        (task-32107) already link on use; media now takes the same path
+        through the shared seam (``Workspaces/link_on_use.py``): a block a
+        LINK can resolve (``not_in_active_workspace``, ``cross_workspace``)
+        is resolved by linking the item into the active workspace, then
+        staging, with a receipt ("Linked to Local Default · staged in
+        Console") and an Undo in the Reader. Blocks a link cannot resolve
+        (no active workspace) keep refusing with their own sentence. An item
+        already in the workspace stages as before with the "Already linked"
+        receipt. The notes rule holds: Console's availability is read BEFORE
+        the write, and a membership this press added is unlinked again if
+        Console then refuses the hand-off.
         """
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()
         notify = getattr(self.app_instance, "notify", None)
+
+        def say(message: str, severity: str = "warning") -> None:
+            if callable(notify):
+                notify(message, severity=severity, markup=False)
+
         if payload is None:
-            if callable(notify):
-                notify(
-                    "Open a media item before using it in Console.", severity="warning"
-                )
-            return
-        # Single-item action: same per-item gate as the conversation
-        # handoff above (TASK-15423).
-        item_eligible, item_reason = library_item_context_handoff(
-            workspace_state,
-            item_type=payload.item_type,
-            item_id=str(payload.source_id or ""),
-        )
-        if not item_eligible:
-            if callable(notify):
-                notify(item_reason, severity="warning")
+            say("Open a media item before using it in Console.")
             return
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None
         )
+        # Read BEFORE the link below: a hand-off that cannot succeed must
+        # not write a membership (the notes hand-off's rule).
         if not callable(open_chat_with_handoff):
+            say("Console handoff is unavailable for Library Media.")
+            return
+        item_id = str(payload.source_id or "")
+        # Single-item action: same per-item gate as the conversation
+        # handoff (TASK-15423) -- but a linkable block is now resolved, not
+        # reported.
+        item_eligible, item_reason = library_item_context_handoff(
+            workspace_state,
+            item_type=payload.item_type,
+            item_id=item_id,
+        )
+        row = next(
+            (
+                candidate
+                for candidate in workspace_state.source_rows
+                if candidate.item_type == payload.item_type
+                and candidate.item_id == item_id
+            ),
+            None,
+        )
+        linkable = row is not None and bool(
+            linkable_ineligibility_label(row.reason_code)
+        )
+        if not item_eligible and not linkable:
+            say(item_reason)
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        link = link_item_to_active_workspace(
+            registry,
+            item_type=payload.item_type,
+            item_id=item_id,
+            title=payload.title,
+        )
+        if link.blocked_reason and not item_eligible:
+            say(link.blocked_reason)
+            return
+        if link.written:
+            # The cached eligibility that sent us here is stale now; without
+            # this the rail and the next press would still call the item
+            # blocked.
+            self._invalidate_library_workspace_depth_state()
+        try:
+            open_chat_with_handoff(payload, action_label="Use in Console")
+        except Exception:
+            logger.opt(exception=True).warning("Library media Console handoff failed.")
+            if link.written and not unlink_item_from_workspace(
+                registry,
+                link.workspace_id,
+                item_type=payload.item_type,
+                item_id=item_id,
+            ):
+                say(
+                    "Can't use this media in Console — Console could not take "
+                    f"it, and the media stayed linked to {link.workspace_name}. "
+                    "Next: try again."
+                )
+                return
+            if link.written:
+                self._invalidate_library_workspace_depth_state()
+            say(
+                "Can't use this media in Console — Console could not take it. "
+                "Next: try again."
+            )
+            return
+        if link.linked:
+            self._set_library_media_link_receipt(
+                workspace_id=link.workspace_id,
+                workspace_name=link.workspace_name,
+                item_id=item_id,
+                written=link.written,
+            )
+
+    def _set_library_media_link_receipt(
+        self,
+        *,
+        workspace_id: str,
+        workspace_name: str,
+        item_id: str,
+        written: bool,
+    ) -> None:
+        """Record the workspace the last "Use in Console" press linked into.
+
+        The id is stored beside the NAME because Undo has to remove the
+        membership a press here added, not whatever is active by the time
+        it is pressed (the conversation reader's review fix round 1). An
+        "Already linked" press keeps the Undo of an earlier press on the
+        same item and workspace: the membership is still the one this
+        session wrote.
+
+        Args:
+            workspace_id: The linked workspace's id.
+            workspace_name: Its display name, for the receipt line.
+            item_id: The media membership id the receipt names.
+            written: Whether THIS press inserted the membership.
+        """
+        prior = self._media_state.link_receipt
+        undo_offered = written or (
+            prior is not None
+            and prior.undo_offered
+            and prior.item_id == item_id
+            and prior.workspace_id == workspace_id
+        )
+        self._media_state.link_receipt = LibraryMediaLinkReceipt(
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+            item_id=item_id,
+            written=written,
+            undo_offered=undo_offered,
+        )
+        self._sync_library_media_viewer_or_recompose()
+
+    @on(Button.Pressed, "#library-media-link-undo")
+    def handle_library_media_link_undo(self, event: Button.Pressed) -> None:
+        """Remove the membership the last "Use in Console" press added.
+
+        The exact inverse of the link in ``_open_selected_media_handoff``:
+        the RECEIPT's workspace by id (never the active one), the receipt
+        cleared, the cached eligibility invalidated, the Reader re-synced.
+        Refused silently when the Reader is not showing the receipt -- a
+        stale Undo after a workspace switch could only remove a membership
+        of a workspace that is no longer active (task-32107 fix round 1).
+
+        Args:
+            event: The Undo button press.
+        """
+        event.stop()
+        receipt = self._media_state.link_receipt
+        payload = self._selected_media_handoff_payload()
+        open_item_id = str(payload.source_id or "") if payload is not None else ""
+        if receipt is None or not open_item_id:
+            return
+        _line, undo_offered = (
+            self._media_controller._library_media_visible_link_receipt(open_item_id)
+        )
+        if not undo_offered:
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
             if callable(notify):
                 notify(
-                    "Console handoff is unavailable for Library Media.",
+                    "Workspaces are unavailable, so this link cannot be undone.",
                     severity="warning",
                 )
             return
-        open_chat_with_handoff(payload, action_label="Use in Console")
+        if not unlink_item_from_workspace(
+            registry,
+            receipt.workspace_id,
+            item_type="media",
+            item_id=receipt.item_id,
+        ):
+            if callable(notify):
+                notify("This link could not be undone. Try again.", severity="warning")
+            return
+        self._media_state.link_receipt = None
+        self._invalidate_library_workspace_depth_state()
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:

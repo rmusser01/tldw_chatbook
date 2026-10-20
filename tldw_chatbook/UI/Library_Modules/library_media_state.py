@@ -254,6 +254,39 @@ def media_state_shim_attr(field_name: str) -> str:
     return "_library_media_" + field_name
 
 
+@dataclass(frozen=True)
+class LibraryMediaLinkReceipt:
+    """One "Use in Console" press's workspace link (TASK-34000.24).
+
+    Attributes:
+        workspace_id: The workspace the item was linked into -- Undo removes
+            THIS membership, never whatever is active by the time it is
+            pressed.
+        workspace_name: That workspace's display name for the receipt line.
+        item_id: The media membership id the receipt is about.
+        written: Whether THE PRESS that earned this receipt inserted the
+            membership ("Linked to …") or found it there ("Already linked
+            to …").
+        undo_offered: Whether "Undo link" renders -- true when a press in
+            this reader session wrote the membership (this one, or an
+            earlier press on the same item and workspace whose receipt a
+            later "Already linked" press replaced); never for a membership
+            the user did not add here.
+    """
+
+    workspace_id: str
+    workspace_name: str
+    item_id: str
+    written: bool
+    undo_offered: bool
+
+    @property
+    def line(self) -> str:
+        """The receipt sentence the Reader paints."""
+        prefix = "Linked to" if self.written else "Already linked to"
+        return f"{prefix} {self.workspace_name} · staged in Console"
+
+
 @dataclass
 class LibraryMediaState:
     """Every field the Media subsystem exclusively owns."""
@@ -541,3 +574,11 @@ class LibraryMediaState:
     #: (task-2223: "Open in Library" on a match landed on the twin's
     #: identity with no explanation).
     arrival_note: str = ""
+
+    #: TASK-34000.24: the workspace membership the last "Use in Console"
+    #: press linked (or found), shown in the Reader as "Linked to <name> ·
+    #: staged in Console" with an Undo for a membership THIS session wrote.
+    #: Cleared at the Reader's selection entry (per-load, like the
+    #: conversation reader's metadata) and keyed by item id so a stale
+    #: receipt can never stand beside a different item.
+    link_receipt: LibraryMediaLinkReceipt | None = None

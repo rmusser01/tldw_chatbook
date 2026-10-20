@@ -975,7 +975,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: entry, a three-line nested `say`, and the comment. No new method.
     #: Review 1: 37008 -> 37014 (+6), one click says at most one toast
     #: (the `spoken` guard). No new method.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37014, 1344),
+    #: 2026-10-19, TASK-34000.24: 37014 -> 37128 (+114), same owner decision:
+    #: the Media reader's hand-off links the item on use through the shared
+    #: seam (`_open_selected_media_handoff`, a screen-resident wiring
+    #: exclusion, rewritten in place), the receipt setter
+    #: `_set_library_media_link_receipt`, the `#library-media-link-undo`
+    #: handler (screen-resident: it needs the depth-state invalidation the
+    #: media controller does not bind), two imports and the two lambdas
+    #: that inject the depth state into the Search/RAG controller.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37128, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

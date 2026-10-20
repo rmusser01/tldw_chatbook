@@ -139,6 +139,8 @@ jobs:
             Tests/Library/test_library_note_autosave_max_wait.py \
             Tests/Library/test_library_file_export.py \
             Tests/Architecture/test_notes_sync_snapshot_construction.py \
+            Tests/Workspaces/test_link_on_use.py \
+            Tests/Workspaces/test_workspace_eligibility.py \
             Tests/UI/Library_Modules/test_library_pending_work_veto_notice.py \
             Tests/Notes/test_notes_sync_root_display_name.py \
             Tests/Library/test_library_rag_answer_provider_resolution.py \

@@ -371,7 +371,16 @@ _BUDGETS: dict[str, int] = {
     # filter handler now arms its timer with (it previously reused
     # SELECTION_SETTLE_SECONDS, a row-selection paint-settle value, as its
     # search debounce). No moved body was touched.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4769,
+    # 2026-10-19, TASK-34000.24 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value): 4769 -> 4874. origin/dev
+    # 4de437a5c5 was ALREADY at 4812 against this row (one of dev's own
+    # pre-existing ratchet reds, 43 over); this task added 62 lines: the
+    # "Use in Console" link receipt threaded through the Reader build and
+    # the unchanged-compare (+10), the receipt's visibility rule
+    # `_library_media_visible_link_receipt` (+41), and the per-item clear at
+    # the selection entry (+6, with its comment). No code was moved or
+    # reflowed to fit.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4874,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -580,7 +589,13 @@ _BUDGETS: dict[str, int] = {
     # bottom. Reworded to match the module docstring's corrected past-tense
     # phrasing. Comment-only growth (+1 line); no method body touched.
     # 1897 -> 1898.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1923,
+    # 2026-10-19, TASK-34000.24 (owner decision 2026-10-04, same rule): 1923 ->
+    # 2028 (+105). Search ▸ evidence ▸ `u` now obeys the readers' link-on-use
+    # rule: `_link_library_rag_result_on_use` (resolves the row-model id,
+    # links through `Workspaces/link_on_use`, refuses a non-linkable block)
+    # plus the two injected dependencies it needs (the workspace depth
+    # state and its invalidation) with their properties and Args entries.
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2028,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
     # Library-only `include_disabled_builtins` flag through the browse read so

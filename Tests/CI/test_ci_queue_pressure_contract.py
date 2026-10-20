@@ -55,6 +55,12 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34000.24: the link-on-use seam (real registry over a temp
+    # WorkspaceDB: written-once, already-linked, no-active, registry-raises,
+    # unlink inverse, row-id resolution) and the shared refusal copy that
+    # names the workspace, never its id; pure, a few seconds.
+    "Tests/Workspaces/test_link_on_use.py",
+    "Tests/Workspaces/test_workspace_eligibility.py",
     # TASK-34000.27: the sentence a vetoed nav-bar click gets from Library
     # (the save's own field-naming reason, the Esc path's sentence for
     # the other kinds, the destination in its head); pure, a few seconds.

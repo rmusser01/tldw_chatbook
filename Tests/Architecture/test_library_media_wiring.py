@@ -83,7 +83,9 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
 #: state -- see the state module's docstring), so 82 move. Pinned here so a
 #: field silently added to or dropped from the dataclass fails loudly
 #: instead of quietly resizing the shim surface this file checks.
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 82
+#: 2026-10-19, TASK-34000.24: 82 -> 83, ``link_receipt`` (the Reader's
+#: "Use in Console" workspace-link receipt; shim ``_library_media_link_receipt``).
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 83
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_

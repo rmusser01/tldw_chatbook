@@ -360,6 +360,11 @@ from ...Library.library_rag_state import (
     library_rag_scope_summary,
     update_search_history,
 )
+from ...Workspaces.eligibility import linkable_ineligibility_label
+from ...Workspaces.link_on_use import (
+    link_item_to_active_workspace,
+    resolve_workspace_item_id,
+)
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH, LIBRARY_ROW_INGEST_MEDIA
 from ...Widgets.Library import (
     LibrarySearchRagPanel,
@@ -409,6 +414,10 @@ class LibraryRagSearchController:
         # docstring group (a)).
         active_library_rail,
         console_setup_would_block,
+        # -- TASK-34000.24: the workspace depth state and its invalidation,
+        # for the link-on-use rule Search `u` shares with the readers.
+        library_workspace_depth_state,
+        invalidate_library_workspace_depth_state,
         open_library_item_by_id,
         safe_text,
         select_library_rail_row,
@@ -526,6 +535,10 @@ class LibraryRagSearchController:
         self._rag_search_state_accessor = rag_search_state_accessor
         self._active_library_rail_fn = active_library_rail
         self._console_setup_would_block_fn = console_setup_would_block
+        self._library_workspace_depth_state_fn = library_workspace_depth_state
+        self._invalidate_library_workspace_depth_state_fn = (
+            invalidate_library_workspace_depth_state
+        )
         self._open_library_item_by_id_fn = open_library_item_by_id
         self._safe_text_fn = safe_text
         self._select_library_rail_row_fn = select_library_rail_row
@@ -621,6 +634,17 @@ class LibraryRagSearchController:
         """The injected ``console_setup_would_block``. See ``__init__``'s
         docstring."""
         return self._console_setup_would_block_fn
+
+    @property
+    def _library_workspace_depth_state(self) -> Any:
+        """The injected ``library_workspace_depth_state`` (TASK-34000.24)."""
+        return self._library_workspace_depth_state_fn
+
+    @property
+    def _invalidate_library_workspace_depth_state(self) -> Any:
+        """The injected ``invalidate_library_workspace_depth_state``
+        (TASK-34000.24)."""
+        return self._invalidate_library_workspace_depth_state_fn
 
     @property
     def _open_library_item_by_id(self) -> Any:
@@ -1255,6 +1279,21 @@ class LibraryRagSearchController:
                 )
             return
 
+        # TASK-34000.24: the same link-on-use rule the Media reader's `c`
+        # obeys -- a local item is linked into the active workspace before
+        # it is staged, so `u` and `c` leave the same membership behind. A
+        # block a link cannot resolve refuses here exactly as the reader
+        # would, and staging proceeds only for a non-blocked item.
+        link_receipt = self._link_library_rag_result_on_use(
+            panel_state.selected_result
+        )
+        if link_receipt is None:
+            return
+        if link_receipt:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(link_receipt, severity="information", markup=False)
+
         # Task-2852 (b): Console's blocking first-run setup card visually
         # covers the whole workbench, so if we said nothing here the user's
         # selection would silently vanish into a locked "Get started"
@@ -1281,6 +1320,72 @@ class LibraryRagSearchController:
             recovery="Review citations before sending.",
             action_label="Review evidence in Console",
         )
+
+    def _link_library_rag_result_on_use(self, result: Any) -> str | None:
+        """Link a LOCAL evidence row's item into the active workspace (TASK-34000.24).
+
+        The membership is written under the id the Library row model reads
+        for that record (``resolve_workspace_item_id``), never under the
+        retrieval spelling, or the reader's gate would stay closed after
+        the link. A row the model does not carry (not in the loaded local
+        records, a server result) is staged as before, unlinked -- the
+        resolver never guesses an id.
+
+        Args:
+            result: The selected ``LibraryRagResultRow``.
+
+        Returns:
+            ``""`` when nothing had to be written (already linked, not a
+            local item); the ``Linked to … · staged in Console`` receipt
+            when a membership was written; ``None`` when a block a link
+            cannot resolve refused the hand-off (already notified).
+        """
+        item_type = {
+            "media": "media",
+            "notes": "note",
+            "conversations": "conversation",
+        }.get(str(getattr(result, "open_source_type", "") or ""), "")
+        source_id = str(getattr(result, "source_id", "") or "").strip()
+        if not item_type or not source_id:
+            return ""
+        try:
+            result.resolve_local_open_id()
+        except (ValueError, AttributeError):
+            # Not a local record (server authority, unusable id): no local
+            # membership to write.
+            return ""
+        state = self._library_workspace_depth_state()
+        item_id = resolve_workspace_item_id(state.source_rows, item_type, source_id)
+        row = next(
+            (
+                candidate
+                for candidate in state.source_rows
+                if candidate.item_type == item_type and candidate.item_id == item_id
+            ),
+            None,
+        )
+        if row is None or row.active_context_eligible:
+            return ""
+        if not linkable_ineligibility_label(row.reason_code):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(row.recovery_copy, severity="warning", markup=False)
+            return None
+        link = link_item_to_active_workspace(
+            getattr(self.app_instance, "workspace_registry_service", None),
+            item_type=item_type,
+            item_id=item_id,
+            title=str(getattr(result, "title", "") or ""),
+        )
+        if link.blocked_reason:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(link.blocked_reason, severity="warning", markup=False)
+            return None
+        if not link.written:
+            return ""
+        self._invalidate_library_workspace_depth_state()
+        return f"Linked to {link.workspace_name} · staged in Console"
 
     async def _apply_library_rag_search_outcome(
         self,
