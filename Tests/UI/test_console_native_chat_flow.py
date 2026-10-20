@@ -4873,8 +4873,10 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
     display has started the next refresh, makes the sync defer instead
     (TASK-35660), and a late resume can leave the warm-up itself not current.
     So warm and sync again until the sync renders, and fail naming Send's
-    state if it has not within the timeout. A closing screen or a disposed
-    runtime can never render, so that fails at once.
+    state if it has not within the timeout. The timeout bounds a warm-up that
+    never settles as well. A closing screen or a disposed runtime can never
+    render, so that fails at once. A sync that defers on every attempt costs
+    each caller the whole timeout before it fails.
 
     Args:
         console: The mounted ChatScreen to render.
@@ -4889,13 +4891,24 @@ async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object
         _readiness_runtime,
     )
 
-    projection = ConsoleReadinessConfigProjection.for_screen(console)
     deadline = time.monotonic() + _CONTROL_BAR_RENDER_TIMEOUT_S
     attempts = 0
     while True:
         attempts += 1
-        # A mount read may still belong to the pre-selection settings revision.
-        if not await projection.warm():
+        # Resolved each attempt, so the warm-up is on the projection the sync reads.
+        projection = ConsoleReadinessConfigProjection.for_screen(console)
+        # asyncio.timeout, not wait_for: the warm-up stays in this task.
+        warm_bound = asyncio.timeout(max(0.0, deadline - time.monotonic()))
+        try:
+            async with warm_bound:
+                # A mount read may still belong to the pre-selection settings revision.
+                current = await projection.warm()
+        except TimeoutError:
+            if not warm_bound.expired():
+                raise
+            last = "the readiness warm-up did not settle"
+            break
+        if not current:
             # The same two refusals warm() makes before it reads anything.
             assert not getattr(console, "_closing", False), "the Console is closing"
             assert not getattr(

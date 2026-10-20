@@ -112,7 +112,26 @@ async def test_control_bar_helper_still_refuses_an_unavailable_owner(monkeypatch
     )
     screen._console_readiness_config_projection = projection
     screen._sync_console_control_bar = lambda: pytest.fail("closed owner rendered")
-    with pytest.raises(AssertionError):
+    # The match pins the helper's own fast refusal; without it, its 15 s
+    # retry bound would raise a different AssertionError that passes too.
+    with pytest.raises(AssertionError, match="the Console is closing"):
+        await _sync_console_control_bar_now(screen)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_refuses_a_disposed_runtime_at_once(monkeypatch):
+    """A disposed runtime can never render, so the helper fails at once
+    instead of retrying until its bound (TASK-35660)."""
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, _owner, _identity, _tasks, _published = _screen(monkeypatch)
+    screen._console_runtime_fallback = SimpleNamespace(_disposed=True)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: pytest.fail("disposed owner read")
+    )
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("disposed owner rendered")
+    with pytest.raises(AssertionError, match="the Console runtime is disposed"):
         await _sync_console_control_bar_now(screen)
 
 
@@ -141,6 +160,38 @@ async def test_control_bar_helper_warms_again_while_each_read_goes_stale(monkeyp
         assert reads == [1, 2, 3]
         assert rendered == [{"revision": 3}]
     finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_bounds_a_warm_up_that_never_settles(monkeypatch):
+    """The helper's bound covers its warm-up too: a refresh that never
+    settles fails within the bound, naming the warm-up (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 0.3)
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        entered.set()
+        assert release.wait(10)
+        return _read_result({"settled": True})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("rendered before a warm-up")
+    try:
+        # A helper that waits on the warm-up unbounded fails here, not at
+        # pytest's own timeout.
+        async with asyncio.timeout(5):
+            with pytest.raises(
+                AssertionError, match="last: the readiness warm-up did not settle"
+            ):
+                await flow._sync_console_control_bar_now(screen)
+        assert entered.is_set()
+    finally:
+        release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 

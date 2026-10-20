@@ -396,6 +396,11 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
     second. This replays one order that makes the sync defer: the warm-up
     returns current, the loop resumes the helper 1.1 s later, and a display
     has started the next refresh in between.
+
+    Send alone cannot show that the helper rendered: during the stall the
+    product's own delayed control-bar replay may lift the mount-time block.
+    So the test records the helper's own syncs and requires a deferral
+    followed by a render.
     """
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
@@ -416,21 +421,40 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
         async def warm_then_resume_late(projection) -> bool:
             current = await warm(projection)
             if current and not late and asyncio.current_task() is helper_task:
-                await asyncio.sleep(1.1)  # past the proof's one second
-                projection.run(lambda: None)  # a display starts the next refresh
+                # A display that refreshed during a stall leaves the proof
+                # fresh and starts nothing, so stall past its second again.
+                for _ in range(3):
+                    await asyncio.sleep(1.1)  # past the proof's one second
+                    projection.run(lambda: None)  # a display starts the next refresh
+                    if projection.pending:
+                        break
                 late.append(projection.pending)
             return current
+
+        real_sync = console._sync_console_control_bar
+        helper_syncs: list[bool] = []
+
+        def recording_sync(*rail_state) -> bool:
+            rendered = real_sync(*rail_state)
+            if asyncio.current_task() is helper_task:
+                helper_syncs.append(bool(rendered))
+            return rendered
 
         monkeypatch.setattr(
             ConsoleReadinessConfigProjection, "warm", warm_then_resume_late
         )
+        monkeypatch.setattr(console, "_sync_console_control_bar", recording_sync)
         await _select_llamacpp_console(console)
+        syncs = list(helper_syncs)  # only the helper's, not the draft load's
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
         assert late == [True], (
             "the warm-up never returned current, or no refresh started"
         )
+        # The stale proof deferred the helper's first sync; it must not return
+        # until one of its own syncs renders.
+        assert syncs and not syncs[0] and syncs[-1], syncs
         assert not send.disabled, f"Send is disabled: {send.tooltip!r}"
 
 
