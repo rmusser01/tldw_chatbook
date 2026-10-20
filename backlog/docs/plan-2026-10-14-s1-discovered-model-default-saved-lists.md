@@ -24,7 +24,7 @@ Tasks: TASK-35010 (Saved model lists keep what the config file holds, and shippe
 
 Source: the verified Settings UX review of origin/dev 1ef4fcf4ae (2026-10-14). Its output is `wf-result.json`, holding assessments A/B/C, their adversarial verdicts and the completeness critic. Only CONFIRMED findings are used, each with its verifier's corrected cause. A2 is the exception: it was rated BY-DESIGN, and the owner has now changed that design.
 
-Builds on: Phase 9 (PR #3169, TASK-33641; head e8f475a219, armed in the merge queue on 2026-10-19). #3057 (Phase 7, TASK-33007) merged as aabc8db355, and Phase 8 (#3144, TASK-33008) as 111f8e48fc. S1 branches from dev after #3169 merges. The plans are backlog/docs/plan-2026-10-03-model-config-p7.md and backlog/docs/plan-2026-10-09-model-config-p9.md. This revision applies the 2026-10-19 re-validation against e8f475a219 (83 plan items checked).
+Builds on: Phase 9 (PR #3169, TASK-33641; head e8f475a219; S1 is rebased onto dev once it merges). #3057 (Phase 7, TASK-33007) merged as aabc8db355, and Phase 8 (#3144, TASK-33008) as 111f8e48fc. S1 branches from dev after #3169 merges. The plans are backlog/docs/plan-2026-10-03-model-config-p7.md and backlog/docs/plan-2026-10-09-model-config-p9.md. This revision applies the 2026-10-19 re-validation against e8f475a219 (83 plan items checked).
 
 Owner decision already made (2026-10-14), "Pick = use as default": choosing a discovered model makes it the default model, as a draft protected by P7's quit guard, and also adds it to the provider's saved model list. "Save selected" becomes a secondary **Add to model list** action for adding several at once.
 
@@ -284,7 +284,7 @@ Files:
 - `tldw_chatbook/Widgets/Console/console_model_popover.py` (NO-1 (a); no size row)
 - `tldw_chatbook/Chat/provider_endpoint_contract.py` (koboldcpp's native endpoint, ruled 2026-10-20; no size row)
 - `Tests/Architecture/test_module_size_ratchet.py` (lower the `settings_screen.py` row to its measured size)
-- `scripts/ui_pr_gate_census.txt` and `scripts/check_ui_pr_gate_census.py`. `MINIMUM_FILES` becomes the branch-point value + 1 (it is 360 at P9, check_ui_pr_gate_census.py:427).
+- `scripts/ui_pr_gate_census.txt` and `scripts/check_ui_pr_gate_census.py`. The file's test functions join the census as one node each, and `MINIMUM_FILES` rises by that count (it is 360 at P9; see New tests, "Each new census entry").
 - `Docs/User_Guide/settings.md`
 - `Docs/User_Guide/console.md` (NO-1's line; see Docs)
 
@@ -537,8 +537,8 @@ No workflow file is edited, unless NO-2 (a) applies (see T2 mechanism 8). `deriv
 - **Each new census entry:**
   - passes 3 of 3 serial runs on its own (ruling C16);
   - is timed in its shard (`entries[index::10]`, tail position) with the lane's install set (`-e . pytest pytest-asyncio pytest-timeout packaging`; lessons-testing-evidence :554, :580);
-  - goes at the census tail;
-  - raises `MINIMUM_FILES` to the branch-point value + 1. The value is 360 at P9, and #3167 raises dev's floor.
+  - goes in as one node per test function, never as a whole file, at the census tail in the S1 block: the lane deals `entries[index::10]`, so block positions i, i+10 and i+20 always share a shard wherever the block starts, and the order balances those ten groups by measured time (corrected in the whole-S1 review: a whole file put all its time on one shard);
+  - raises `MINIMUM_FILES` by the number of nodes added. The value is 360 at P9, and #3167 raises dev's floor.
 - **Every mounted test** carries `@private_profile_test`. A file without the marker needs the collection-time `import tldw_chatbook.app`, or it trips `RecoveryRequired` at setup.
 
 **TASK-35010: `Tests/UI/test_settings_saved_lists_follow_file.py`.** It uses the real `LocalLLMProviderCatalogService` and scope service with only the transport stubbed (`Tests/UI/test_settings_provider_key_check.py::_Provider` / `_route_discovery_to`), at 211x44 with the real stylesheet. Configuration is written to the file through the production writer, never by hand-seeding `app.providers_models`. Cases:
