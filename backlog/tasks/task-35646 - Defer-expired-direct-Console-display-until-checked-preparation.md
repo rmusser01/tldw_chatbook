@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-20 01:44'
-updated_date: '2026-10-20 02:10'
+updated_date: '2026-10-20 02:11'
 labels: []
 dependencies: []
 ---
@@ -21,7 +21,7 @@ Remove the measured native configuration entry from direct coalesced Console con
 - [x] #1 A genuine expired stock display defers without main-thread native config entry and renders only after fresh checked preparation.
 - [x] #2 Direct coalesced refresh, submission refusal and storage/source/lifecycle fences retain their correct behavior; custom readers keep their original route.
 - [x] #3 Serial native original/current profiles retain every result, exact exit, source hash and guard count.
-- [ ] #4 Targeted verification, independent review and PR3166 publication are complete with auto-merge off.
+- [x] #4 Targeted verification, independent review and PR3166 publication are complete with auto-merge off.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -33,5 +33,5 @@ ADR required: no. ADR path: N/A. Reason: narrow existing disposable display refu
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the qualified-expiry refusal in console_spend_projection.py; existing checked refresh and coalesced retry are reused, with no storage admission, path, owner, freshness, cancellation or retirement changes. Genuine-deadline and direct-callback RED/GREEN regressions cover retry after submission refusal; 115 distinct targeted cases pass. Three pre-target cost-source fixture failures reproduce on baseline and remain; recorder overflow was corrected with existing sibling coalescing and source pinning, with no assertions weakened. Independent review has no required changes. Projection-only serial ABBA: input median 200.73 to 181.36 ms; attachment 1063.05 to 1169.22 ms; worst input worsens. Natural diagnostics have zero coalesced native entries in both arms and cannot demonstrate removal; direct RED/GREEN does. One candidate main config entry outside the callback remains. All six process exits and all guard counts are zero, 36 drafts/attachments succeed. Four plain source receipts retain exact product commit e9c894e9bc. Fourteen exact disposable roots removed. ADR required: no; existing ADR126/230 apply. Full method, adverse results and verification limitations: Docs/Development/evidence/windows-performance-2026-10-18/CONTROL_BAR_RESULTS.md. PR3166 publication pending; auto-merge is off. Keep In Progress because three baseline fixture failures and broader latency qualification remain unresolved.
+Implemented the qualified-expiry refusal in console_spend_projection.py; existing checked refresh and coalesced retry are reused, with no storage admission, path, owner, freshness, cancellation or retirement changes. Genuine-deadline and direct-callback RED/GREEN regressions cover retry after submission refusal; 115 distinct targeted cases pass. Three pre-target cost-source fixture failures reproduce on baseline and remain; recorder overflow was corrected with existing sibling coalescing and source pinning, with no assertions weakened. Independent review has no required changes. Projection-only serial ABBA: input median 200.73 to 181.36 ms; attachment 1063.05 to 1169.22 ms; worst input worsens. Natural diagnostics have zero coalesced native entries in both arms and cannot demonstrate removal; direct RED/GREEN does. One candidate main config entry outside the callback remains. All six process exits and all guard counts are zero, 36 drafts/attachments succeed. Four plain source receipts retain exact product commit e9c894e9bc. Fourteen exact disposable roots removed. ADR required: no; existing ADR126/230 apply. Full method, adverse results and verification limitations: Docs/Development/evidence/windows-performance-2026-10-18/CONTROL_BAR_RESULTS.md. PR3166 updated with product e9c894e9bc and evidence feb9250db6; remote head confirmed and auto-merge is off. Final independent evidence review confirms the mixed outcome and nonreproducing natural diagnostic qualification. Keep In Progress because three baseline fixture failures and broader latency qualification remain unresolved.
 <!-- SECTION:NOTES:END -->
