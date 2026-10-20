@@ -4329,8 +4329,9 @@ reached `issue_code` (the issue_code wrapper above logged nothing).
 app normally, with config and data under the scratch HOME. The mechanism is
 not identified. It is not the private-path walk: that follows root-owned
 platform symlinks, and `Utils/private_paths.py::_trusted_symlink` names
-`/var -> private/var` as one. `launcher.startup_preflight` turns any
-`OSError`/`ValueError`/`RuntimeError` from `_read_recovery_file` (storage
+`/var -> private/var` as one. `launcher.startup_preflight` turns any other
+`OSError` (a missing file reads as no config) or `ValueError`/`RuntimeError`
+from `_read_recovery_file` (storage
 admission's `RecoveryRequired` included) into the fixed
 `configuration_unavailable` without calling `issue_code`, which is why the
 wrapper saw nothing. Storage admission's lexical-versus-resolved path checks are
