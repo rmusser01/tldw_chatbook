@@ -74,7 +74,7 @@ from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_me
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_engine as engines
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
-from tldw_chatbook.UI.Wizards.first_run_speech_layout import compose_speech_step
+from tldw_chatbook.UI.Wizards import first_run_speech_layout as speech_layout
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.Widgets.ModelArtifacts import (
     ActivationRequested,
@@ -93,13 +93,13 @@ if TYPE_CHECKING:
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
 
 
-def wizard_state_sections(app_config: Any) -> Mapping[str, Any]:
-    """The full-TOML ``[transcription]`` table, with this run's saves on top."""
-    from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
+def wizard_state_sections(wizard: Any) -> Mapping[str, Any]:
+    """The ``[transcription]`` table as it is now (``wizard_config_sections``)."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import wizard_config_sections
 
-    if not isinstance(app_config, Mapping):
+    if wizard is None:
         return {}
-    return full_config_sections(app_config, "transcription")["transcription"]
+    return wizard_config_sections(wizard, "transcription")["transcription"]
 
 
 class SpeechSetupStep(SetupStep):
@@ -223,7 +223,7 @@ class SpeechSetupStep(SetupStep):
             app_config, parakeet_bytes=self._parakeet_bytes()
         )
         self._engine = engine or engines.saved_engine(
-            wizard_state_sections(app_config), self._engine_facts
+            wizard_state_sections(self.wizard), self._engine_facts
         )
         self._advanced_expanded = False
 
@@ -233,7 +233,7 @@ class SpeechSetupStep(SetupStep):
         Pure: built from in-memory state (``first_run_speech_layout``); the
         installed-state check runs in ``on_show``'s worker.
         """
-        yield from compose_speech_step(self)
+        yield from speech_layout.compose_speech_step(self)
 
     # -- pure, I/O-free helpers ------------------------------------------
     @staticmethod
@@ -291,10 +291,10 @@ class SpeechSetupStep(SetupStep):
     def _on_engine_changed(self, event: RadioSet.Changed) -> None:
         event.stop()
         key = (event.pressed.id or "").removeprefix("setup-speech-engine-")
-        if key == self._engine or not key:
+        if key == self._engine or not key or speech_layout.engine_locked(self):
             return
         self._engine = key
-        self.refresh(recompose=True)
+        speech_layout.show_engine_choice(self)  # in place: review F7
         if key == engines.ENGINE_PARAKEET:
             self._ensure_loaded()
 
@@ -1505,22 +1505,21 @@ class SpeechSetupStep(SetupStep):
             succeeded; ``(False, <message>)`` when work is still pending or
             preparing, writing, or accepting an external selection failed.
         """
+        if self._external_busy:  # whatever the engine (review F7)
+            return False, "Wait for external model verification to finish."
         if self._engine != engines.ENGINE_PARAKEET:
             # voice-speech-15: "No dictation for now" writes nothing; the
             # installed and cloud engines write [transcription] only when this
             # run changed it.
-            app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
             mutation = engines.build_engine_commit(
                 self._engine,
                 facts=self._engine_facts,
-                transcription=wizard_state_sections(app_config),
+                transcription=wizard_state_sections(self.wizard),
             )
             if not mutation:
                 return True, ""
             ok = await self.wizard.commit_config(mutation)
             return (True, "") if ok else (False, "Saving the dictation engine failed.")
-        if self._external_busy:
-            return False, "Wait for external model verification to finish."
         if self._pending_external_selection is not None:
             return await self._commit_external_selection()
 

@@ -1599,6 +1599,26 @@ async def test_busy_external_setup_has_keyboard_cancel_with_path_private_copy():
         worker.cancel.assert_called_once_with()
 
 
+async def _press_through_language(pilot, step, language) -> None:
+    """Force the Language Select open and pick another language by keyboard.
+
+    review-tests F11 (TASK-34100.13): Language became a one-row Select and
+    fell out of the force-enable-and-press fence; the step's selection, and so
+    the commit target, must not move while a commit or check is pending.
+    """
+    before = (step._selected_language, step._selection())
+    shown = language.value
+    language.disabled = False
+    language.focus()
+    await pilot.press("enter")
+    await pilot.pause()
+    await pilot.press("down")
+    await pilot.press("enter")
+    await pilot.pause()
+    assert language.value != shown, "the key presses never reached the Select"
+    assert (step._selected_language, step._selection()) == before
+
+
 @pytest.mark.asyncio
 async def test_commit_pending_physically_blocks_every_source_control(monkeypatch):
     prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
@@ -1656,8 +1676,6 @@ async def test_commit_pending_physically_blocks_every_source_control(monkeypatch
                 control.disabled for control in (disk, install, language, precision)
             )
 
-            # TASK-34100.13: Language is a one-row Select now; its disabled
-            # state is asserted above, the key presses cover the buttons.
             for control in (disk, install, precision):
                 control.disabled = False
                 control.focus()
@@ -1665,6 +1683,7 @@ async def test_commit_pending_physically_blocks_every_source_control(monkeypatch
                     "space" if isinstance(control, RadioButton) else "enter"
                 )
                 await pilot.pause()
+            await _press_through_language(pilot, step, language)
 
             step._installed_item = _installed_item(active=False)
             step.refresh(recompose=True)
@@ -1764,6 +1783,7 @@ async def test_slow_external_prepare_fences_every_source_control(monkeypatch):
                     "space" if isinstance(control, RadioButton) else "enter"
                 )
                 await pilot.pause()
+            await _press_through_language(pilot, step, language)
 
             step._installed_item = _installed_item(active=False)
             step.refresh(recompose=True)
