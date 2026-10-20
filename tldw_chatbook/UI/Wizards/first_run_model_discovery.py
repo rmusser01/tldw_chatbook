@@ -697,11 +697,12 @@ async def discover_within_timeout(
     Review round 2 (R2-07): httpx's own ConnectTimeout (10 s) -- where a
     stalled loopback https handshake is confirmed as plain HTTP -- never
     fired before the wizard's 8 s wait, so the failure reached the step with
-    no cause. The listing now gets the wait minus the confirmation's own
-    budget; when it runs out, the result is a typed 'timeout', or
-    'tls_plain_http' when one plain GET to the same loopback host:port is
-    answered. The whole call ends inside MODEL_DISCOVERY_TIMEOUT_SECONDS, so
-    Model's own wait for this result never fires first.
+    no cause. An https loopback listing now gets the wait minus the
+    confirmation's own budget, and every other listing the full wait, as
+    before R2-07 (review v3r1, R1-08); when it runs out, the result is a typed
+    'timeout', or 'tls_plain_http' when one plain GET to the same loopback
+    host:port is answered. The whole call ends inside
+    MODEL_DISCOVERY_TIMEOUT_SECONDS.
 
     Args:
         discover_models: The catalog scope service's ``discover_models``.
@@ -722,6 +723,11 @@ async def discover_within_timeout(
 
     total = MODEL_DISCOVERY_TIMEOUT_SECONDS
     confirm = discovery.PLAIN_HTTP_CONFIRM_TIMEOUT_SECONDS
+    settings = (staged_settings.get("api_settings") or {}).get(provider_key) or {}
+    endpoint = str(settings.get(provider_endpoint_key(provider_key)) or "")
+    # Review v3r1, R1-08: only an https loopback listing gives up part of the
+    # wait for the plain-HTTP check; a cloud listing keeps the full wait.
+    confirmable = discovery.https_on_loopback(endpoint)
     try:
         return await asyncio.wait_for(
             discover_models(
@@ -730,13 +736,11 @@ async def discover_within_timeout(
                 staged_settings=staged_settings,
                 use_shared_cache=False,
             ),
-            timeout=max(total - confirm - 0.5, total / 2),
+            timeout=max(total - confirm - 0.5, total / 2) if confirmable else total,
         )
     except TimeoutError:
         pass
-    settings = (staged_settings.get("api_settings") or {}).get(provider_key) or {}
-    endpoint = str(settings.get(provider_endpoint_key(provider_key)) or "")
-    plain = await discovery.loopback_answers_plain_http(endpoint)
+    plain = confirmable and await discovery.loopback_answers_plain_http(endpoint)
     return ModelDiscoveryResult(
         provider=provider_key,
         provider_list_key=None,
