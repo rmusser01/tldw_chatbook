@@ -382,8 +382,12 @@ unmounts and detaches it but leaves `is_mounted` True. The guard was copied
 from `SettingsScreen._raw_config_changed`, whose `is_mounted` check only skips a
 screen not yet mounted (its unmount detaches that callback): a convention in
 the same file had answered a different question, "mounted yet?", not "left the
-stack?". For "has this screen left the stack", use `is_attached`, and pin it
-with a test that pops the screen first
+stack?". For "has this screen left the stack": a screen that is not installed
+(not a `reusable` route, like Settings) is removed on pop, so `is_attached`
+answers it; an installed screen (the `reusable` routes Home, Chat and Library
+in screen_registry.py) stays attached after a pop, so check
+`screen in app.screen_stack` (or `is_current`) there. Pin it with a test that
+pops the screen first
 (`test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists`
 failed with `is_mounted`).
 
