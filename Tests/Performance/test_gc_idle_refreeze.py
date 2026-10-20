@@ -22,12 +22,17 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Utils import ui_responsiveness
 from tldw_chatbook.Utils.text_selection_crash_guard import TextualAppGuards
 from tldw_chatbook.Utils.ui_responsiveness import (
     COMPACTION_GROWTH_RATIO,
     IdleHeapRefreezer,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
 class Clock:
@@ -436,6 +441,115 @@ async def test_twenty_switches_keep_the_frozen_generation_bounded() -> None:
             assert final.maintain("run_settled") == "compact"
             assert alive(dropped) == 0
             assert alive(shown) == len(shown)
+    finally:
+        gc.unfreeze()
+
+
+class ConsoleTranscriptApp(TextualAppGuards, App[None]):
+    """The real Console transcript, showing one session's conversation at a time."""
+
+    CSS = "ConsoleTranscript { height: 20; }"
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Pruning would drop rows on its own; keep every row mounted.
+        self.app_config = {
+            "chat_defaults": {
+                "prune_high_watermark": 1_000_000,
+                "prune_low_watermark": 900_000,
+            }
+        }
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+    async def show(self, session: str, turns: int = 12) -> set[int]:
+        """Show ``session``'s conversation, as a chat switch does.
+
+        Returns:
+            The ``id()`` of every widget the transcript holds afterwards.
+        """
+        transcript = self.query_one(ConsoleTranscript)
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=role,
+                    content=f"{session} {role.value} {index}: " + "words " * 12,
+                    id=f"{session}-{role.value}-{index}",
+                    status="completed",
+                )
+                for index in range(turns)
+                for role in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT)
+            ],
+            session_id=session,
+        )
+        await transcript.refresh_messages()
+        await self.workers.wait_for_complete()
+        return {id(widget) for widget in transcript.query("*")}
+
+    def rows(self) -> list[weakref.ref]:
+        """Weak references to every widget the transcript holds now."""
+        return [
+            weakref.ref(widget)
+            for widget in self.query_one(ConsoleTranscript).query("*")
+        ]
+
+
+async def switch_away(
+    app: ConsoleTranscriptApp, pilot, rows: list[weakref.ref], session: str
+) -> list[weakref.ref]:
+    """Switch to ``session``; returns the references to rows it unmounted.
+
+    A row the collector already freed during the switch counts as unmounted
+    (its reference is dead), so an automatic collection mid-switch cannot
+    shrink the sample.
+    """
+    kept = await app.show(session)
+    await pilot.pause()
+    dropped = []
+    for ref in rows:
+        widget = ref()
+        if widget is None or id(widget) not in kept:
+            dropped.append(ref)
+        del widget
+    return dropped
+
+
+@pytest.mark.bootstrap_profile  # the transcript reads [console] settings
+async def test_real_console_transcript_rows_frozen_live_are_freed_by_the_compaction() -> (
+    None
+):
+    """AC#6 on the real ``ConsoleTranscript``: switched-away rows die after compaction.
+
+    Controls: with nothing frozen, the rows a chat switch unmounts are
+    collected (so the transcript keeps no reference to them); after a
+    re-freeze they survive a full collection (the leak the compaction
+    bounds is real for these widgets); the compaction then frees them.
+    """
+    gc.unfreeze()
+    gc.collect()
+    app = ConsoleTranscriptApp()
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await app.show("alpha")
+            unfrozen = await switch_away(app, pilot, app.rows(), "bravo")
+            assert len(unfrozen) > 20, "the switch unmounted too few rows to test"
+            gc.collect()
+            assert alive(unfrozen) == 0, "the transcript still holds switched-away rows"
+
+            refreezer = real_refreezer(growth_ratio=0.0, min_growth=1)
+            await app.show("charlie")
+            assert refreezer.maintain("conversation_painted") == "refreeze"
+            frozen = await switch_away(app, pilot, app.rows(), "delta")
+            assert len(frozen) > 20
+            gc.collect()
+            assert alive(frozen) == len(frozen), (
+                "frozen transcript rows were collected without a compaction"
+            )
+
+            assert refreezer.maintain("run_settled") == "compact"
+            assert alive(frozen) == 0, "the compaction left switched-away rows alive"
     finally:
         gc.unfreeze()
 
