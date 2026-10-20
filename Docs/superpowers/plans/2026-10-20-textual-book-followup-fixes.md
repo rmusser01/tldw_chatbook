@@ -45,11 +45,11 @@ Tasks 1-2 touch different Schedules UI owners and share only `Docs/Architecture/
 **Files:** modify `tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py`; extend `Tests/UI/test_automation_definition_form.py`; update Schedules architecture/user documentation as needed.
 **Interfaces:** keep `_run_save(self) -> None`, `_save_async(self, payload: dict[str, Any], owner: str) -> None` and `SchedulingService.save_definition` outcomes. No service/storage API changes.
 ADR required: no; existing Accepted ADR-018; Proposed ADR-099/116 are context only.
-- [ ] Add `test_double_save_while_insert_pending_creates_one_definition` using real form/service/SQLite. Hold the first physical insert, wait for Button active-effect removal, press Save again; assert one persisted row and one successful outcome. Include same-turn pre-worker admission and genuine failure/retry controls.
-- [ ] Run the new nodes first and record expected duplicate/admission failures before changing product code. Fix fixture/collection errors before treating them as red evidence.
-- [ ] Add minimal synchronous admission and visible pending state around the existing Save dispatch; retain ownership until the admitted operation settles, prevent replacement by repeated gestures, and reset safely for genuine retry.
-- [ ] Run the affected form tests plus directly affected modal/ownership checks; verify local create/edit and queued/refused outcomes, scoped Ruff/format and whitespace. Record commands, red/green output and any inherited noise in the report.
-- [ ] Update relevant docs, self-review, and commit only owned files. Leave task status In Progress for controller review.
+- [x] Add `test_double_save_while_insert_pending_creates_one_definition` using real form/service/SQLite. Hold the first physical insert, wait for Button active-effect removal, press Save again; assert one persisted row and one successful outcome. Include same-turn pre-worker admission and genuine failure/retry controls.
+- [x] Run the new nodes first and record expected duplicate/admission failures before changing product code. Fix fixture/collection errors before treating them as red evidence.
+- [x] Add minimal synchronous admission and visible pending state around the existing Save dispatch; retain ownership until the admitted operation settles, prevent replacement by repeated gestures, and reset safely for genuine retry.
+- [x] Run the affected form tests plus directly affected modal/ownership checks; verify local create/edit and queued/refused outcomes, scoped Ruff/format and whitespace. Record commands, red/green output and any inherited noise in the report.
+- [x] Update relevant docs, self-review, and commit only owned files. Leave task status In Progress for controller review.
 
 ### Task 2: TASK-35866 - Results mutation admission
 

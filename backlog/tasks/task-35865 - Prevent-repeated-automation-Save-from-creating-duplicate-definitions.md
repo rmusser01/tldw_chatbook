@@ -1,7 +1,7 @@
 ---
 id: TASK-35865
 title: Prevent repeated automation Save from creating duplicate definitions
-status: In Progress
+status: Done
 created_date: 2026-10-20 19:23
 labels:
 - scheduling
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-20 19:42
+updated_date: 2026-10-20 19:59
 ---
 
 ## Description
@@ -41,11 +41,11 @@ Reason: No new ADR is expected for a localized UI admission repair preserving se
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Two real Save gestures after the normal button active effect clears, while the first physical create is held, persist exactly one definition and publish one successful outcome.
-- [ ] #2 Pending Save is visibly represented; repeated button and keyboard/direct action paths cannot replace or duplicate the admitted operation.
-- [ ] #3 Validation/refusal and a genuinely failed save retain the form draft and permit a subsequent successful retry without duplicate rows.
-- [ ] #4 Local create/edit, server-owned queued/refused outcomes, and existing modal close/quit guards retain their established behavior; no schema, sync-policy or generic worker-framework change is introduced.
-- [ ] #5 Deterministic private-profile tests hold and release the real SQLite write, wait for physical settlement, and retain ordinary Save, failure and retry controls.
+- [x] #1 Two real Save gestures after the normal button active effect clears, while the first physical create is held, persist exactly one definition and publish one successful outcome.
+- [x] #2 Pending Save is visibly represented; repeated button and keyboard/direct action paths cannot replace or duplicate the admitted operation.
+- [x] #3 Validation/refusal and a genuinely failed save retain the form draft and permit a subsequent successful retry without duplicate rows.
+- [x] #4 Local create/edit, server-owned queued/refused outcomes, and existing modal close/quit guards retain their established behavior; no schema, sync-policy or generic worker-framework change is introduced.
+- [x] #5 Deterministic private-profile tests hold and release the real SQLite write, wait for physical settlement, and retain ordinary Save, failure and retry controls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,3 +62,13 @@ Reason: bounded form admission fix; preserve existing writer, ownership, validat
 
 Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 1).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Automation Save now admits one operation synchronously at the form owner, disables and labels Save while pending, and restores admission after validation/refusal/failure or submission errors. Existing save_definition, ownership/outbox and modal close/quit paths are unchanged. Added real mounted/SQLite duplicate-click, same-turn, trigger failure/retry, refusal/queued retry and validation retry controls. Updated scheduling-workflows.md and schedules.md.
+
+Evidence: commit 7d00f8490d. RED: two requested failures (2 persisted rows; first worker cancelled) and a passing genuine failure/retry control. GREEN: all 28 form cases, 2 exact automation quit guards and 26 save_definition service cases, 56 targeted passes total. Scoped Ruff/format and git diff --check passed. Inherited pytest-asyncio/Pydantic deprecations documented without filters; no full suite run.
+
+Superpowers independent spec/quality review approved with no actionable findings. ADR required: no; existing backlog/decisions/018-local-server-hybrid-scheduled-tasks.md applies; ADR-099/116 remain Proposed context. Full six-task integration/review is tracked by Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md. No new generalized lesson.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

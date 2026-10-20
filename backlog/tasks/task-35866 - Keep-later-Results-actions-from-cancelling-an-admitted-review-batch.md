@@ -1,7 +1,7 @@
 ---
 id: TASK-35866
 title: Keep later Results actions from cancelling an admitted review batch
-status: To Do
+status: In Progress
 created_date: 2026-10-20 19:24
 labels:
 - scheduling
@@ -10,6 +10,9 @@ labels:
 priority: medium
 documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 19:59
 ---
 
 ## Description
@@ -44,3 +47,18 @@ Reason: No new ADR is expected if the repair stays within existing UI mutation a
 - [ ] #4 Existing local/server owner checks and review-plus-outbox transaction semantics are preserved without a bulk schema primitive or new sync/conflict policy.
 - [ ] #5 Deterministic actual-keyboard/private-profile SQLite tests cover a-then-d overlap, related action overlap, physical settlement and ordinary/failure controls.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/018-local-server-hybrid-scheduled-tasks.md
+Reason: bounded Results mutation admission; preserve owner checks, per-row review/outbox transactions and existing service contracts. ADR-116 remains Proposed context.
+
+1. Add real-keyboard/private-profile SQLite overlap and ordinary/failure controls, holding the first physical review read; record expected cancellation failure.
+2. Admit actions synchronously with captured IDs/scope, visibly refuse overlaps while busy, and release admission on all outcomes without a generic command queue.
+3. Run targeted Results/service/outbox and static checks; update Schedules documentation.
+4. Obtain Superpowers spec/quality review before controller completion.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 2).
+<!-- SECTION:PLAN:END -->
