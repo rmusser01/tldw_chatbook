@@ -202,7 +202,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: only on a real activation, never on the attach reconcile's direct
     #: replay of on_screen_resume. Dev 0923ec0ca2 measured 24319/736; with
     #: the fix, 24321/737, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24329, 737),
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +11.
+    #: 2026-10-20, TASK-34100.6 review v3r1 (R1-01); re-measured 2026-10-29
+    #: after rebasing onto dev (24329/737): this task adds 11 -- the Get
+    #: started card's 'Look again' action and the local_server_found flag
+    #: behind 'No model connected' (AC#9), and the exported-key provider
+    #: 'Set up provider' opens (AC#11). Methods unchanged. 24340/737, the
+    #: exact measurement, never above it.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24340, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
