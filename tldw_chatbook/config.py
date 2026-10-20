@@ -7238,15 +7238,18 @@ def _warm_config_cache_hit() -> Optional[Dict[str, Any]]:
     return None
 
 
-def cli_config_read_would_wait() -> bool:
-    """Whether a CLI config read on this thread would wait for another thread.
+def config_read_would_wait() -> bool:
+    """Whether a config read on this thread would wait for another thread.
 
-    TASK-35645: a warm read never waits; a cold one waits while another
-    thread holds the config locks (a rebuild or a write), so they are probed
-    without blocking, in their usual order. A storage pause makes a cold read
-    raise rather than wait, as it always has.
+    TASK-35645: warm settings and CLI config caches never wait; a cold one
+    waits while another thread holds the config locks (a rebuild or a write),
+    so they are probed without blocking, in their usual order. A storage
+    pause makes a cold read raise rather than wait, as it always has.
     """
-    if _warm_config_cache_hit() is not None:
+    if (
+        _warm_config_cache_hit() is not None
+        and _settings_cache_hit(_get_effective_config_path()) is not None
+    ):
         return False
     with ExitStack() as acquired:
         for lock in (_settings_rebuild_lock(), _config_file_lock()):

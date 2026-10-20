@@ -92,7 +92,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ProprietaryThinkingBlock,
     ThinkingEnvelope,
 )
-from tldw_chatbook.config import cli_config_read_would_wait, get_cli_setting
+from tldw_chatbook.config import config_read_would_wait, get_cli_setting
 from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
@@ -5052,7 +5052,7 @@ class ConsoleTranscript(VerticalScroll):
         `get_cli_setting` here is a test's patch point. TASK-35645: a read that
         would wait out another thread's config rebuild keeps the last value.
         """
-        if not cli_config_read_would_wait():
+        if not config_read_would_wait():
             self._turn_file_cards_shown = bool(get_cli_setting("console", "turn_file_cards", True))
         return self._turn_file_cards_shown
 

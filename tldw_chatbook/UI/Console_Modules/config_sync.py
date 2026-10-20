@@ -116,16 +116,20 @@ def replay_whole_console_sync(screen) -> bool:
 
 
 def sync_console_core_state(screen) -> None:
-    """Push the provider selection from checked display config, never waiting.
+    """Push the live provider selection unless that read would wait.
 
-    TASK-35645: the full UI sync pushed it with a live ``load_settings()``,
-    which waited out any config rebuild on the UI loop. A deferral hands the
-    whole sync to the replay; the rest of this pass still runs, and each later
-    step defers itself. A send pushes the live selection itself
-    (``_ensure_console_chat_controller``).
+    TASK-35645: the full UI sync's push reads ``load_settings()`` live, which
+    waited out any config rebuild on the UI loop. While a rebuild holds a cold
+    config the push hands the whole sync to the replay instead, and the rest of
+    this pass still runs. Otherwise it is the same live read a send's own push
+    makes (``_ensure_console_chat_controller``).
     """
-    if not run_console_presentation_sync(screen, screen._sync_console_chat_core_state):
+    from tldw_chatbook.config import config_read_would_wait
+
+    if config_read_would_wait():
         replay_whole_console_sync(screen)
+        return
+    screen._sync_console_chat_core_state()
 
 
 def sync_console_rail_visibility(screen) -> bool:
