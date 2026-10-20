@@ -1005,7 +1005,9 @@ the message leaves that list while the card handles it, so the same message is
 never offered in two places. If Cancel finds text already in the composer, the
 message goes back on the list for **Restore** later. If you switch to another
 conversation while Cancel runs, the message goes back to its own
-conversation's draft, not to the one on screen. If the card is closed while
+conversation's draft, not to the one on screen; if you had typed something
+new in that draft, your text stays and the message is listed for **Restore**
+instead. If the card is closed while
 it acts — for example you open the Console terminal during a Retry — the
 search stops, the send pauses as **Library search stopped**, and the message
 is listed again with Restore and Discard; the card shows it again when you

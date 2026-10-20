@@ -6842,6 +6842,7 @@ class ConsoleSessionController:
         from ...Chat.console_unsent_turn import (
             card_action_finished,
             card_action_started,
+            own_draft_takes_it_back,
             shelf_releasable,
         )
 
@@ -6909,13 +6910,16 @@ class ConsoleSessionController:
         )
         cancelled = action == "cancel" and settled
         refill = cancelled and shown and not composer.draft_text().strip()
+        to_own_draft = cancelled and not shown and own_draft_takes_it_back(
+            controller.store, held.session_id, held_text
+        )
         if releasable:
             returned = card_action_finished(
                 runtime,
                 controller,
                 preparation_id,
                 accepted=bool(getattr(result, "accepted", False)),
-                return_to_composer=refill or (cancelled and not shown),
+                return_to_composer=refill or to_own_draft,
             )
             if returned is not None:
                 held_text = returned.draft  # with its attachments restaged

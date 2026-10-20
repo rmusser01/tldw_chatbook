@@ -3238,9 +3238,9 @@ class ConsoleRuntime:
 
         TASK-33621.20 review: the card's Cancel used to refill the composer's
         text only; the attachments the send had taken stayed with the dropped
-        shelf entry. The caller has checked that the composer is empty, and
-        the controller's cancel has just written the sent text back into the
-        stored draft, so the draft is replaced rather than merged.
+        shelf entry. The caller has checked that the composer (or, after a tab
+        switch, this session's stored draft) is empty or holds only the sent
+        text the cancel put back, so the draft is replaced rather than merged.
 
         Returns:
             The returned unsent turn, or None when the send had none.

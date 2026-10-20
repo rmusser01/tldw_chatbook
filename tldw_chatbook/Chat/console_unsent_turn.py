@@ -79,6 +79,29 @@ def release_unsent_turn_preparation(
     return current is None or current.preparation_id != preparation_id
 
 
+def own_draft_takes_it_back(store: Any, session_id: str, sent_text: str) -> bool:
+    """Whether a cancelled send may go back into its own (unshown) draft.
+
+    TASK-33621.20: a card Cancel that finishes after a tab switch returns the
+    message to its own conversation's stored draft instead of the composer.
+    Like the composer refill, that must never replace a follow-up typed there
+    meanwhile; the store's cancel keeps such a draft, so it no longer matches.
+
+    Args:
+        store: The Console chat store.
+        session_id: The cancelled send's session.
+        sent_text: The text the send carried.
+
+    Returns:
+        True when that draft is empty or is the sent text put back.
+    """
+    try:
+        draft = store.session_draft(session_id).strip()
+    except KeyError:  # the conversation is gone
+        return False
+    return draft in {"", sent_text.strip()}
+
+
 def card_action_started(runtime: Any, preparation_id: str) -> None:
     """Take the paused send's unsent turn off the shelf while its card acts.
 
@@ -108,7 +131,8 @@ def card_action_finished(
         preparation_id: The paused send's preparation id.
         accepted: The action sent the turn.
         return_to_composer: The action was a Cancel that took effect and the
-            composer is empty, so the turn goes back there.
+            composer is empty -- or, after a tab switch, the turn's own draft
+            is free (`own_draft_takes_it_back`) -- so the turn goes back there.
         interrupted: The action raised or was cancelled -- opening the
             Console terminal removes the card mid-action -- so no card is
             known to cover a re-pause and the shelf offers the turn again.

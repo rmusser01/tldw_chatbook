@@ -373,6 +373,67 @@ async def test_card_cancel_after_a_tab_switch_returns_the_text_to_its_own_chat()
 
 
 @pytest.mark.asyncio
+async def test_card_cancel_after_a_tab_switch_keeps_a_follow_up_typed_meanwhile():
+    """A Cancel that finishes after a tab switch never overwrites a newer draft.
+
+    The user typed a follow-up while the card was up, pressed Cancel, and the
+    tab switched before the action finished. The follow-up stays as that
+    conversation's draft (as it does when its composer is still shown and not
+    empty), and the cancelled message stays on the shelf to Restore.
+    """
+    gateway = _Gateway()
+    host = _build_with(gateway)
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _timed_out_send(host, pilot, library)
+            store = controller.store
+            first_id = store.active_session_id
+            runtime = console._console_runtime()
+            (entry,) = runtime.recoveries_for_session(first_id)
+            composer.load_draft(SECOND)  # typed while the card is up
+            await pilot.pause()
+            await until(lambda: store.session_draft(first_id) == SECOND)
+            real_cancel = controller.cancel_library_preparation
+            other_ids: list[str] = []
+
+            def cancel_after_a_tab_switch(preparation_id):
+                other = store.create_session(title="Other")
+                other_ids.append(other.id)
+                store.switch_session(other.id)
+                console._console_visible_draft_session_id = other.id
+                composer.load_draft("")
+                return real_cancel(preparation_id)
+
+            controller.cancel_library_preparation = cancel_after_a_tab_switch
+            console.query_one(_CARD_ACTIONS["Cancel send"], Button).press()
+            await until(lambda: other_ids != [])
+            await until(
+                lambda: (
+                    store.preparation_by_id(entry.preparation_id) is None
+                    or store.preparation_by_id(entry.preparation_id).state
+                    is ConsoleTurnPreparationState.CANCELLED
+                )
+            )
+            # The card's action settles, one way or the other.
+            await until(
+                lambda: (
+                    store.session_draft(first_id) != SECOND
+                    or runtime.recoveries_for_session(first_id) == (entry,)
+                )
+            )
+            await pilot.pause()
+
+            assert store.session_draft(first_id) == SECOND  # not overwritten
+            # Offered again to Restore, rather than dropped.
+            assert runtime.recoveries_for_session(first_id) == (entry,)
+            assert store.session_draft(other_ids[0]) == ""
+            assert composer.draft_text() == ""
+            assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_a_card_retry_whose_durable_commit_fails_keeps_the_turn_on_the_shelf():
     """Re-review MINOR 8: the shelf trusts the store, which says "not sent".
 
