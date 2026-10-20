@@ -3743,6 +3743,39 @@ class LibraryMediaController:
             id="library-media-canvas",
         )
 
+    def _library_media_link_receipt_block(self, media_id: str) -> str:
+        """Why the standing link receipt is withheld for ``media_id``, if it is.
+
+        Fix round 2 (item 4): the Undo handler has to tell a registry it
+        cannot read apart from a workspace that genuinely moved -- the
+        first gets the registry-unavailable sentence, only the second "no
+        longer active".
+
+        Args:
+            media_id: The membership id of the item the Reader is showing.
+
+        Returns:
+            ``""`` when the receipt stands; ``"no_receipt"``,
+            ``"other_item"``, ``"registry_unavailable"`` or
+            ``"workspace_inactive"`` otherwise.
+        """
+        receipt = self._library_media_link_receipt
+        if receipt is None:
+            return "no_receipt"
+        if not media_id or receipt.item_id != media_id:
+            return "other_item"
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return "registry_unavailable"
+        try:
+            active = registry.get_active_workspace()
+        except Exception:
+            # An unreadable current context cannot authorize a standing Undo.
+            return "registry_unavailable"
+        if active is None or active.workspace_id != receipt.workspace_id:
+            return "workspace_inactive"
+        return ""
+
     def _library_media_visible_link_receipt(self, media_id: str) -> tuple[str, bool]:
         """Project the "Use in Console" link receipt into the Reader (TASK-34000.24).
 
@@ -3764,19 +3797,10 @@ class LibraryMediaController:
             ``(line, undo_offered)``: the receipt sentence or ``""``, and
             whether "Undo link" renders beside it.
         """
+        if self._library_media_link_receipt_block(media_id):
+            return "", False
         receipt = self._library_media_link_receipt
-        if receipt is None or not media_id or receipt.item_id != media_id:
-            return "", False
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
-            return "", False
-        try:
-            active = registry.get_active_workspace()
-        except Exception:
-            # An unreadable current context cannot authorize a standing Undo.
-            return "", False
-        if active is None or active.workspace_id != receipt.workspace_id:
-            return "", False
+        assert receipt is not None  # the block check above covers None
         return receipt.line, receipt.undo_offered
 
     def _build_library_media_reader(self) -> LibraryMediaViewer:

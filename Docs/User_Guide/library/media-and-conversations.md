@@ -957,9 +957,11 @@ Escape's return to the list live at 100x30).*
   and a "copy or link" action that does not exist for media, while Search
   ▸ evidence ▸ `u` staged the same item with no workspace rule at all.
   Both now take the same path: the item is linked to the active workspace
-  and staged in one step, the receipt names the workspace by its display
-  name, and the link can be undone from the reader. An item that is never
-  used stays unlinked, so the Default workspace still means what it meant.
+  and staged in one step, and the receipt names the workspace by its display
+  name. Only a link the reader's own press made offers "Undo link" there; a
+  link made from Search evidence has no Undo in the reader (remove it from
+  the workspace's sources). An item that is never used stays unlinked, so
+  the Default workspace still means what it meant.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent

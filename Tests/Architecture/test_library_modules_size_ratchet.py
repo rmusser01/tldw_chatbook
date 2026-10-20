@@ -380,7 +380,12 @@ _BUDGETS: dict[str, int] = {
     # `_library_media_visible_link_receipt` (+41), and the per-item clear at
     # the selection entry (+6, with its comment). No code was moved or
     # reflowed to fit. Re-measured after fix round 1: still 4874.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4874,
+    # 2026-10-20, fix round 2 (item 4): 4874 -> 4898 (+24),
+    # `_library_media_link_receipt_block` -- why a standing receipt is
+    # withheld (other item / registry unavailable / workspace inactive), so
+    # the Undo handler can tell an unreadable registry from a moved
+    # workspace; the visibility rule now reads it.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4898,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -595,7 +600,13 @@ _BUDGETS: dict[str, int] = {
     # links through `Workspaces/link_on_use`, refuses a non-linkable block)
     # plus the two injected dependencies it needs (the workspace depth
     # state and its invalidation) with their properties and Args entries.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2028,
+    # 2026-10-20, TASK-34000.24 fix rounds 1-2 (owner decision 2026-10-04,
+    # same rule): 2028 -> 2051. Fix round 1 added +17 (the seam's one
+    # decision call, the receipt said after the stage, the press's own
+    # write taken back on a refused stage) -- the row raise that round's
+    # commit missed; fix round 2 added +6 (one plain sentence whether the
+    # opener refused or raised).
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2051,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
     # Library-only `include_disabled_builtins` flag through the browse read so

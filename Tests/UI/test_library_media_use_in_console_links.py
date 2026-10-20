@@ -69,6 +69,13 @@ FAILED_LINK_LINE = (
     "Can't use this media in Console — it could not be linked to Local Default. "
     "Next: try again."
 )
+CONSOLE_REFUSED_LINE = (
+    "Can't use this media in Console — Console could not take it. Next: try again."
+)
+REGISTRY_UNAVAILABLE_LINE = (
+    "Can't use this media in Console — the workspace registry is unavailable. "
+    "Next: restart Chatbook, then try again."
+)
 RAW_ID = DEFAULT_WORKSPACE_ID
 THESIS_ID = "ws-thesis-9f2c"
 MEDIA_ID = "1"
@@ -278,6 +285,34 @@ async def test_media_use_in_console_links_on_use_journey():
             _notified(app)
         )
 
+        # -- fix round 2, item 4: a registry that cannot be read during an
+        # Undo is not "a workspace that is no longer active" -- it says the
+        # registry is unavailable (the M-6 sentence) and removes nothing.
+        await _press_use_in_console(screen, pilot)
+        await _wait_for_receipt(screen, pilot, LINKED_RECEIPT, app)
+        real_get_active = registry.get_active_workspace
+
+        def raising_get_active(*args, **kwargs):
+            raise WorkspaceRegistryServiceError("storage failure")
+
+        registry.get_active_workspace = raising_get_active
+        await _press_undo(screen, pilot)
+        registry.get_active_workspace = real_get_active
+        assert [row.workspace_id for row in _memberships(app)] == [RAW_ID]
+        assert REGISTRY_UNAVAILABLE_LINE in _notified(app), _notified(app)
+        assert not [line for line in _notified(app) if "no longer active" in line], (
+            _notified(app)
+        )
+        # The registry is back: the receipt still stands, so Undo it cleanly
+        # before the next section (control: the sentence above removed
+        # nothing).
+        screen._sync_library_media_viewer_or_recompose()
+        await pilot.pause()
+        await _wait_for_receipt(screen, pilot, LINKED_RECEIPT, app)
+        await _press_undo(screen, pilot)
+        assert _memberships(app) == ()
+        await _wait_for_no_receipt(screen, pilot, "receipt still painted after Undo")
+
         # -- AC#4: a block a link cannot resolve (the registry refuses the
         # write) still refuses, in plain language, naming the workspace by
         # name with a next step; nothing staged, nothing linked.
@@ -418,16 +453,23 @@ async def test_search_u_and_reader_c_agree():
         assert not screen.query("#library-media-link-undo")
 
 
-async def test_search_u_unlinks_its_own_write_when_console_refuses():
+@pytest.mark.parametrize("opener", ("refuses", "raises"))
+async def test_search_u_unlinks_its_own_write_when_console_refuses(opener):
     """Fix round 1, I-2: the receipt is said only AFTER Console took the
     stage, and a refused stage takes the membership `u` just wrote back with
     it (the reader's own rule) -- no "Linked to …" beside "could not be
-    staged", no orphan membership."""
+    staged", no orphan membership. Fix round 2, item 3: whether the opener
+    refused or raised, the user hears ONE plain sentence in the reader's
+    grammar, not silence."""
     host, app = _media_host()
     app.library_rag_search_service = _StaticLibraryRagSearchService(
         {"results": [_search_result_for(MEDIA_ID)]}
     )
-    app.open_console_for_live_work = Mock(return_value=False)
+    app.open_console_for_live_work = (
+        Mock(return_value=False)
+        if opener == "refuses"
+        else Mock(side_effect=RuntimeError("console exploded"))
+    )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -443,3 +485,4 @@ async def test_search_u_unlinks_its_own_write_when_console_refuses():
         assert not [line for line in _notified(app) if "Linked to" in line], (
             _notified(app)
         )
+        assert _notified(app).count(CONSOLE_REFUSED_LINE) == 1, _notified(app)

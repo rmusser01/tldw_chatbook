@@ -1330,10 +1330,17 @@ class LibraryRagSearchController:
             )
             staged = False
         # Fix round 1 (I-2): the receipt is said only AFTER Console took the
-        # stage, and a refused stage (``False``; the opener has already said
-        # so) takes the membership this press wrote back with it -- the
-        # reader's own rule. ``None`` is a caller that does not report.
+        # stage, and a refused stage (``False``) or a raising opener takes
+        # the membership this press wrote back with it -- the reader's own
+        # rule. ``None`` is a caller that does not report. Fix round 2
+        # (item 3): either way the user hears ONE plain sentence in the
+        # reader's grammar -- the "stayed linked" variant when the unlink
+        # failed, the plain one otherwise -- never silence.
         if staged is False:
+            failure = (
+                f"Can't use this {item_type or 'item'} in Console — Console could "
+                "not take it. Next: try again."
+            )
             if link is not None and link.written:
                 outcome = unlink_item_from_workspace(
                     getattr(self.app_instance, "workspace_registry_service", None),
@@ -1343,15 +1350,14 @@ class LibraryRagSearchController:
                 )
                 self._invalidate_library_workspace_depth_state()
                 if outcome is UnlinkOutcome.FAILED:
-                    notify = getattr(self.app_instance, "notify", None)
-                    if callable(notify):
-                        notify(
-                            f"Console could not take this {item_type}, and it "
-                            f"stayed linked to {link.workspace_name}. Next: try "
-                            "again.",
-                            severity="warning",
-                            markup=False,
-                        )
+                    failure = (
+                        f"Can't use this {item_type} in Console — Console could "
+                        f"not take it, and the {item_type} stayed linked to "
+                        f"{link.workspace_name}. Next: try again."
+                    )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(failure, severity="warning", markup=False)
             return
         if link is not None and link.written:
             notify = getattr(self.app_instance, "notify", None)

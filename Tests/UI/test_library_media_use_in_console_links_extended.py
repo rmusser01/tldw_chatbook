@@ -44,7 +44,6 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_condition,
     _wait_for_library_shell,
-    _wait_for_selector,
 )
 from tldw_chatbook.UI.Library_Modules.screen_constants import LIBRARY_SOURCE_PAGE_SIZES
 

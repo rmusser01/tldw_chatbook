@@ -388,6 +388,7 @@ from ...Workspaces.eligibility import (
 from ...Workspaces.link_on_use import (
     UnlinkOutcome,
     decide_link_on_use,
+    registry_unavailable_copy,
     unlink_item_from_workspace,
 )
 from ...Workspaces.registry_service import WorkspaceRegistryServiceError
@@ -36899,13 +36900,18 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify(message, severity="warning", markup=False)
 
-        if receipt is None or not open_item_id:
+        block = self._media_controller._library_media_link_receipt_block(open_item_id)
+        if receipt is None or not open_item_id or block in ("no_receipt", "other_item"):
             self._sync_library_media_viewer_or_recompose()
             return
-        _line, undo_offered = (
-            self._media_controller._library_media_visible_link_receipt(open_item_id)
-        )
-        if not undo_offered:
+        if block == "registry_unavailable":
+            # Fix round 2 (item 4): a registry that is missing or cannot be
+            # read is not a workspace that moved -- say which (the M-6
+            # sentence) and withhold the control.
+            say(registry_unavailable_copy("media"))
+            self._sync_library_media_viewer_or_recompose()
+            return
+        if block == "workspace_inactive" or not receipt.undo_offered:
             say(
                 "This link was made in a workspace that is no longer active, "
                 "so it can't be undone from here."
@@ -36913,9 +36919,6 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_media_viewer_or_recompose()
             return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
-            say("Workspaces are unavailable, so this link cannot be undone.")
-            return
         outcome = unlink_item_from_workspace(
             registry,
             receipt.workspace_id,

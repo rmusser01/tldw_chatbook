@@ -987,7 +987,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Undo cannot act and clear an already-removed link), two imports and
     #: the two lambdas that inject the depth state into the Search/RAG
     #: controller.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37134, 1344),
+    #: 2026-10-20, fix round 2 (item 4): 37134 -> 37137 (+3), the Undo
+    #: handler says the registry-unavailable sentence for a registry it
+    #: cannot read and "no longer active" only for a moved workspace.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37137, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
