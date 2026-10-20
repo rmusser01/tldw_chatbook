@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## Validate monitoring event masks before booting the app (TASK-35645, 2026-10-19)
+
+**Incident.** A review correctly noticed missing unwind accounting in a Windows
+native-read observer, but adding `PY_UNWIND` to `set_local_events` failed before
+app construction with `ValueError: invalid local event set 0x100f`. A tiny
+Python 3.12 reproduction confirmed that unwind is a global-only event. A
+filtered `set_events` callback then observed the original exception correctly.
+
+**What to do.** Validate the actual runtime's monitoring API with a small
+raising function before another app boot. Filter global callbacks by exact code
+objects, clear their masks on finish, and retain failed diagnostic setup exits
+separately from product failures and plain timing comparisons.
+
 ## A performance warmup pause does not establish quiet background work (TASK-35644, 2026-10-19)
 
 **Incident.** After a focused CSS optimization, a Windows Console return
