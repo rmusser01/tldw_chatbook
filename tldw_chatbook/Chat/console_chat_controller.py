@@ -26452,8 +26452,17 @@ class ConsoleChatController:
                 expected_project_state = state
 
                 def on_owning_loop(callback):
-                    call_from_thread = getattr(self.app, "call_from_thread", None)
-                    if callable(call_from_thread):
+                    app = self.app
+                    call_from_thread = getattr(app, "call_from_thread", None)
+                    # ``call_from_thread`` is only legal from a worker thread;
+                    # on the app thread (the async send path reaches this guard
+                    # synchronously via ``capture_run_tool_read``) it raises,
+                    # which stranded every accepted agent turn. Mirror the
+                    # app_service_wiring pattern: direct call when we already
+                    # own the loop (app_service_wiring.py's thread check).
+                    if callable(call_from_thread) and threading.get_ident() != getattr(
+                        app, "_thread_id", None
+                    ):
                         return call_from_thread(callback)
                     return callback()
 
