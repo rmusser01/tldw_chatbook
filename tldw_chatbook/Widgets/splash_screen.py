@@ -56,18 +56,6 @@ SPLASH_SETTING_DEFAULTS = (
     ("card_selection", "random"),
 )
 
-#: ``[first_run]`` keys that mean a profile has been launched before.
-_LAUNCHED_KEYS = ("setup_started", "setup_completed", "env_key_notice_shown")
-
-
-def is_first_launch(config: Any) -> bool:
-    """A profile no launch has recorded yet (no ``[first_run]`` flag at all)."""
-    first_run = config.get("first_run") if hasattr(config, "get") else None
-    if not hasattr(first_run, "get"):
-        return True
-    return not any(first_run.get(key) for key in _LAUNCHED_KEYS)
-
-
 def random_pool(active_cards: Any, known_cards: Any) -> list:
     """The cards a random pick may choose from (never an opt-in-only card)."""
     cards = active_cards if isinstance(active_cards, (list, tuple)) else ["default"]
@@ -77,13 +65,20 @@ def random_pool(active_cards: Any, known_cards: Any) -> list:
     return pool or ["default"]
 
 
-def splash_options(config: Any, environ: Any = None) -> Optional[Dict[str, Any]]:
+def splash_options(
+    config: Any, environ: Any = None, *, first_launch: bool = False
+) -> Optional[Dict[str, Any]]:
     """``SplashScreen`` keyword arguments, or None when no splash should play.
 
     Args:
-        config: A mapping with ``first_run``, ``splash_screen`` and
-            ``appearance`` sections (the app passes what it read).
+        config: A mapping with ``splash_screen`` and ``appearance`` sections
+            (the app passes what it read).
         environ: The process environment (defaults to ``os.environ``).
+        first_launch: Whether this launch created the profile's config file
+            (``config.first_profile_created_this_session()``). Review F1: a
+            missing ``[first_run]`` flag is not a first launch -- a
+            hand-written or pre-wizard profile never records one, and lost
+            its configured splash on every launch.
 
     Returns:
         None on a first launch or when ``[splash_screen] enabled`` is false;
@@ -94,9 +89,7 @@ def splash_options(config: Any, environ: Any = None) -> Optional[Dict[str, Any]]
 
     splash = config.get("splash_screen") if hasattr(config, "get") else None
     splash = splash if hasattr(splash, "get") else {}
-    if is_first_launch(config) or not coerce_bool_setting(
-        splash.get("enabled", True), True
-    ):
+    if first_launch or not coerce_bool_setting(splash.get("enabled", True), True):
         return None
     appearance = config.get("appearance") if hasattr(config, "get") else None
     appearance = with_motion_environment(appearance or {}, environ)
