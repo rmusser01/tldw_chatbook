@@ -107,29 +107,25 @@ def pick_installed_engine(configured: str, installed: tuple[str, ...]) -> str:
     return candidates[0] if candidates else ""
 
 
-def _usable_key(value: Any) -> bool:
-    from tldw_chatbook.config import resolve_provider_api_key
-
-    return resolve_provider_api_key(value) is not None
-
-
 def openai_key_configured(
     app_config: Mapping[str, Any], environ: Mapping[str, str]
 ) -> bool:
-    """Whether an OpenAI key exists in config or the environment (bool only)."""
+    """Whether an OpenAI key exists in config or the environment (bool only).
+
+    Resolved exactly as the transcription path resolves it
+    (``config.resolve_openai_provider_key``), so Cloud is never offered on a
+    key remote-whisper cannot send (review F6).
+    """
+    from tldw_chatbook.config import resolve_openai_provider_key
     from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
 
     sections = full_config_sections(app_config, "api_settings", "API")
-    openai = sections["api_settings"].get("openai")
-    openai = openai if isinstance(openai, Mapping) else {}
-    if _usable_key(openai.get("api_key")):
-        return True
-    if _usable_key(sections["API"].get("openai_api_key")):
-        return True
-    env_name = openai.get("api_key_env_var") or "OPENAI_API_KEY"
-    return _usable_key(environ.get(str(env_name))) or _usable_key(
-        environ.get("OPENAI_API_KEY")
+    key = resolve_openai_provider_key(
+        sections["api_settings"].get("openai"),
+        sections["API"].get("openai_api_key"),
+        environ,
     )
+    return key is not None
 
 
 def detect_engine_facts(
