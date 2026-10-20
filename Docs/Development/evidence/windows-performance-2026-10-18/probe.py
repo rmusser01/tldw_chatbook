@@ -202,6 +202,11 @@ async def main():
 
         timer.sleep = coarse_sleep
         report["cooperative_timers_experiment"] = True
+    if "--native-wait-baseline" in sys.argv:
+        import native_wait_baseline
+
+        report["baseline_revision"] = native_wait_baseline.BASE_REVISION
+        report["baseline_scope"] = ["tldw_chatbook/UI/Screens/home_screen.py"]
     if "--attachment-baseline" in sys.argv:
         import attachment_baseline
 
@@ -272,6 +277,11 @@ async def main():
     finish_config_observation = None
     finish_storage_observation = None
     finish_return_observation = None
+    finish_native_wait_observation = None
+    if "--native-wait-observe" in sys.argv:
+        from native_wait_observer import install
+
+        finish_native_wait_observation = install(report, lambda: stage)
     if "--return-observe" in sys.argv:
         from return_observer import install
 
@@ -638,6 +648,8 @@ async def main():
         faulthandler.dump_traceback(file=stack_log)
         raise
     finally:
+        if finish_native_wait_observation is not None:
+            finish_native_wait_observation()
         if finish_return_observation is not None:
             finish_return_observation()
         if finish_storage_observation is not None:
