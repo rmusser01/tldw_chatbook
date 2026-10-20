@@ -497,15 +497,17 @@ def join_pick(
     # The combined save's own check (review rounds 1 and 2): a list it would
     # refuse would refuse the default with it.
     if not saved_model_list_admits(list_key, updated[list_key], model, owner):
+        # Each cause on its own (review round 3): "m" is an id the check
+        # admits, so it tests the key alone; then the model alone.
+        cannot = "Settings cannot write (empty, over 120 characters, or not plain text)"
         if model not in updated[list_key]:
             why = "it is a sample id older versions shipped, which saved lists ignore"
-        elif not saved_model_list_admits(list_key, [model], model, owner):
+        elif not saved_model_list_admits(list_key, ["m"], "m", owner):
             why = f'the [providers] key "{list_key}" is not one Settings can write'
+        elif not saved_model_list_admits(list_key, [model], model, owner):
+            why = f"it is an id {cannot}"
         else:
-            why = (
-                "the list holds an id Settings cannot write (empty, over 120 "
-                "characters, or not plain text)"
-            )
+            why = f"the list holds an id {cannot}"
         return not_added(why)
     section_values["providers"] = {list_key: updated[list_key]}
     return ListJoin(

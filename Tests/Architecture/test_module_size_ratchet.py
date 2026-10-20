@@ -312,7 +312,8 @@ _BUDGETS: dict[str, int] = {
     # combined save would refuse (a sample id, an unwritable saved id) saves
     # the default alone, and the lists refresh whenever a pick was pending:
     # 505. Round 2: a key the save would refuse is named in its receipt: 516.
-    "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 516,
+    # Round 3: a model id it cannot write is named, not the key: 518.
+    "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 518,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

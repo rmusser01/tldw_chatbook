@@ -987,12 +987,49 @@ def _admits(provider: str, model: str, providers: object) -> bool:
     return True
 
 
+def _join_reason(monkeypatch, providers: dict, model: str) -> str:
+    """The receipt ``join_pick`` gives a pending ``model`` for llama.cpp
+    when the read before the lock finds ``providers`` (no app: a stand-in
+    screen holds the pick and the draft)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Settings_Modules.saved_model_list import join_pick
+
+    real = config.get_atomic_config_snapshot
+
+    def read():
+        snapshot = real()
+        snapshot.values["providers"] = providers
+        return snapshot
+
+    monkeypatch.setattr(config, "get_atomic_config_snapshot", read)
+    screen = SimpleNamespace(
+        _discovered_pick=("llama_cpp", model),
+        _provider_draft=lambda: SimpleNamespace(dirty_keys={"model"}),
+        _provider_setting_values_mapping=lambda: {
+            "provider": "llama_cpp",
+            "model": model,
+        },
+        _provider_display_label=lambda _provider: "llama.cpp",
+    )
+    sections: dict = {}
+    join = join_pick(screen, "llama_cpp", model, sections)
+    monkeypatch.setattr(config, "get_atomic_config_snapshot", real)
+    assert "providers" not in sections, sections
+    return join.receipt
+
+
 @private_profile_test
-async def test_the_combined_save_admits_only_its_own_list_holding_the_model(request):
+async def test_the_shared_saved_list_check_and_each_refusal_the_join_names(
+    request, monkeypatch
+):
     """The validator's providers branch: the mutation's own provider's list
     (Custom_2 for Custom 2, through provider_config_key, which _ownership_for
     cannot spell), holding the model saved; never another provider's key, a
-    list without the model, a non-list, a second key, or no model."""
+    list without the model, a non-list, a second key, or no model. Review
+    round 3: the join's receipt names the real cause of a refusal; a model
+    id the save cannot write is not blamed on a good key."""
     assert _admits("llama_cpp", "m", {"Llama_cpp": ["None", "m"]})
     assert _admits("custom_2", "m", {"Custom_2": ["m"]})
     assert _admits("Custom 2", "m", {"Custom_2": ["a", "m"]})
@@ -1013,3 +1050,22 @@ async def test_the_combined_save_admits_only_its_own_list_holding_the_model(requ
     for key in ("Llama_cpp ", "Llama cpp", "z.ai", "Custom 2", "OpenAI"):
         assert not saved_model_list_admits(key, ["m"], "m", "llama_cpp"), key
     assert not saved_model_list_admits("Llama_cpp", ["m", "  "], "m", "llama_cpp")
+
+    long_id = "x" * 121
+    cannot = "(empty, over 120 characters, or not plain text)"
+    for providers, model, why in (
+        (
+            {"Llama_cpp": ["None"]},
+            long_id,
+            f"it is an id Settings cannot write {cannot}",
+        ),
+        ({"Llama_cpp ": ["None"]}, "m", 'the [providers] key "Llama_cpp " is not'),
+        (
+            {"Llama_cpp": ["None", "  "]},
+            "m",
+            f"holds an id Settings cannot write {cannot}",
+        ),
+    ):
+        receipt = _join_reason(monkeypatch, providers, model)
+        assert receipt.startswith(f" {model} was not added to llama.cpp's model list: ")
+        assert why in receipt, (why, receipt)
