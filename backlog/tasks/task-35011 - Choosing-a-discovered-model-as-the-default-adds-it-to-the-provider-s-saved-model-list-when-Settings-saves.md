@@ -1,8 +1,11 @@
 ---
 id: TASK-35011
 title: Choosing a discovered model as the default adds it to the provider's saved model list when Settings saves
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-10-14 17:10
+updated_date: 2026-10-20 04:29
 labels:
 - settings
 - providers
@@ -51,3 +54,21 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 - [ ] #14 ADR-002 (backlog/decisions/002-openai-compatible-model-discovery.md) records the 2026-10-14 'Pick = use as default' ruling and states that it supersedes TASK-33007.3 AC#4 and the '[providers] list did not change' clause of TASK-33007.3 AC#10
 - [ ] #15 The Settings User Guide says that choosing a discovered model in Default model and pressing s saves it as the default and adds it to the provider's saved list, and describes Add to model list (applies immediately, adds several at once), the Discover models, list, Add to model list, Clear order, the 'joins on save' title and the new receipts
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Follows the plan's TASK-35011 mechanisms 1-9 (backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md), built on T1 (TASK-35010).
+
+1. New `UI/Settings_Modules/saved_model_list.py`: the Saved model list block, `saved_models_summary` and `saved_models_not_listed` move in from the card (verbatim, then changed), with `_activate_saved_model_if_field_empty`; it holds the pending-addition helpers, the `s` preparation and its receipt suffix and conflict copy, Add to model list's receipts and retry steps, and the Inspector rows. The card imports it at load; settings_screen only inside functions.
+2. A pick records a pending addition (provider key, model id) only when the id is in the current discovery listing and not saved; any other pick (catalog, Custom ID) clears it. It counts only while the Providers & Models draft stages exactly that provider and model, so Revert, Discard and a successful save end it with the draft. It is cleared at the provider, endpoint, credential, API key and deep-link provider changes and in Revert, never by the reset's other callers (resume, Discover, Clear). `save_state`/`restore_state` carry it (a new view-state key in `SETTINGS_SNAPSHOT_KEYS`, shape-checked).
+3. `s`: while a pending addition matches, read the list under the config lock (`get_atomic_config_snapshot`), resolve the key (`resolve_provider_list_key`), and add `providers.<key>` = that list + the model (`append_models_to_provider_list`, which drops sample ids) to the same mutation, guarded by a pure `locked_snapshot_precondition` comparing the locked list with the one read. On success: refresh the lists in place, the picker and the discovery widgets; the toast (markup=False) names the model added. On a conflict: nothing written, draft kept, "press s again". A key that no longer resolves saves the default and says why the model was not added.
+4. Validator: `_validate_combined_provider_settings_mutation` admits one `providers` key only when the model is set, the key's `provider_config_key` is the mutation's provider and the value is a list of safe strings holding the model.
+5. Block: Discover models on its own row, then the list, then Add to model list (renamed, reworded tooltip, instant-apply hint) and Clear (B6); the title says "1 joins on save" while a pending addition matches (A2).
+6. Receipts (C4 residual, AC#9-10): Add names the models added, or says they were already listed and how a model becomes the default; filling an empty Default model says s still saves it; retry steps name Add to model list.
+7. Inspector (B19): content rows for Discover, the list, Add and Clear; the Save row is the instant-apply copy for Add and "saves nothing" for the other three.
+8. Capability line (C-M2): Settings' duplicate constant goes; the shared `MODEL_CAPABILITY_UNKNOWN_WARNING` is reworded once.
+9. ADR-002 amendment and settings.md. Size rows never rise: settings_screen.py nets <= 0, the card's row lowers, `saved_model_list.py` gets a birth row with no PR lane (NO-2 (b), PR #3036 touches derived-artifacts.yml).
+
+Tests first in Tests/UI/test_settings_pick_joins_saved_list.py (the plan's cases 1-12, private profile, census tail), each shown red before its fix; rewrite only the pinned tests the plan names (plus T1's receipts); covering run at head vs a base worktree by failure name.
+<!-- SECTION:PLAN:END -->
