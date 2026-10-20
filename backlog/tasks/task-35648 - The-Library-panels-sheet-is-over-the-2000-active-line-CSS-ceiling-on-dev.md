@@ -2,7 +2,7 @@
 id: TASK-35648
 title: The Library panels sheet is over the 2,000 active-line CSS ceiling on dev
 status: To Do
-created_date: 2026-10-20 04:30
+created_date: 2026-10-20 03:07
 dependencies: []
 labels:
 - follow-up

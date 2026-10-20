@@ -2,7 +2,7 @@
 id: TASK-35647
 title: Settings Overview and the Tools & MCP state badge still describe the retired MCP screen
 status: To Do
-created_date: 2026-10-20 04:30
+created_date: 2026-10-20 03:07
 dependencies: []
 labels:
 - follow-up

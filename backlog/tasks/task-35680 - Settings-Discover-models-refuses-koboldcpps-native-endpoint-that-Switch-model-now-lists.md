@@ -2,7 +2,7 @@
 id: TASK-35680
 title: Settings Discover models refuses koboldcpp's native endpoint that Switch model now lists
 status: To Do
-created_date: 2026-10-20 07:00
+created_date: 2026-10-20 03:58
 dependencies:
 - TASK-35010
 labels:

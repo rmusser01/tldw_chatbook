@@ -2,7 +2,7 @@
 id: TASK-35649
 title: Six class-level DEFAULT_CSS declarations are outside the allowlist on dev
 status: To Do
-created_date: 2026-10-20 04:30
+created_date: 2026-10-20 03:07
 dependencies: []
 labels:
 - follow-up
