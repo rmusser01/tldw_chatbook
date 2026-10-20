@@ -3049,7 +3049,7 @@ class MCPInspector(VerticalScroll):
         """The `HubTool` `#mcp-inspector-tool` currently describes, or `None`.
 
         Read-only accessor for `MCPWorkbench.open_test_for_selected_tool()`
-        (the `t` keybinding's entry point, mcp_screen.py) to check whether
+        (the `t` keybinding's entry point, the Tools & MCP pane) to check whether
         there's anything to test before dispatching -- mirrors how every
         other cross-widget read here goes through a public method rather
         than reaching into `_current_tool` directly.

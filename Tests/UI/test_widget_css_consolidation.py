@@ -441,8 +441,9 @@ def test_generated_sheets_scope_every_selector(filename: str):
     ``build_css.py`` -- see the decision comment there for the parity evidence).
     Born red against the quirked widget-defaults build: the self sheet carried
     56 leaked selectors across 6 classes (LibraryScreen, MCPAuditMode,
-    MCPToolsMode, MCPScreen, MainNavigationBar, SyncStatusWidget), and this
-    guard is what keeps that set from silently growing back.
+    MCPToolsMode, the since-retired MCP shell screen, MainNavigationBar,
+    SyncStatusWidget), and this guard is what keeps that set from silently
+    growing back.
     """
     text = (_CSS_ROOT / filename).read_text(encoding="utf-8")
     parts = _BANNER_RE.split(text)
@@ -1153,6 +1154,16 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
         (
             "UI/MCP_Modules/mcp_server_mutations.py",
             "MCPServerMutationsPanel",
+            "DEFAULT_CSS",
+        ),
+        # ADR-240: the pane's mode-chip styling must load under ANY host app
+        # (destination-shell harnesses mount it with no CSS_PATH, so the app
+        # bundle is absent; it also uses raw $surface/$text tokens that the
+        # $ds-* aliases only define once the bundle loads). Reviewed
+        # exception, inherited from the retired MCP shell screen's copy.
+        (
+            "UI/Screens/settings_tools_hub.py",
+            "ToolsHubPanel",
             "DEFAULT_CSS",
         ),
         ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),

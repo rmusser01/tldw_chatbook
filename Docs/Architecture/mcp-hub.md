@@ -1,6 +1,6 @@
 # MCP hub and permission store
 
-This document describes the MCP package: the unified control-plane service behind the MCP Hub screen, external stdio server management, the permission store and its decision semantics, the standalone built-in MCP server, and the gateway runtime for external tool exposure.
+This document describes the MCP package: the unified control-plane service behind the Tools & MCP hub (hosted in Settings → Tools & MCP since ADR-240; the former standalone MCP destination is retired), external stdio server management, the permission store and its decision semantics, the standalone built-in MCP server, and the gateway runtime for external tool exposure. The workbench internals — rail IA, recovery review, audit drill-down (ADR-148) — are unchanged by the re-homing; only the host surface moved.
 
 ## Authoritative files
 
@@ -88,7 +88,7 @@ profiles:
 
 ## Governing decisions
 
-ADR-032 (`032-local-agent-tool-permission-boundary.md` — local tools under the MCP permission model), ADR-053 (`053-mcp-unified-standalone-runtime-boundary.md`), ADR-067 (indefinite human approval waits), ADR-079 (workspace assistant defaults / profiles). Specs: `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md`, `Docs/superpowers/specs/2026-09-11-mcp-hub-ux/`. User guide: `Docs/User_Guide/mcp.md`.
+ADR-032 (`032-local-agent-tool-permission-boundary.md` — local tools under the MCP permission model), ADR-053 (`053-mcp-unified-standalone-runtime-boundary.md`), ADR-067 (indefinite human approval waits), ADR-079 (workspace assistant defaults / profiles), ADR-240 (`240-mcp-destination-retirement-tools-hub-in-settings.md` — destination retired; Settings hosts the hub). Specs: `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md`, `Docs/superpowers/specs/2026-09-11-mcp-hub-ux/`, `Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md`. User guide: `Docs/User_Guide/mcp.md`.
 
 ## Verified gotchas
 

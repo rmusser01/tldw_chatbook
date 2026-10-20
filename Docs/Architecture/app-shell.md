@@ -39,7 +39,7 @@ App-level state includes the DB handles (`media_db`, `prompts_db`, `subscription
 
 Three layers resolve a route string to a screen:
 
-1. **Destinations** (`shell_destinations.py`) — 15 shell destinations in strip order (home, console, library, personas, watchlists, artifacts, schedules, workflows, mcp, acp, lab, logs, settings, research, meetings). `_ROUTE_MAP` folds legacy route names at import time; unknown routes resolve to themselves.
+1. **Destinations** (`shell_destinations.py`) — 13 shell destinations in strip order (home, console, library, personas, watchlists_collections, schedules, workflows, acp, lab, logs, settings, research, meetings). Artifacts (ADR-172) and MCP (ADR-240) are retired from the strip: their routes alias Library and Settings respectively, and ctrl+6/ctrl+9 survive as compatibility deep-links. `_ROUTE_MAP` folds legacy route names at import time; unknown routes resolve to themselves.
 2. **Screen registry** (`screen_registry.py`) — lazy `module_path`/`class_name` per route so `app.py` never imports screen classes directly (circular-import guard). `resolve_screen_target()` resolution order: aliases → routes → shell destinations (so `"lab"` → `"llm"`, `"console"` → `"chat"`). `dependency_check` gates optional screens via `Utils/optional_deps.py`.
 3. **App dispatch** (`app.py`) — `@on(NavigateToScreen)` runs `handle_screen_navigation` as a worker (an inline await of a confirm dialog would starve the App's single message task — the "zombie-modal soft-lock"), under an `asyncio.Lock` that gives overlapping navigations FIFO ordering.
 
@@ -94,11 +94,11 @@ All visual values are `$ds-*` tokens in `core/_variables.tcss` (ADR-150): spacin
 - Never bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) for app actions.
 - Screen actions use single-letter htop-style bindings; destructive actions require a confirm dialog.
 - Footer hints must be truthful: advertised ⊆ bound, and advertised == working in the active context.
-- The destination hotkey layer is one left-to-right keyboard walk: ctrl+1..ctrl+9, ctrl+0, then f2/f3/f4/f5/f7 — defined in `SHELL_DESTINATION_SHORTCUTS`, owned by the destination contract, and moving in lockstep with `SHELL_DESTINATION_ORDER`; destination-local bindings may not shadow these keys (ADR-152). The embedded Console terminal viewport encodes F-keys to the pty when focused.
+- The destination hotkey layer is one left-to-right keyboard walk: ctrl+1..ctrl+5, ctrl+7, ctrl+8, ctrl+0, then f2/f3/f4/f5/f7 — defined in `SHELL_DESTINATION_SHORTCUTS`, owned by the destination contract, and moving in lockstep with `SHELL_DESTINATION_ORDER`; destination-local bindings may not shadow these keys (ADR-152). ctrl+6 (Artifacts → Library, ADR-172) and ctrl+9 (Tools & MCP → Settings, ADR-240) sit outside the walk as retained compatibility deep-links for retired destinations. The embedded Console terminal viewport encodes F-keys to the pty when focused.
 
 ## Settings surface
 
-`UI/Screens/settings_screen.py` is the canonical settings destination (~30 categories via `SettingsCategoryId`), with companion modules `settings_config_models.py`, `settings_config_adapter.py`, and per-category default modules. The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Do not add new settings anywhere but the Settings screen.
+`UI/Screens/settings_screen.py` is the canonical settings destination (~30 categories via `SettingsCategoryId`), with companion modules `settings_config_models.py`, `settings_config_adapter.py`, and per-category default modules. One category is a hosted workbench, not a form: **Tools & MCP** (`SettingsCategoryId.TOOLS`, pane module `settings_tools_hub.py`) re-homes the four-mode MCP workbench — Servers / Tools / Permissions / Audit — that used to be its own shell destination; the `mcp`/`tools_settings` routes alias Settings with a `{"category": "tools"}` default context (ADR-240). The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Do not add new settings anywhere but the Settings screen.
 
 ## Splash subsystem
 

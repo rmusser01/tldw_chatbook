@@ -340,6 +340,17 @@ from .settings_config_models import (
     SettingsDraft,
     SettingsOwnershipRecord,
 )
+from .settings_tools_hub import (
+    TOOL_PROFILES_OWNERSHIP_RECORD,
+    TOOLS_HUB_CATEGORY_SUMMARY,
+    TOOLS_HUB_OWNERSHIP_RECORD,
+    ToolsHubPanel,
+    builtin_hub_tool_names,
+    mcp_permission_store,
+    parse_tools_navigation_context,
+    tool_pack_failure_copy,
+    tools_footer_hints,
+)
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
 from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
@@ -491,7 +502,6 @@ from ..Navigation.vllm_handoff import (
 
 if TYPE_CHECKING:
     from ...Agents.hook_permissions import HookReviewSnapshot
-    from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.model_search_picker import ModelSearchPicker
     from ...Widgets.Settings_Widgets.personal_context_panel import (
@@ -2129,23 +2139,6 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         follow_up="add workflow defaults after Workflows exposes a persisted execution-safety contract.",
     ),
     SettingsDomainCategoryContract(
-        category=SettingsCategoryId.MCP_DEFAULTS,
-        title="MCP Defaults",
-        owner_destination="MCP",
-        source_of_truth=("Unified MCP panel", "MCP configured server target store"),
-        rows=(
-            (
-                "Runtime owner",
-                "MCP owns server/tool runtime, target management, and tool readiness",
-            ),
-            (
-                "Settings role",
-                "show global defaults/status only; server operations stay in MCP",
-            ),
-        ),
-        follow_up="add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
-    ),
-    SettingsDomainCategoryContract(
         category=SettingsCategoryId.ACP_DEFAULTS,
         title="ACP Defaults",
         owner_destination="ACP",
@@ -3777,9 +3770,8 @@ class SettingsScreen(BaseAppScreen):
         ("t", "test category"),
     )
 
-    @staticmethod
     def _category_footer_shortcuts(
-        category: SettingsCategoryId,
+        self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
         """Advertised footer hints for ONE category (task-1340, ADR-031).
 
@@ -3788,7 +3780,8 @@ class SettingsScreen(BaseAppScreen):
         the same per-category verb the live footer uses (task-1714), so the
         F1 help panel and the footer never disagree. The keys stay bound
         screen-wide (they respond with guidance everywhere), but only what
-        the active category actually supports is taught.
+        the active category actually supports is taught. Instance method
+        because the TOOLS branch reads the mounted hub pane's live mode.
         """
         shortcuts: list[tuple[str, str]] = []
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
@@ -3809,6 +3802,8 @@ class SettingsScreen(BaseAppScreen):
             shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
         if category is SettingsCategoryId.THEME:
             shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
+        if category is SettingsCategoryId.TOOLS:
+            shortcuts.extend(tools_footer_hints(self._tools_hub_pane()))
         return tuple(shortcuts)
 
     #: task-1564: categories whose `t` binding performs a real test action --
@@ -3962,6 +3957,7 @@ class SettingsScreen(BaseAppScreen):
         self._tool_profile_review_modal: ModalScreen | None = None
         self._tool_profile_operation_revision = 0
         self._tool_profile_completion_revision = 0
+        self._tools_hub_initial_view_state: dict[str, object] | None = None
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -4454,6 +4450,8 @@ class SettingsScreen(BaseAppScreen):
         # draft, a return continuation) outlived its Save or Revert (13c).
         state: dict[str, object] = {}
         state["active_category"] = self.active_category
+        if (tools_pane := self._tools_hub_pane()) is not None:
+            state["mcp_hub_view_state"] = tools_pane.get_view_state()
         state["category_search_query"] = self._sanitize_category_search_query(
             self.category_search_query
         )
@@ -4518,6 +4516,12 @@ class SettingsScreen(BaseAppScreen):
             pass
         else:
             self.active_category = category.value
+
+        mcp_view_state = state.get("mcp_hub_view_state")
+        if isinstance(mcp_view_state, dict):
+            self._tools_hub_initial_view_state = mcp_view_state
+        if (tools_pane := self._tools_hub_pane()) is not None:
+            tools_pane.set_initial_view_state(self._tools_hub_initial_view_state)
 
         query = state.get("category_search_query")
         if isinstance(query, str):
@@ -4632,6 +4636,21 @@ class SettingsScreen(BaseAppScreen):
         """
         shortcuts = self._footer_shortcut_entries()
         self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+        # The "settings" and "settings-tools" sources share one footer slot
+        # (last writer wins), so re-assert the TOOLS set when active.
+        self._refresh_tools_footer_shortcuts()
+
+    def _refresh_tools_footer_shortcuts(self) -> None:
+        """Register the active Tools-mode hint set; clear it otherwise."""
+        if self.active_category != SettingsCategoryId.TOOLS.value:
+            self.clear_footer_shortcuts(source="settings-tools")
+            return
+        # Unconditional: a fresh TOOLS enter runs before the pane mounts,
+        # and a default (servers) load fires no ModeChanged to re-register.
+        self.register_footer_shortcuts(
+            source="settings-tools",
+            shortcuts=tools_footer_hints(self._tools_hub_pane()),
+        )
 
     def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
         """Category- and focus-aware footer hints (task-1564/1560).
@@ -5299,6 +5318,8 @@ class SettingsScreen(BaseAppScreen):
                 continue
 
     def on_screen_resume(self) -> None:
+        # ADR-240: re-assert what suspend cleared ("settings-tools" source).
+        self._register_footer_shortcuts()
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
                 PersonalContextProvenanceDetails,
@@ -5598,6 +5619,7 @@ class SettingsScreen(BaseAppScreen):
                 "Import, export, review, bind, and remove portable tool permission profiles.",
                 "Immediate actions",
             ),
+            TOOLS_HUB_CATEGORY_SUMMARY,
             SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
                 "Privacy & Security",
@@ -5674,12 +5696,6 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WORKFLOWS,
                 "Workflows",
                 "Procedure, dry-run, approval, and execution safety defaults.",
-                "Read-only",
-            ),
-            SettingsCategorySummary(
-                SettingsCategoryId.MCP_DEFAULTS,
-                "MCP Defaults",
-                "Server/tool management defaults without owning MCP runtime operations.",
                 "Read-only",
             ),
             SettingsCategorySummary(
@@ -5921,7 +5937,7 @@ class SettingsScreen(BaseAppScreen):
             )
             copy = f"{label} in progress. Wait for it to finish."
         elif state.error_category:
-            copy = self._tool_pack_failure_copy(
+            copy = tool_pack_failure_copy(
                 state.operation, ToolPackError(state.operation, state.error_category)
             )
         elif state.operation == "import":
@@ -5967,53 +5983,6 @@ class SettingsScreen(BaseAppScreen):
         outcome = await asyncio.shield(task)
         self._sync_tool_profile_operations()
         return outcome
-
-    @staticmethod
-    def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
-        """Return bounded recovery copy for one stable Tool Pack error."""
-        if operation == "export" and error.category == "cancelled":
-            return "Export cancelled before publication."
-        if operation == "export" and error.category == "destination_changed":
-            return "Export destination changed. Choose a new filename."
-        if operation == "import" and error.category == "activation_uncertain":
-            return (
-                "Import outcome uncertain. Check the current profile state "
-                "before retrying."
-            )
-        if operation == "export" and error.category == "durability_uncertain":
-            return (
-                "Export outcome uncertain. Check the chosen destination "
-                "before retrying."
-            )
-        if operation == "remove":
-            return {
-                "outcome_uncertain": (
-                    "Removal outcome uncertain. Check the current profile state "
-                    "before retrying."
-                ),
-                "stale": "Profile changed. Review its current details before removing it.",
-                "in_use": (
-                    "Profile is in use. Finish its active run, then reopen Tool Profiles."
-                ),
-                "referenced": (
-                    "Profile is referenced by a workspace. Update its active and "
-                    "archived workspace defaults first."
-                ),
-                "non_removable": "Profile cannot be removed. Review its current details.",
-            }.get(
-                error.category, "Removal unavailable. Check the current profile state."
-            )
-        if operation == "export" and error.category == "publication_unsupported":
-            if os.name == "nt":
-                return (
-                    "Export unavailable · publication_unsupported. Native Windows "
-                    "Tool Pack publication is not supported yet."
-                )
-            return (
-                "Export unavailable · publication_unsupported. Required safe "
-                "publication primitives are unavailable on this platform."
-            )
-        return f"{operation.title()} failed · {error.category}"
 
     @on(ToolProfilesPanel.ImportRequested)
     def _handle_tool_profile_import(
@@ -6143,7 +6112,7 @@ class SettingsScreen(BaseAppScreen):
         except ToolPackError as exc:
             if mutation_started or self._tool_profile_review_is_current(intent):
                 self._set_tool_profiles_result(
-                    self._tool_pack_failure_copy("import", exc)
+                    tool_pack_failure_copy("import", exc)
                 )
                 if mutation_started:
                     self._request_tool_profiles_listing()
@@ -6289,7 +6258,7 @@ class SettingsScreen(BaseAppScreen):
         except ToolPackError as exc:
             if mutation_started or self._tool_profile_review_is_current(intent):
                 self._set_tool_profiles_result(
-                    self._tool_pack_failure_copy("export", exc)
+                    tool_pack_failure_copy("export", exc)
                 )
         except asyncio.CancelledError:
             raise
@@ -6381,8 +6350,9 @@ class SettingsScreen(BaseAppScreen):
             return
         self.post_message(
             NavigateToScreen(
-                "mcp",
+                "settings",
                 {
+                    "category": "tools",
                     "mode": "permissions",
                     "tool_policy_profile_id": event.profile_id,
                     "profile_revision": event.revision,
@@ -6530,6 +6500,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.STORAGE,
                     SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.TOOL_PROFILES,
+                    SettingsCategoryId.TOOLS,
                     SettingsCategoryId.PRIVACY_SECURITY,
                     SettingsCategoryId.NETWORK,
                     SettingsCategoryId.PERSONAL_CONTEXT,
@@ -6563,7 +6534,6 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.DREAMS,
                     SettingsCategoryId.GUARDIAN,
                     SettingsCategoryId.WORKFLOWS,
-                    SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
                     SettingsCategoryId.IMAGE_GENERATION,
                     SettingsCategoryId.VIDEO_GENERATION,
@@ -6961,28 +6931,8 @@ class SettingsScreen(BaseAppScreen):
                     "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
                 ),
             ),
-            SettingsOwnershipRecord(
-                category=SettingsCategoryId.TOOL_PROFILES,
-                owns_config_sections=(
-                    "MCP permission-store Tool profiles",
-                    "portable Tool Pack import receipts",
-                ),
-                reads_runtime_state_from=(
-                    "ToolPackService lifecycle",
-                    "workspace profile references",
-                    "MCP permission inventory",
-                ),
-                writes_allowed=True,
-                runtime_owner="ToolPackService (immediate reviewed actions)",
-                boundary_copy=(
-                    "Settings manages profile lifecycle; MCP Permissions owns policy editing. "
-                    "Tool Packs never install tools."
-                ),
-                recovery_copy=(
-                    "Re-inspect stale imports and remove only profiles with no active or "
-                    "archived workspace references."
-                ),
-            ),
+            TOOL_PROFILES_OWNERSHIP_RECORD,
+            TOOLS_HUB_OWNERSHIP_RECORD,
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
                 owns_config_sections=(
@@ -22191,7 +22141,7 @@ class SettingsScreen(BaseAppScreen):
             markup=False,
         )
 
-        store = self._settings_workspace_permission_store()
+        store = mcp_permission_store(self.app_instance)
         profile_options: list[Option] = []
         highlight_profile = (pending or {}).get("profile_id") or (
             getattr(defaults, "tool_policy_profile_id", None) if defaults else None
@@ -22244,7 +22194,7 @@ class SettingsScreen(BaseAppScreen):
                     preview_rules,
                     preview_payload,
                     str(highlight_profile or "default"),
-                    self._settings_workspace_preview_tool_names(),
+                    builtin_hub_tool_names(self.app_instance),
                 )
             ),
             id="settings-workspace-posture-preview",
@@ -22261,32 +22211,6 @@ class SettingsScreen(BaseAppScreen):
         except Exception:  # noqa: BLE001 -- defaults degrade, never block
             return None
         return record if isinstance(record, dict) else None
-
-    def _settings_workspace_permission_store(self) -> Any:
-        """The unified service's permission store, or None (guarded)."""
-        service = getattr(self.app_instance, "unified_mcp_service", None)
-        return getattr(service, "permission_store", None)
-
-    def _settings_workspace_preview_tool_names(self) -> list[str]:
-        """Built-in hub tool names for the posture preview (guarded).
-
-        Reads the unified service's local inventory — the same builtin
-        catalog source the MCP workbench's hub list uses. Any missing
-        seam yields an empty list, which the preview renders as its
-        single "Tool catalog unavailable" degrade line.
-        """
-        service = getattr(self.app_instance, "unified_mcp_service", None)
-        local_service = getattr(service, "local_service", None)
-        get_inventory = getattr(local_service, "get_inventory", None)
-        if not callable(get_inventory):
-            return []
-        try:
-            inventory = get_inventory()
-        except Exception:  # noqa: BLE001 -- preview degrades, never blocks
-            return []
-        from ...MCP.hub_tool_catalog import builtin_tools_from_inventory
-
-        return [tool.name for tool in builtin_tools_from_inventory(inventory or {})]
 
     def _render_workspace_folder_bindings(
         self,
@@ -22925,6 +22849,12 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         await open_profile_rules(self)
 
+    def _tools_hub_pane(self) -> ToolsHubPanel | None:
+        try:
+            return self.query_one("#settings-tools-hub", ToolsHubPanel)
+        except QueryError:
+            return None
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.HOOKS:
@@ -23017,6 +22947,12 @@ class SettingsScreen(BaseAppScreen):
                 result=self._tool_profiles_result,
                 result_profile_id=self._tool_profiles_result_profile_id,
                 id="settings-tool-profiles-panel",
+            )
+        elif category is SettingsCategoryId.TOOLS:
+            yield ToolsHubPanel(
+                self.app_instance,
+                initial_view_state=self._tools_hub_initial_view_state,
+                id="settings-tools-hub",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static(
@@ -24473,6 +24409,17 @@ class SettingsScreen(BaseAppScreen):
             self._clear_navigation_provider_context()
             self._select_category(category_value, restore_focus=True)
             self._after_category_panes(self._apply_speech_tts_navigation_context)
+            return
+        if category_value == SettingsCategoryId.TOOLS.value:
+            # Bounds live in the hub module; None = reject, {} = no state.
+            view_state = parse_tools_navigation_context(context)
+            if view_state is None:
+                return
+            self._tools_hub_initial_view_state = view_state or None
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            if (pane := self._tools_hub_pane()) is not None:
+                pane.set_initial_view_state(self._tools_hub_initial_view_state)
             return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._clear_navigation_provider_context()
@@ -26017,6 +25964,15 @@ class SettingsScreen(BaseAppScreen):
             self._settings_selected_workspace_id = None
             self._discard_workspace_memory_confirmation()
         if (
+            self.active_category == SettingsCategoryId.TOOLS.value
+            and category_value != SettingsCategoryId.TOOLS.value
+        ):
+            # The pane swap below destroys the hub pane -- snapshot its
+            # live view state (target-guarded so a Tools->Tools deep-link
+            # that just set its own state is not clobbered).
+            if (tools_pane := self._tools_hub_pane()) is not None:
+                self._tools_hub_initial_view_state = tools_pane.get_view_state()
+        if (
             self.active_category == SettingsCategoryId.THEME.value
             and category_value != SettingsCategoryId.THEME.value
             and self.theme_editor_modified
@@ -26086,6 +26042,9 @@ class SettingsScreen(BaseAppScreen):
             # here too would fire first, against the pane the swap has not
             # rebuilt yet -- pre-swap geometry, and a wasted pass.
             self.call_after_refresh(self._update_inspector_overflow_hint)
+        # Enter and leave alike: the helper self-clears the "settings-tools"
+        # hint set for non-TOOLS categories; the pane re-registers on load.
+        self._refresh_tools_footer_shortcuts()
 
     async def recompose(self) -> None:
         """Restore a pending category focus after a WHOLE-screen rebuild.
@@ -29993,6 +29952,11 @@ class SettingsScreen(BaseAppScreen):
             isinstance(self.app.screen, ModalScreen)
             and self._active_category_id() is SettingsCategoryId.THEME
         )
+        # ADR-240 port: under an overlay, clear the Tools & MCP hint set
+        # and invalidate an accepted recovery review's receipt.
+        self.clear_footer_shortcuts(source="settings-tools")
+        if (tools_pane := self._tools_hub_pane()) is not None:
+            tools_pane.suspend_recovery_review()
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
                 PersonalContextProvenanceDetails,
@@ -33217,6 +33181,12 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # No draft state: `s` answers with guidance here (ADR-240 A3).
+            self.app.notify(
+                "Tools & MCP applies changes immediately — nothing to save."
+            )
+            return
         category = self._active_category_id()
         if category is SettingsCategoryId.HOOKS:
             self._start_hooks_save()
@@ -34137,6 +34107,15 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # The pane-held `r` binding wins while focus is inside the pane;
+            # this branch keeps the advertised key working when focus is
+            # outside it (e.g. on the category rail) -- force-reload the
+            # workbench (ADR-240), not the draft revert path.
+            pane = self._tools_hub_pane()
+            if pane:
+                pane.refresh_now()
+            return
         category = self._active_category_id()
         if category is SettingsCategoryId.PRIVACY_SECURITY and getattr(
             self, "_raw_cli_save_pending", False
@@ -34394,6 +34373,14 @@ class SettingsScreen(BaseAppScreen):
             return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # The pane-held `t` binding wins while focus is inside the pane;
+            # this branch keeps the advertised key working outside it (e.g.
+            # the rail), not the stub toast (ADR-240, test_settings_tools_hub).
+            pane = self._tools_hub_pane()
+            if pane:
+                pane.test_selected_tool()
+            return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
             detail, summary, passed = self._provider_readiness_test_report()
@@ -34552,12 +34539,26 @@ class SettingsScreen(BaseAppScreen):
         """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self.active_category == SettingsCategoryId.TOOLS.value:
+            # The pane-held `a` binding wins while focus is inside the pane;
+            # this branch keeps the advertised key working when focus is
+            # outside it (e.g. on the category rail) -- open the hub's
+            # Add-server form (ADR-240), not the RAG set-active flow.
+            pane = self._tools_hub_pane()
+            if pane:
+                pane.add_server()
+            return
         if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
             self._dispatch_personal_context_action("add_record")
             return
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
             return
         self._trigger_library_rag_profile_set_active()
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Forward runtime-backend changes to the Tools & MCP pane (ADR-240)."""
+        if (pane := self._tools_hub_pane()) is not None:
+            pane.handle_runtime_backend_change(runtime_backend)
 
     def _dispatch_personal_context_action(self, action_name: str) -> None:
         """Route a category-scoped shortcut to the mounted profile panel."""

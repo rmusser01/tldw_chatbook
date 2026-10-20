@@ -196,6 +196,7 @@ SETTINGS_SNAPSHOT_KEYS = frozenset(
         "active_category",
         "category_search_query",
         "hooks_snapshot",  # the saved hooks' review; their edits are a draft
+        "mcp_hub_view_state",  # Tools & MCP hub pane's view state (ADR-240)
         "provider_return_continuation",
         # Drafts: retained work while unsaved.
         "settings_drafts",
