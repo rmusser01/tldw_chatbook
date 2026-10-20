@@ -123,3 +123,19 @@ exact owned `.test-tmp` directory to private mode using the application's
 native Windows filesystem API, leaving all product guards enabled. Subsequent
 diagnostic writes use the native command runner and do not widen that ACL.
 The rejected runs are retained; they are not counted as behavioral passes.
+
+Final updated-dev receipts: eight contract cases passed in 238.08 s (new
+component/origin/category-return/action cases plus Tools outside-pane dispatch).
+The four affected Console Behavior configuration cases passed in their private
+children. The subsequent all-category footer child also passed, but its
+startup plus 96.75 s child session exceeded the outer 110 s timeout. Reran the
+six affected footer cases with a startup-inclusive 180 s timeout: six passed,
+eight deselected, 303.56 s. This is 18 distinct selected behavior cases passed
+across batches, plus the two Settings size-ratchet checks. No test assertion,
+product timing ceiling or security guard was relaxed to obtain these results.
+
+Delivered in [PR #3176](https://github.com/rmusser01/tldw_chatbook/pull/3176)
+against dev. TASK-35676/35677/35678 are complete in this branch. The
+[follow-up analysis](./2026-10-19-textual-book-followup.md) records the separate
+parallel-run diagnostic failure as new work, not as a failure of the fixed
+paste-region contract or a reason to widen the completed tasks.

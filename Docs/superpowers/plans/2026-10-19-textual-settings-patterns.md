@@ -22,26 +22,26 @@ Reason: preserve existing UI, commit and runtime boundaries.
 
 ## TASK-35676
 
-- [ ] Add a mounted regression for both controls and observe the original failure.
-- [ ] Apply prevent(...) to programmatic assignments and prove real edits still stage.
-- [ ] Verify save/revert and category-return cases against the original writer.
+- [x] Add a mounted regression for both controls and observe the original failure.
+- [x] Apply prevent(...) to programmatic assignments and prove real edits still stage.
+- [x] Verify save/revert and category-return cases against the original writer.
 
 ## TASK-35677
 
-- [ ] Census and move only composer-paste composition/events into Widgets/Settings_Widgets/composer_paste_panel.py.
-- [ ] Preserve screen-owned staging and validation through widget-local edit messages.
-- [ ] Prove targeted refresh preserves focus/cursor/selection and field search.
-- [ ] Update architecture and measured size/import governance where needed.
+- [x] Census and move only composer-paste composition/events into Widgets/Settings_Widgets/composer_paste_panel.py.
+- [x] Preserve screen-owned staging and validation through widget-local edit messages.
+- [x] Prove targeted refresh preserves focus/cursor/selection and field search.
+- [x] Update architecture and measured size/import governance where needed.
 
 ## TASK-35678
 
-- [ ] Pin category/focus/advertisement behavior before consolidation.
-- [ ] Reuse category eligibility for dispatch, footer/help and relevant controls without a generic registry.
-- [ ] Verify guidance-only, text-entry, busy/dirty, keyboard/button and narrow-width cases.
+- [x] Pin category/focus/advertisement behavior before consolidation.
+- [x] Reuse category eligibility for dispatch, footer/help and relevant controls without a generic registry.
+- [x] Verify guidance-only, text-entry, busy/dirty, keyboard/button and narrow-width cases.
 
 ## Completion
 
-- [ ] Run focused regressions, affected existing checks, scoped lint/format and derived artifacts.
-- [ ] Run private-profile keyboard journeys and inspect rendered screens/logs.
-- [ ] Self-review, update task notes and ACs only with evidence, commit/push, and create/attach PR against dev.
-- [ ] Reassess the updated source against the book and report remaining evidence-backed opportunities.
+- [x] Run focused regressions, affected existing checks, scoped lint/format and derived artifacts.
+- [x] Run private-profile keyboard journeys and inspect rendered screens/logs.
+- [x] Self-review, update task notes and ACs only with evidence, commit/push, and create/attach PR against dev.
+- [x] Reassess the updated source against the book and report remaining evidence-backed opportunities.

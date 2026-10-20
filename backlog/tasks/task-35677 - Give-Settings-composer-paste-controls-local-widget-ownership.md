@@ -1,7 +1,7 @@
 ---
 id: TASK-35677
 title: 'Give Settings composer-paste controls local widget ownership'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-19'
@@ -53,12 +53,12 @@ Deduplication: TASK-32809.3 records decomposition candidates and is not an autho
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A caller and field-ownership census bounds the move to Composer paste handling and records its compatibility with the approved decomposition design and TASK-35017; no other settings section is extracted.
-- [ ] #2 The section owns child composition, local update handling and presentation; Settings retains the existing category draft and save authority, with no whole-screen proxy or duplicate configuration state.
-- [ ] #3 Actual typing, toggling and summary refresh preserve the mounted threshold Input, focus, cursor and selection; ordinary value changes do not recompose the enclosing Settings detail pane.
-- [ ] #4 Existing staged Save/Revert, validation, field search, category return, tab/focus navigation and programmatic-update suppression behave as before; no new shortcuts or settings destination are introduced.
-- [ ] #5 Focused component and mounted Settings tests plus a private-profile keyboard journey cover the extracted region, including compact and wide layouts. Existing tokens/classes and appropriate size/import ratchets are preserved or updated to measured values.
-- [ ] #6 The relevant architecture documentation records the region's owner and message flow; any departure from the existing ownership contract has an ADR before code changes.
+- [x] #1 A caller and field-ownership census bounds the move to Composer paste handling and records its compatibility with the approved decomposition design and TASK-35017; no other settings section is extracted.
+- [x] #2 The section owns child composition, local update handling and presentation; Settings retains the existing category draft and save authority, with no whole-screen proxy or duplicate configuration state.
+- [x] #3 Actual typing, toggling and summary refresh preserve the mounted threshold Input, focus, cursor and selection; ordinary value changes do not recompose the enclosing Settings detail pane.
+- [x] #4 Existing staged Save/Revert, validation, field search, category return, tab/focus navigation and programmatic-update suppression behave as before; no new shortcuts or settings destination are introduced.
+- [x] #5 Focused component and mounted Settings tests plus a private-profile keyboard journey cover the extracted region, including compact and wide layouts. Existing tokens/classes and appropriate size/import ratchets are preserved or updated to measured values.
+- [x] #6 The relevant architecture documentation records the region's owner and message flow; any departure from the existing ownership contract has an ADR before code changes.
 <!-- AC:END -->
 
 

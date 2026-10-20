@@ -1,7 +1,7 @@
 ---
 id: TASK-35678
 title: 'Share Settings action availability across shortcuts buttons and help'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-19'
@@ -52,12 +52,12 @@ Other recommendations from this book review already have owners and are explicit
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A before/after category and focus-state matrix records action execution, guidance-only behavior, button availability and footer/F1 wording for the scoped action families.
-- [ ] #2 Shared eligibility rules drive the relevant action, button and custom help/footer decisions without duplicated category lists that can disagree; any intentional distinction between advertised, executable and guidance-only behavior is explicit.
-- [ ] #3 Existing guidance-only shortcuts still provide their guidance, focused text fields still receive printable keys, button/direct-call paths retain their intended focus behavior, and destructive actions keep their confirmations.
-- [ ] #4 Switching category or changing relevant draft/busy state refreshes availability and help without stale results or configuration/database reads newly added to key dispatch or check_action.
-- [ ] #5 Targeted mounted tests retain the existing footer/help contracts and cover keyboard/button equivalence, supported and unsupported categories, text focus and narrow-width discoverability; a private-profile live keyboard check confirms behavior.
-- [ ] #6 No Console polling, worker ownership, screen-wide recomposition or global binding changes are included; implementation notes link the existing ADRs and record any deliberately retained duplicate presentation needed for different semantics.
+- [x] #1 A before/after category and focus-state matrix records action execution, guidance-only behavior, button availability and footer/F1 wording for the scoped action families.
+- [x] #2 Shared eligibility rules drive the relevant action, button and custom help/footer decisions without duplicated category lists that can disagree; any intentional distinction between advertised, executable and guidance-only behavior is explicit.
+- [x] #3 Existing guidance-only shortcuts still provide their guidance, focused text fields still receive printable keys, button/direct-call paths retain their intended focus behavior, and destructive actions keep their confirmations.
+- [x] #4 Switching category or changing relevant draft/busy state refreshes availability and help without stale results or configuration/database reads newly added to key dispatch or check_action.
+- [x] #5 Targeted mounted tests retain the existing footer/help contracts and cover keyboard/button equivalence, supported and unsupported categories, text focus and narrow-width discoverability; a private-profile live keyboard check confirms behavior.
+- [x] #6 No Console polling, worker ownership, screen-wide recomposition or global binding changes are included; implementation notes link the existing ADRs and record any deliberately retained duplicate presentation needed for different semantics.
 <!-- AC:END -->
 
 

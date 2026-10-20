@@ -1,7 +1,7 @@
 ---
 id: TASK-35676
 title: 'Keep Console Behavior form refreshes from staging user edits'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-19'
@@ -46,11 +46,11 @@ Deduplication: TASK-15740/TASK-15673 cover the completed provider repopulation f
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A mounted regression distinguishes an actual value-changing programmatic refresh from a user edit for both paste controls, waits for queued Changed messages, and records the pre-change result.
-- [ ] #2 Opening, repopulating, saving and confirmed reverting the paste controls leave no phantom dirty keys or newly staged result message once queued events settle; unrelated staged values retain their existing semantics.
-- [ ] #3 Real user toggle/threshold edits still stage the intended values, retain existing invalid-value feedback, save through the existing writer, and revert through the existing confirmation flow.
-- [ ] #4 Initial mount and category leave/re-entry do not swallow the first genuine edit, including one equal to an earlier programmatic value; existing suppression queues outside this section are unchanged.
-- [ ] #5 Only affected Settings tests run under a private profile, with a real keyboard Save/Revert journey for any behavioral fix; no real user configuration is modified. Evidence distinguishes reproduced defects from source-only concerns.
+- [x] #1 A mounted regression distinguishes an actual value-changing programmatic refresh from a user edit for both paste controls, waits for queued Changed messages, and records the pre-change result.
+- [x] #2 Opening, repopulating, saving and confirmed reverting the paste controls leave no phantom dirty keys or newly staged result message once queued events settle; unrelated staged values retain their existing semantics.
+- [x] #3 Real user toggle/threshold edits still stage the intended values, retain existing invalid-value feedback, save through the existing writer, and revert through the existing confirmation flow.
+- [x] #4 Initial mount and category leave/re-entry do not swallow the first genuine edit, including one equal to an earlier programmatic value; existing suppression queues outside this section are unchanged.
+- [x] #5 Only affected Settings tests run under a private profile, with a real keyboard Save/Revert journey for any behavioral fix; no real user configuration is modified. Evidence distinguishes reproduced defects from source-only concerns.
 <!-- AC:END -->
 
 
