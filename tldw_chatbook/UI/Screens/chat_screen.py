@@ -17047,6 +17047,31 @@ class ChatScreen(BaseAppScreen):
         # gap, and the refresh-key reconcile inside the pipeline remains
         # the final arbiter of DOM writes.
         store = self._console_chat_store
+        memory_inputs = None
+        effective_memory = None
+        live_memory_reader = False
+        if (
+            transcript is not None
+            and store is not None
+            and store.active_session_id is not None
+        ):
+            try:
+                from ..Console_Modules.console_spend_projection import (
+                    console_transcript_context_inputs,
+                )
+
+                memory_inputs = console_transcript_context_inputs(
+                    self,
+                    self._console_chat_controller
+                    or self._ensure_console_chat_controller(),
+                    store.active_session_id,
+                )
+                if memory_inputs is None:
+                    live_memory_reader = True
+                else:
+                    _local, _global, effective_memory = memory_inputs
+            except Exception:
+                logger.warning("Console effective-memory presentation selection failed")
         if store is not None:
             session_id = store.active_session_id
             try:
@@ -17126,6 +17151,9 @@ class ChatScreen(BaseAppScreen):
                 getattr(self, "_console_send_ack", None) is not None,
                 run_activity,
                 delete_arm,
+                # Existing finite context publication must reopen a quiet
+                # transcript after cold preparation, without holding chunks.
+                effective_memory,
             )
             # getattr fail-open: bare test shells build this screen via
             # __new__ and do not run __init__ (review finding).
@@ -17215,12 +17243,12 @@ class ChatScreen(BaseAppScreen):
             self._review_selection._sync_console_annotation_discovery(store)
             transcript.set_annotation_previews(self._console_annotation_previews)
             memory_banner = None
-            if store.active_session_id is not None:
+            if live_memory_reader and store.active_session_id is not None:
                 try:
                     memory_controller = (
                         controller or self._ensure_console_chat_controller()
                     )
-                    _global, _local, effective_memory = (
+                    _local, _global, effective_memory = (
                         memory_controller.context_control_inputs(
                             store.active_session_id
                         )
@@ -17229,11 +17257,10 @@ class ChatScreen(BaseAppScreen):
                     logger.warning(
                         "Console effective-memory presentation selection failed"
                     )
-                else:
-                    memory_banner = derive_console_memory_banner_presentation(
-                        effective_memory,
-                        active_messages,
-                    )
+            if effective_memory is not None:
+                memory_banner = derive_console_memory_banner_presentation(
+                    effective_memory, active_messages
+                )
             transcript.set_memory_banner_presentation(memory_banner)
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
