@@ -249,7 +249,8 @@ _BUDGETS: dict[str, int] = {
     # snapshot's own model_facet, not a second copy (-5): 35,772.
     # TASK-33005.15's PR review: one write covers every Overview row (-1): 35,771.
     # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint is -1: 35,770.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35770,
+    # Rebased onto dev 88fe3108e5, whose task-35150 Tools & MCP category is +1: 35,771.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
