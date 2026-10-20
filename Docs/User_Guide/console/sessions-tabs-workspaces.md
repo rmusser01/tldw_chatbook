@@ -101,9 +101,9 @@ on separate lines so the metadata remains readable in the narrow rail.
 While a reply is running, the section checks saved character chats for
 changes about once a second (a different open chat or character is picked up
 at once), and it catches up as soon as the reply ends. When one of these
-background checks finds new or changed saved chats, the list updates in place
-without first showing "Refreshing local character chats…" (switching to a
-different open chat, or **Retry**, still shows it briefly).
+checks finds new or changed saved chats, the list usually updates in place
+without first showing "Refreshing local character chats…"; **Retry** always
+shows it briefly.
 When a Context search is active, **Continue search in Character chats** opens
 that same validated query in Ctrl+K's complete local Character-chat results.
 Enter or double-click opens an exact saved conversation in its Console tab;
