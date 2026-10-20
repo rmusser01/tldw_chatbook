@@ -1216,6 +1216,14 @@ def gated_off_mcp_builtin_twins(
     if gates is None:
         gates = all_tool_gates()
     enabled = {gate.key: gate.enabled for gate in gates if gate.section == "tools"}
+    # The [console] master drops the whole local group, the native character
+    # tools included, so their twins go with it (TASK-34100.13 review F3).
+    if any(
+        gate.key == LOCAL_TOOLS_MASTER_KEY and not gate.enabled for gate in gates
+    ):
+        from .local_tool_provider import CHARACTER_TOOLS_GATE_KEY
+
+        enabled[CHARACTER_TOOLS_GATE_KEY] = False
     return frozenset(
         name
         for name, gate_key in _mcp_builtin_native_twins().items()
