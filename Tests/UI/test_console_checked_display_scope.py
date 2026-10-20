@@ -171,20 +171,119 @@ async def test_warm_display_nested_disk_reader_keeps_its_own_fresh_scope(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_genuine_display_expiry_uses_original_native_entry(tmp_path):
+@pytest.mark.parametrize("already_pending", [False, True])
+async def test_genuine_display_expiry_defers_until_fresh_checked_read(
+    tmp_path, already_pending
+):
     database, _store, _controller, screen, tasks = _screen(tmp_path)
-    observed = []
+    observed, retries = [], []
+    screen._request_console_control_bar_sync = lambda **_: retries.append(True)
     try:
         projection = await _warm(screen, tasks)
         assert projection.max_age == 1
         await asyncio.sleep(1.02)
+        if already_pending:
+            projection.run(lambda: None)
         with _actual_calls() as calls:
-            assert run_console_presentation_sync(
-                screen, lambda: observed.append(getattr(raw._local, "operation", None))
+            assert (
+                run_console_presentation_sync(
+                    screen,
+                    lambda: observed.append(getattr(raw._local, "operation", None)),
+                )
+                is False
             )
-        assert calls["main_scopes"] == 1 and calls["main_opens"] > 0
-        assert len(observed) == 1 and observed[0] is not None
-        assert observed[0] not in raw._states
+        assert observed == [] and retries == [True]
+        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
+        assert projection.pending
+        await asyncio.gather(*tasks)
+        with _actual_calls() as calls:
+            assert (
+                run_console_presentation_sync(
+                    screen,
+                    lambda: observed.append(getattr(raw._local, "operation", None)),
+                )
+                is True
+            )
+        assert observed == [None]
+        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
+        assert not any(state.source is config for state in raw._states.values())
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_coalesced_control_bar_queues_checked_refresh_without_native_entry(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.UI.Console_Modules import inspector_data
+
+    database, _store, _controller, screen, tasks = _screen(tmp_path)
+    rendered, timers = [], []
+    screen._console_control_bar_replay_whole_sync = False
+    screen._console_control_bar_sync_scheduled = True
+    screen._sync_console_control_bar_under_config = lambda _rail: rendered.append(
+        getattr(raw._local, "operation", None)
+    )
+    for name in (
+        "_request_console_control_bar_sync",
+        "_run_coalesced_control_bar_sync",
+        "_sync_console_control_bar",
+    ):
+        setattr(screen, name, MethodType(getattr(ChatScreen, name), screen))
+    screen.set_timer = lambda delay, callback: timers.append((delay, callback))
+    monkeypatch.setattr(inspector_data, "_sync_console_pending_display", lambda _: None)
+    try:
+        await _warm(screen, tasks)
+        await asyncio.sleep(1.02)
+        with _actual_calls() as calls:
+            screen._run_coalesced_control_bar_sync()
+        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
+        assert rendered == [] and len(timers) == 1
+        assert timers[0][0] == 0.2 and screen._console_control_bar_sync_scheduled
+        await asyncio.gather(*tasks)
+        with _actual_calls() as calls:
+            timers.pop()[1]()
+        assert rendered == [None]
+        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_expired_display_submission_failure_defers_and_remains_retryable(
+    tmp_path, monkeypatch
+):
+    database, _store, _controller, screen, tasks = _screen(tmp_path)
+    rendered, retries = [], []
+    screen._request_console_control_bar_sync = lambda **_: retries.append(True)
+    try:
+        projection = await _warm(screen, tasks)
+        await asyncio.sleep(1.02)
+
+        def refuse(*_args, **_kwargs):
+            raise RuntimeError("worker submission refused")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(screen, "run_worker", refuse)
+            with _actual_calls() as calls:
+                assert (
+                    run_console_presentation_sync(screen, lambda: rendered.append(True))
+                    is False
+                )
+        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
+        assert rendered == [] and retries == [True]
+        assert not projection.pending and projection._settled.is_set()
+        assert (
+            run_console_presentation_sync(screen, lambda: rendered.append(True))
+            is False
+        )
+        await asyncio.gather(*tasks)
+        assert (
+            run_console_presentation_sync(screen, lambda: rendered.append(True)) is True
+        )
+        assert rendered == [True]
     finally:
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
@@ -286,9 +385,7 @@ async def test_warm_display_refuses_changed_native_owner_before_body(
             sys.modules["tldw_chatbook.config"] = replacement
         with _actual_calls() as calls:
             assert (
-                run_console_presentation_sync(
-                    screen, lambda: rendered.append(True)
-                )
+                run_console_presentation_sync(screen, lambda: rendered.append(True))
                 is False
             )
         assert not rendered and retry == [True]
@@ -442,18 +539,14 @@ async def test_actual_cold_screen_defers_body_until_checked_worker_settles(tmp_p
     try:
         with _actual_calls() as calls:
             assert (
-                run_console_presentation_sync(
-                    screen, lambda: rendered.append(True)
-                )
+                run_console_presentation_sync(screen, lambda: rendered.append(True))
                 is False
             )
         assert not rendered and calls["main_scopes"] == calls["main_opens"] == 0
         await asyncio.gather(*tasks)
         with _actual_calls() as calls:
             assert (
-                run_console_presentation_sync(
-                    screen, lambda: rendered.append(True)
-                )
+                run_console_presentation_sync(screen, lambda: rendered.append(True))
                 is True
             )
         assert rendered == [True] and calls["main_scopes"] == calls["main_opens"] == 0
@@ -539,9 +632,7 @@ async def test_permissive_alias_equality_cannot_retain_display_proof(
         monkeypatch.setattr(config, "current_config_identity", EqualAlias())
         with _actual_calls() as calls:
             assert (
-                run_console_presentation_sync(
-                    screen, lambda: rendered.append(True)
-                )
+                run_console_presentation_sync(screen, lambda: rendered.append(True))
                 is False
             )
         assert rendered == [] and retry == [True]
@@ -602,9 +693,7 @@ async def test_permissive_owner_equality_never_accepts_changed_receiver(
             screen._console_chat_store = EqualOwner(screen._console_chat_store)
         with _actual_calls() as calls:
             assert (
-                run_console_presentation_sync(
-                    screen, lambda: rendered.append(True)
-                )
+                run_console_presentation_sync(screen, lambda: rendered.append(True))
                 is False
             )
         assert rendered == [] and calls["main_scopes"] == calls["main_opens"] == 0

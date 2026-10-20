@@ -48,9 +48,13 @@ An inspector build shares provider/config derivation through the existing synchr
 memo, discarded when that build ends (TASK-35612). A subsequent build, including
 FULL's post-await projection, starts fresh. Checked-display coordinator contention
 requests the existing repaint retry without entering its body or a nested metadata
-fallback. If expiry already selected a native presentation operation, a subsequent
-display refusal requests retry only after physical retirement; cleanup errors still
-propagate. No source, pause, ownership, lifetime or action fence is relaxed.
+fallback. A qualified expired display also defers to the existing finite checked
+refresh, even when that direct call started the refresh (TASK-35646). The original
+coalesced retry renders only after a fresh check; refused worker submission stays
+retryable. Unknown/custom and unscoped callers retain their native route. If such
+an entry later refuses display, retry waits for physical retirement and cleanup
+errors still propagate. No source, pause, ownership, lifetime or action fence is
+relaxed.
 
 Independent provider-label and readiness builds also open that existing synchronous
 scope (TASK-35613). Each loads current config once, reuses an enclosing scope when
