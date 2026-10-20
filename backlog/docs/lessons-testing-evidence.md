@@ -280,6 +280,18 @@ slice and checks what it actually reclaims takes minutes. If the fixed term
 alone exceeds the target, changing the cadence cannot help; only removing
 the operation can.
 
+## Re-measure before resuming an interrupted performance fix (TASK-33620.15.6, 2026-10-19)
+
+**Incident.** TASK-33620.15.6 was filed on 2026-10-10 from a live profile: about 21 SQLite helper starts per Console send window, 8.6 of them from the Character scope check. Its WIP, interrupted for nine days, was a new operation-scoped session thread that shared one handle across the check's awaits. When work resumed, dev was about 1,540 commits ahead. A 4-send probe of current dev (a `sitecustomize` hook on `subprocess._fork_exec` that records the spawning chain) measured about 15.5 starts per window and a Character share of 2.7. TASK-33620.15.1 and the finite Character batch had removed most of the target. The WIP's edits no longer applied, and ADR-126 now ruled out a new coordinator around that callback. What remained was one duplicate read per changed check, a smaller change of a different shape.
+
+**What to do.** Before rebasing an old performance WIP, measure the current base with the same probe the task was filed from, and restate the acceptance numbers against that measurement. Read the ADR amendments made since the WIP to the code it touches. The probe takes minutes. Rebasing a design that the base has already overtaken costs hours and changes nothing.
+
+## A barrier test's pair index names a phase, not a count (TASK-33620.15.6, 2026-10-19)
+
+**Incident.** Folding the Character display's scope probe into its reload batch removed one metadata pair from the read sequence. Dev's evidence tests block in a profiler barrier at "the Nth pair", for example `pair_count == 3` for the batch's final pair. On the branch that pair never came. Each case waited out its 10 s `release.wait`, so twenty cases took 200 s and then timed out. The entry-control hook asserted `callbacks == 1` at the reader selector's return, inside a profile callback. On the new route the selector ran before any callback, so the assertion raised in the hook and the hold never armed.
+
+**What to do.** When a change reorders or merges the reads that a barrier test counts, map each barrier to the phase it was written for: the first pair of a batch, the read before groups, or the final fence pair. Do not shift the number by the delta. Run the tests on the branch to measure the new counts, and say in a comment which phase the barrier now names. A test that times out at a barrier is usually waiting for a read that no longer happens, not a hang.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
