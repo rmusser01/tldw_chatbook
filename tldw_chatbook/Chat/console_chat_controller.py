@@ -17723,8 +17723,11 @@ class ConsoleChatController:
             self.prompt_queue_coordinator.pause_for_stop(session_id)
             return True
         runtime = getattr(self, "_hooks_v2_runtime", None)
+        library_search = self._library_search_tasks.get(session_id)  # TASK-33621.20
+        searching = library_search is not None and not library_search.done()
         received_cancelled = bool(
-            runtime is not None
+            not searching  # its send is in custody: Stop pauses only the search
+            and runtime is not None
             and getattr(runtime, "_chat_controller", None) is self
             and session_id
             and runtime.cancel_received_intents(session_id)
@@ -17743,7 +17746,9 @@ class ConsoleChatController:
             self._signal_stop(session_id=session_id)
         from .console_preparation_reads import preparation_tasks_for
 
-        read_tasks = preparation_tasks_for(self._preparation_reads, session_id)
+        read_tasks = () if searching else preparation_tasks_for(
+            self._preparation_reads, session_id
+        )
         if read_tasks:
             self._signal_stop(session_id=session_id)
             self.prompt_queue_coordinator.pause_for_stop(session_id)
@@ -17765,9 +17770,8 @@ class ConsoleChatController:
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True
-        library_search = self._library_search_tasks.get(session_id)
-        if library_search is not None and not library_search.done():
-            return library_search.cancel()  # TASK-33621.20: pauses the send
+        if searching:  # TASK-33621.20: pauses the send
+            return library_search.cancel()
         start = self._chat_start._active.get(session_id)
         if (
             start is not None
