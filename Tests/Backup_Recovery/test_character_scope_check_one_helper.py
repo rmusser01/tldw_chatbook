@@ -141,9 +141,7 @@ async def test_changed_display_check_reloads_through_one_helper(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run_active", [True, False], ids=["active", "idle"])
-async def test_unchanged_display_check_stops_after_its_scope_read(
-    tmp_path, run_active
-):
+async def test_unchanged_display_check_stops_after_its_scope_read(tmp_path, run_active):
     database = CharactersRAGDB(tmp_path / "unchanged.sqlite", "one-helper")
     try:
         controller, screen, _ = await _settled(database, run_active=run_active)
@@ -162,9 +160,7 @@ async def test_unchanged_display_check_stops_after_its_scope_read(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run_active", [True, False], ids=["active", "idle"])
-async def test_unchanged_display_check_keeps_the_probe_loop_cost(
-    tmp_path, run_active
-):
+async def test_unchanged_display_check_keeps_the_probe_loop_cost(tmp_path, run_active):
     """Folding the reload in adds no UI-loop handoff to an unchanged check.
 
     The unchanged check is the common one (about once a second during a
