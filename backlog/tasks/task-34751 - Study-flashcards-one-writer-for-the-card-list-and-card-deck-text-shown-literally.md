@@ -29,7 +29,7 @@ Since this task was filed, dev took most of that in PR #3057 (commits tagged TAS
 <!-- AC:BEGIN -->
 - [x] #1 Overlapping card-list rebuilds (deck switch, re-list, refresh, create/delete/move) leave exactly one row per card, in order, and current_cards matches the rows
 - [x] #2 The gated contract test test_real_service_create_deck_select_deck_and_add_card_in_local_mode no longer flakes: it passes repeatedly, including with extra event-loop turns injected before its card-list assert and with create_deck's own rebuild slowed
-- [x] #3 A card-list rebuild still in flight when the list leaves the app (view switch, app shutdown) stops without writing, so no MountError at teardown
+- [x] #3 A card-list rebuild still in flight when the list leaves the app (view switch, app shutdown) ends quietly: no MountError or NoMatches escapes its worker, so nothing fails at teardown; a MountError while the Study window is still attached still raises
 - [x] #4 Card fronts/backs, deck names, quiz names/questions/answers and workspace names containing markup-like brackets render literally everywhere Study shows them (card and question rows, review panel, status lines, deck/quiz pickers, dashboard, quiz session panel, the deck-created toast) and never raise MarkupError
 - [x] #5 Each new or changed test fails on origin/dev for the stated reason and passes with the fix; a test that pins behaviour dev already has fails under the mutation it guards against
 <!-- AC:END -->
@@ -53,7 +53,7 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 
 **1. Contract test (AC #2).** `_wait_for_study_workers` pauses, then requires no pending `study-*` worker across two pauses. `_open_flashcards` waits for the view's first load. The test reads `#card-list` only after the deck switch's rebuild has finished, and again after create_card's. Dev's lock serialises rebuilds but does not order them: when create_card's rebuild takes the lock before the deck switch's worker reaches it, the worker runs last and replaces the row the test is waiting to see painted.
 
-**2. Shutdown (AC #3).** Once `App._exit` is set, `is_attached` is False for every widget, so a rebuild resuming after its fetch appended into a list "not mounted" and raised `MountError` from its worker. `_quiet_when_swapped_out` now ends quietly on `NoMatches` or `MountError` once the window is detached, and still raises a `MountError` while it is attached. A view switch was already quiet on dev: mounting into a pruned list is a no-op, and `NoMatches` after a swap is handled.
+**2. Shutdown (AC #3).** Once `App._exit` is set, `is_attached` is False for every widget, so a rebuild resuming after its fetch appended into a list "not mounted" and raised `MountError` from its worker. `_quiet_when_swapped_out` now ends quietly on `NoMatches` or `MountError` once the window is detached, and still raises a `MountError` while it is attached. A view switch was already quiet on dev: mounting into a pruned list is a no-op, and `NoMatches` after a swap is handled. The guard stops crashes, not every write: after a swap out and back, a rebuild that outlived its panel still sets `current_cards` and writes the review status and lifecycle controls onto the new panel, and so do its `create_deck`/`create_card` callers. That predates this branch and is now AC #4 of TASK-34755. The quit test asserts that the held rebuild really resumed past its fetch, so it cannot go green on a Textual that cancels the worker first. Two unit tests are the negative control: a `MountError` with the window attached raises, whether Flashcards is shown or swapped out, and a detached window is quiet for both errors.
 
 **3. Scope banner (AC #4).** `#study-scope-workspace-name` is `markup=False`. `_sync_scope_banner`'s own `except Exception` swallowed the `MarkupError` from `update()`, so the crash came later, when the compositor first painted the banner. No in-app path enters workspace scope on dev (`enter_workspace_scope` has no caller outside tests), so this is verified in Pilot only.
 
@@ -62,6 +62,7 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 **Red/green, on dev ce4aa4a231 vs this branch:**
 - `test_study_flashcards_quit_mid_rebuild.py`: RED on dev with `WorkerFailed: MountError("Can't mount widget(s) before ListView(id='card-list', ...) is mounted")`; GREEN.
 - `test_workspace_name_with_markup_brackets_paints_literally_in_the_scope_banner`: RED on dev with `MarkupError: closing tag '[/b]' does not match any open tag`, raised from the compositor; GREEN.
+- `test_a_mount_error_while_the_window_is_attached_still_raises` (both cases) pins behaviour that is the same on dev and the branch, so it is GREEN on both. With the guard mutated to swallow every `MountError`, both cases fail ("DID NOT RAISE") while the quit test stays green. That is the gap this negative control closes. The mutation was restored by Edit.
 - `test_deck_and_quiz_pickers_find_a_markup_named_entry_by_typing` pins dev's `Text` prompts, so it is GREEN on dev. It fails with the deck prompts built as `Content` ("typing 'z' to pick the Zebra deck") and with the quiz prompts as `Content` ("typing 'g' to pick the Graph quiz"). Both mutations were restored by Edit.
 - Contract test under loaded orderings: a scratch probe (deleted) ran the test unchanged under 17 orderings: the deck switch's rebuild started 0.01-0.4 s late or 1-16 loop turns late, every card fetch slowed 50 ms (create_deck's included), and extra loop turns added after each of the test's waits, before its asserts. Dev's version failed 6/17 with the CI signatures: `WorkerFailed(MountError)` at teardown (4 occurrences), "timed out ... the card row to be painted" (2), `assert [] == ['No cards in this deck.']` (1), and a row region of zero, meaning the row was replaced (1). The branch passed 17/17. An earlier 7-case sweep (wall-time delays only) gave the same split: dev 4/7 failed, branch 7/7 passed.
 
@@ -83,14 +84,23 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 - Pressed Refresh twice, switched to Dashboard at once, then back to Flashcards; still 3 rows.
 - Created `Alpha r64 deck`, opened the deck picker and typed `r` then Enter. The `[/b]` deck was selected, with its label literal and its 3 cards listed.
 - Review showed the front and back literally.
-- Pressed Refresh twice and quit at once. The profile log has 0 lines matching `unhandled_exception|MarkupError|MountError|WorkerFailed|Traceback`.
+- Pressed Refresh twice and quit at once. The profile log has 0 lines matching `unhandled_exception|MarkupError|MountError|WorkerFailed|Traceback`. This is a smoke check, not evidence for the quit fix. The local fetch is fast, so nothing shows a rebuild was still in flight at quit, and dev would very likely pass the same steps. The evidence for the quit fix is the Pilot test, which holds the fetch until the app is exiting.
 
 **The 2026-10-10 review's items:**
 - IMPORTANT 1 (the Scheduling `notify` fakes) and IMPORTANT 2 (`Content` prompts break type-to-search) are on dev already. The second is pinned here.
 - MINOR 3 (`is_attached` during teardown): the guard now runs after the exception is raised. A mount into a pruning list is a no-op, and `is_attached` turns False exactly when `App._exit` is set, which is the case the guard handles.
-- MINOR 4 (callers writing the review panel after `refresh_cards` stopped): each caller is itself wrapped in `_quiet_when_swapped_out`. The overwritten "Deck created." status is TASK-34755.
+- MINOR 4 (callers writing the review panel after `refresh_cards` stopped): each caller is itself wrapped in `_quiet_when_swapped_out`, which stops crashes but not the writes. After a swap out and back, those writes land on the new panel. That is AC #4 of TASK-34755, alongside the overwritten "Deck created." status.
 - MINOR 6: the worker wait pauses before its first check, and the quit test holds the fetch on Events.
 - MINOR 7: follow-ups TASK-34752 (the quizzes question list), TASK-34753 (doubled toast title) and TASK-34755 (Deck-created status) are filed. Their ids were checked as unused on every ref and in every worktree. The move-target draft (34754) was dropped because dev pins that behaviour.
+
+**The 2026-10-19 review's follow-ups (verdict: ship, nothing blocking):**
+- The picker test's quiz half now waits for the Study workers, as its deck half does, so the Quizzes view's initialize worker cannot outlive the test.
+- The quit test asserts that the rebuild resumed past its held fetch.
+- Two unit tests now pin the attached `MountError` negative control.
+- AC #3 is reworded to what the guard guarantees. The stale writes are AC #4 of TASK-34755.
+- The test docstrings cite dev ce4aa4a231, where the red evidence was taken.
+- The live notes no longer suggest that the quit run exercised the fix.
+- The teardown error at high host load (the executor join timing out, "Native app workers remain uncertain") is filed as TASK-35663. It is environmental and also hits dev's unchanged tests. The id was checked as unused on every ref and in every worktree; the highest seen was 35662.
 
 **Out of scope.** `#review-next-intervals` stays markup-on. It shows scheduler interval strings, not user text.
 
@@ -105,5 +115,5 @@ Re-planned 2026-10-19, after PR #3057 landed most of the original scope on dev.
 - `scripts/ui_pr_gate_census.txt`
 - `scripts/check_ui_pr_gate_census.py`
 - `backlog/docs/lessons-backlog-hygiene.md`
-- `backlog/tasks/task-34752`, `task-34753`, `task-34755`
+- `backlog/tasks/task-34752`, `task-34753`, `task-34755`, `task-35663`
 <!-- SECTION:NOTES:END -->
