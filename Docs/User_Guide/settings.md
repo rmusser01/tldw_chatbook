@@ -286,7 +286,11 @@ list, arrow keys to move, and **Space** to select a model; its row then starts
 with **selected** and its box shows an **X**. An unchecked row's box stays
 empty, under the cursor too. Checked rows, and the **Served now** rows in Model,
 survive leaving this category and returning within Settings. **Save selected** immediately appends those exact
-model IDs to that provider’s saved list and reports once, on the line above
+model IDs to that provider’s saved list as the config file holds it at that
+moment. A model added to the file or removed from it since the app started, in
+**Advanced Config** or by another program, is kept or stays removed. After **Save
+selected**, an **Advanced Config** save or a **Config reload**, Model, the **Saved
+model list** and Switch model show the file's lists without a restart. It reports once, on the line above
 **Discover models**: "Saved 2 discovered models to OpenAI.", "The selected
 models are already saved for OpenAI." when none was new, or why nothing was
 saved ("Select discovered models to save." with none checked). If Model is empty, the first newly
@@ -299,6 +303,15 @@ line is then theirs, its report is a toast that names the provider the save
 was for, such as "OpenAI: Could not save discovered models to the providers list."
 Changing provider, endpoint or credentials clears the old results; a delayed
 operation cannot replace the new form’s results or Model value.
+
+The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
+fill through **Discover models**. A config file written by an older version
+may still hold their sample IDs (`vllm-model-z`, `tabby-model`,
+`aphrodite-engine`, `custom-model-alpha` and the like), which no server serves.
+They are ignored: no saved list, count or default shows them, so switching to
+one of those providers leaves Model **not set** until you choose or save a
+model. The next time Settings saves that provider's list, they are removed from
+the file; the app does not rewrite the file at startup for this.
 
 **Model defaults** opens expanded, right under the default model, to edit
 overrides for that provider and model. Supported controls remain reachable

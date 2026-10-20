@@ -853,6 +853,9 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   `localhost:8080`) that is not this chat's, the default's or a recent
   chat's provider. They are checked like any other local server, so one
   that is running reads "Ready · reachable" under READY PROVIDERS instead.
+  An untouched local server with no model chosen (vLLM, llama.cpp,
+  koboldcpp, Oobabooga, llamafile) is checked too: when it is running, it
+  lists the models it serves, and when it refuses, it is named here.
   Change a provider's settings or use it, and its refusal is a NEEDS SETUP
   row again. MLX-LM is a server too, but no model listing can check it, so
   while it is still at its shipped settings, unused and listing no models,
