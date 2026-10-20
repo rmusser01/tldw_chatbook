@@ -1515,8 +1515,12 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
             if not button.disabled and button in app.screen._compositor.visible_widgets
         )
         install.press()
+        # TASK-34100.14: the details text mounts inside the plan's collapsed
+        # "Details" section, a compose cycle after the confirm button.
         assert await _wait_for(
-            lambda: bool(app.screen.query("#model-install-confirm")), pilot
+            lambda: bool(app.screen.query("#model-install-confirm"))
+            and bool(app.screen.query(".model-plan-details-text")),
+            pilot,
         )
         modal = app.screen
         modal_text = "\n".join(
