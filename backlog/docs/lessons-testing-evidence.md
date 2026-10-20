@@ -153,6 +153,25 @@ runs that predated TASK-35710's fix, the TASK-35443 trap below.)
 
 **What to do.** When a test stands in for a production timer, use the same Textual call, and print `asyncio.current_task().get_name()` inside the callback once to confirm which task the work runs in. While a widget's pump is deliberately held, poll with `asyncio.sleep`, not `pilot.pause()`.
 
+## A bounded leak can still be a latency regression: time the reclaim itself (TASK-33620.15.3, 2026-10-19)
+
+**Incident.** The idle heap re-freeze strands frozen garbage by design and
+bounds it with a compaction once the frozen set has grown 25%. The leak tests
+(weakrefs die at the compaction, the frozen set stays bounded over 24 switches)
+and the memory round (tracked objects and RSS against origin/dev) were all
+green. The same memory round's probe also timed every collection. In it, a
+compaction collected 212-373K switched-away objects in one pass, at 2.1-2.8 s
+of UI-loop CPU (27-37 s of wall time on the loaded host). Both arms spent the
+same total collection CPU (12.4 s against 12.5 s); the budget had only gathered
+dev's per-switch passes (worst: 329 ms) into a few long stalls. The fix
+compacts after each switch away from a transcript a freeze had caught, so each
+compaction meets about one transcript.
+
+**What to do.** When a change defers or batches reclamation (freeze, cache,
+pool, queue), measure the reclaim's own pause and its distribution, not only
+the memory bound and the total. Compare the worst single pause with the worst
+pause the baseline had for the same work.
+
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
 **Incident.** TASK-35443 was filed on 2026-10-18 from two required-lane failures titled "worker manager is closed". That text was the test's own stub message, which the private-profile wrapper's "child failure" line repeats; the assertion that failed was a tab-strip settle further down. The cause had been fixed on dev the evening before (623df0136e, #3146), and neither failing head contained that commit.
