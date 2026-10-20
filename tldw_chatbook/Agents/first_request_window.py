@@ -49,13 +49,25 @@ def planning_window(
 
     Returns:
         The window and reservation to plan against, or ``None`` when no usable
-        window was supplied (the caller keeps its own resolution).
+        window was supplied (the caller keeps its own resolution). A window
+        planned as is reserves the Console gateway's safety margin beside the
+        reply (TASK-34100.5.3 review round 2, V2-2): the gateway refuses a
+        request over ``window - reply - margin``, and the planner tested only
+        ``window - reply``, so it kept tool surfaces the gateway then refused
+        -- live, Full agent tools on gpt-4 (8k) failed every send
+        ("4033 > 3584"), and a first message that fit tool-less was refused
+        before commit. Planned within the same ceiling, such a request goes
+        out with fewer tools, or none.
     """
     tokens = getattr(window, "tokens", None)
     if type(tokens) is not int or tokens <= 0:
         return None
     if getattr(window, "verified", False) is True or not _self_hosted(provider):
-        return tokens, response_reserve_tokens
+        from tldw_chatbook.Chat.console_prepared_request import (
+            request_safety_margin_tokens,
+        )
+
+        return tokens, response_reserve_tokens + request_safety_margin_tokens(tokens)
     tokens = min(tokens, UNVERIFIED_PLANNING_WINDOW_TOKENS)
     return tokens, min(
         response_reserve_tokens, max(1, tokens // UNVERIFIED_RESERVATION_DIVISOR)
