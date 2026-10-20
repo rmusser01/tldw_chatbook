@@ -37,6 +37,34 @@ from tldw_chatbook.Utils.ui_responsiveness import IdleHeapRefreezer
 pytestmark = pytest.mark.bootstrap_profile
 
 
+class BusySampler:
+    """Reads the Console's busy check on every loop turn until stopped.
+
+    Two probes can miss a gap between hand-offs (press to admission,
+    admission to custody, custody to the transcript poll); a re-freeze that
+    found one would land inside the send window.
+    """
+
+    def __init__(self, console) -> None:
+        self.samples: list[bool] = []
+        self._console = console
+        self._task = asyncio.get_running_loop().create_task(self._run())
+
+    async def _run(self) -> None:
+        while True:
+            self.samples.append(console_transcript._console_heap_busy(self._console))
+            await asyncio.sleep(0)
+
+    def stop(self) -> None:
+        self._task.cancel()
+
+
+def sending(console) -> bool:
+    """Whether the Console has a visible send in flight (its Enter was handled)."""
+    flight = getattr(console, "_console_send_flight", None)
+    return flight is not None and bool(flight.tasks)
+
+
 def recording_refreezer(timeline) -> tuple[IdleHeapRefreezer, list[str]]:
     """A refreezer that marks the harness timeline instead of freezing."""
     reasons: list[str] = []
@@ -76,6 +104,8 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
             held = HeldAdmission(console)
             timeline.mark("enter")
             press(host, "enter", "\r")
+            await until(lambda: sending(console))
+            sampler = BusySampler(console)
             # Before acceptance: only the send's own flight marks it.
             await until(held.entered.is_set)
             busy_in_admission = console_transcript._console_heap_busy(console)
@@ -89,6 +119,7 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
             await asyncio.sleep(0.3)
             gateway.validation_release.set()
             await until(lambda: gateway.stream_calls == 1)
+            sampler.stop()
             await until(lambda: REPLY in "\n".join(_painted_lines(host)))
             await until(lambda: "run_settled" in reasons, timeout=20)
             idle_after_the_run = console_transcript._console_heap_busy(console)
@@ -99,6 +130,12 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
 
     assert busy_in_admission, "a send being admitted did not hold the re-freeze off"
     assert busy_mid_send, "an accepted send did not hold the re-freeze off"
+    assert len(sampler.samples) > 20, sampler.samples
+    gaps = [index for index, busy in enumerate(sampler.samples) if not busy]
+    assert gaps == [], (
+        f"the Console read idle on {len(gaps)} of {len(sampler.samples)} loop "
+        "turns between Enter and the provider call"
+    )
     assert "admission_probe" not in reasons
     assert "mid_send_probe" not in reasons
     assert not idle_after_the_run

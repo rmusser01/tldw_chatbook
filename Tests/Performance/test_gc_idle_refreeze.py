@@ -157,6 +157,48 @@ def test_a_compaction_unfreezes_then_collects_everything_then_freezes(
     assert calls == [("unfreeze",), ("collect", 2), ("freeze",)]
 
 
+class Cycle:
+    """The smallest object reference counting cannot free: it points at itself."""
+
+    def __init__(self) -> None:
+        self.me = self
+
+
+def old_garbage() -> weakref.ref:
+    """A cycle promoted into generation 2 while live, then dropped."""
+    cycle = Cycle()
+    ref = weakref.ref(cycle)
+    gc.collect()  # it survives, so it now lives in the oldest generation
+    del cycle
+    assert ref() is not None, "reference counting freed a cycle"
+    return ref
+
+
+def test_a_refreeze_reclaims_old_generation_cycles_instead_of_freezing_them() -> None:
+    """The full collection before each re-freeze is what keeps old garbage out.
+
+    Negative control: the boot points' young collection plus freeze strands
+    a cycle already in generation 2 (only the unfreeze reclaims it); the
+    re-freeze's full collection frees it before anything is frozen.
+    """
+    gc.unfreeze()
+    gc.collect()
+    try:
+        stranded = old_garbage()
+        ui_responsiveness.freeze_long_lived_heap("unit-test")
+        gc.collect()
+        assert stranded() is not None, "a young collection reclaimed old garbage"
+        gc.unfreeze()
+        gc.collect()
+        assert stranded() is None
+
+        reclaimed = old_garbage()
+        ui_responsiveness.refreeze_long_lived_heap("unit-test")
+        assert reclaimed() is None, "the re-freeze froze old-generation garbage"
+    finally:
+        gc.unfreeze()
+
+
 def test_a_request_runs_once_its_owner_is_idle_and_the_user_quiet() -> None:
     """The re-freeze waits the quiet period after the request, then runs once."""
     clock, ops, owner = Clock(), Ops(), Owner()
