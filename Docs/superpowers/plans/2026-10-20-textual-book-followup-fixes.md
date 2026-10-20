@@ -106,16 +106,16 @@ ADR required: no; exact keyboard ADR-031 and ADR-152.
 **Files:** modify `tldw_chatbook/UI/Screens/chunking_lab_screen.py`; create `Tests/UI/test_chunking_lab_shortcuts.py`; update `Docs/Chunking_Lab.md` as appropriate.
 **Interfaces:** keep current coordinator/recovery/runtime APIs, native text-focus action gates and safe Escape behavior; use existing WorkbenchHelpPanel if a Lab-specific help projection is needed.
 ADR required: no; keyboard ADR-031/152 and Lab ADR-118.
-- [ ] Add actual mounted Lab tests for focus-stable idle -> busy -> idle, guarded/recovery/leaving and candidate readiness changes, plus Input/TextArea/Select focus and compact/wide F1. Use existing deterministic local coordinator/runner fixtures, not provider/network calls.
-- [ ] Record expected misleading hints/help failures on original code.
-- [ ] Share a small surface-local action-support projection between controls/footer/help, refresh on state and focus changes, and preserve useful refusal paths and printable typing.
-- [ ] Run new tests and affected Lab screen/recovery/results tests plus relevant static/import guards; record exact evidence.
-- [ ] Update docs, self-review and commit owned files; leave completed TASK-31645 and stale pre-renumber TASK-31428 unchanged.
+- [x] Add actual mounted Lab tests for focus-stable idle -> busy -> idle, guarded/recovery/leaving and candidate readiness changes, plus Input/TextArea/Select focus and compact/wide F1. Use existing deterministic local coordinator/runner fixtures, not provider/network calls.
+- [x] Record expected misleading hints/help failures on original code.
+- [x] Share a small surface-local action-support projection between controls/footer/help, refresh on state and focus changes, and preserve useful refusal paths and printable typing.
+- [x] Run new tests and affected Lab screen/recovery/results tests plus relevant static/import guards; record exact evidence.
+- [x] Update docs, self-review and commit owned files; leave completed TASK-31645 and stale pre-renumber TASK-31428 unchanged.
 
 ## Controller closeout
 
-- [ ] After each task, obtain spec-compliance and quality review against its full commit range; resolve findings before the next task. Record every scoped exclusion/ruling and verify unchanged-contract requirements.
-- [ ] Only after evidence and review satisfy each AC, update its Backlog status/checkboxes/implementation notes via CLI, preserving metadata and ADR links.
-- [ ] Admit new regressions to existing PR CI without dropping any of the 408 previous entries or raising limits; verify the current census floor, exact coverage and measured placement. Do not claim TASK-35834's separate three-run/headroom acceptance.
-- [ ] Run focused combined checks, Backlog guards, link checks, scoped lint/format and generated-artifact checks applicable to actual changes. No full suite unless the user requests one.
+- [x] After each task, obtain spec-compliance and quality review against its full commit range; resolve findings before the next task. Record every scoped exclusion/ruling and verify unchanged-contract requirements.
+- [x] Only after evidence and review satisfy each AC, update its Backlog status/checkboxes/implementation notes via CLI, preserving metadata and ADR links.
+- [x] Admit new regressions to existing PR CI without dropping any of the 408 previous entries or raising limits; verify the current census floor, exact coverage and measured placement. Do not claim TASK-35834's separate three-run/headroom acceptance.
+- [x] Run focused combined checks, Backlog guards, link checks, scoped lint/format and generated-artifact checks applicable to actual changes. No full suite unless the user requests one.
 - [ ] Obtain one fresh whole-branch Superpowers review on the most capable model, resolve its scoped findings, create/attach a follow-up PR against dev, inspect its CI and address feedback. Preserve the worktree and do not merge without user authorization.

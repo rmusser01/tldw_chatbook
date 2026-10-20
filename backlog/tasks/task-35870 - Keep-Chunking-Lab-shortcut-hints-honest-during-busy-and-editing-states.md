@@ -1,7 +1,7 @@
 ---
 id: TASK-35870
 title: Keep Chunking Lab shortcut hints honest during busy and editing states
-status: In Progress
+status: Done
 created_date: 2026-10-20 19:25
 labels:
 - chunking-lab
@@ -12,7 +12,7 @@ documentation:
 - Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
 assignee:
 - '@codex'
-updated_date: 2026-10-20 21:59
+updated_date: 2026-10-20 22:28
 ---
 
 ## Description
@@ -41,10 +41,10 @@ Reason: No new ADR is expected: retain the existing Lab route, coordinator, reco
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Footer hints update on idle/busy, guarded, leaving, candidate readiness and focus transitions even when focus itself does not change, and advertise only executable actions in that context.
-- [ ] #2 F1 presents the same action-support facts with honest scope requirements for text editors and narrow layouts, rather than blindly listing raw printable bindings.
-- [ ] #3 Button, keyboard and direct-action paths preserve current execution/recovery validation and useful refusal guidance; printable r/p/s still type in text controls and safe Escape behavior is unchanged.
-- [ ] #4 Mounted Lab tests cover busy and recovery-guard transitions, editor focus, candidate availability, and compact/wide F1/footer behavior without relaxing runtime or recovery limits.
+- [x] #1 Footer hints update on idle/busy, guarded, leaving, candidate readiness and focus transitions even when focus itself does not change, and advertise only executable actions in that context.
+- [x] #2 F1 presents the same action-support facts with honest scope requirements for text editors and narrow layouts, rather than blindly listing raw printable bindings.
+- [x] #3 Button, keyboard and direct-action paths preserve current execution/recovery validation and useful refusal guidance; printable r/p/s still type in text controls and safe Escape behavior is unchanged.
+- [x] #4 Mounted Lab tests cover busy and recovery-guard transitions, editor focus, candidate availability, and compact/wide F1/footer behavior without relaxing runtime or recovery limits.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,3 +62,13 @@ Reason: Correct current local action/help projection, preserving the Lab coordin
 
 Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 6).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Chunking Lab now shares a surface-local support projection across controls, footer and F1, refreshing on state/focus/load/navigation settlement. Busy/guarded/leaving hints reflect execution gates; Pin hints require completed current non-stale B, while keyboard/button/direct validation and useful refusal guidance remain reachable. Native printable typing and safe Escape remain. Updated Docs/Chunking_Lab.md; runtime/recovery/persistence policies and global bindings are unchanged.
+
+Evidence: 615956f69a. Original mounted RED: 5 expected failures. Final same-product coverage: 5 passing nodes in a six-node batch, then candidate-only oracle correction passes1; six new nodes have passing evidence, not a fabricated all-green batch. Five existing controls and four binding/design guards pass, two POSIX cases skip on Windows. 56 legacy profile-admission stops and 3 unchanged pre-mount fixture refusals remain unqualified. Initial full-app teardown reports uncertain workers/executor3s join; cause unqualified, no clean full-app lifecycle claim. Existing destination harness still closes actual coordinator/runner/writer/store and preserves SQLite affinity; no guard/timeout relaxation.
+
+Superpowers Astra independent spec/quality review Approved, no blocking findings. Scoped lint/format/AST/whitespace pass with one unchanged E721. Combined worker/markup scans have no new violations; final preimport ceiling passes 557/558 modules, 420,444/425,347 LOC with no increase in ceilings. No full suite run. ADR required: no; existing ADR-031/118/152 apply. Qualification and seven-node additive CI admission are in Docs/superpowers/qa/2026-10-20-textual-book-followup-fixes.md. TASK-31645 and stale TASK-31428 remain unchanged.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

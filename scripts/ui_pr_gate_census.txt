@@ -34,11 +34,11 @@ Tests/UI/test_console_frame_states.py
 Tests/UI/test_console_image_viewer.py
 Tests/UI/test_console_library_policy_controller.py
 Tests/UI/test_console_library_search_modal.py
-Tests/UI/test_console_model_popover_no_provider.py
+Tests/UI/test_console_settings_saved_defaults.py
 Tests/UI/test_console_model_popover_registry_options.py
 # TASK-33620.9: durable rename publication through the mounted rail menu.
 Tests/UI/test_console_rename_consistency.py
-Tests/UI/test_console_pending_interrupt_projection.py
+Tests/UI/test_quit_prompt_vanish.py
 Tests/UI/test_console_popover_context_window.py
 Tests/UI/test_console_progress_navigation_owners.py
 Tests/UI/test_console_rail_progress_timer.py
@@ -46,8 +46,8 @@ Tests/UI/test_console_rail_section_layout.py
 Tests/UI/test_console_retrieval_controller.py
 Tests/UI/test_console_run_inspector_worldbooks.py
 Tests/UI/test_console_selection_core.py
-# TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
-Tests/UI/test_approval_batch_geometry.py
+# TASK-33007.4: who a save reaches -- the real D1 reach save and Ctrl+T in Console.
+Tests/UI/test_settings_save_reach.py
 
 # TASK-33621.27: the Console review's P0 regression tests, by node id -- their
 # files are over the lane's per-file rule (under load: Choose folder 148 s,
@@ -162,7 +162,7 @@ Tests/UI/test_product_maturity_phase39_library_collections.py
 Tests/UI/test_product_maturity_phase6_release_closeout.py
 Tests/UI/test_profile_owned_settings_paths.py
 Tests/UI/test_prompt_review_docstrings.py
-Tests/UI/test_quit_prompt_vanish.py
+Tests/UI/test_console_pending_interrupt_projection.py
 Tests/UI/test_research_mode_strip.py
 Tests/UI/test_research_source_inspector.py
 Tests/UI/test_research_source_receipt.py
@@ -183,17 +183,17 @@ Tests/UI/test_speech_axis_row.py
 Tests/UI/test_speech_mixin_decorators.py
 Tests/UI/test_speech_mixin_handler_registration.py
 Tests/UI/test_speech_param_group.py
-Tests/UI/test_speech_playground_model.py
+
+# TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
+# out. Appended, so no other file changes shard.
+Tests/UI/test_library_note_autosave_recovers.py
 Tests/UI/test_speech_result_delivery.py
 Tests/UI/test_speech_settings_completeness.py
 Tests/UI/test_speech_settings_model.py
 Tests/UI/test_speech_settings_save_equivalence.py
 
 Tests/UI/test_console_session_tab_close.py
-
-# TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
-# out. Appended, so no other file changes shard.
-Tests/UI/test_library_note_autosave_recovers.py
+Tests/UI/test_speech_playground_model.py
 
 # (TASK-34000 wave 1b: these two blocks sit here, not at the end, on purpose --
 # every PR appends at the end and the tail conflicted on each rebase.)
@@ -260,9 +260,9 @@ Tests/UI/test_console_tab_switch_binds_composer.py::test_running_harness_retires
 # for the Notes status debounce;9 green cases, under10s locally. Appended
 # so every earlier entry retains its shard.
 Tests/UI/Library_Modules/test_library_notes_sync_attention_listener.py
-# TASK-25907.23 / 34800: bounded provenance/currentness and Canvas companions.
-# Preserve all earlier entries and shard placement; heavier files use node IDs.
-Tests/UI/test_personal_context_provenance.py
+# Phase 9 Task 14 (2026-10-17) appends the model-config tests no PR lane ran, each 3 of 3 serial in the lane's install set.
+# TASK-33002.17: every model-config surface takes its labels from the one field table (whole file, 16 tests, ~22 s, private profile).
+Tests/UI/test_model_config_field_labels.py
 Tests/UI/test_console_personal_context_selection_factory.py
 Tests/UI/test_personal_context_proposal_review.py::test_provenance_renewal_preserves_proposal_editor_and_acceptance
 Tests/UI/test_settings_personal_context.py::test_canonical_settings_pending_provenance_uses_cheap_current_owner
@@ -274,6 +274,16 @@ Tests/UI/test_settings_api_key_row_env_var.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
+# TASK-33007.1: the card's controls stay hit-testable after the
+# region-module move, at 160x45 and 235x52.
+Tests/UI/test_settings_providers_models_card_geometry.py
+# R2 card note (a2-N2): the Key check verdict reads the credential Save keeps.
+Tests/UI/test_settings_key_check_env_var_draft.py
+# TASK-33007.7 AC#7: a memory save refuses an invalid trigger/target pair (15-28 s).
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair
+Tests/UI/test_console_model_popover_no_provider.py
+# Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
 # TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 92
 # entries below are this PR's. They sit last, so no earlier entry's shard
 # depends on them, in the order that spreads them most evenly when they are
@@ -292,16 +302,6 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 # TASK-33007.9: Connect painted whole -- the open provider list's box and a
 # wide provider name from its head, at both full-screen sizes.
 Tests/UI/test_settings_connect_paint.py
-# R2 card note (a2-N2): the Key check verdict reads the credential Save keeps.
-Tests/UI/test_settings_key_check_env_var_draft.py
-# TASK-33007.7 AC#7: a memory save refuses an invalid trigger/target pair (15-28 s).
-Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair
-Tests/UI/test_console_settings_saved_defaults.py
-# Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
-Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
-# TASK-33007.1: the card's controls stay hit-testable after the
-# region-module move, at 160x45 and 235x52.
-Tests/UI/test_settings_providers_models_card_geometry.py
 # R3 #4 (C7): no assumed window for a server that reports its own.
 Tests/UI/test_settings_server_reported_window.py
 # Fix round 1, finding 17: the picker sync ends quietly when its field is gone.
@@ -314,8 +314,8 @@ Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged
 Tests/UI/test_settings_api_key_clear_reset.py
 # Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft
-# TASK-33007.4: who a save reaches -- the real D1 reach save and Ctrl+T in Console.
-Tests/UI/test_settings_save_reach.py
+# TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
+Tests/UI/test_approval_batch_geometry.py
 # TASK-33007.7: Console Behavior's global fallbacks in the shared rows, the
 # On/Off streaming Select, and a real save a new chat follows.
 Tests/UI/test_settings_console_fallback_rows.py
@@ -627,9 +627,9 @@ Tests/UI/test_console_switcher_local_probe.py::test_closing_mid_probe_raises_not
 Tests/UI/test_console_resize_reflow.py::test_model_summary_sync_invalidates_mounted_context_allocation
 # TASK-33005.10 AC#4: a keyed Settings test reaches Chat settings for the same stored key (8 s, private profile).
 Tests/UI/test_settings_provider_test_draft.py::test_settings_test_result_reaches_chat_settings_for_the_same_connection[stored-key]
-# Phase 9 Task 14 (2026-10-17) appends the model-config tests no PR lane ran, each 3 of 3 serial in the lane's install set.
-# TASK-33002.17: every model-config surface takes its labels from the one field table (whole file, 16 tests, ~22 s, private profile).
-Tests/UI/test_model_config_field_labels.py
+# TASK-25907.23 / 34800: bounded provenance/currentness and Canvas companions.
+# Preserve all earlier entries and shard placement; heavier files use node IDs.
+Tests/UI/test_personal_context_provenance.py
 # TASK-33641.2 (ledger R11): the Lab GGUF "Model source:" label and its Select paint on one row at 211x44 and 235x52 (~15 s, private profile).
 Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_on_one_row
 # TASK-33003.22 (ledger R11): the Skills preview's Enabled label hugs its text under the app stylesheet (whole file, 17 cases, ~2 s).
@@ -725,3 +725,24 @@ Tests/UI/test_settings_action_availability.py
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_refresh_preserves_unrelated_draft_and_delivers_next_edit
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_keyboard_save_revert_and_category_return_use_real_writer[size0]
 Tests/UI/test_settings_parallel_run_event_origin.py::test_parallel_keyboard_save_revert_and_category_return_use_real_writer[size1]
+
+# TASK-35865..35870: seven representative mounted regressions (408 -> 415).
+# All prior 408 entries, S1 slots 363..398 and prior tail 399..407 remain.
+# Measured whole-file slot swaps below 363 travel with their comments; no
+# shard or timeout changes. Qualification records per-occurrence costs
+# and conservative 2.6x native new-node estimates; hosted CI is authoritative.
+# TASK-35834 retains heavy-file distribution/three-run headroom acceptance.
+# TASK-35865 core regression
+Tests/UI/test_automation_definition_form.py::test_double_save_while_insert_pending_creates_one_definition
+# TASK-35866 core regression
+Tests/UI/test_schedules_results_tab.py::test_mark_all_read_survives_overlapping_dismiss
+# TASK-35867 core regression
+Tests/UI/test_settings_remaining_input_event_origin.py::test_remaining_stale_events_keep_latest_edit_and_invalid_draft
+# TASK-35868 core regression
+Tests/UI/test_watchlists_rule_drafts.py::test_list_refresh_keeps_raw_rule_draft_and_focus[wide-Edit]
+# TASK-35868 core regression
+Tests/UI/test_watchlists_rule_drafts.py::test_section_return_restores_rule_draft_without_saving[Edit]
+# TASK-35869 core regression
+Tests/UI/test_evals_grid_shortcuts.py::test_grid_footer_and_f1_follow_keyboard_panes[compact]
+# TASK-35870 core regression
+Tests/UI/test_chunking_lab_shortcuts.py::test_busy_hints_refresh_without_focus_change

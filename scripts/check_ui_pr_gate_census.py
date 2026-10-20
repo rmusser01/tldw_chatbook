@@ -450,7 +450,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # reserves guide six further whole-file pairs; S1's 36-node block and the
 # nine new entries stay in place at the 399-entry boundary. Coverage,
 # shard count, timeout and the inherited floor are preserved.
-MINIMUM_FILES = 408
+# TASK-35865..35870 add seven representative mounted regressions and retain
+# all 408 prior entries. Measured whole-file slot swaps preserve every node,
+# the ten shards and all time limits; TASK-35834 headroom work stays open.
+MINIMUM_FILES = 415
 
 
 def read_census(path: Path) -> list[str]:
