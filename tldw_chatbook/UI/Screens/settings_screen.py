@@ -17560,11 +17560,8 @@ class SettingsScreen(BaseAppScreen):
         ):
             # TASK-33005.4 (ADR-012 amendment 2026-09-26): a key check's
             # outcome, led by the readiness word (it carries the time).
-            summary = (
-                f"{rows[0][1]} — "
-                f"{self._provider_key_check_copy(display_name, evidence, extras['rejection_reason'])}"
-                f".{choose}"
-            )
+            check = self._provider_key_check_copy(display_name, evidence, extras["rejection_reason"])
+            summary = f"{rows[0][1]} — {check}.{choose}"
         elif listing == "unreachable":
             failure = self._provider_listing_failure_copy(
                 getattr(evidence, "category", None)
