@@ -21018,6 +21018,37 @@ Read the failed job's own log with `gh api repos/<owner>/<repo>/actions/jobs/<jo
 `gh run view --job 114249247572 --log` returned the log of that run's passing re-run (attempt 2, job 114263924697,
 "704 passed"), so the failure looked absent.
 
+**Holding the locks removed one reason to defer, not all of them (TASK-35660, 2026-10-19).** After TASK-34789 the
+shared helper held both config locks and asserted that its one sync rendered. Under `taskpolicy -b` it still failed,
+with a bare `assert False`, in 3 of 10 runs of dev's poll test. Another dev caller failed the same way at normal
+priority on a loaded host. The bare assert named no reason, so a probe logged why each sync deferred. In one probed
+run the warm-up was not current twice, because its key went stale while a refresh was pending. The sync renders from
+a readiness proof that is good for one second. Replaying a loop that resumes the helper later than that, after
+another display has started the next refresh, makes the sync defer at the same assert. Both orders now replay
+deterministically, and the helper retries within a 15 s bound and then names the last refusal. When a call can defer
+for several reasons, removing one reason and asserting a single attempt only makes the flake rarer. Retry within a
+bound, and name the reason when the bound runs out.
+
+**Read where each starved run failed before you count it.** At host load 70-100, `taskpolicy -b` failed app-booting
+pilots before their bodies ran: `HelperTimeoutError` starting a private SQLite helper while building the app, and
+Textual's `WaitForScreenTimeout` inside `run_test`. Those runs say nothing about the test. Tally failures by line and
+compare with dev under the same load. Here dev's poll test failed 9 of 10, and every red was in a place this branch
+changed: its 10 s wait (6) or the helper (3).
+
+**A pause-count loop is not a deadline.** The first pass at TASK-35660 replaced the poll test's
+`for _ in range(100): await pilot.pause(0.05)` with a 20 s deadline. `pilot.pause()` also waits for the app to drain
+its messages, so under load the 100 pauses stretched while 20 s did not. With a 5 s precapture delay at load ~100, one
+poll tick took several seconds and the deadline failed in 1 of 6 paired runs with either helper. If you turn a wait
+into a wall-clock deadline, size it for the slowest host it must survive. A bound that ends as soon as its condition
+holds costs passing runs nothing; the poll test now waits up to 60 s.
+
+**A stall patched onto a class method catches every caller.** The stale-proof replay patched
+`ConsoleReadinessConfigProjection.warm` to sleep 1.1 s after the first current warm-up, and recorded that only after
+the sleep. The context snapshot also warms that projection from a worker, so a second call slept too, and a run failed
+the replay's own guard (`[True, True] == [True]`). Worse, the worker's call could have taken the only stall and left
+the helper undelayed, so the test would pass without testing anything. Scope an injected delay to the caller under
+test. Here that meant checking `asyncio.current_task()` against the test's own task.
+
 
 ## Loaded controller data does not give a newly shown button mouse geometry
 
