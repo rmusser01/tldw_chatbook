@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from loguru import logger
 from rich.text import Text
 from textual.css.query import NoMatches, QueryError
+from textual.widget import MountError
 from textual.widgets import (
     Button,
     Input,
@@ -54,7 +55,11 @@ def _quiet_when_swapped_out(action):
         The method, ending on a `NoMatches` raised once Flashcards is no
         longer the sub-view, has been swapped out and back (the new panel
         is not composed yet) or the window is being removed (a tab switch);
-        one raised while the same panel is shown is a bug and raises.
+        one raised while the same panel is shown is a bug and raises. It
+        also ends on a `NoMatches` or `MountError` raised once the window
+        has left the app -- above all while the app quits (TASK-34751):
+        every widget reads as detached once `App._exit` is set, so a
+        card-list rebuild resuming then raised `MountError` from its worker.
     """
 
     @functools.wraps(action)
@@ -62,7 +67,11 @@ def _quiet_when_swapped_out(action):
         swaps = getattr(self.window, "view_swaps", 0)
         try:
             await action(self, *args, **kwargs)
-        except NoMatches:
+        except (NoMatches, MountError) as error:
+            if not self.window.is_attached:
+                return  # the app is quitting, or the window is gone
+            if isinstance(error, MountError):
+                raise
             # Ask the window, not the DOM: a removal goes leaf first, so
             # `#card-list` can outlive `#review-status` for a moment. A tab
             # switch removes the window and leaves `current_view` alone;
