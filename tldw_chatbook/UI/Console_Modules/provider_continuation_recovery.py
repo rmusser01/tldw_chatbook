@@ -861,18 +861,17 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         """Synchronize the always-mounted recovery placeholder in place."""
         # TASK-33621.20: Textual marks a removed subtree as pruning at once and
         # prunes children first, so mid-swap a card can outlive its own title.
+        # A sync then (a cancelled card action's own) skips the doomed region;
+        # its replacement composes fresh. A card missing from a live region
+        # still raises.
         if not self.is_mounted or self._pruning:
             return
-        try:
-            trace = self.query_one(TraceCallRecoveryCallout)
-            continuation = self.query_one(ProviderContinuationRecoveryCallout)
-        except NoMatches:
-            # TASK-33621.20: a center swap removing this region prunes its
-            # children first; a sync then (a cancelled card action's own)
-            # must not fail the worker. The replacement composes fresh.
-            return
-        trace.sync_recovery(self._trace_recovery_state_builder())
-        continuation.sync_recovery(self._recovery_state())
+        self.query_one(TraceCallRecoveryCallout).sync_recovery(
+            self._trace_recovery_state_builder()
+        )
+        self.query_one(ProviderContinuationRecoveryCallout).sync_recovery(
+            self._recovery_state()
+        )
 
     async def _recover_trace_call(
         self, action: str, preparation_id: str
