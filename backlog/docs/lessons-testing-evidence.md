@@ -1,5 +1,25 @@
 # Lessons: what counts as evidence a change works
 
+## Composer presence is not completed Console attachment (TASK-35710, 2026-10-20 UTC)
+
+**Incident.** PR #3176's admission-sensitive job failed the headless-delivery
+poll assertion with `reconciled=False`, an active wake and the same controller.
+The test had waited for a composer selector and a message-pump pause. Those
+can complete while the full attachment sync remains deferred; production
+starts the view's poll after reconciliation. The Console paths were unchanged
+against dev, and the unchanged exact test passed locally. This was a distinct
+signature from TASK-34789's earlier WaitForScreenTimeout reports; it does not
+identify the particular native deferral in that hosted run.
+
+**What to do.** A post-attachment assertion first witnesses the existing
+attachment-complete state for the current screen, as the neighboring public
+startup journey already does. Retain the idle no-poll and active poll
+assertions and bounded test budget. Here eight targeted controls passed;
+deliberately incomplete attachment still failed the setup assertion, and
+disabling poll arming still failed the original assertion with
+`reconciled=True`. This barrier does not witness retirement of later queued
+refreshes; that remains the separate lesson below.
+
 ## A plain gated Tests/UI test that reads config fails in CI too (TASK-34982, 2026-10-19)
 
 **Incident.** Locally every plain (non-private-profile) Tests/UI test errored at setup with `RecoveryRequired: raw_source_selection_changed`, and the working assumption was that CI ran the same files cleanly. A new gated test drove a real `ConsoleTranscript.refresh_messages()`, whose row reconcile reads config (`get_cli_setting`). In UI Fast Lane (7) it failed with that same error twice, and the merge queue evicted the PR. The test's three neighbours, which read no config, passed.

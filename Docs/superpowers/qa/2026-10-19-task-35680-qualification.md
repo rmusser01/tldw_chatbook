@@ -73,3 +73,43 @@ credits; CodeRabbit reported that automatic review was skipped for this base.
 These messages are service/configuration status, not review approval.
 Current-head CI and any subsequent review feedback are checked after pushing;
 no remote green result is inferred from local tests or the prior head.
+
+## Independent review and CI follow-up (2026-10-20 UTC)
+
+At the user's request, superpowers:requesting-code-review replaced Qodo for
+this PR. A fresh read-only reviewer assessed the full 0fef489ece..df4e73c908
+range against all four task records, the plan, applicable ADRs and lessons.
+It found no Critical, Important or Minor issue requiring changes and
+independently passed five panel/action/paste-origin cases. Its exclusions
+(unchanged control families and broader decomposition/polling work with
+existing owners) were explicitly accepted by the coordinator.
+
+On that head, Perf Guard, PR Fast Lane, all ten UI shards, Dreams checks
+and Console P0 passed. The admission-sensitive job failed one test with
+545 passing and one expected failure:
+[hosted assertion](https://github.com/rmusser01/tldw_chatbook/actions/runs/39375455061/job/118472787475).
+`test_opening_console_during_a_headless_delivery_arms_the_poll` inspected the
+poll with attachment still unreconciled, the wake still delivering and the
+same controller. The Console paths and test were unchanged against dev;
+dev's push workflow skips that job, so its green result is not a baseline
+pass for this test. The unchanged exact node passed locally in 66.24 s.
+Earlier failures recorded by TASK-34789 had different signatures; no exact
+local reproduction or particular native deferral cause is claimed.
+
+[TASK-35710](../../../backlog/tasks/task-35710%20-%20Wait-for-Console-attachment-before-checking-headless-delivery-poll.md)
+owns the bounded test-only correction. Composer presence and a message-pump
+pause do not witness completion of full attachment. The test now waits for
+the existing completion flag/current screen at all three visits, using the
+neighboring startup test's 50 polls at 0.1-second intervals. Both original
+idle/active poll assertions and the wake/navigation/profile/test-timeout
+contracts remain. Production source and polling policy are unchanged.
+
+Eight targeted ownership checks passed in 93.02 s. Disposable negative
+controls confirmed that never completing attachment fails the new setup
+assertion (56.52 s), and suppressing poll arming fails the original active
+assertion after successful reconciliation (53.19 s, reconciled=True).
+No negative-control patches are committed. Ruff lint and modified-function
+formatting pass; whole-file formatter debt is identical to the pre-change
+head. The first comparison attempt used Windows' legacy subprocess encoding;
+explicit UTF-8 completed the comparison. Backlog ID/readability guards and
+diff whitespace checks pass. No full suite ran.
