@@ -432,7 +432,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Study's literal-text pins (a markup-shaped workspace name in the scope
 # banner; type-to-search over markup-shaped deck and quiz names) and its
 # quit-mid-rebuild pin, appended last, after TASK-34982's entry: 363.
-MINIMUM_FILES = 363
+# TASK-35010 (S1 T1) adds its saved-lists file: 361.
+MINIMUM_FILES = 364
 
 
 def read_census(path: Path) -> list[str]:

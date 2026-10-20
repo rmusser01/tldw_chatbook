@@ -459,8 +459,8 @@ async def test_an_old_sample_list_leaves_default_model_unset_until_save_selected
 
 @private_profile_test
 async def test_switch_model_lists_no_sample_id_and_untouched_refusals_stay_quiet(
-    servers,
-    request,  # noqa: F811
+    servers,  # noqa: F811 - the probe fixture, imported above
+    request,
 ):
     """AC#6, AC#9: Switch model built from the loader's lists of an
     old-sample file lists no sample id but lists a real id saved beside
@@ -505,9 +505,9 @@ _MODEL_LESS = {
     ids=("vllm-koboldcpp-run", "llamacpp-oobabooga-llamafile-run"),
 )
 async def test_an_untouched_server_with_no_model_is_probed_listed_or_not_running(
-    servers,
+    servers,  # noqa: F811 - the probe fixture, imported above
     request,
-    running,  # noqa: F811
+    running,
 ):
     """NO-1 (a), its scope widened 2026-10-19 and ruled 2026-10-20: vLLM's
     emptied list, and the "None" lists of llama.cpp, koboldcpp, Oobabooga and
