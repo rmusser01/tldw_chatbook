@@ -434,7 +434,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # quit-mid-rebuild pin, appended last, after TASK-34982's entry: 363.
 # TASK-35010 (S1 T1) adds its saved-lists file: 361.
 # TASK-35011 (S1 T2, 2026-10-20) adds its pick-joins-the-list file: 362.
-MINIMUM_FILES = 365
+# Its review round 1 (2026-10-20) lists both S1 files as one node per test
+# function (12 + 15) instead of two whole files, so no shard takes either
+# file whole: 387.
+MINIMUM_FILES = 390
 
 
 def read_census(path: Path) -> list[str]:
