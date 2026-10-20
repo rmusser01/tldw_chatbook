@@ -671,40 +671,40 @@ Tests/UI/test_study_flashcards_quit_mid_rebuild.py
 # TASK-35010 (S1 T1): saved lists follow the config file, sample ids never pose as saved, and Switch model probes an untouched server with no model (12 functions, private profile, 86 s serial in the lane's install set).
 # TASK-35011 (S1 T2): a discovered model chosen as the default joins its saved list on s, Add to model list's label, order, receipts and Inspector rows (15 functions, private profile, 145 s serial in the lane's install set).
 # TASK-35012 (S1 T3, 2026-10-20): Switch model and Chat settings' model picker list each provider's saved default first (9 functions after T2's, private profile, 2.4-7.2 s each and 39.2 s together summed from junit test durations, 3 of 3 serial in the lane's install set; the probe function's listing-bound case since review round 2).
-# TASK-35011 review rounds 1-2 and TASK-35012 (2026-10-20): the three files as one node per test function. The lane deals entries[index::10], so tail positions i, i+10, i+20 and i+30 always share a shard whatever index the tail starts at; the order balances those ten fixed groups by measured time, one group per shard, and T3's nine fill the nine groups its tail positions reach, its two heaviest on the two lightest of them: 25.3-30.8 s per group summed from junit test durations (setup, call, teardown), 27.0-32.8 s pytest session time with collection, and 21.9-24.3 s / 23.6-26.0 s for the one group T3 left alone, each group 3 of 3 serial in the lane's install set (about 1.1-1.3 min on CI at 2.6x). Whole, T1 cost one shard 86 s and T2 another 145 s.
-Tests/UI/test_settings_pick_joins_saved_list.py::test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join
-Tests/UI/test_settings_pick_joins_saved_list.py::test_a_model_staged_any_other_way_leaves_the_saved_list_unchanged
-Tests/UI/test_settings_saved_lists_follow_file.py::test_save_selected_says_already_saved_when_the_file_lists_them
-Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_left_by_quit_and_discard_leaves_the_file_byte_identical
-Tests/UI/test_settings_saved_lists_follow_file.py::test_switch_model_lists_no_sample_id_and_untouched_refusals_stay_quiet
+# TASK-35011 review rounds 1-2, TASK-35012 and the rebase onto dev 1bbc145ffc (2026-10-20): the three files as one node per test function. The lane deals entries[index::10], so block positions i, i+10, i+20 and i+30 always share a shard. The block starts at census index 363, so position group g runs on job ((363+g) mod 10)+1. The order fits each group to its job's measured load: the job's worst wall time on dev's census (#3169's runs 39382891881 and 39420530080) plus 2.6x the group's local serial seconds (each node at the slower of two runs in the lane's install set). Job 9, at 19.5 min worst before S1 (TASK-35834), gets the four lightest nodes (10.2 s, about +0.4 min: 19.9 predicted); no other job is predicted above 18.2 min. If dev appends entries before this merges, every group moves that many jobs: re-derive the order.
 Tests/UI/test_settings_saved_lists_follow_file.py::test_config_reload_reads_an_in_place_edit_into_the_saved_lists
+Tests/UI/test_settings_pick_joins_saved_list.py::test_s_saves_the_default_and_says_why_a_pick_did_not_simply_join
 Tests/UI/test_settings_saved_lists_follow_file.py::test_the_startup_refresh_keeps_an_external_addition_and_appends_new_ids
-Tests/UI/test_settings_saved_lists_follow_file.py::test_an_old_sample_list_leaves_default_model_unset_until_save_selected
-Tests/UI/test_settings_pick_joins_saved_list.py::test_the_shared_saved_list_check_and_each_refusal_the_join_names
-Tests/UI/test_settings_pick_joins_saved_list.py::test_the_saved_model_list_reads_in_tab_order_and_says_a_pick_joins
-Tests/UI/test_settings_saved_lists_follow_file.py::test_an_untouched_server_with_no_model_is_probed_listed_or_not_running
-Tests/UI/test_settings_pick_joins_saved_list.py::test_a_discovered_id_that_is_a_shipped_sample_id_is_saved_as_the_default_only
-Tests/UI/test_settings_saved_lists_follow_file.py::test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_saved_list_settings_cannot_write_still_saves_the_default
+Tests/UI/test_settings_saved_lists_follow_file.py::test_an_old_sample_list_leaves_default_model_unset_until_save_selected
+Tests/UI/test_console_switcher_saved_default.py::test_empty_find_with_no_previous_or_current_row_highlights_the_lifted_default
+Tests/UI/test_settings_pick_joins_saved_list.py::test_a_discovered_id_that_is_a_shipped_sample_id_is_saved_as_the_default_only
+Tests/UI/test_settings_saved_lists_follow_file.py::test_save_selected_says_already_saved_when_the_file_lists_them
+Tests/UI/test_settings_saved_lists_follow_file.py::test_switch_model_lists_no_sample_id_and_untouched_refusals_stay_quiet
 Tests/UI/test_settings_saved_lists_follow_file.py::test_the_locked_write_drops_samples_and_maps_a_refusal_to_an_error
-Tests/UI/test_settings_pick_joins_saved_list.py::test_the_inspector_names_each_saved_model_list_control
+Tests/UI/test_settings_saved_lists_follow_file.py::test_an_untouched_server_with_no_model_is_probed_listed_or_not_running
+Tests/UI/test_settings_pick_joins_saved_list.py::test_a_model_staged_any_other_way_leaves_the_saved_list_unchanged
+Tests/UI/test_settings_pick_joins_saved_list.py::test_the_shared_saved_list_check_and_each_refusal_the_join_names
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_from_a_listing_the_endpoint_edit_dropped_joins_nothing
-Tests/UI/test_settings_saved_lists_follow_file.py::test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
-Tests/UI/test_settings_pick_joins_saved_list.py::test_a_discovered_pick_saved_with_s_joins_the_saved_list
-Tests/UI/test_settings_saved_lists_follow_file.py::test_a_model_deleted_in_advanced_config_leaves_every_list_and_stays_gone
-Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_reverted_before_s_leaves_the_file_byte_identical
+Tests/UI/test_settings_pick_joins_saved_list.py::test_the_saved_model_list_reads_in_tab_order_and_says_a_pick_joins
+Tests/UI/test_console_switcher_saved_default.py::test_a_saved_default_listed_under_recent_is_not_listed_again
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_list_changed_while_s_saves_writes_nothing_and_keeps_the_draft
+Tests/UI/test_settings_saved_lists_follow_file.py::test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists
+Tests/UI/test_settings_pick_joins_saved_list.py::test_the_capability_line_no_longer_ties_capabilities_to_saving
+Tests/UI/test_console_switcher_saved_default.py::test_the_saved_default_leads_its_group_though_saved_last
+Tests/UI/test_settings_saved_lists_follow_file.py::test_save_selected_keeps_a_model_the_file_gained_after_start
+Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_left_by_quit_and_discard_leaves_the_file_byte_identical
+Tests/UI/test_settings_saved_lists_follow_file.py::test_koboldcpps_native_endpoint_lists_at_v1_models_and_sends_unchanged
+Tests/UI/test_settings_saved_lists_follow_file.py::test_a_model_deleted_in_advanced_config_leaves_every_list_and_stays_gone
+Tests/UI/test_settings_pick_joins_saved_list.py::test_a_discovered_pick_saved_with_s_joins_the_saved_list
+Tests/UI/test_console_switcher_saved_default.py::test_chat_settings_model_picker_lists_the_same_order
+Tests/UI/test_console_switcher_saved_default.py::test_find_ranks_its_matches_as_before
+Tests/UI/test_settings_pick_joins_saved_list.py::test_the_inspector_names_each_saved_model_list_control
+Tests/UI/test_console_switcher_saved_default.py::test_a_shipped_sample_id_default_is_never_lifted
+Tests/UI/test_console_switcher_saved_default.py::test_the_saved_default_follows_this_chats_model_or_is_it
+Tests/UI/test_console_switcher_saved_default.py::test_a_local_servers_listing_orders_the_default_and_never_adds_it
 Tests/UI/test_settings_pick_joins_saved_list.py::test_add_to_model_list_names_what_it_added_or_how_to_choose_a_default
 Tests/UI/test_settings_saved_lists_follow_file.py::test_the_template_ships_empty_lists_and_old_sample_ids_are_ignored
+Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_reverted_before_s_leaves_the_file_byte_identical
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_kept_through_leaving_settings_is_added_by_the_next_s
-Tests/UI/test_settings_pick_joins_saved_list.py::test_the_capability_line_no_longer_ties_capabilities_to_saving
-Tests/UI/test_settings_saved_lists_follow_file.py::test_save_selected_keeps_a_model_the_file_gained_after_start
-Tests/UI/test_console_switcher_saved_default.py::test_the_saved_default_leads_its_group_though_saved_last
-Tests/UI/test_console_switcher_saved_default.py::test_empty_find_with_no_previous_or_current_row_highlights_the_lifted_default
-Tests/UI/test_console_switcher_saved_default.py::test_find_ranks_its_matches_as_before
-Tests/UI/test_console_switcher_saved_default.py::test_the_saved_default_follows_this_chats_model_or_is_it
-Tests/UI/test_console_switcher_saved_default.py::test_a_shipped_sample_id_default_is_never_lifted
-Tests/UI/test_console_switcher_saved_default.py::test_a_saved_default_listed_under_recent_is_not_listed_again
-Tests/UI/test_console_switcher_saved_default.py::test_chat_settings_model_picker_lists_the_same_order
-Tests/UI/test_console_switcher_saved_default.py::test_a_local_servers_listing_orders_the_default_and_never_adds_it
 Tests/UI/test_console_switcher_saved_default.py::test_a_lifted_default_lists_the_same_models_and_the_more_count
