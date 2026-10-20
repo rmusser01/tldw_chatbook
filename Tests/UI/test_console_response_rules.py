@@ -610,8 +610,12 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                 region.sync_recovery()
             else:
                 transcript_sync = case.console._sync_native_console_transcript
+                test_task = asyncio.current_task()
 
-                async def rebuild_then_transcript():
+                async def rebuild_then_transcript(*args, **kwargs):
+                    # Only this test's sync: the app's own syncs pass through.
+                    if asyncio.current_task() is not test_task:
+                        return await transcript_sync(*args, **kwargs)
                     start_rebuild()
                     # Past the TASK-34958 tick gate: the whole pipeline runs.
                     await transcript_sync(force=True)
@@ -619,6 +623,13 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                 monkeypatch.setattr(
                     case.console, "_sync_native_console_transcript", rebuild_then_transcript
                 )
+                # The app's own sync may be running: this call would then
+                # return at entry. Nothing awaits between the check and entry.
+                async with asyncio.timeout(5):
+                    while case.console._console_sync_in_progress or getattr(
+                        case.console, "_console_control_bar_replay_whole_sync", False
+                    ):
+                        await asyncio.sleep(0.01)
                 await case.console._sync_native_console_chat_ui()
                 assert held.is_set(), "the full sync never reached its transcript step"
             elapsed = time.monotonic() - started

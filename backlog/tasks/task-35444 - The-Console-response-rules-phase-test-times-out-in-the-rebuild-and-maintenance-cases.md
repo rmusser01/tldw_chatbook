@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-18 10:10
-updated_date: '2026-10-20 00:30'
+updated_date: '2026-10-20 01:16'
 labels:
 - tests
 - flaky
@@ -61,11 +61,11 @@ Fix (this PR), three refresh reads moved onto the existing deferral, each pinned
 - The transcript's memory banner used context_control_inputs only for the effective memory, but the call also read the global context policy, which waits on a cold cache. It now passes include_global=False (a new keyword; the default keeps every other caller unchanged).
 Tried and reverted: putting the full sync's core-state push (the live provider selection a send acts on) behind run_console_config_sync's non-blocking lock probe. Ordinary background config reads hold those locks for milliseconds, so the whole sync deferred constantly; test_a_probe_settling_mid_poll_still_reaches_the_console failed 5 of 5 (dev 5 of 5 passed). That push stays a live read, as before.
 
-Pin: test_console_syncs_never_wait_for_a_config_rebuild[recovery|full-ui] (renamed from test_recovery_sync_never_waits_for_a_config_rebuild; census line updated, floor unchanged). The full-ui case starts the rebuild as the sync's transcript step begins and forces that step past its tick gate. On dev it fails at the rail-visibility read (the CI chain); here it passes; reverting any one of the three fixes makes it fail at that fix's read.
+Pin: test_console_syncs_never_wait_for_a_config_rebuild[recovery|full-ui] (renamed from test_recovery_sync_never_waits_for_a_config_rebuild; census line updated, floor unchanged). The full-ui case starts the rebuild as the test's own sync reaches its transcript step (the app's own syncs pass through the patched step untouched) and forces that step past its tick gate; it first waits until no app sync or whole-sync replay is in flight, since the call would otherwise return at entry (review round 1: the first version failed about 1 run in 8 that way). On dev it fails 3 of 3 at the rail-visibility read (the CI chain); here it passed 30 of 30; reverting any one of the three fixes makes it fail at that fix's read.
 
 Open, filed as its own task (owner's choice, 2026-10-19: ship these three and file the rest): more refresh reads wait the same way. Locally the phase test still failed 1 of 13 runs, at the transcript's turn-file-cards get_cli_setting in ConsoleTranscript._reconcile_rows; the general approach (screen-by-screen deferral or reads that do not wait) is an owner decision. So AC #2 may still not hold after this merges.
 
-Evidence: the response-rules file passes whole (17); the probe test 5 of 5; The UI census's 70 Console files (xdist -n 8; most failures are the local wall): 111 failed and 1341 passed here, 112 and 1339 on dev 98c7eb308d, and every failure here also fails on dev (test_console_settings_modal_save_disabled_during_active_run failed on dev only). Tests/CI 998 passed. chat_screen.py stays at dev's 24,378 lines (its ratchet was already 9 over budget on dev, from the 2026-10-18 status-strip PR). The UI-ready module census is unchanged (1030 on dev and here, identical lists).
+Side effects, accepted: a deferred rail-visibility or guidance refresh lands on the 0.2 s coalesced timer instead of inline (the control refresh already behaves so under TASK-34415); and the transcript tick no longer re-warms the global-policy memo, so its other readers pay one checked read after each config change. Evidence: the response-rules file passed whole in 9 of 11 runs; one failure was test_workspace_command_opens_same_manager_in_registered_scope (WorkerCancelled), which fails on dev too, and the other run's failing test was not captured; the probe test 5 of 5; The UI census's 70 Console files (xdist -n 8; most failures are the local wall): 111 failed and 1341 passed here, 112 and 1339 on dev 98c7eb308d, and every failure here also fails on dev (test_console_settings_modal_save_disabled_during_active_run failed on dev only). Tests/CI 998 passed. chat_screen.py stays at dev's 24,378 lines (its ratchet was already 9 over budget on dev, from the 2026-10-18 status-strip PR). The UI-ready module census is unchanged (1030 on dev and here, identical lists).
 
 Files: tldw_chatbook/UI/Console_Modules/config_sync.py, tldw_chatbook/UI/Screens/chat_screen.py, tldw_chatbook/Chat/console_chat_controller.py, Tests/UI/test_console_response_rules.py, scripts/ui_pr_gate_census.txt, backlog/docs/lessons-testing-evidence.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

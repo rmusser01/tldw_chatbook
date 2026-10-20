@@ -16961,7 +16961,7 @@ class ChatScreen(BaseAppScreen):
                 ``True`` -- the review-notes edit/delete reload otherwise
                 skips as a no-op until the user's next send.
         """
-        from ..Console_Modules.config_sync import run_console_presentation_sync
+        from ..Console_Modules import config_sync
         from ..Console_Modules.transcript import ConsoleChangeReviewProjection
 
         if type(self._change_review_projection) is ConsoleChangeReviewProjection:
@@ -17292,7 +17292,7 @@ class ChatScreen(BaseAppScreen):
                     )
                 self._last_native_transcript_refresh_key = refresh_key
             # TASK-35444: checked display config; a deferral replays the bar.
-            run_console_presentation_sync(self, self._sync_console_transcript_guidance)
+            config_sync.run_console_presentation_sync(self, self._sync_console_transcript_guidance)
             self._last_native_transcript_session_id = (
                 self._ensure_console_chat_store().active_session_id
             )
