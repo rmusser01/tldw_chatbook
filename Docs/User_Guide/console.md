@@ -889,9 +889,10 @@ status at once, under the open list. Once a server's model listing has
 answered (this check, or **Test connection** of the same connection), that
 server's rows are the models it listed (in Chat settings, with the models a
 listing there found), and saved or cached models it did not list are no
-longer offered. When the server listed the provider's saved default for new
-chats, the default still leads those rows, after this chat's model when that
-is one of them; a pair PREVIOUS or RECENT lists is not repeated there.
+longer offered; this chat's own model stays listed even when the server did
+not list it. The provider's saved default for new chats still leads those
+rows when it is one of them, after this chat's model unless RECENT lists it;
+a pair PREVIOUS or RECENT lists is not repeated there.
 On llama.cpp, which sends to an endpoint set only on this chat, a pick keeps
 this chat's endpoint, so while a llama.cpp chat runs on a
 server other than the configured one, llama.cpp's readiness words and its
@@ -909,7 +910,9 @@ covers both servers: that endpoint for the rows, and the configured one,
 which new chats use and **Ctrl+N** checks. Pick mode, which has no
 **Ctrl+N**, checks only that endpoint. A listing is read up to 100 models, and
 one that reaches 100 may be cut short, so then the saved and cached models
-stay after the listed ones; this chat's own model stays listed first.
+stay after the listed ones, except the provider's saved default, which moves
+ahead of them all; this chat's own model, unless RECENT lists it, still
+comes first.
 Until then (not checked yet, refused or timed out) the rows are the saved
 and cached models. A server on a carrier-grade NAT address
 (100.64.0.0/10, as some VPNs use) counts as public and is not checked. Cloud providers, a server on a public address or host name, and
