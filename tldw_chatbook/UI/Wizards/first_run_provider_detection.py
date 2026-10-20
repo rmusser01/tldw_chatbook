@@ -595,6 +595,8 @@ class ProviderDetectionStep(SetupStep):
             f"{server_address(server)} — {count} model{'' if count == 1 else 's'}."
         )
         banner.remove_class("hidden")
+        # Review v3r1, G6-BV3-01: the line lands above the list being browsed.
+        getattr(self, "keep_browsed_row_in_view", lambda: False)()
         self._highlight_discovered_server(server)
 
     def _use_found_server(self, server: Any) -> None:

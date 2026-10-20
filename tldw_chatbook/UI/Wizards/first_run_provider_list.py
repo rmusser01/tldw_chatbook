@@ -167,7 +167,7 @@ class ProviderChoiceList(OptionList):
         if highlighted is not None and self.has_focus:
             self.call_after_refresh(self._keep_highlighted_row_on_screen)
 
-    def _keep_highlighted_row_on_screen(self) -> None:
+    def _keep_highlighted_row_on_screen(self, tries: int = 0) -> None:
         if self.highlighted is None or not self.has_focus:
             return
         try:
@@ -176,8 +176,19 @@ class ProviderChoiceList(OptionList):
         except Exception:  # noqa: BLE001 - not laid out yet: nothing to keep.
             return
         y = self.region.y + self.gutter.top + line - int(self.scroll_offset.y)
-        if not clip.y <= y < clip.bottom:
-            self.scroll_visible(animate=False)
+        if clip.y <= y < clip.bottom:
+            return
+        # Review v3r1, G6-BV3-01: at 80x24 the step shows ~5 of the list's 8
+        # rows, so bringing the list's top on screen left a lower row hidden.
+        # Scroll the step by what the row itself is outside the view.
+        scroller = next((a for a in self.ancestors_with_self[1:] if getattr(a, "allow_vertical_scroll", False)), None)
+        if scroller is None or not clip.height:
+            self.scroll_visible(animate=False)  # wholly off screen: list first
+            if tries < 2:
+                self.call_after_refresh(self._keep_highlighted_row_on_screen, tries + 1)
+            return
+        delta = y - clip.bottom + 1 if y >= clip.bottom else y - clip.y
+        scroller.scroll_relative(y=delta, animate=False, immediate=True)
 
 
 class FoundServerOption(ProviderChoiceOption):
@@ -613,6 +624,29 @@ class ProviderListStep(ProviderKeyEntryStep):
         if untouched and merged and choices.has_focus:
             # Live at 80x24 the rows arrived after focus; keep them on screen.
             self.call_after_refresh(choices.scroll_visible, animate=False)
+
+    def keep_browsed_row_in_view(self) -> bool:
+        """While the list or its filter has focus, keep the browsed row on screen.
+
+        Review v3r1, G6-BV3-01 (live at 120x40 and 80x24): browsing selects,
+        and what a browsed row's check or fill does afterwards -- a keyless
+        401 scrolling Authentication into view, the 'Using the … server
+        found' line appearing above the list -- moved the row the user was
+        on off screen while the list kept focus. Callers that would scroll
+        the step ask this first.
+
+        Returns:
+            True while the user is browsing: nothing else may scroll the step.
+        """
+        try:
+            choices = self.query_one("#setup-provider-choice", ProviderChoiceList)
+            query = self.query_one("#setup-provider-filter", Input)
+        except NoMatches:
+            return False
+        if not (choices.has_focus or query.has_focus):
+            return False
+        choices.call_after_refresh(choices._keep_highlighted_row_on_screen)
+        return True
 
     def found_server_for(self, provider_key: str) -> Any:
         """The first detected server for ``provider_key``, or None."""

@@ -461,3 +461,121 @@ async def test_arrowing_past_the_lists_viewport_scrolls_the_list(monkeypatch, si
             f"[{top}, {top + choices.scrollable_content_region.height})"
         )
         assert choices.highlighted in highlighted, "OptionHighlighted was never posted"
+
+
+def _row_in_view(step) -> bool:
+    """Whether the highlighted row is inside the list's visible part on screen."""
+    choices = provider_list(step)
+    try:
+        clip = choices.screen.find_widget(choices).visible_region
+    except Exception:  # noqa: BLE001 - not in the screen's map: scrolled away.
+        return False
+    return clip.y <= _highlighted_row_y(step) < clip.bottom
+
+
+def _keyless_refusal_scope():
+    """A catalog stand-in whose listing answers a keyless 401, a beat late."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    async def refuse(**kwargs):
+        await asyncio.sleep(0.15)  # settles after the highlight has landed
+        provider = kwargs["provider"]
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider,
+            endpoint_fingerprint=None,
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="x",
+                recovery_hint="y",
+                category="unauthorized",
+            ),
+        )
+
+    return SimpleNamespace(discover_models=refuse)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 40), (80, 21)])
+async def test_a_keyless_refusal_settling_while_browsing_keeps_the_row_in_view(
+    monkeypatch, size
+):
+    """Review v3r1, G6-BV3-01 (live at 120x40 and 80x24): browsing selects,
+    the browsed provider's keyless listing answers 401, and TASK-33008's
+    ``note_probe_failure`` then scrolled the Authentication section into view
+    -- taking the list, and the row being browsed, off screen while the list
+    still had focus. The pilot never settled a real keyless 401 before."""
+    from tldw_chatbook.Chat import local_server_discovery
+
+    async def nothing_answers(_app_config, **_kwargs):
+        return ()
+
+    monkeypatch.setattr(local_server_discovery, "discover_local_servers", nothing_answers)
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    wizard = resumed_on_provider()
+    wizard.app_instance.llm_provider_catalog_scope_service = _keyless_refusal_scope()
+    app = WizardHost(wizard)
+    async with app.run_test(size=size) as pilot:
+        step = await _on_provider(pilot, wizard)
+        choices = provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        for press in range(6):
+            await pilot.press("down")
+            await pilot.pause(0.5)  # the refusal settles, then its scroll
+            await pilot.wait_for_scheduled_animations()
+            assert app.focused is choices
+            assert _row_in_view(step), (
+                f"after Down {press + 1} ({step.selected_provider_key}): the "
+                f"highlighted row left the screen"
+            )
+        assert step._key_required_at is not None, "no keyless refusal ever settled"
+
+
+@pytest.mark.asyncio
+async def test_browsing_onto_a_found_engine_keeps_its_row_in_view_at_80x24(monkeypatch):
+    """Review v3r1, G6-BV3-01 (80x24, the llama.cpp Popular row): browsing
+    onto the engine a scan found fills its server, and the '✓ Using the
+    llama.cpp server found…' line that appears above the list pushed the row
+    below the fold."""
+    from tldw_chatbook.Chat import local_server_discovery
+    from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+
+    found = DiscoveredLocalServer("llama_cpp", "http://127.0.0.1:9099", ("qwen",))
+
+    async def one_server(_app_config, **_kwargs):
+        return (found,)
+
+    monkeypatch.setattr(local_server_discovery, "discover_local_servers", one_server)
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=(80, 21)) as pilot:
+        step = await _on_provider(pilot, wizard)
+        choices = provider_list(step)
+        await wait_until(pilot, lambda: "found-0" in _option_ids(step))
+        choices.focus()
+        await pilot.pause()
+        target = choices.get_option_index("provider-llama_cpp")
+        for _ in range(40):
+            if choices.highlighted == target:
+                break
+            await pilot.press("down")
+            await pilot.pause(0.05)
+        assert choices.highlighted == target
+        await wait_until(pilot, lambda: step.query_one("#setup-provider-detected").display)
+        assert step.selected_provider_key == "llama_cpp"
+        # Before the fix the row stayed below the fold for good; under load
+        # the keep can land a few frames after the line, so wait for it.
+        await wait_until(pilot, lambda: _row_in_view(step))
+        await pilot.pause(0.3)
+        assert _row_in_view(step), "the llama.cpp row went below the fold"
