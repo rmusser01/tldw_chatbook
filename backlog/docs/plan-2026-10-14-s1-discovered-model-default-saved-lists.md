@@ -12,6 +12,11 @@
 > - NO-3: **no gate.** Switch model and Chat settings' pick-mode model picker both get T3's reorder. TASK-35012 AC#1, AC#5 and console.md name both surfaces, and one pick-mode test node pins it.
 > - NO-4: C6 stays out of S1. Its copy follow-up is filed as TASK-35578.
 > - Implementer defaults D-a, D-b and D-c stand (the owner raised no objection). They are recorded under Decisions.
+>
+> **Owner ruling, 2026-10-20** (asked directly, after T1's implementer stopped under NO-1's stop rule): **"All 5, endpoint too".**
+> - NO-1 takes the predicate plus **two** branches in `console_model_popover.py`. A refused probe is listed under NOT RUNNING (`_offer_probes`, `_not_running`). A running server's listing supplies the model: `_resolve_readiness` re-requests readiness once that happens.
+> - koboldcpp's untouched template endpoint becomes probeable in the endpoint contract (`resolve_provider_endpoint`). The template's koboldcpp `api_url` is not changed.
+> - A koboldcpp send must behave exactly as before, with an unchanged URL proved by tests. New stop rule: if this needs a template change, changes what a koboldcpp send does, or spreads past the endpoint contract and probe-target layer, the implementer stops again.
 
 Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/critique/2026-10-14T15-26-24Z__tldw-chatbook-ui-screens-settings-screen-py.md`), reviewed on origin/dev 1ef4fcf4ae.
 
@@ -251,20 +256,25 @@ Closes: C3 (with its corrected reach: deletions are resurrected, and Console and
      - `_not_running` (:1514-1537) needs `_retries_in_place` (:161-173), and a `model_missing` readiness never has `recovery_action == "retry_connection"`.
      - The result: an untouched vLLM would move from NOT RUNNING to NEEDS SETUP, and a running one would never be found (TASK-33005.6 AC#3).
      - The same gate already holds back four more servers on a fresh profile: llama_cpp (config.py:5235), oobabooga (:5250), koboldcpp (:5266) and local_llamafile (:5383). Each has `model = ""` in its template table and no saved model (its list is `["None"]`). T1's emptied vLLM list makes vLLM the fifth.
-   - **The fix,** in `console_model_popover.py`:
+   - **The fix,** in `console_model_popover.py` (corrected 2026-10-20 from the implementer's measurements):
      - also probe providers that are `model_missing`, URL-based (`URL_BASED_PROVIDER_KEYS`, Chat/provider_endpoint_contract.py:27-44) and still at the shipped default;
-     - list a refused probe under NOT RUNNING. Because the resolver puts `model_missing` before the endpoint result, `_not_running` reads the refusal from the probe outcome, not from `_retries_in_place`.
+     - list a refused probe under NOT RUNNING. Because the resolver puts `model_missing` before the endpoint result, `_not_running` reads the refusal from the probe outcome, not from `_retries_in_place`;
+     - **a second branch, for the running half.** `_resolve_readiness` computes each target's model from the readiness *before* the probe. The re-read after a probe settles is still model-less: the row stays `model_missing` under NEEDS SETUP although its listing has arrived. Once a model-less resolve leaves a row whose listing now supplies a model, readiness is re-requested with that model (the same move `_load_catalogs` makes for a catalog). Measured on e8f475a219+docs: with the predicate and the NOT RUNNING branch only, the refused half passed and the running half failed for vLLM, llama.cpp, Oobabooga and llamafile; with the second branch both passed.
+   - **koboldcpp needs the endpoint contract (ruled 2026-10-20).** Its template `api_url` is `http://localhost:5001/api/v1/generate`, KoboldAI's native generate route. `resolve_provider_endpoint` refuses that path ("Endpoint path has ambiguous API suffixes."), so:
+     - `canonical_connection_identity` is None, and Console readiness carries no connection for it;
+     - `connection_probe_availability` is UNAVAILABLE, and `switcher_probe_target` refuses it;
+     - Settings `s` with that endpoint raises "Endpoint is invalid." (`build_provider_setup_mutation`).
+
+     No change in the popover can probe it. The fix is in `resolve_provider_endpoint`: for koboldcpp, a path ending in `/api/v1/generate` resolves with its models route at the same root's `/v1/models` (koboldcpp's OpenAI-compatible listing, the route a koboldcpp root endpoint already probes). Its chat URL and persisted endpoint stay the native URL, so whatever a caller saves or sends is the URL it was given. A send never reads this resolution: `effective_provider_endpoint` passes koboldcpp's configured `api_url` through unchanged (`_effective_contract_endpoint` resolves only custom, custom_2 and llama.cpp).
    - **The five providers.** The rule covers vllm, llama_cpp, koboldcpp, oobabooga and local_llamafile, all in `URL_BASED_PROVIDER_KEYS`.
      - **The four that are not vLLM change behaviour.** Today they show under NEEDS SETUP and are never probed. After T1:
        - a refused one is under NOT RUNNING;
        - a running one is probed and listed.
-     - **Each Alt+M on a fresh profile probes four more endpoints:** llama.cpp's root :8080, Oobabooga's :5000, koboldcpp's :5001 and llamafile's :8001.
+     - **Each Alt+M on a fresh profile probes four more endpoints:** llama.cpp's root :8080, Oobabooga's :5000, koboldcpp's :5001 (its `/v1/models`, after the contract change above) and llamafile's :8001.
      - **The probes share the per-open cap.** At most `SWITCHER_PROBES_IN_FLIGHT = 3` run at once (UI/Console_Modules/connection_probe.py:58), so a fresh profile's open takes longer to settle.
      - **The other template servers need nothing.** TabbyAPI, Aphrodite, Custom and Custom 2 carry a model in their template tables (config.py:5310, :5325, :5340, :5355), so they are probed already.
    - **The gating is not a P9 change.** It dates from fa6ab8527f (TASK-33005.5), an ancestor of the plan base. The existing pins cannot catch it, because they seed `vllm=['vendor/model:b']` (Tests/UI/test_console_switcher_local_probe.py:68).
-   - **The stop rule,** re-checked against the wider scope.
-     - It still holds: the five share one predicate (URL-based, `model_missing`, at the shipped default), so the change stays a predicate plus one branch.
-     - If it turns out larger, stop and bring option (c) back to the owner. Under the wider scope, (c) means accepting these servers under NEEDS SETUP and amending AC#9.
+   - **The stop rule.** On 2026-10-19 the plan said the change stayed "a predicate plus one branch". It did not: the running half needs a second branch, and koboldcpp needs the endpoint contract. The implementer stopped, and the owner ruled on 2026-10-20 (see the rulings block): predicate plus two branches, plus the contract change for koboldcpp. The new stop rule covers a template change, a change to what a koboldcpp send does, and any spread past the endpoint contract and probe-target layer.
 
 Files:
 - `tldw_chatbook/LLM_Provider_Catalog/model_discovery_persistence.py`
@@ -272,6 +282,7 @@ Files:
 - `tldw_chatbook/Chat/provider_setup_persistence.py`
 - `tldw_chatbook/UI/Screens/settings_screen.py`
 - `tldw_chatbook/Widgets/Console/console_model_popover.py` (NO-1 (a); no size row)
+- `tldw_chatbook/Chat/provider_endpoint_contract.py` (koboldcpp's native endpoint, ruled 2026-10-20; no size row)
 - `Tests/Architecture/test_module_size_ratchet.py` (lower the `settings_screen.py` row to its measured size)
 - `scripts/ui_pr_gate_census.txt` and `scripts/check_ui_pr_gate_census.py`. `MINIMUM_FILES` becomes the branch-point value + 1 (it is 360 at P9, check_ui_pr_gate_census.py:427).
 - `Docs/User_Guide/settings.md`

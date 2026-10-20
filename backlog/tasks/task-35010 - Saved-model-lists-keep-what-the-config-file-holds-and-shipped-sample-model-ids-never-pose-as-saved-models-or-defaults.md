@@ -1,7 +1,9 @@
 ---
 id: TASK-35010
 title: Saved model lists keep what the config file holds, and shipped sample model ids never pose as saved models or defaults
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-10-14 17:10
 labels:
 - settings
@@ -43,3 +45,20 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 - [ ] #11 The Settings User Guide says the vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and fill through Discover models, that old sample ids are ignored and dropped the next time Settings saves that list, and that Save selected adds to the list as the config file holds it
 - [ ] #12 The Console User Guide says Switch model checks an untouched local server with no model chosen: it is listed when it is running, and under NOT RUNNING when it refuses
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Follows the plan's TASK-35010 steps 1-8 (backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md).
+
+1. `persist_discovered_models_to_settings`, with no injected save callback, does one read-modify-write under the config write lock (`apply_literal_settings_transaction_to_cli_config`). The builder is pure: it reads the locked snapshot's effective `[providers]` list, decides the added ids and "already saved" against it, and calls no config reader, writer or task. A failed transaction maps to `status="error"`; a key the locked view lacks maps to `missing_provider_key`. Injected callbacks keep today's contract.
+2. `refresh_providers_models(app, force=)` in the same module re-reads the loader into `app.providers_models` in place; `force` republishes the caches first (Config reload).
+3. Settings: Save selected's saved branch refreshes instead of appending in memory (`_append_saved_discovered_models` deleted); the Advanced Config `applied` callbacks and both Config reload sites adopt the loaded config through one helper that also refreshes. Net settings_screen.py lines <= 0; lower its size row.
+4. `config.py`: the template's vLLM, TabbyAPI, Aphrodite, Custom and Custom_2 lists ship empty (and the dead `LOCAL_PROVIDERS` literal mirrors it); `SHIPPED_SAMPLE_MODEL_IDS` (13 ids) beside `get_cli_providers_and_models`, which drops them from every list and keeps every key.
+5. `resolve_remembered_provider_model(..., ignore_shipped_samples=)`, off by default; only Settings' provider switch and empty-Model fallback pass it.
+6. `append_models_to_provider_list` drops sample ids from the list it rewrites; a Save selected that adds nothing still writes a list that held samples (D-a). Nothing rewrites the file at startup.
+7. Template `[api_settings.*].model` values untouched.
+8. NO-1 (owner ruling 2026-10-20, "All 5, endpoint too"): the Switch model popover also probes URL-based providers that are `model_missing` at the shipped default. It lists a refused one under NOT RUNNING, and re-requests readiness once a running one's listing supplies a model (a predicate plus two branches). koboldcpp's native `/api/v1/generate` endpoint resolves in `resolve_provider_endpoint` with its models route at `/v1/models`. Its chat URL and persisted endpoint stay the native URL, so a koboldcpp send's URL is unchanged, proved by tests. Stop again if this needs a template change, changes a send, or spreads past the endpoint contract and probe-target layer.
+
+Tests first in Tests/UI/test_settings_saved_lists_follow_file.py (plan cases 1-8, private profile, census tail), each shown red before its fix; rewrite only the pinned tests the plan names; docs in settings.md and console.md; covering run at head vs a base worktree by failure name.
+<!-- SECTION:PLAN:END -->
