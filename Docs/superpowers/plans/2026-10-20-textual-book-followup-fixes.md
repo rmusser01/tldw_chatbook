@@ -118,4 +118,6 @@ ADR required: no; keyboard ADR-031/152 and Lab ADR-118.
 - [x] Only after evidence and review satisfy each AC, update its Backlog status/checkboxes/implementation notes via CLI, preserving metadata and ADR links.
 - [x] Admit new regressions to existing PR CI without dropping any of the 408 previous entries or raising limits; verify the current census floor, exact coverage and measured placement. Do not claim TASK-35834's separate three-run/headroom acceptance.
 - [x] Run focused combined checks, Backlog guards, link checks, scoped lint/format and generated-artifact checks applicable to actual changes. No full suite unless the user requests one.
-- [ ] Obtain one fresh whole-branch Superpowers review on the most capable model, resolve its scoped findings, create/attach a follow-up PR against dev, inspect its CI and address feedback. Preserve the worktree and do not merge without user authorization.
+- [x] Obtain one fresh whole-branch Superpowers review on the most capable model and resolve its scoped findings.
+
+Operational handoff: create/attach the follow-up PR against dev, inspect current-head CI and address feedback. The PR description records hosted receipts after native source qualification; preserve the worktree and do not merge without user authorization.

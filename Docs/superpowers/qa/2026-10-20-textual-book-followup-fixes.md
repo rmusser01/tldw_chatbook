@@ -1,6 +1,6 @@
 # Textual book follow-up fixes — qualification
 
-Status: all six tasks are complete and independently reviewed. Native combined guards and additive CI admission pass; whole-branch review and hosted PR CI remain.
+Status: all six tasks are complete and independently reviewed. Native combined guards and additive CI admission pass; whole-branch review is approved for PR/current-head CI; hosted checks remain.
 
 Scope: the six bounded follow-ups from [the merged-dev reanalysis](./2026-10-20-textual-book-reanalysis.md). [Implementation plan](../plans/2026-10-20-textual-book-followup-fixes.md). PR #3176 is already merged; these changes belong to the new codex/textual-book-followups branch. No new PR is authorized to merge yet.
 
@@ -42,7 +42,7 @@ Six measured whole-file slot swaps below 363 move their associated comments with
 
 New-node estimates conservatively multiply ordinary native parent call times by 2.6. With the measured swaps, projected job walls are 1122.9-1137.9 seconds, leaving a smallest estimated 62.1-second margin. These estimates are placement evidence, not hosted qualification or a three-minute headroom claim. Exact nodes/costs/swaps are in the companion evidence JSON. [TASK-35834](../../../backlog/tasks/task-35834%20-%20UI-Fast-Lane-job-9-runs-within-a-minute-of-its-20-minute-cap-on-dev.md) retains heavy-file distribution, three post-change runs and replay-attribution acceptance.
 
-Census guard passes at 415 entries/floor 415; exact seven-node collection passes. Combined worker scan reports 312 post-await sites/148 functions and 43 wait-dismiss pushes/23 entries, none new; markup scan reports 313 notify/79 button/60 tooltip interpolations with 541 pins, OK. Backlog ID/readability guards pass across 5,589 tasks; 48 relative links resolve. Final import payload passes as above. Whole-branch review remains pending. The follow-up PR description will carry the hosted current-head CI receipts after the code head is fixed; this source report records native qualification and reviewed scope.
+Census guard passes at 415 entries/floor 415; exact seven-node collection passes. Combined worker scan reports 312 post-await sites/148 functions and 43 wait-dismiss pushes/23 entries, none new; markup scan reports 313 notify/79 button/60 tooltip interpolations with 541 pins, OK. Backlog ID/readability guards pass across 5,589 tasks; 49 relative links resolve. Final import payload passes as above. Fresh whole-branch Superpowers Astra review of dev 02ab8bc89b..bbc3c3b072 is approved for PR/current-head CI, with no introduced Critical, Important or actionable Minor finding. It independently confirmed exact 408->415 preservation, 45 unchanged prior slots and all six task boundaries. Hosted timing remains pending. The follow-up PR description will carry the hosted current-head CI receipts after the code head is fixed; this source report records native qualification and reviewed scope.
 
 ## Execution decisions
 
