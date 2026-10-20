@@ -290,8 +290,8 @@ model IDs to that provider’s saved list as the config file holds it at that
 moment. A model added to the file or removed from it since the app started, in
 **Advanced Config** or by another program, is kept or stays removed. After **Save
 selected**, an **Advanced Config** save or a **Config reload**, Model, the **Saved
-model list** and Switch model show the file's lists without a restart. It reports once, on the line above
-**Discover models**: "Saved 2 discovered models to OpenAI.", "The selected
+model list** and Switch model show the file's lists without a restart.
+**Save selected** reports once, on the line above **Discover models**: "Saved 2 discovered models to OpenAI.", "The selected
 models are already saved for OpenAI." when none was new, or why nothing was
 saved ("Select discovered models to save." with none checked). If Model is empty, the first newly
 saved ID fills it as an unsaved draft; an existing Model value is kept.

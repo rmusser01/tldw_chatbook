@@ -207,6 +207,7 @@ from ...Chat.provider_catalog import (
 )
 from ...config import (
     ConfigMutationResult,
+    refresh_runtime_config_from_cli_config,
     resolve_provider_api_key,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
@@ -13118,6 +13119,7 @@ class SettingsScreen(BaseAppScreen):
                 None,
             )
         if isinstance(loaded, dict):
+            refresh_runtime_config_from_cli_config()  # TASK-35010: an in-place edit, read here off the UI thread
             return validation_result, f"Config reload: loaded\n{source}", loaded
         return (
             validation_result,
@@ -13132,7 +13134,7 @@ class SettingsScreen(BaseAppScreen):
         loaded_config: dict | None,
     ) -> None:
         if loaded_config is not None:
-            self._adopt_config(loaded_config, force=True)
+            self._adopt_config(loaded_config)
         self._diagnostics_validation_result = validation_result
         self._diagnostics_reload_result = reload_result
         self._set_static_text(
@@ -13198,20 +13200,17 @@ class SettingsScreen(BaseAppScreen):
         return self._advanced_config_settings
 
     def _adopt_config(self, loaded: dict, *, force: bool = False) -> None:
-        """Install a saved or reloaded config, with the model lists it holds.
-
-        TASK-35010: the lists are updated in place, so the Default model
-        picker and the Saved model list read the file's lists without a
-        rebuild. ``force`` (Config reload) re-reads an in-place edit.
-        """
+        """Install a config and its model lists in place, so the Default model picker
+        and Saved model list need no rebuild (TASK-35010); ``force`` re-reads the file."""
         from ...LLM_Provider_Catalog.model_discovery_persistence import (
             refresh_providers_models,
         )
 
         self.app_instance.app_config = loaded
         refresh_providers_models(self.app_instance, force=force)
-        self._sync_model_picker(self._provider_widget_value() or None, reload=True)
-        self._refresh_advanced()
+        if self.is_mounted:  # An Advanced Config save can finish after Settings closed.
+            self._sync_model_picker(self._provider_widget_value() or None, reload=True)
+            self._refresh_advanced()
 
     def _raw_config_changed(self) -> None:
         if not self.is_mounted:
