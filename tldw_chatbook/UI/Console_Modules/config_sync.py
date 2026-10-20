@@ -107,29 +107,11 @@ def replay_whole_console_sync(screen) -> bool:
     """Hand the rest of a full UI sync to the coalesced control-bar replay.
 
     Returns:
-        False, for the full sync to return.
+        False, for a full sync that stops here to return; a caller that lets
+        the pass continue (``sync_console_core_state``) ignores it.
     """
     screen._console_control_bar_replay_whole_sync = True
     screen._request_console_control_bar_sync(delayed=True)
-    return False
-
-
-def config_read_would_wait() -> bool:
-    """Whether a CLI config read on this thread would wait for another thread.
-
-    TASK-35645: a warm read never waits; a cold one waits while another
-    thread holds the config locks (a rebuild or write), so they are probed
-    without blocking, in their usual order.
-    """
-    from tldw_chatbook import config
-
-    if config._warm_config_cache_hit() is not None:
-        return False
-    with ExitStack() as acquired:
-        for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
-            if not lock.acquire(blocking=False):
-                return True
-            acquired.callback(lock.release)
     return False
 
 

@@ -855,13 +855,29 @@ def _run_checked_display_sync(
     return accepted
 
 
+def _native_config_locks_held() -> bool:
+    """Whether this thread renders under the native config locks (TASK-35645).
+
+    run_console_config_sync's live fallback holds both while it renders, so a
+    nested presentation read there is live, matches the rest of that pass, and
+    cannot wait on another thread.
+    """
+    from tldw_chatbook import config
+
+    return config._settings_rebuild_lock()._is_owned() and config._config_file_lock()._is_owned()
+
+
 def console_readiness_presentation(function: Callable) -> Callable:
     """Limit disposable configuration data to named synchronous UI refreshes."""
 
     @wraps(function)
     def wrapped(screen, *args, **kwargs):
         config = _screen_readiness_config(screen)
-        if not config or not screen._console_config_snapshot_is_disk_loaded(config):
+        if (
+            not config
+            or not screen._console_config_snapshot_is_disk_loaded(config)
+            or _native_config_locks_held()
+        ):
             return function(screen, *args, **kwargs)
         return ConsoleReadinessConfigProjection.for_screen(screen).run(
             lambda: function(screen, *args, **kwargs)
