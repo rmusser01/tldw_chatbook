@@ -211,7 +211,9 @@ async def test_wrappers_pass_the_pinned_sources(monkeypatch: pytest.MonkeyPatch)
             calls.append(("preflight", ref, type(catalog).__name__, sources))
             return "REPORT"
 
-        async def provision(self, ref, grant, catalog, *, sources, progress=None):
+        async def provision(
+            self, ref, grant, catalog, *, sources, progress=None, control=None
+        ):
             calls.append(("provision", ref, grant, sources, progress))
             return ref
 

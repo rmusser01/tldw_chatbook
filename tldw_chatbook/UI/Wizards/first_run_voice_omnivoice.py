@@ -23,6 +23,7 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static
 
+from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
 from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
     omnivoice_setup_state,
     run_omnivoice_preflight,
@@ -69,6 +70,9 @@ class OmniVoiceStepBase(SetupStep):
         self._omnivoice_state_generation = 0
         self._omnivoice_installing = False
         self._omnivoice_report: Any = None
+        # TASK-34100.14: names this download for the Speech step's install
+        # (which waits for it), and carries the progress widget's Cancel.
+        self._omnivoice_download: DownloadControl | None = None
         self._omnivoice_seed: int | None = None
         self._sample_audio_path: Path | None = None
         self._refocus_test = False
@@ -217,7 +221,9 @@ class OmniVoiceStepBase(SetupStep):
             install = Button("Install voice model", id="setup-voice-omnivoice-install")
             install.display = False
             yield install
-            progress = ModelInstallProgress(None, id="setup-voice-omnivoice-progress")
+            progress = ModelInstallProgress(
+                None, id="setup-voice-omnivoice-progress", cancellable=True
+            )
             progress.display = False
             yield progress
 
@@ -375,6 +381,9 @@ class OmniVoiceStepBase(SetupStep):
         if not confirmed:
             self._finish_omnivoice_install(None)
             return
+        self._omnivoice_download = DownloadControl(
+            label="OmniVoice voice model", wait_if_busy=True
+        )
         self._omnivoice_provision()
 
     @wizard_work(
@@ -387,11 +396,15 @@ class OmniVoiceStepBase(SetupStep):
         try:
             asyncio.run(  # policy-exception: worker-thread loop
                 run_omnivoice_provision(
-                    report, progress=make_progress_callback(self.post_message)
+                    report,
+                    progress=make_progress_callback(self.post_message),
+                    control=self._omnivoice_download,
                 )
             )
         except Exception as exc:
-            logger.opt(exception=True).error("OmniVoice model installation failed")
+            control = self._omnivoice_download
+            if control is None or not control.cancel_requested:
+                logger.opt(exception=True).error("OmniVoice model installation failed")
             self.app.call_from_thread(
                 self._finish_omnivoice_install,
                 install_failure_message(exc, model_label="OmniVoice voice model"),
@@ -402,6 +415,7 @@ class OmniVoiceStepBase(SetupStep):
     def _finish_omnivoice_install(self, error: str | None) -> None:
         self._omnivoice_installing = False
         self._omnivoice_report = None
+        self._omnivoice_download = None
         try:
             self.query_one(
                 "#setup-voice-omnivoice-progress", ModelInstallProgress
@@ -425,6 +439,14 @@ class OmniVoiceStepBase(SetupStep):
             return
         progress.display = True
         progress.update_progress(event.progress)
+
+    @on(ModelInstallProgress.CancelRequested, "#setup-voice-omnivoice-progress")
+    def _omnivoice_cancel_requested(
+        self, event: ModelInstallProgress.CancelRequested
+    ) -> None:
+        event.stop()
+        if self._omnivoice_download is not None:
+            self._omnivoice_download.cancel()
 
     def _start_omnivoice_sample(self) -> None:
         if self._omnivoice_state != "ready" or self._omnivoice_installing:

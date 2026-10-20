@@ -503,7 +503,11 @@ _BUDGETS: dict[str, int] = {
     # Round 3: the key mark came back to the listing's call site, where a
     # reader sees it (that line stays pure) -> 2,454.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2454,
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
+    # download's cancel switch, its live status line and the cancelled
+    # outcome are wired on the step (its @on handlers must stay on the
+    # class); the copy itself lives in first_run_speech_step_state.py.
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1768,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained

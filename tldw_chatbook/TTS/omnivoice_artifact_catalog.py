@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         CredentialResolver,
         PreflightReport,
     )
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
     from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
 
@@ -366,6 +367,7 @@ async def run_omnivoice_provision(
     credential_resolver: "CredentialResolver | None" = None,
     free_bytes_probe: "Callable[[Path], int] | None" = None,
     progress: "Callable[[AcquisitionProgress], None] | None" = None,
+    control: "DownloadControl | None" = None,
 ) -> Path:
     """Download, verify and activate the OmniVoice model after consent.
 
@@ -375,6 +377,9 @@ async def run_omnivoice_provision(
         credential_resolver: Download credentials (defaults to env/config).
         free_bytes_probe: Free-disk probe override (tests).
         progress: Callback receiving download/verify progress.
+        control: TASK-34100.14: names this download for other installs, can
+            wait in line for one already running, and carries the caller's
+            cancel switch (forwarded to ``provision()``).
 
     Returns:
         The installed artifact directory.
@@ -386,5 +391,6 @@ async def run_omnivoice_provision(
         OmniVoiceCatalog(),
         sources=omnivoice_onnx_source_map(),
         progress=progress,
+        control=control,
     )
     return service.artifact_path(installed)

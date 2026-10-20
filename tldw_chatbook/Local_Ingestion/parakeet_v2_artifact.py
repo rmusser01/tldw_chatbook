@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         CredentialResolver,
         PreflightReport,
     )
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
 
 
 #: Canonical identity components for the managed Parakeet v2 artifact.
@@ -661,8 +662,14 @@ async def run_parakeet_provision(
     free_bytes_probe: Callable[[Path], int] | None = None,
     trusted_origins: frozenset[str] = frozenset(),
     progress: "Callable[[AcquisitionProgress], None] | None" = None,
+    control: "DownloadControl | None" = None,
 ) -> Path:
-    """Provision and activate one exact Parakeet root closure."""
+    """Provision and activate one exact Parakeet root closure.
+
+    ``control`` (TASK-34100.14) is forwarded to ``provision()``: it names
+    this download for other installs, can wait in line for one already
+    running, and lets the caller cancel the transfer from its UI thread.
+    """
     from tldw_chatbook.Model_Artifacts.acquisition import (
         ArtifactAcquisitionService,
         EnvConfigCredentialResolver,
@@ -687,6 +694,7 @@ async def run_parakeet_provision(
         ParakeetCatalog(),
         sources=parakeet_source_map(),
         progress=progress,
+        control=control,
     )
     return service.artifact_path(activated)
 
